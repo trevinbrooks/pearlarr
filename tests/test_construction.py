@@ -49,7 +49,7 @@ def _state_holders(loop: ArrRunLoop, services: ArrRunServices) -> list[object]:
     ]
 
 
-def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
+def test_arr_run_loop_adopts_placeholder_then_rebinds_fresh_state() -> None:
     deps = make_run_deps()
     services = ArrRunServices(deps, Arr.SONARR)
     loop = ArrRunLoop(deps, services)
@@ -74,7 +74,7 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     assert all(vars(c)["_state"] is loop._state for c in holders)
 
 
-def test_services_read_selection_staleness_from_the_store_at_construction() -> None:
+def test_services_read_selection_change_from_the_store_at_construction() -> None:
     # The real __init__ compares the store's selection hash against the config's:
     # an older hash turns on the arr-run-wide re-check. A matching hash or a fresh
     # store (no hash stored yet) stays quiet.
@@ -93,7 +93,7 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
     assert ArrRunServices(make_run_deps(config=config), Arr.SONARR).selection_changed is False
 
 
-def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
+def test_sonarr_strategy_init_shares_cache_store_for_staged_writes() -> None:
     # The parse-cache writer (SonarrParseCache) and the pending import update builder (ImportReconciler,
     # through the services' pending import store) must share the strat's cache_store by identity, or
     # a staged parse write would not be visible to build_pending_import_updates.
@@ -111,7 +111,7 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
     assert services.pending_imports._store is deps.cache_store
 
 
-def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
+def test_radarr_strategy_init_builds_without_network_via_the_client_argument() -> None:
     # The radarr_client argument lets RadarrStrategy's REAL __init__ run under test: the
     # injected fake skips require_connection, so no config keys are needed.
     deps = make_run_deps()
@@ -139,7 +139,7 @@ def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
     )
 
 
-def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_arr_run_deps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`ArrRunDeps.build` constructs the arr run's httpx client with THIS arr's `verify_ssl`.
 
     It's the per-arr escape hatch for a self-signed HTTPS arr.
@@ -170,7 +170,7 @@ class _PassingQbit:
 
 
 @respx.mock
-def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
+def test_arr_run_deps_build_wires_lazy_categories_fetched_at_first_use(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -206,7 +206,7 @@ def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
 
 
 @respx.mock
-def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> None:
+def test_arr_run_deps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> None:
     """No qBittorrent client (perpetual dry run): no category is ever applied, so `build` never contacts the arr."""
 
     route = respx.get("http://sonarr/api/v3/downloadclient").respond(json=[])
@@ -221,7 +221,7 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
     assert route.call_count == 0
 
 
-def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
+def test_arr_run_deps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
     """`build` binds this arr's transport once: label from the arr, default rewarn interval."""
 
     deps = _build_deps(make_config(url="http://sonarr", api_key="key"), tmp_path)
@@ -234,7 +234,7 @@ def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
     assert deps.arr_http.rewarn_s == REWARN_INTERVAL_S
 
 
-def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:
+def test_arr_run_deps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:
     """Missing keys: `build` stays raise-free - require_connection fires at strategy construction instead."""
 
     deps = _build_deps(make_config(), tmp_path)
@@ -245,7 +245,7 @@ def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Pa
     assert deps.categories.grab_category() is None
 
 
-def test_rundeps_build_category_handle_derives_from_arr_http(
+def test_arr_run_deps_build_category_handle_derives_from_arr_http(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

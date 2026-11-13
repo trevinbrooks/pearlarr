@@ -94,7 +94,7 @@ class TestDateHelpers:
         assert parse_history_date("not-a-date") is None
 
 
-class TestScan:
+class TestRead:
     """`ArrActivityReader.read` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
 
     def test_bootstrap_queries_lookback_window_and_stores_max_id_checkpoint(self) -> None:
@@ -214,7 +214,7 @@ class TestScan:
         ("arr", "event"),
         [(Arr.SONARR, "downloadFolderImported"), (Arr.RADARR, "movieFolderImported")],
     )
-    def test_own_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
+    def test_pearlarrs_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
         # A pending grab of pearlarr's is set up so a re-added filter on pearlarr's grabs fails here: the arr may import
         # only part of a grab.
         cache = FakeCacheStore()
@@ -229,7 +229,7 @@ class TestScan:
 
         assert activity.read(fetch, now=_NOW).touched == frozenset({1, 2})
 
-    def test_committed_own_grab_import_is_not_touched_again(self) -> None:
+    def test_committed_pearlarrs_grab_import_is_not_touched_again(self) -> None:
         # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.
         activity, cache = _activity_reader()
         cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
@@ -343,7 +343,7 @@ class TestRunLoopActivityWiring:
         assert engine._services._dirty_al_ids == {11}
         assert len(strategy.history_calls) == 1
 
-    def test_own_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
+    def test_pearlarrs_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
         cache = FakeCacheStore()
         cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
         engine = _engine(_FinalizeRecorder(), logger, cache_store=cache)
@@ -387,7 +387,7 @@ class TestRunLoopActivityWiring:
         gateway.unreachable = True
         return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
 
-    def test_outage_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
+    def test_unreachable_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
         # A SeaDex-unreachable run skips every lookup, so committing would consume
         # drift events the run never acted on.
         cache = FakeCacheStore()
@@ -397,7 +397,7 @@ class TestRunLoopActivityWiring:
         assert engine._services._dirty_al_ids == {11}  # detection itself still ran
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
-    def test_consecutive_outage_runs_keep_holding(self, logger: logging.Logger) -> None:
+    def test_consecutive_unreachable_runs_keep_holding(self, logger: logging.Logger) -> None:
         cache = FakeCacheStore()
         for _ in range(2):
             engine = self._engine_with_seadex_unreachable(logger, cache)

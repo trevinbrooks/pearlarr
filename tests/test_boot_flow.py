@@ -56,7 +56,7 @@ def _error(message: str) -> Diagnostic:
 # --- banner + boot scope ---------------------------------------------------------
 
 
-def test_banner_opens_the_section_and_states_the_run_facts() -> None:
+def test_banner_opens_the_boot_scope_and_states_the_run_facts() -> None:
     flow, recording, _ = _flow()
 
     flow.banner()
@@ -71,7 +71,7 @@ def test_banner_opens_the_section_and_states_the_run_facts() -> None:
     assert recording.events == [started, opened]
 
 
-def test_a_step_after_end_section_opens_a_fresh_scope() -> None:
+def test_a_step_after_end_boot_opens_a_fresh_scope() -> None:
     # The second arr's boot steps reopen a boot scope (bootstrap's per-arr loop).
     flow, recording, _ = _flow()
 
@@ -101,7 +101,7 @@ def test_close_is_the_scope_safety_net() -> None:
 # --- step lifecycle ---------------------------------------------------------------
 
 
-def test_step_graduates_with_detail_and_timing() -> None:
+def test_step_finishes_with_detail_and_timing() -> None:
     flow, recording, clock = _flow()
 
     with flow.step("Fetching Sonarr library") as step:
@@ -119,7 +119,7 @@ def test_step_graduates_with_detail_and_timing() -> None:
     )
 
 
-def test_step_failure_graduates_failed_and_reraises() -> None:
+def test_step_failure_finishes_failed_and_reraises() -> None:
     flow, recording, clock = _flow()
 
     with pytest.raises(ValueError, match="bad config"), flow.step("Reading config"):
@@ -148,7 +148,7 @@ def test_slow_heads_up_is_emitted_once_per_step() -> None:
 # --- the ready line gate ----------------------------------------------------------
 
 
-def test_capstone_measures_from_the_first_step() -> None:
+def test_ready_line_measures_from_the_first_step() -> None:
     flow, recording, clock = _flow()
 
     flow.banner()
@@ -162,7 +162,7 @@ def test_capstone_measures_from_the_first_step() -> None:
     assert ready.elapsed_s == pytest.approx(1.22)
 
 
-def test_error_recorded_mid_section_suppresses_the_capstone() -> None:
+def test_error_recorded_mid_boot_suppresses_the_ready_line() -> None:
     # An ERROR that doesn't raise still means the boot isn't "ready". The
     # facade sees it through the hub's severity counts. Errors logged through
     # the app logger reach these counts via the bridge in production.
@@ -176,7 +176,7 @@ def test_error_recorded_mid_section_suppresses_the_capstone() -> None:
     assert recording.of_type(BootReady) == []
 
 
-def test_a_warning_does_not_gate_the_capstone() -> None:
+def test_a_warning_does_not_gate_the_ready_line() -> None:
     flow, recording, clock = _flow()
 
     with flow.step("Reading config"):
@@ -187,7 +187,7 @@ def test_a_warning_does_not_gate_the_capstone() -> None:
     assert len(recording.of_type(BootReady)) == 1
 
 
-def test_deferred_warn_still_allows_the_capstone() -> None:
+def test_deferred_warn_still_allows_the_ready_line() -> None:
     # A DEFERRED (warn) finish - qBittorrent unconfigured, SeaDex unreachable - is a
     # degraded but READY boot. Only failures and recorded errors gate it.
     flow, recording, clock = _flow()
@@ -216,7 +216,7 @@ def test_error_before_the_first_step_does_not_gate() -> None:
     assert len(recording.of_type(BootReady)) == 1
 
 
-def test_error_gate_resets_with_the_section() -> None:
+def test_error_gate_resets_with_the_boot_scope() -> None:
     # end_boot resets the mark: an error during one arr's boot must not
     # suppress the NEXT arr's ready line (multi-arr runs share the flow).
     flow, recording, clock = _flow()
@@ -232,7 +232,7 @@ def test_error_gate_resets_with_the_section() -> None:
     assert len(recording.of_type(BootReady)) == 1  # second boot only
 
 
-def test_capstone_gate_survives_a_hub_swap_mid_section() -> None:
+def test_ready_line_gate_survives_a_hub_swap_mid_boot() -> None:
     # The window's mark carries the counter it was taken on: errors tallied by
     # a hub installed AFTER the mark (an embedding caller re-installing) must not
     # suppress the ready line with a cross-hub diff.
@@ -248,7 +248,7 @@ def test_capstone_gate_survives_a_hub_swap_mid_section() -> None:
     assert len(swapped.of_type(BootReady)) == 1  # gated on the ORIGINAL counter
 
 
-def test_empty_section_emits_no_capstone() -> None:
+def test_empty_boot_emits_no_ready_line() -> None:
     flow, recording, _ = _flow()
 
     flow.banner()
@@ -258,7 +258,7 @@ def test_empty_section_emits_no_capstone() -> None:
     assert len(recording.of_type(ScopeClosed)) == 1  # the mark still closes
 
 
-def test_logger_error_via_the_bridge_suppresses_the_capstone() -> None:
+def test_logger_error_via_the_bridge_suppresses_the_ready_line() -> None:
     # The full production chain: logger.error -> HubBridgeHandler -> hub counts ->
     # ready line gate. conftest's autouse teardown uninstalls the bridge + hub and
     # resets the app logger's handlers/level. propagate (flipped by install_bridge)

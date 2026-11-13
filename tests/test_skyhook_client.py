@@ -141,7 +141,9 @@ def test_one_bad_row_empties_the_order_and_keeps_the_header() -> None:
         pytest.param(httpx.ConnectTimeout("timed out"), "ConnectTimeout", id="timeout"),
     ],
 )
-def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response | Exception, detail: str) -> None:
+def test_skyhook_stays_unreachable_and_later_fetches_send_nothing(
+    answer: httpx.Response | Exception, detail: str
+) -> None:
     recording = install_recording_hub()
     client = _client()
 
@@ -164,7 +166,7 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
     ]
 
 
-def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:
+def test_skyhooks_own_not_found_is_for_that_series_only() -> None:
     client = _client()
 
     with respx.mock:

@@ -837,7 +837,7 @@ class TestBannerParity:
         assert harness.lines() == ITEM_STARTED_RADARR_LINES
 
 
-class TestLedgerRowParity:
+class TestTitleRowParity:
     """The self-contained title rows (unmonitored, no-mapping, no-episodes, ignored) reproduce their golden lines."""
 
     def test_unmonitored(self) -> None:
@@ -866,7 +866,7 @@ class TestLedgerRowParity:
         assert harness.lines() == IGNORED_TITLED_LINES
 
 
-class TestEntryHeaderParity:
+class TestTitleHeaderParity:
     """`open_title_block` / `log_cached_title` / `log_pending_import` reproduce the pinned title-header golden lines.
 
     Covers the checking, cached, and pending states.
@@ -894,7 +894,7 @@ class TestEntryHeaderParity:
         harness.reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 2)
         assert harness.lines() == CACHED_BARE_LINES
 
-    def test_pending_snapshots(self) -> None:
+    def test_pending_import_snapshots(self) -> None:
         harness = _Harness()
         pending = pending_import(**_PENDING_IMPORT_KWARGS)
         for state, expected in (
@@ -907,13 +907,13 @@ class TestEntryHeaderParity:
             assert harness.lines() == expected
 
 
-class TestTitledEntryParity:
+class TestTitledRowParity:
     """`log_no_sd_entry` / `log_seadex_unreachable` reproduce the pinned golden lines.
 
     A title's name is resolved via the AniList gateway, else the arr item's own name, else the id form alone.
     """
 
-    def test_no_entry_with_resolved_title(self) -> None:
+    def test_no_entry_with_resolved_name(self) -> None:
         harness = _Harness(title="Resolved Title")
         harness.reporter.log_no_sd_entry(ArrRunState(arr=Arr.SONARR), 42)
         assert harness.lines() == NO_ENTRY_RESOLVED_LINES
@@ -925,12 +925,12 @@ class TestTitledEntryParity:
         harness.reporter.log_no_sd_entry(state, 42)
         assert harness.lines() == NO_ENTRY_ARR_TITLE_LINES
 
-    def test_no_entry_without_a_title(self) -> None:
+    def test_no_entry_without_a_name(self) -> None:
         harness = _Harness(title=None)
         harness.reporter.log_no_sd_entry(ArrRunState(arr=Arr.SONARR), 77)
         assert harness.lines() == NO_ENTRY_UNRESOLVED_LINES
 
-    def test_outage_skip_with_cached_name(self) -> None:
+    def test_seadex_unreachable_with_cached_name(self) -> None:
         harness = _Harness(store=_seeded_store())
         harness.reporter.log_seadex_unreachable(ArrRunState(arr=Arr.SONARR), 1)
         assert harness.lines() == UNREACHABLE_LINES
@@ -1154,7 +1154,7 @@ class TestExternalDetailParity:
 
         assert harness.lines() == tuple(site.golden for site in self.SITES)
 
-    def test_post_rides_the_open_entry_then_emits_scope_free(self) -> None:
+    def test_post_carries_the_open_title_scope_then_emits_scope_free(self) -> None:
         # Inside an open title the fact carries the title scope. After a boundary
         # closes it, a post emits scope-free (col-0 by design, like _post).
         harness = _Harness()
@@ -1200,7 +1200,7 @@ class TestActionBlockParity:
         )
         assert harness.lines() == ACTION_DRY_LINES
 
-    def test_already_downloading_with_monitor(self) -> None:
+    def test_already_in_qbit_with_and_without_waiting_to_import(self) -> None:
         harness = _Harness()
         seadex_dict = {
             "GroupA": rg_group({"https://nyaa.si/view/1": make_release(download=True)}, tags=frozenset({_HDR_TAG})),
@@ -1215,7 +1215,7 @@ class TestActionBlockParity:
         harness.reporter.log_seadex_action(seadex_dict, results, dry_run=False, waiting_to_import=False)
         assert harness.lines() == ACTION_DOWNLOADING_NO_WAIT_LINES
 
-    def test_mixed_results_group_added_before_downloading(self) -> None:
+    def test_mixed_results_group_added_before_already_in_qbit(self) -> None:
         # Already-in-qBittorrent-first input still renders added-first: the grouping, not
         # results order, is the pinned contract.
         harness = _Harness()
@@ -1256,7 +1256,7 @@ def _summary_lines(
     return harness.lines()
 
 
-class TestRunSummaryParity:
+class TestArrRunSummaryParity:
     """`log_arr_run_summary` reproduces the pinned summary golden lines across rich/dry/minimal/wait-off states.
 
     Includes the issues row's style ladder (plain, yellow, bold-red).
@@ -1284,7 +1284,7 @@ class TestRunSummaryParity:
         state = ArrRunState(arr=Arr.SONARR)
         assert _summary_lines(state, dry_run=False, has_client=True) == SUMMARY_MINIMAL_LINES
 
-    def test_wait_mode_off_hides_pending_rows(self) -> None:
+    def test_wait_mode_off_hides_pending_import_rows(self) -> None:
         state = ArrRunState(arr=Arr.SONARR, stats=_wait_off_stats())
         assert _summary_lines(state, dry_run=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
 
@@ -1333,7 +1333,7 @@ class TestScopeLifecycle:
     serial values.
     """
 
-    def test_item_entry_entry_item_sequence(self) -> None:
+    def test_item_title_title_item_sequence(self) -> None:
         # item -> title -> title -> item: each new title closes the previous, and
         # the closing item boundary closes the last one.
         harness = _Harness()
@@ -1377,7 +1377,7 @@ class TestScopeLifecycle:
 
         assert len([e for e in harness.events if isinstance(e, ScopeClosed)]) == 1
 
-    def test_action_keeps_the_entry_open_for_a_trailing_diagnostic(self) -> None:
+    def test_action_keeps_the_title_open_for_a_trailing_diagnostic(self) -> None:
         # A1(b): log_seadex_action POSTS but does not close, so the title stays among
         # the open scopes - a diagnostic emitted before the next boundary indents
         # under this title (live-verified), not col-0.
@@ -1396,7 +1396,7 @@ class TestScopeLifecycle:
         action = next(e for e in harness.events if isinstance(e, GrabAction))
         assert action.scope == opened.scope
 
-    def test_fresh_reporter_has_no_open_entry(self) -> None:
+    def test_fresh_reporter_has_no_open_title(self) -> None:
         # _title_scope starts None on a fresh reporter, so the first current-title
         # detail (no header before it) opens no scope and goes scope-free.
         harness = _Harness()
@@ -1406,7 +1406,7 @@ class TestScopeLifecycle:
         detail = next(e for e in harness.events if isinstance(e, TitleDetail))
         assert detail.scope is None
 
-    def test_cap_closes_the_open_entry(self) -> None:
+    def test_cap_closes_the_open_title(self) -> None:
         # The scan breaks at the cap and _finish_arr_run's reconcile runs before
         # the summary: a still-open TITLE scope would misplace its diagnostics.
         harness = _Harness()

@@ -119,7 +119,7 @@ class TestEpisodeCoverage:
         # No placed episode -> the group blanket-covers every episode
         assert result.blanket == {"other"}
 
-    def test_a_record_outside_the_index_never_blankets(self) -> None:
+    def test_a_placed_episode_outside_the_index_never_blankets(self) -> None:
         # The placement only ever records the title's own episodes, so this input cannot
         # arise. The index guard still keeps a key outside the index out, and a release with placed
         # episodes never blankets: a placed episode is proof of what the release covers.

@@ -422,7 +422,7 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
     assert note.trace is not None and "RuntimeError" in note.trace.plain
 
 
-def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() -> None:
+def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_error() -> None:
     """A run must never silently lose its whole log file.
 
     When the casualty IS the file renderer, the containment note goes visible
@@ -443,7 +443,7 @@ def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() ->
     assert hub.counts.counts_since(mark).errors == 1
 
 
-def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
+def test_three_strikes_quarantine_until_begin_run_restarts() -> None:
     flaky, survivor = _FailingRenderer(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
 
@@ -456,7 +456,7 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
     assert flaky.calls == STRIKE_LIMIT + 1  # reset, not process-latched
 
 
-def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() -> None:
+def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_run_restarts() -> None:
     """An arr run's close (ArrRunFinished) is not a run turnover.
 
     Strikes are a per-run budget: they accumulate across the ArrRunFinished
@@ -496,7 +496,7 @@ def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() 
     assert sub.strikes == 1
 
 
-def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
+def test_quarantine_closes_the_renderer_exactly_once_at_the_crossing() -> None:
     """This test pins the live-leak fix: striking out closes the renderer (a struck boot Live must stop repainting).
 
     Only the crossing fires it - never skipped events.
@@ -551,7 +551,7 @@ def test_keyboard_interrupt_still_propagates() -> None:
         hub.emit(_EVENT)
 
 
-def test_containment_notes_are_uncounted_while_a_file_surface_survives() -> None:
+def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> None:
     flaky, survivor = _FailingRenderer(), _FileishRecorder()
     hub = OutputHub([flaky, survivor])
     mark = hub.counts.mark()
@@ -656,7 +656,7 @@ def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
     assert hub._drainer is None
 
 
-def test_a_propagating_interrupt_never_strands_the_baton() -> None:
+def test_a_propagating_interrupt_never_strands_the_drain_lock() -> None:
     flaky, survivor = _InterruptOnceRenderer(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
 
@@ -669,7 +669,7 @@ def test_a_propagating_interrupt_never_strands_the_baton() -> None:
     assert follow in survivor.events
 
 
-def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypatch: pytest.MonkeyPatch) -> None:
     """An interrupt landing before _drain runs must leave no leftover drain lock behind.
 
     Emit only checks-and-calls. The drain lock is taken inside _drain's try. With the
@@ -694,7 +694,7 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: 
     assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
 
 
-def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
+def test_drain_is_a_no_op_loser_when_another_thread_holds_the_drain_lock() -> None:
     """The take race's loser returns without dispatching or touching the owner's drain lock."""
 
     survivor = RecordingRenderer()
@@ -794,7 +794,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     assert all("overflowed" not in m for m in messages)  # a structural never trips the note
 
 
-def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
+def test_overflow_sheds_diagnostics_and_restarts_the_note_per_episode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with one note per episode.
@@ -841,7 +841,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
 # --- once= dedup ---------------------------------------------------------------------
 
 
-def test_once_keys_dedup_and_clear_per_cycle() -> None:
+def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
     recording = RecordingHub()
     warning = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
@@ -943,7 +943,7 @@ def test_set_level_fans_out_to_every_renderer() -> None:
     assert renderer.levels == [logging.DEBUG]
 
 
-def test_begin_cycle_turns_over_renderers_and_applies_the_level() -> None:
+def test_begin_run_turns_over_renderers_and_applies_the_level() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
 
@@ -963,7 +963,7 @@ def test_close_is_idempotent_and_reaches_every_renderer() -> None:
     assert renderer.closed
 
 
-def test_a_closed_hub_drops_emits_and_cycle_turnovers() -> None:
+def test_a_closed_hub_drops_emits_and_scheduled_run_turnovers() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
     hub.close()
@@ -994,7 +994,7 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
 # --- console ownership (the rich handler's skip predicate) ---------------------------
 
 
-def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: pytest.CaptureFixture[str]) -> None:
+def test_visible_warnings_reach_stderr_while_no_console_renderer_is_active(capsys: pytest.CaptureFixture[str]) -> None:
     """This covers the install→`begin_run` window and a quarantined console renderer.
 
     A visible WARNING+ diagnostic must still reach a human, via stderr.
@@ -1007,7 +1007,9 @@ def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: py
     assert "CRITICAL [app] invalid level" in capsys.readouterr().err
 
 
-def test_the_stderr_fallback_skips_info_file_only_and_seated_consoles(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_stderr_fallback_skips_info_file_only_and_hubs_with_a_console_renderer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
 
     hub.emit(Diagnostic(severity=Severity.INFO, message="quiet"))
@@ -1027,19 +1029,19 @@ def test_factory_less_hubs_never_write_stderr(capsys: pytest.CaptureFixture[str]
     assert capsys.readouterr().err == ""
 
 
-def test_console_render_active_is_false_without_a_console_seat() -> None:
+def test_console_render_active_is_false_without_a_console_renderer() -> None:
     hub = OutputHub([RecordingRenderer()])
 
     assert hub.console_render_active() is False
 
 
-def test_console_render_active_is_true_for_an_armed_seat() -> None:
+def test_console_render_active_is_true_for_an_active_console_renderer() -> None:
     hub = OutputHub([], console=RecordingRenderer())
 
     assert hub.console_render_active() is True
 
 
-def test_console_render_active_is_false_once_the_seat_strikes_out() -> None:
+def test_console_render_active_is_false_once_the_console_renderer_strikes_out() -> None:
     # The quarantine fallback: a struck-out console renderer hands the badge class
     # back to the legacy handler, so warnings can never vanish.
     hub = OutputHub([], console=_FailingRenderer(), strike_limit=1)
@@ -1052,7 +1054,7 @@ def test_console_render_active_is_false_once_the_seat_strikes_out() -> None:
 # --- console renderer swap -----------------------------------------------------------
 
 
-def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
+def test_begin_run_swaps_the_console_renderer_only_on_format_change() -> None:
     built: list[tuple[LogFormat, RecordingRenderer]] = []
 
     def factory(console_format: LogFormat) -> Renderer:
@@ -1077,7 +1079,7 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
     assert stable_renderer.events == [_EVENT, _EVENT]  # the stable renderer saw both
 
 
-def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> None:
+def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file_only() -> None:
     console, renderer = RecordingRenderer(), _FileishRecorder()
 
     def factory(console_format: LogFormat) -> Renderer:
@@ -1098,7 +1100,7 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
 # --- the process registry (install/uninstall) + the cli renderer order ----------------
 
 
-def test_cli_hub_seats_the_file_sink_first() -> None:
+def test_cli_hub_installs_the_file_log_renderer_first() -> None:
     # The file-before-console dispatch pin: _subs[0] is the first-declared renderer
     # (the reader convention above), and cli declares FileLogRenderer first.
     hub, _ = _install_output_hub(resolve_paths())
@@ -1196,7 +1198,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
     assert hub.counts.counts_since(mark).warning == 1
 
 
-def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> None:
+def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
     """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's drain lock.
 
     The re-entrant event still dispatches AFTER the in-flight one.
@@ -1271,7 +1273,7 @@ def test_a_broken_stderr_never_raises_through_emit() -> None:
     assert hub.counts.mark().warning == 1  # emitted, counted, contained
 
 
-def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> None:
+def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
     """`close()` closes the file renderers LAST.
 
     A diagnostic emitted from another renderer's close path (a contained
@@ -1339,7 +1341,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
     assert not any(isinstance(e, PearlarrStarted) for e in file_recorder.handled)
 
 
-def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:
+def test_begin_run_applies_the_level_to_a_fresh_console_exactly_once() -> None:
     """The swap-time `set_level` died (`begin_run`'s tail applies the run level to every sub).
 
     One bug must cost the fresh console ONE strike, not two.

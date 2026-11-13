@@ -89,7 +89,7 @@ def test_two_default_factories_never_mint_colliding_serials() -> None:
 # --- StepScope --------------------------------------------------------------------
 
 
-def test_step_times_and_graduates_success_with_detail() -> None:
+def test_step_times_and_finishes_success_with_detail() -> None:
     factory, recorder, clock = _factory()
 
     with factory.step("Fetching Sonarr library") as step:
@@ -110,7 +110,7 @@ def test_step_times_and_graduates_success_with_detail() -> None:
     ]
 
 
-def test_step_warn_graduates_deferred() -> None:
+def test_step_warn_finishes_deferred() -> None:
     factory, recorder, _ = _factory()
 
     with factory.step("Refreshing mappings") as step:
@@ -121,7 +121,7 @@ def test_step_warn_graduates_deferred() -> None:
     assert finished.detail == "SeaDex unreachable"
 
 
-def test_step_failure_graduates_failed_and_reraises() -> None:
+def test_step_failure_finishes_failed_and_reraises() -> None:
     factory, recorder, _ = _factory()
 
     with pytest.raises(ValueError, match="boom"), factory.step("Opening cache"):
@@ -174,7 +174,7 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
 # --- TitleScope --------------------------------------------------------------------
 
 
-def test_entry_opens_with_its_header_stamped() -> None:
+def test_title_opens_with_its_header_tagged() -> None:
     factory, recorder, _ = _factory()
 
     title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
@@ -187,7 +187,7 @@ def test_entry_opens_with_its_header_stamped() -> None:
     assert recorder.events[0] == opened[0]  # header-at-open: ScopeOpened first
 
 
-def test_entry_post_stamps_the_scope_id() -> None:
+def test_title_post_tags_the_scope_id() -> None:
     factory, recorder, _ = _factory()
     title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
@@ -197,7 +197,7 @@ def test_entry_post_stamps_the_scope_id() -> None:
     assert skipped.scope == title_scope.scope_id
 
 
-def test_entry_close_emits_scope_closed_once() -> None:
+def test_title_close_emits_scope_closed_once() -> None:
     factory, recorder, _ = _factory()
     title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
@@ -207,7 +207,7 @@ def test_entry_close_emits_scope_closed_once() -> None:
     assert [c.scope for c in recorder.of_type(ScopeClosed)] == [title_scope.scope_id]
 
 
-def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
+def test_late_title_post_demotes_and_keeps_the_severity() -> None:
     factory, recorder, _ = _factory()
     title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren"))
     title_scope.close()
@@ -262,7 +262,7 @@ def test_wait_opens_scope_then_announces_totals() -> None:
     assert recorder.events[1] == WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=wait.scope_id)
 
 
-def test_wait_progress_and_graduations_are_stamped() -> None:
+def test_wait_progress_and_finished_rows_are_tagged() -> None:
     factory, recorder, _ = _factory()
     wait = factory.wait(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR)
 

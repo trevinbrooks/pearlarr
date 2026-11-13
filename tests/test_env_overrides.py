@@ -23,7 +23,7 @@ from pearlarr.config import AppConfig, _env_overrides, _hash_config_bytes
 from pearlarr.wait_types import ImportWaitMode
 
 
-class TestOverlayShape:
+class TestOverridesShape:
     """`_env_overrides` maps a qualifying name to a key path with a YAML value."""
 
     def test_path_mapping_and_lowercasing(self) -> None:
@@ -63,7 +63,7 @@ class TestOverlayShape:
         assert overrides == {}
 
 
-class TestOverlayValueParsing:
+class TestOverridesValueParsing:
     """A value is `yaml.safe_load`ed, so it means exactly what the same text means in the file."""
 
     def test_int_bool_and_flow_list(self) -> None:
@@ -93,7 +93,7 @@ class TestOverlayValueParsing:
         assert "PEARLARR_SONARR__API_KEY" in format_validation_errors(excinfo.value)
 
 
-class TestOverlayThroughLoad:
+class TestOverridesThroughLoad:
     """`AppConfig.load` applies the environment onto the migrated file, env winning per leaf."""
 
     def _write(self, tmp_path: Path, text: str) -> str:
@@ -167,7 +167,7 @@ class TestErrorLinesNameTheVariable:
         error = self._error(tmp_path, "")
         assert error == "  - sonar (set by PEARLARR_SONAR__LANGUAGE, PEARLARR_SONAR__VERIFY_SSL): unknown key"
 
-    def test_bad_list_item_names_the_variable_that_set_the_list(
+    def test_bad_list_element_names_the_variable_that_set_the_list(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -190,10 +190,10 @@ class TestErrorLinesNameTheVariable:
         assert error == "  - PEARLARR_ADVANCED__SLEEP_TIME: is not valid YAML - fix or unset the environment variable"
 
 
-class TestChecksumFoldsEnv:
+class TestConfigHashIncludesEnv:
     """The config hash includes the qualifying env pairs, so an env change re-checks."""
 
-    def test_digest_folds_only_qualifying_pairs(self) -> None:
+    def test_config_hash_includes_only_qualifying_pairs(self) -> None:
         raw = b"sonarr:\n  url: http://x\n"
         environ = {"PEARLARR_SEADEX__WANT_BEST": "false", "PEARLARR_DATA_DIR": "/d", "OTHER": "y"}
         assert (
@@ -205,14 +205,14 @@ class TestChecksumFoldsEnv:
         # Unrelated (delimiter-less / non-prefixed) vars leave it at the no-env hash.
         assert _hash_config_bytes(raw, {"PEARLARR_DATA_DIR": "/d", "OTHER": "y"}) == hashlib.md5(raw).hexdigest()
 
-    def test_checksum_moves_when_an_override_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_config_hash_moves_when_an_override_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "config.yml"
         cfg.write_bytes(b"sonarr:\n  url: http://x\n")
         base = AppConfig.load(str(cfg)).config_hash()
         monkeypatch.setenv("PEARLARR_SEADEX__WANT_BEST", "false")
         assert AppConfig.load(str(cfg)).config_hash() != base
 
-    def test_checksum_stable_for_unrelated_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_config_hash_stable_for_unrelated_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "config.yml"
         cfg.write_bytes(b"sonarr:\n  url: http://x\n")
         base = AppConfig.load(str(cfg)).config_hash()

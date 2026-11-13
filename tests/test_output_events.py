@@ -93,7 +93,7 @@ def test_scope_id_is_a_value() -> None:
 # --- severity mapping --------------------------------------------------------------
 
 
-def test_diagnostic_and_entry_detail_carry_their_own_severity() -> None:
+def test_diagnostic_and_title_detail_carry_their_own_severity() -> None:
     diag = Diagnostic(severity=Severity.ERROR, message="boom")
     detail = TitleDetail(label="skipped", value=StyledValue("x"), severity=Severity.WARNING)
     assert severity_of(diag) is Severity.ERROR
@@ -134,7 +134,7 @@ def test_boot_step_finished_tallies_info_regardless_of_outcome() -> None:
     assert severity_of(finished(OutcomeKind.FAILED)) is Severity.INFO
 
 
-def test_torrent_graduated_severity_follows_its_outcome_category() -> None:
+def test_row_finished_severity_follows_its_outcome_category() -> None:
     def row_finished(outcome: Outcome) -> RowFinished:
         return RowFinished(label="T", outcome=outcome, files=None, waited_s=1.0)
 
@@ -166,7 +166,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
 # --- ArrRunTally: the single conversion site ------------------------------------------
 
 
-def test_run_tally_freezes_run_stats_whole() -> None:
+def test_arr_run_tally_freezes_arr_run_stats_whole() -> None:
     stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
     stats.no_mappings = 2
     stats.no_seadex_entry = 3
@@ -215,7 +215,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
 _PARITY_ALLOWLIST: Final[frozenset[str]] = frozenset()
 
 
-def test_run_tally_field_names_mirror_run_stats() -> None:
+def test_arr_run_tally_field_names_mirror_arr_run_stats() -> None:
     stats_names = {f.name for f in dataclasses.fields(ArrRunStats)} - _PARITY_ALLOWLIST
     tally_names = {f.name for f in dataclasses.fields(ArrRunTally)} - _PARITY_ALLOWLIST
     assert stats_names == tally_names

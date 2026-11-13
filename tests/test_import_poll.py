@@ -62,7 +62,7 @@ def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy
 class TestRescanOnce:
     """A lagging view gets one rescan per pending import per run, and none once Sonarr provably looked."""
 
-    def test_pass_our_rescan_starts_defers_the_step_in(self) -> None:
+    def test_a_pass_the_rescan_starts_blocks_the_auto_import(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy([], clock)
 
@@ -100,7 +100,7 @@ class TestRescanOnce:
             pytest.param((_RESCAN_BEFORE_ADD,), 1, id="not-since-the-add"),
         ],
     )
-    def test_no_row_record_skips_the_rescan_when_sonarr_already_looked(
+    def test_pending_import_with_no_row_skips_the_rescan_when_sonarr_already_looked(
         self, commands: tuple[CommandResource, ...], refresh_calls: int
     ) -> None:
         strat, sonarr = _strategy([])
@@ -152,7 +152,7 @@ class TestRescanOnce:
         assert sonarr.refresh_calls == 1
         assert len(sonarr.execute_calls) == 1
 
-    def test_throttled_record_keeps_its_turn(self) -> None:
+    def test_throttled_pending_import_keeps_its_turn(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy([], clock)
         throttled = pending_import(infohash="def456")
@@ -166,10 +166,10 @@ class TestRescanOnce:
         assert (inside_the_interval, sonarr.refresh_calls) == (1, 2)
 
 
-class TestStepInGuard:
+class TestAutoImportGuard:
     """The command list read before the fetch, right after it, and right before the POST."""
 
-    def test_pass_started_during_the_scan_defers_the_step_in(self) -> None:
+    def test_pass_started_during_the_fetch_blocks_the_auto_import(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def start_a_pass() -> None:
@@ -182,7 +182,7 @@ class TestStepInGuard:
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_started_during_an_empty_scan_reads_busy(self) -> None:
+    def test_pass_started_during_an_empty_fetch_reads_busy(self) -> None:
         strat, sonarr = _make_sonarr_for_import(candidates=[], queue=[_blocked_row()])
 
         def start_a_pass() -> None:
@@ -194,7 +194,7 @@ class TestStepInGuard:
 
         assert result.pause_reason is PauseReason.BUSY
 
-    def test_pass_completed_during_the_scan_does_not_block_the_post(self) -> None:
+    def test_pass_completed_during_the_fetch_does_not_block_the_post(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def run_a_pass() -> None:
@@ -206,7 +206,7 @@ class TestStepInGuard:
 
         assert len(sonarr.execute_calls) == 1
 
-    def test_pass_run_during_the_episode_re_read_defers_the_step_in(self) -> None:
+    def test_pass_run_during_the_episode_re_read_blocks_the_auto_import(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
         reads = 0
 
@@ -223,7 +223,7 @@ class TestStepInGuard:
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_started_before_the_post_defers_the_step_in(self) -> None:
+    def test_pass_started_before_the_post_blocks_the_auto_import(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def start_a_pass() -> None:
@@ -236,7 +236,7 @@ class TestStepInGuard:
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_completed_before_the_post_defers_the_step_in(self) -> None:
+    def test_pass_completed_before_the_post_blocks_the_auto_import(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy([_blocked_row()], clock)
 
@@ -254,7 +254,7 @@ class TestStepInGuard:
         assert blocked.pause_reason is PauseReason.BUSY
         assert (posted_while_blocked, len(sonarr.execute_calls)) == (0, 1)
 
-    def test_import_of_the_download_started_before_the_post_reads_as_ours(self) -> None:
+    def test_import_of_the_download_started_before_the_post_reads_as_an_auto_import(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def start_an_import() -> None:
@@ -316,7 +316,7 @@ class TestStepInGuard:
         assert sonarr.execute_calls == []
         assert sonarr.refresh_calls == 0
 
-    def test_unreadable_command_list_after_the_scan_waits(self) -> None:
+    def test_unreadable_command_list_after_the_fetch_waits(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def fail_the_next_read() -> None:
@@ -350,7 +350,7 @@ class TestStepInGuard:
 class TestEpisodeReads:
     """Episode files read this poll decide what is imported, never the last known list."""
 
-    def test_files_a_pass_imports_during_the_scan_read_as_imported(self) -> None:
+    def test_files_a_pass_imports_during_the_fetch_read_as_imported(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def import_torrent_file() -> None:
@@ -365,7 +365,7 @@ class TestEpisodeReads:
         assert result.imported_count == 1
         assert sonarr.execute_calls == []
 
-    def test_unreadable_re_seed_waits(self) -> None:
+    def test_unreadable_episode_re_read_waits(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def fail_the_next_read() -> None:
@@ -410,10 +410,10 @@ class TestEpisodeReads:
         assert strat.import_progress(pending_import()) == NO_PROGRESS
 
 
-class TestKeptScan:
+class TestKeptCandidates:
     """A by-id fetch from a blocked poll serves the pending import's next poll, once."""
 
-    def test_blocked_poll_keeps_its_scan_for_the_next_poll(self) -> None:
+    def test_blocked_poll_keeps_its_candidates_for_the_next_poll(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
@@ -445,7 +445,7 @@ class TestKeptScan:
 
         assert len(sonarr.execute_calls) == 1
 
-    def test_a_fresh_scan_discards_the_kept_scan(self) -> None:
+    def test_a_fresh_fetch_discards_the_kept_candidates(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy([_blocked_row()], clock)
 
@@ -467,7 +467,7 @@ class TestKeptScan:
 
         assert len(sonarr.candidate_calls) == 3
 
-    def test_kept_scan_is_not_used_without_a_queue_row(self) -> None:
+    def test_kept_candidates_are_not_used_without_a_queue_row(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
@@ -480,7 +480,7 @@ class TestKeptScan:
 
         assert sonarr.execute_calls == []
 
-    def test_kept_scan_expires_after_two_poll_intervals(self) -> None:
+    def test_kept_candidates_expire_after_two_poll_intervals(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
@@ -492,7 +492,7 @@ class TestKeptScan:
 
         assert sonarr.execute_calls == []
 
-    def test_kept_scan_is_not_used_under_another_content_path(self) -> None:
+    def test_kept_candidates_are_not_used_under_another_content_path(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()
@@ -504,7 +504,7 @@ class TestKeptScan:
 
         assert sonarr.execute_calls == []
 
-    def test_kept_scan_serves_one_poll_only(self) -> None:
+    def test_kept_candidates_serve_one_poll_only(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
         pending = pending_import()

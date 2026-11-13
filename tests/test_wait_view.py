@@ -96,29 +96,29 @@ def _make_view(logger: logging.Logger, *, poll_s: int, progress_line_interval: i
     return view
 
 
-def test_factory_wants_telemetry_on_a_live_tty() -> None:
+def test_factory_wants_download_progress_on_a_live_tty() -> None:
     view = _make_view(_logger_with_console(force_terminal=True), poll_s=30)
 
     assert view.wants_download_progress is True
 
 
-def test_factory_skips_telemetry_on_a_non_tty() -> None:
+def test_factory_skips_download_progress_on_a_non_tty() -> None:
     # The non-TTY progress line renders no per-row download progress, so the wait pass's
     # download progress read from qBittorrent is skipped for it (pure waste on Docker/cron).
     assert _make_view(_logger_with_console(force_terminal=False), poll_s=30).wants_download_progress is False
 
 
-def test_factory_skips_telemetry_without_a_console() -> None:
+def test_factory_skips_download_progress_without_a_console() -> None:
     # plain/json logging: no rich console handler at all.
     assert _make_view(_quiet_logger("wait-view-null"), poll_s=30).wants_download_progress is False
 
 
-def test_factory_skips_telemetry_when_too_narrow() -> None:
+def test_factory_skips_download_progress_when_too_narrow() -> None:
     # A real TTY too narrow for a legible wait region falls back to the progress line path.
     assert _make_view(_logger_with_console(force_terminal=True, width=20), poll_s=30).wants_download_progress is False
 
 
-def test_factory_pulse_is_the_max_of_poll_and_digest_as_a_float() -> None:
+def test_factory_progress_line_interval_is_the_max_of_poll_and_setting_as_a_float() -> None:
     recording = RecordingHub()
     install_hub(recording.hub)
     logger = _quiet_logger()
@@ -164,7 +164,7 @@ class TestHubWaitViewNarration:
         assert recording.of_type(WaitStarted) == [started]
 
     @pytest.mark.parametrize("kind", WaitKind)
-    def test_the_narrators_kind_rides_the_start_and_the_finish(self, kind: WaitKind) -> None:
+    def test_the_narrators_kind_is_on_the_start_and_the_finish(self, kind: WaitKind) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
         view = self._view(kind=kind)
@@ -177,7 +177,7 @@ class TestHubWaitViewNarration:
         assert started.kind is kind
         assert finished.kind is kind
 
-    def test_graduation_dedup_and_exact_field_mapping(self) -> None:
+    def test_row_finish_dedup_and_exact_field_mapping(self) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
         view = self._view()
@@ -205,7 +205,7 @@ class TestHubWaitViewNarration:
             ),
         ]
 
-    def test_graduation_carries_the_unmatched_files(self) -> None:
+    def test_row_finish_carries_the_unmatched_files(self) -> None:
         recording = RecordingHub()
         install_hub(recording.hub)
         row = _finished_view(
@@ -222,7 +222,7 @@ class TestHubWaitViewNarration:
         assert row_finished.left_for_hand_import.names == ("a.mkv", "b.mkv")
         assert row_finished.outcome is Outcome.UNMATCHED
 
-    def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
+    def test_rows_finished_at_the_first_snapshot_finish_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
         # logged a first-snapshot finished row BEFORE their start line. The
         # narrator opens (ScopeOpened + WaitStarted) first.
@@ -386,7 +386,7 @@ def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch)
 # --- pure model helpers --------------------------------------------------------
 
 
-def test_graduations_returns_only_unseen_terminals() -> None:
+def test_finished_rows_returns_only_the_unseen_ones() -> None:
     # frozenset inputs also prove purity: newly_finished() can never mutate seen.
     snap = WaitSnapshot(
         (

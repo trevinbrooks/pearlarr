@@ -138,7 +138,7 @@ class TestBuilders:
         assert _as_lines(item_started_lines(ITEM_STARTED_SONARR)) == ITEM_STARTED_SONARR_LINES
         assert _as_lines(item_started_lines(ITEM_STARTED_RADARR)) == ITEM_STARTED_RADARR_LINES
 
-    def test_ledger_rows(self) -> None:
+    def test_title_rows(self) -> None:
         for event, expected in (
             (UNMONITORED_ROW, UNMONITORED_LINES),
             (NO_MAPPING_ROW, NO_MAPPING_LINES),
@@ -148,13 +148,13 @@ class TestBuilders:
         ):
             assert _as_lines(title_row_lines(event)) == expected
 
-    def test_ledger_row_accents(self) -> None:
+    def test_title_row_accents(self) -> None:
         plain = TitleRow(state=TitleState.CHECKING, label="Focal", accent=Accent.PLAIN)
         assert title_row_lines(plain)[1].payload == StyledLine(style="")
         good = TitleRow(state=TitleState.IMPORTED, label="Done", accent=Accent.GOOD)
         assert title_row_lines(good)[1].payload == StyledLine(style="green")
 
-    def test_entry_headers(self) -> None:
+    def test_title_headers(self) -> None:
         for event, expected in (
             (CHECKING_FULL, CHECKING_FULL_LINES),
             (CHECKING_URL_ONLY, CHECKING_URL_ONLY_LINES),
@@ -166,14 +166,14 @@ class TestBuilders:
         ):
             assert _as_lines(title_header_lines(event)) == expected
 
-    def test_incomplete_tail_rides_the_files_row_when_url_absent(self) -> None:
+    def test_incomplete_tail_goes_on_the_files_row_when_url_absent(self) -> None:
         event = TitleHeader(state=TitleState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
         last = title_header_lines(event)[-1]
         assert last.message == "    files     S01 E01-E28"
         assert isinstance(last.payload, KeyValue)
         assert last.payload.tail == "(marked incomplete on SeaDex)"
 
-    def test_entry_details(self) -> None:
+    def test_title_details(self) -> None:
         composed = (
             _as_lines(title_row_lines(UNREACHABLE_ROW))
             + _as_lines(title_detail_lines(UNREACHABLE_ANILIST_DETAIL))
@@ -186,7 +186,7 @@ class TestBuilders:
         assert resolved == NO_ENTRY_RESOLVED_LINES
         assert _as_lines(title_detail_lines(NO_RELEASES_DETAIL)) == NO_RELEASES_LINES
 
-    def test_entry_detail_carries_its_severity_and_tail(self) -> None:
+    def test_title_detail_carries_its_severity_and_tail(self) -> None:
         event = TitleDetail(
             label="status",
             value=StyledValue("size mismatch", Accent.CAUTION),
@@ -291,7 +291,7 @@ def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> li
     return out
 
 
-class TestRichRendererScanArm:
+class TestRichRendererScanBranch:
     """The RichRenderer scan branch matches the golden lines, honors level gating, and no-ops without a console."""
 
     def test_renders_a_scan_sequence_in_order(self) -> None:
@@ -343,7 +343,7 @@ class TestRichRendererScanArm:
             renderer.handle(event, 0.0)
 
 
-class TestEntryIndentedDiagnostics:
+class TestTitleIndentedDiagnostics:
     """The generalized position rule: a diagnostic indents while an ENTRY or ITEM scope is open (like boot/wait).
 
     Under RUN alone it stays column-0.
@@ -355,14 +355,14 @@ class TestEntryIndentedDiagnostics:
         renderer.handle(ScanStarted(arr=Arr.SONARR, total=1), 0.0)
         renderer.handle(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"), 0.0)
 
-    def test_diagnostic_indents_inside_an_open_entry_block(self) -> None:
+    def test_diagnostic_indents_inside_an_open_title_block(self) -> None:
         renderer, stream = _renderer()
         self._open_item(renderer)
         renderer.handle(ScopeOpened(scope=self._TITLE_SCOPE, label="entry"), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
-    def test_diagnostic_indents_under_an_open_item_between_entries(self) -> None:
+    def test_diagnostic_indents_under_an_open_item_between_titles(self) -> None:
         # Import-flow lines fire between a series' title blocks: they indent
         # with the listing, not the run margin.
         renderer, stream = _renderer()

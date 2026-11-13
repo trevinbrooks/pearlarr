@@ -68,7 +68,7 @@ def _nyaa_disposition(filename: str) -> dict[str, str]:
 
 
 @respx.mock
-def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
+def test_fetch_nyaa_link_reads_the_title_off_one_head() -> None:
     """The link is built from the release number and the torrent name is its download filename, from one HEAD."""
 
     head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
@@ -81,7 +81,7 @@ def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
 
 
 @respx.mock
-def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
+def test_fetch_nyaa_link_decodes_a_non_ascii_title() -> None:
     """The torrent name comes from the header's UTF-8 `filename*` form, so a non-ASCII name survives."""
 
     respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition("[Group] クールアニメ - 01.torrent"))
@@ -95,14 +95,14 @@ def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
     "url", ["https://nyaa.si/view/1234567/", "https://nyaa.si/view/1234567#com", "https://nyaa.si/view/1234567?page=2"]
 )
 @respx.mock
-def test_get_nyaa_torrent_finds_the_release_number_past_a_slash_fragment_or_query(url: str) -> None:
+def test_fetch_nyaa_link_finds_the_release_number_past_a_slash_fragment_or_query(url: str) -> None:
     respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
     assert fetch_nyaa_link(url, client=httpx.Client()) == TrackerLink(_NYAA_LINK, _NYAA_TITLE)
 
 
 @respx.mock
-def test_get_nyaa_torrent_refuses_a_download_url_without_a_request() -> None:
+def test_fetch_nyaa_link_refuses_a_download_url_without_a_request() -> None:
     head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
     with pytest.raises(TrackerPageError, match="Could not read a Nyaa release number"):
@@ -112,7 +112,7 @@ def test_get_nyaa_torrent_refuses_a_download_url_without_a_request() -> None:
 
 
 @respx.mock
-def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
+def test_fetch_nyaa_link_reads_the_utf8_name_in_any_case() -> None:
     respx.head(_NYAA_LINK).respond(
         headers={"content-disposition": f"attachment; FILENAME*=utf-8''{_NYAA_TITLE}.torrent"}
     )
@@ -131,7 +131,7 @@ def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
     ],
 )
 @respx.mock
-def test_get_nyaa_torrent_falls_back_to_the_plain_filename(template: str) -> None:
+def test_fetch_nyaa_link_reads_the_plain_filename(template: str) -> None:
     value = template.format(name=quote(_NYAA_TITLE))
     respx.head(_NYAA_LINK).respond(headers={"content-disposition": f"inline; {value}"})
 
@@ -139,7 +139,7 @@ def test_get_nyaa_torrent_falls_back_to_the_plain_filename(template: str) -> Non
 
 
 @respx.mock
-def test_get_nyaa_torrent_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_nyaa_link_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None:
     def _no_sleep_head(client: httpx.Client, url: str) -> httpx.Response:
         return head_with_retries(client, url, sleep=lambda _s: None)
 
@@ -154,7 +154,7 @@ def test_get_nyaa_torrent_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @respx.mock
-def test_get_nyaa_torrent_without_a_release_number_raises() -> None:
+def test_fetch_nyaa_link_without_a_release_number_raises() -> None:
     """A URL with no `/view/<number>` raises before any fetch (the routeless mock proves nothing was requested)."""
 
     url = "https://nyaa.si/user/x"
@@ -164,7 +164,7 @@ def test_get_nyaa_torrent_without_a_release_number_raises() -> None:
 
 
 @respx.mock
-def test_get_nyaa_torrent_without_a_filename_raises() -> None:
+def test_fetch_nyaa_link_without_a_filename_raises() -> None:
     """A download header with no file name raises."""
 
     respx.head(_NYAA_LINK).respond(headers={"content-disposition": "inline"})
@@ -173,7 +173,7 @@ def test_get_nyaa_torrent_without_a_filename_raises() -> None:
 
 
 @respx.mock
-def test_get_nyaa_torrent_deleted_release_raises_http_error() -> None:
+def test_fetch_nyaa_link_deleted_release_raises_http_error() -> None:
     """A 404 on the .torrent (a deleted release) raises `HTTPStatusError`, a contained grab failure."""
 
     respx.head(_NYAA_LINK).respond(status_code=404)
@@ -185,7 +185,7 @@ def test_get_nyaa_torrent_deleted_release_raises_http_error() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_success() -> None:
+def test_fetch_animetosho_link_success() -> None:
     """The scraped torrent name plus the feed element whose `link` matches the URL yield `(torrent_url, title)`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -204,7 +204,7 @@ def test_get_animetosho_torrent_success() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
+def test_fetch_animetosho_link_no_feed_match_returns_none_url() -> None:
     """When no feed element's `link` matches the page URL, the .torrent link is `None` but the scraped torrent name is still returned."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -220,7 +220,7 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
+def test_fetch_animetosho_link_non_str_url_becomes_none() -> None:
     """A matching feed element with a junk (non-str) `torrent_url` yields `None` instead of leaking the junk value downstream as a fake .torrent link."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -234,7 +234,7 @@ def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_missing_title_raises() -> None:
+def test_fetch_animetosho_link_missing_title_raises() -> None:
     """A page with no `<h2 id="title">` raises before the feed is queried."""
 
     page_url = "https://animetosho.org/view/no-title.1"
@@ -245,7 +245,7 @@ def test_get_animetosho_torrent_missing_title_raises() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_two_titles_raises() -> None:
+def test_fetch_animetosho_link_two_titles_raises() -> None:
     """A page with more than one `<h2 id="title">` is ambiguous and raises."""
 
     page_url = "https://animetosho.org/view/two-titles.1"
@@ -256,7 +256,7 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_animetosho_link_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 5xx page (still 5xx once the transient retries run out) raises `HTTPStatusError` (a contained grab failure) instead of scraping the error body into a misleading "no title" parse error."""
 
     _stub_retry_sleep(monkeypatch)
@@ -268,7 +268,7 @@ def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.M
 
 
 @respx.mock
-def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
+def test_fetch_animetosho_link_non_json_feed_is_a_parse_error() -> None:
     """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a `TrackerPageError` naming the feed URL, not a raw `JSONDecodeError`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -280,7 +280,7 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
 
 
 @respx.mock
-def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
+def test_fetch_animetosho_link_non_list_json_is_a_parse_error() -> None:
     """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a `TrackerPageError`, not an AttributeError from iterating its keys."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -295,7 +295,7 @@ def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
 
 
 @respx.mock
-def test_get_rutracker_torrent_builds_magnet() -> None:
+def test_fetch_rutracker_link_builds_magnet() -> None:
     """The RuTracker parser scrapes the maintitle and builds the magnet from the hash, the fixed announce, and the torrent name as `dn`."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
@@ -313,7 +313,7 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
 
 
 @respx.mock
-def test_get_rutracker_torrent_missing_title_raises() -> None:
+def test_fetch_rutracker_link_missing_title_raises() -> None:
     """A page with no `h1.maintitle` raises."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=7654321"
@@ -324,7 +324,7 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
 
 
 @respx.mock
-def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_rutracker_link_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 5xx topic page raises `HTTPStatusError` rather than a misleading parse error."""
 
     _stub_retry_sleep(monkeypatch)
@@ -336,7 +336,7 @@ def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.Mo
 
 
 @respx.mock
-def test_get_rutracker_torrent_no_infohash_raises() -> None:
+def test_fetch_rutracker_link_no_infohash_raises() -> None:
     """A None infohash can't make a magnet ("urn:btih:None"): raise the parse error before any fetch (the routeless mock proves nothing was requested)."""
 
     with pytest.raises(TrackerPageError, match="no infohash"):

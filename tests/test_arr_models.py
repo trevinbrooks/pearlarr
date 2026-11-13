@@ -35,7 +35,7 @@ def test_sonarr_episode_reads_its_air_date_and_runtime() -> None:
         {"airDate": 20200829, "runtime": [95]},
     ],
 )
-def test_sonarr_episode_folds_a_missing_or_junk_air_date_and_runtime_to_none(raw: dict[str, object]) -> None:
+def test_sonarr_episode_reduces_a_missing_or_junk_air_date_and_runtime_to_none(raw: dict[str, object]) -> None:
     episode = SonarrEpisode.model_validate({"id": 7, **raw})
 
     assert episode == SonarrEpisode(id=7)
@@ -108,7 +108,7 @@ def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -
     assert series.alternateTitles == (AlternateTitle(title="To Glimmer-Zu"), AlternateTitle(title="Shin To Glimmer-Zu"))
 
 
-def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
+def test_parsed_file_info_null_number_arrays_reduce_to_empty() -> None:
     """Sonarr nulls empty number arrays. They reduce to () like the absent case."""
 
     info = ParsedFileInfo.model_validate(
@@ -117,7 +117,7 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
     assert info == ParsedFileInfo(season_number=1)
 
 
-def test_parsed_file_info_reads_the_lifted_series_title_and_folds_a_null_one() -> None:
+def test_parsed_file_info_reads_the_parsed_series_name_and_reduces_a_null_one() -> None:
     """The parsed series name comes along. A null one, or a null `parsedEpisodeInfo`, reads as "" and never fails."""
 
     lifted = ParsedFileInfo.model_validate({"parsedEpisodeInfo": {"seriesTitle": "To Glimmer-Zu"}})

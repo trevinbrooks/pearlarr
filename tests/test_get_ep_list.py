@@ -127,7 +127,7 @@ def test_the_episode_count_is_the_gateways() -> None:
     assert anilist.n_eps_calls == [123]
 
 
-def test_an_entry_the_gateway_left_unread_is_unread() -> None:
+def test_a_title_the_gateway_left_unread_is_unread() -> None:
     # AniList turns unreachable on title 5. Title 4 is looked up after that, from its answer in the arr run cache.
     down = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({5})))
     down.al_cache[4] = anilist_body(4)

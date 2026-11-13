@@ -118,10 +118,10 @@ class TestAniBridgePath:
 class TestSpecialAliasing:
     """A mapping's `special_aliasing` defaults to None and keeps a read-only copy of the aliases it was built with."""
 
-    def test_an_entry_defaults_to_no_aliasing(self) -> None:
+    def test_a_mapping_defaults_to_no_aliasing(self) -> None:
         assert TitleMapping(anilist_id=1).special_aliasing is None
 
-    def test_the_aliases_are_a_read_only_copy_of_the_producers_dict(self) -> None:
+    def test_the_aliases_are_a_read_only_copy_of_the_callers_dict(self) -> None:
         aliases = {13: 12}
         mapping = TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
 
@@ -142,22 +142,22 @@ class TestSpecialAliasing:
         assert mappings[1].special_aliasing == SpecialAliasing(900, {7: 7, 13: 12})
 
 
-class TestModeDiscriminant:
+class TestKindDiscriminant:
     """`kind` keys off presence, not truthiness (the empty-dict trap)."""
 
-    def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
+    def test_empty_tvdb_mappings_is_still_episode_ranges(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.
         assert TitleMapping(anilist_id=1, tvdb_mappings={}).kind is MappingKind.EPISODE_RANGES
 
-    def test_populated_tvdb_mappings_is_anibridge(self) -> None:
+    def test_populated_tvdb_mappings_is_episode_ranges(self) -> None:
         assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).kind is MappingKind.EPISODE_RANGES
 
-    def test_absent_tvdb_mappings_is_anime_ids(self) -> None:
+    def test_absent_tvdb_mappings_is_season_offset(self) -> None:
         assert TitleMapping(anilist_id=1).kind is MappingKind.SEASON_OFFSET
         assert TitleMapping(anilist_id=1, tvdb_mappings=None).kind is MappingKind.SEASON_OFFSET
 
 
-def test_entry_is_frozen() -> None:
+def test_mapping_is_frozen() -> None:
     # Immutability is what makes sharing mappings across the resolver's memo safe.
     mapping = TitleMapping(anilist_id=1)
     # Attribute name kept in a var so ruff's B010 (constant setattr) doesn't fire

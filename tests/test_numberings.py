@@ -271,10 +271,10 @@ class TestEveryNumberingAgrees:
         }
 
 
-class TestTheGatesRefuse:
+class TestTheGatesBlock:
     """Each gate leaves the file to its verdict, and blocks nothing a passing file would have."""
 
-    def test_two_numberings_that_disagree_refuse_the_file(self) -> None:
+    def test_two_numberings_that_disagree_block_the_file(self) -> None:
         # Sengoku Youko's 14 and 22: the absolute for 14 is S02E01, inside the window, so the series row reads 14
         # as S02E01 while the window row reads it as S02E14.
         series = _sengoku_youko()
@@ -288,7 +288,7 @@ class TestTheGatesRefuse:
 
         assert _read(_grabbing_title(series, window), (window,), parsed) == {}
 
-    def test_a_window_off_anilists_count_refuses_the_torrent(self) -> None:
+    def test_a_window_off_anilists_count_blocks_the_torrent(self) -> None:
         # Panty & Stocking (Sonarr 74): AniList counts the season as 13 double-episodes, Sonarr as 26 rows.
         # Underwater's 01v2 reads S01E01 every way, and still gets no proposal: the window isn't the title AniList
         # counts.
@@ -303,7 +303,7 @@ class TestTheGatesRefuse:
 
         assert _read(_grabbing_title(series, window), (window,), parsed) == {}
 
-    def test_a_repeated_number_under_one_title_refuses_the_files_carrying_it(self) -> None:
+    def test_a_repeated_number_under_one_title_blocks_the_files_carrying_it(self) -> None:
         # K Project (Sonarr 101): Beatrice-kBaraka's Return of Kings carries 13 twice (a Director's Cut and a v2),
         # and a CM extra without a number. The two 13s get no proposal, and 01-12 place.
         series = _series(
@@ -341,7 +341,7 @@ class TestTheGatesRefuse:
         assert _gintama_name("002") not in proposed
         assert proposed[_gintama_name("003")] == (4606,)
 
-    def test_a_row_numbered_otherwise_than_its_position_refuses_the_series_row(self) -> None:
+    def test_a_row_numbered_otherwise_than_its_position_blocks_the_series_row(self) -> None:
         # Wandering Son (Sonarr 700): the two specials carry absolutes 11 and 12, so S01E11 carries 13. aro's BD
         # batch is numbered 01-12 and holds 10 twice (a 10+11 cut and a 10). The series row and the absolute fit the
         # torrent (every absolute lies in the two windows). 01-09 place, the 10s are a repeat, 11 reads to a row
@@ -363,7 +363,7 @@ class TestTheGatesRefuse:
 
         assert proposed[_hourou_musuko("10")] == (33595,)
 
-    def test_a_shuffled_season_refuses_the_files_whose_rows_carry_another_absolute(self) -> None:
+    def test_a_shuffled_season_blocks_the_files_whose_rows_carry_another_absolute(self) -> None:
         # Cowboy Bebop (Sonarr 15): TVDB's absolutes follow the Japanese broadcast order, so S01E01 carries 2 and
         # S01E13 carries 1, and 19-26 carry their episode numbers. The window isn't monotone, so the window numberings
         # are dropped. The series row leaves out 01 and reads 19 as S01E19, where the absolute agrees.
@@ -387,7 +387,7 @@ class TestTheGatesRefuse:
             pytest.param("", id="no title lifted (constructed)"),
         ],
     )
-    def test_a_lifted_title_the_run_does_not_know_refuses_the_file(self, title: str) -> None:
+    def test_a_parsed_series_name_the_run_does_not_know_blocks_the_file(self, title: str) -> None:
         # Re:ZERO (Sonarr 197): OZR's Shin Henshuu-ban recut is numbered from one under the first season's entry.
         # Every numbering agrees on S01E01, but the parsed series name is neither the series', an alternate's, nor
         # AniList's.
@@ -416,10 +416,10 @@ class TestTheGatesRefuse:
         assert _read(_grabbing_title(series, first), (first, second), parsed) == {}
 
 
-class TestTheReaderStandsDown:
+class TestTheNumberingStepStandsDown:
     """When the numbering step proposes nothing at all, and which names it never reads."""
 
-    def test_an_unknown_parse_stands_the_reader_down(self) -> None:
+    def test_an_unknown_parse_stands_the_numbering_step_down(self) -> None:
         # Tsundere's nyaa batch (1050453) carries six SP files too; one not yet parsed leaves the release unread, and
         # the numbering step proposes nothing until it is.
         parsed: dict[str, ParsedFileInfo | None] = {**_STRAY_CATS_FILES}
@@ -428,7 +428,7 @@ class TestTheReaderStandsDown:
 
         assert _read(_grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON), windows, parsed) == {}
 
-    def test_off_the_aired_numbering_the_reader_proposes_nothing(self) -> None:
+    def test_off_the_aired_order_the_numbering_step_proposes_nothing(self) -> None:
         # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
         grabbing_title = _grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
 
@@ -444,7 +444,7 @@ class TestTheReaderStandsDown:
 
         assert proposed == {_stray_cat(n): (32768 + n,) for n in range(1, 13)}
 
-    def test_an_extra_and_a_title_counted_name_are_not_in_the_pool(self) -> None:
+    def test_an_extra_and_a_name_numbered_by_its_episode_title_are_not_in_the_pool(self) -> None:
         # Constructed: an NCOP Sonarr read a number off, and a name whose number is its episode title's (no episode
         # title confirms "03 Days of Summer" and the series has no absolute 3 among the window's rows), beside the
         # batch's 01. Neither repeats 01's number nor is proposed; 01 places.
@@ -461,7 +461,7 @@ class TestTheReaderStandsDown:
         assert proposed == {"show - 01 [grp].mkv": (601,)}
 
 
-class TestTitleKeys:
+class TestNameKeys:
     """The three name keys, on the names they were measured against."""
 
     @pytest.mark.parametrize(
@@ -474,7 +474,7 @@ class TestTitleKeys:
             ("", ""),
         ],
     )
-    def test_norm_title_folds_case_punctuation_and_the_ampersand(self, title: str, key: str) -> None:
+    def test_norm_title_converts_case_punctuation_and_the_ampersand(self, title: str, key: str) -> None:
         assert _norm_title(title) == key
 
     @pytest.mark.parametrize(
@@ -485,7 +485,7 @@ class TestTitleKeys:
             ("K-ON!!", "k-on!!"),
         ],
     )
-    def test_raw_title_folds_the_two_separators_and_keeps_the_marks(self, title: str, key: str) -> None:
+    def test_raw_title_converts_the_two_separators_and_keeps_the_marks(self, title: str, key: str) -> None:
         assert _raw_title(title) == key
 
     @pytest.mark.parametrize(

@@ -61,7 +61,7 @@ def test_one_mapped_special_far_from_its_date_is_a_miss(stray_aired: str, kept: 
     assert specials_by_date([parts[kept - 1], stray], [*parts, stray], airing) == parts
 
 
-def test_a_weekly_run_dated_one_airing_late_stands() -> None:
+def test_a_weekly_broadcast_dated_one_airing_late_stands() -> None:
     # Three 5-minute shorts, each dated a week after AniList has it. Another short aired on AniList's start date,
     # so the three shorts on AniList's dates are the wrong ones.
     airing = AniListAiring(start=_PREMIERE, end=date(2020, 9, 12), episodes=3, duration=5)
@@ -137,7 +137,7 @@ def test_two_specials_on_one_of_its_dates_leave_a_two_episode_title(aired: tuple
     assert specials_by_date([_SHORT], [_SHORT, *specials], airing) is None
 
 
-def test_the_first_and_last_dates_pick_only_for_a_two_episode_title() -> None:
+def test_the_first_and_last_dates_choose_only_for_a_two_episode_title() -> None:
     # Three 45-minute episodes over three months, and only two such specials, one on each of the two dates.
     airing = AniListAiring(start=_PREMIERE, end=date(2020, 11, 28), episodes=3, duration=45)
     specials = [_special(2, "2020-08-29", 45), _special(3, "2020-11-28", 45)]
@@ -160,7 +160,7 @@ def test_specials_that_are_already_the_mapped_ones_change_nothing() -> None:
     assert specials_by_date(mapped, [_SHORT, *mapped], airing) is None
 
 
-def test_a_regular_season_episode_is_never_picked() -> None:
+def test_a_regular_season_episode_is_never_chosen() -> None:
     episode = sonarr_ep(1, 5, ep_id=105, air_date="2020-08-29", runtime=95)
 
     assert specials_by_date([_SHORT], [_SHORT, episode], _film()) is None
@@ -194,12 +194,12 @@ def test_a_mapped_special_without_an_air_date_is_left_alone() -> None:
     assert specials_by_date([undated], [undated, _FEATURE], _film()) is None
 
 
-def test_a_special_without_an_air_date_is_never_picked() -> None:
+def test_a_special_without_an_air_date_is_never_chosen() -> None:
     assert specials_by_date([_SHORT], [_SHORT, _special(2, None, 95)], _film()) is None
 
 
 @pytest.mark.parametrize("runtime", [0, None])
-def test_a_special_with_no_runtime_is_never_picked(runtime: int | None) -> None:
+def test_a_special_with_no_runtime_is_never_chosen(runtime: int | None) -> None:
     # A 3-minute title, which a runtime of 0 is within 3 minutes of.
     airing = AniListAiring(start=_PREMIERE, end=_PREMIERE, episodes=1, duration=3)
 
@@ -219,7 +219,7 @@ def test_a_special_with_no_runtime_is_never_picked(runtime: int | None) -> None:
         (9, 5, False),
     ],
 )
-def test_a_special_is_picked_only_at_a_runtime_close_to_the_episode_length(
+def test_a_special_is_chosen_only_at_a_runtime_close_to_the_episode_length(
     runtime: int, duration: int, picked: bool
 ) -> None:
     airing = AniListAiring(start=_PREMIERE, end=_PREMIERE, episodes=1, duration=duration)

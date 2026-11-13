@@ -64,15 +64,15 @@ def _grad(
 # --- the shared ProgressLineThrottle -----------------------------------------------------------
 
 
-class TestPulseThrottle:
+class TestProgressLineThrottle:
     """ProgressLineThrottle's contract: skip-first firing, elapsed-anchored cadence, and start() restarts skip-first."""
 
-    def test_disarmed_never_fires(self) -> None:
+    def test_stopped_never_fires(self) -> None:
         throttle = ProgressLineThrottle()
         assert throttle.fire(0.0) is False
         assert throttle.fire(10_000.0) is False
 
-    def test_first_fire_after_arm_is_skipped(self) -> None:
+    def test_first_fire_after_start_is_skipped(self) -> None:
         # The old view's first render printed the start line and returned.
         throttle = ProgressLineThrottle()
         throttle.start(300.0)
@@ -96,14 +96,14 @@ class TestPulseThrottle:
         assert throttle.fire(300.0) is False  # a shorter interval would fire, 600 rules
         assert throttle.fire(600.0) is True
 
-    def test_reset_disarms(self) -> None:
+    def test_reset_stops(self) -> None:
         throttle = ProgressLineThrottle()
         throttle.start(300.0)
         assert throttle.fire(0.0) is False
         throttle.reset()
         assert throttle.fire(10_000.0) is False
 
-    def test_re_arm_restarts_the_skip_first(self) -> None:
+    def test_restart_restarts_the_skip_first(self) -> None:
         throttle = ProgressLineThrottle()
         throttle.start(300.0)
         assert throttle.fire(0.0) is False
@@ -128,7 +128,7 @@ class TestPulseThrottle:
 class TestWaitBuilders:
     """Builder edge cases the goldens miss: zero tallies, per-kind wording, outcome line style/level by outcome."""
 
-    def test_zero_graduation_tally_is_empty(self) -> None:
+    def test_zero_row_finish_tally_is_empty(self) -> None:
         finished = WaitFinished(imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR)
         assert wait_tally_lines(finished) == []
 
@@ -161,13 +161,13 @@ class TestWaitBuilders:
         finished = WaitFinished(imported=1, left=0, failed=0, elapsed_s=60.0, in_progress=pending, kind=kind)
         assert wait_tally_lines(finished)[1].message == expected
 
-    def test_graduation_style_is_dropped_without_color(self) -> None:
+    def test_row_finish_style_is_dropped_without_color(self) -> None:
         # The colorless case is style="", not None (an unstyled console line).
         [line] = row_finished_lines(_grad("Show A", Outcome.IMPORTED, files=1, waited=60), detect_features(None))
         assert line.payload == StyledLine(style="")
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
-    def test_graduation_line_level_follows_the_outcome_category(self) -> None:
+    def test_outcome_line_level_follows_the_outcome_category(self) -> None:
         # The rendered line and severity_of/the renderer admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
         features = detect_features(None)
@@ -340,7 +340,7 @@ def test_compact_eta_covers_every_magnitude() -> None:
     assert _rough_eta(-5) == "~0s"
 
 
-def test_phase_rank_covers_every_non_terminal_phase() -> None:
+def test_phase_rank_covers_every_unfinished_phase() -> None:
     # Drift pin: a new Phase member must be added to the live region ordering - and
     # in the overflow/progress line tallies that hand-list the same unfinished trio.
     assert set(_PHASE_RANK) | {Phase.FINISHED} == set(Phase)
@@ -349,21 +349,21 @@ def test_phase_rank_covers_every_non_terminal_phase() -> None:
 # --- outcome line note -----------------------------------------------------------
 
 
-def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
+def test_outcome_line_tail_states_files_and_elapsed_for_an_import() -> None:
     assert row_finished_note(_grad("A", Outcome.IMPORTED, files=12, waited=192)) == f"12 files{SEP}3m 12s"
 
 
-def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
+def test_outcome_line_tail_is_empty_when_an_import_has_no_detail() -> None:
     # No files count (incomplete file map) and a sub-second wait -> nothing to say.
     assert row_finished_note(_grad("A", Outcome.IMPORTED)) == ""
 
 
-def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
+def test_outcome_line_tail_elapsed_alone_when_files_unknown() -> None:
     # An incomplete file map hides the files count but the wait clock still shows.
     assert row_finished_note(_grad("A", Outcome.IMPORTED, waited=192)) == "3m 12s"
 
 
-def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
+def test_outcome_line_tail_says_left_pending_outcomes_retry() -> None:
     for outcome in (
         Outcome.DOWNLOAD_TIMED_OUT,
         Outcome.DOWNLOAD_ERRORED,
@@ -375,7 +375,7 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         assert row_finished_note(_grad("A", outcome)) == "retries next run"
 
 
-def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
+def test_outcome_line_tail_counts_unmatched_files_and_names_the_action() -> None:
     # Never "retries".
     event = _grad("A", Outcome.UNMATCHED, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"))
     assert row_finished_note(event) == "2 files matched no episode · import by hand in Sonarr"
@@ -384,7 +384,7 @@ def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
     ) == ("1 file matched no episode · import by hand in Sonarr")
 
 
-def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
+def test_outcome_line_tail_counts_files_left_for_hand_import_and_names_the_action() -> None:
     event = _grad("A", Outcome.PARTIAL, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"))
     assert row_finished_note(event) == "2 files held back · import by hand in Sonarr"
 
@@ -418,7 +418,9 @@ _SEVERAL = order_only_hand_import_files(
         ),
     ],
 )
-def test_an_order_only_record_leads_with_its_unfilled_episodes(left: LeftForHandImport, note: str, lead: str) -> None:
+def test_an_order_only_pending_import_leads_with_its_still_needed_episodes(
+    left: LeftForHandImport, note: str, lead: str
+) -> None:
     assert row_finished_note(_grad("A", Outcome.PARTIAL, left_for_hand_import=left)) == note
     assert hand_import_sentences(left)[0] == lead
 
@@ -467,7 +469,7 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
     assert {line.level for line in lines} == {logging.WARNING}
 
 
-def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
+def test_a_row_left_for_hand_import_names_five_files_and_counts_the_rest() -> None:
     names = tuple(f"[grp] Show - Part {n:02d}.mkv" for n in range(1, 8))
     lines = row_finished_lines(
         _grad("A", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import(*names)), detect_features(None)
@@ -479,7 +481,7 @@ def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
     ]
 
 
-def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
+def test_a_mixed_pending_import_keeps_its_count_and_keys_the_order_only_file() -> None:
     left = LeftForHandImport(
         files=(order_only_hand_import_files().files[0], HandImportFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv"))
     )
@@ -491,5 +493,5 @@ def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
     ]
 
 
-def test_graduation_tail_says_a_missing_record_is_gone() -> None:
+def test_outcome_line_tail_says_a_missing_pending_import_is_gone() -> None:
     assert row_finished_note(_grad("A", Outcome.MISSING)) == "no longer tracked · title checked again next run"

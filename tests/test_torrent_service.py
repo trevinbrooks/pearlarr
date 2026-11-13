@@ -234,7 +234,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     assert qbit.add_calls == []
 
 
-def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_hashless_reports_the_scraped_torrent_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """A hashless torrent skips the dedup/name lookup, so the reported name is the scraped torrent name."""
 
     _patch_nyaa_parser(monkeypatch)
@@ -252,7 +252,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize(("raw", "expected"), [("", None), ("   ", None), (_HASH, _HASH), (f"  {_HASH}  ", _HASH)])
-def test_seadex_url_item_normalizes_infohash(raw: str, expected: str | None) -> None:
+def test_seadex_release_normalizes_infohash(raw: str, expected: str | None) -> None:
     """`Release` strips its infohash and converts an empty/blank one to None (a real hash is never empty)."""
 
     assert Release(infohash=raw).infohash == expected
@@ -428,7 +428,7 @@ def test_add_already_present_reads_the_add_time(
     assert when == expected
 
 
-def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_dry_run_add_with_the_torrent_in_qbit_reports_it_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
     """A dry run checks qBittorrent first too: a torrent it has is ALREADY_IN_QBIT and its page is never fetched."""
 
     fetched: list[str] = []
@@ -513,7 +513,7 @@ def _marked(service: TorrentService, item: Release, *, pearlarr_imports: bool = 
         pytest.param(_row(_CROSS, category=_POST, state="stalledUP", progress=1.0), True, id="seeding-after-import"),
     ],
 )
-def test_mark_cross_seeds_marks_a_torrent_holding_the_urls_files(row: _TorrInfo, pearlarr_imports: bool) -> None:
+def test_mark_cross_seeds_marks_a_torrent_holding_the_releases_files(row: _TorrInfo, pearlarr_imports: bool) -> None:
     """A counted torrent with exactly the release's files under another hash marks the release with that hash."""
 
     qbit = _FakeQbit(rows=(row,), files=_ALREADY_IN_QBIT)
@@ -544,7 +544,7 @@ def test_mark_cross_seeds_marks_a_torrent_holding_the_urls_files(row: _TorrInfo,
         pytest.param((_row(_CROSS, state="missingFiles"),), _ALREADY_IN_QBIT, True, id="errored"),
     ],
 )
-def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
+def test_mark_cross_seeds_leaves_a_release_no_counted_torrent_holds(
     rows: tuple[_TorrInfo, ...], files: Mapping[str, list[_TorrFile] | Exception], pearlarr_imports: bool
 ) -> None:
     """A release stays SeaDex's when no counted torrent has exactly its files, or SeaDex's own is in qBittorrent."""
@@ -561,7 +561,9 @@ def test_mark_cross_seeds_leaves_a_url_no_counted_torrent_holds(
         pytest.param(replace(_seadex_release(), infohash=None), (_row(_CROSS),), id="no-hash"),
     ],
 )
-def test_mark_cross_seeds_skips_a_url_without_reading_a_file_list(item: Release, rows: tuple[_TorrInfo, ...]) -> None:
+def test_mark_cross_seeds_skips_a_release_without_reading_a_file_list(
+    item: Release, rows: tuple[_TorrInfo, ...]
+) -> None:
     """A release SeaDex's own torrent has, or one with no hash (every private release), is left before any file-list read."""
 
     qbit = _FakeQbit(rows=rows, files=_ALREADY_IN_QBIT)
@@ -669,7 +671,7 @@ def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imp
     assert item.cross_seed_hash == marked
 
 
-def test_add_a_marked_url_is_its_cross_seed() -> None:
+def test_add_a_marked_release_is_its_cross_seed() -> None:
     """A marked release is ALREADY_IN_QBIT as the torrent with its files, and SeaDex's is never added."""
 
     qbit = _FakeQbit(present={_CROSS: "Cross"})
@@ -681,7 +683,7 @@ def test_add_a_marked_url_is_its_cross_seed() -> None:
     assert qbit.add_calls == []
 
 
-def test_add_a_marked_url_whose_cross_seed_left_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_a_marked_release_whose_cross_seed_left_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """A marked release whose torrent left qBittorrent fails its grab instead of adding SeaDex's under its pending import."""
 
     _patch_nyaa_parser(monkeypatch)

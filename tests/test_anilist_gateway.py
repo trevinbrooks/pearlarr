@@ -148,7 +148,7 @@ class TestPrefetch:
         assert written["fetched_at"] >= before
         assert written["data"] == anilist_body(3)
 
-    def test_a_preview_save_writes_nothing(self) -> None:
+    def test_a_dry_run_save_writes_nothing(self) -> None:
         # A dry run never commits, so the fetch stays in memory and no aged row is evicted.
         client = ScriptedAniListClient()
         store = FakeCacheStore()
@@ -162,7 +162,7 @@ class TestPrefetch:
         assert store.get_anilist_meta(3) is None
         assert store.get_anilist_meta(1) is not None
 
-    def test_stops_once_the_breaker_trips(self) -> None:
+    def test_stops_once_anilist_is_unreachable(self) -> None:
         client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
@@ -180,7 +180,7 @@ class TestPrefetch:
         assert gateway.al_cache == {}
         assert store.get_anilist_meta(1) is None
 
-    def test_outage_keeps_stale_rows_and_serves_them(self) -> None:
+    def test_unreachable_keeps_stale_rows_and_serves_them(self) -> None:
         client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
@@ -200,7 +200,7 @@ class TestPrefetch:
         assert client.query_calls == []
 
     @pytest.mark.parametrize("asked", [pytest.param([1, 2], id="asked-for"), pytest.param([2], id="not-asked-for")])
-    def test_a_fresh_record_stored_without_dates_is_refetched(self, asked: list[int]) -> None:
+    def test_a_fresh_answer_stored_without_dates_is_refetched(self, asked: list[int]) -> None:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
@@ -282,7 +282,7 @@ class TestMediaResolution:
         assert gateway.titles(3) == ("R",)
         assert gateway.titles(4) == ()
 
-    def test_definite_miss_is_remembered_for_the_run(self) -> None:
+    def test_definite_not_found_is_remembered_for_the_run(self) -> None:
         # AniList answered with no Media: the id is unknown, so no later accessor asks again.
         client = ScriptedAniListClient(absent=frozenset({7}))
         gateway = make_anilist_gateway(client)
@@ -293,7 +293,7 @@ class TestMediaResolution:
         assert gateway.al_cache[7] == {}
         assert client.query_calls == [7]
 
-    def test_failure_trips_the_breaker_without_remembering_a_miss(self) -> None:
+    def test_failure_marks_anilist_unreachable_without_remembering_a_not_found(self) -> None:
         client = ScriptedAniListClient(failing=frozenset({7}))
         gateway = make_anilist_gateway(client)
 
@@ -315,7 +315,9 @@ class TestUnread:
             pytest.param(5, False, id="answered-unknown"),
         ],
     )
-    def test_an_outage_leaves_unread_a_looked_up_id_with_no_dated_record(self, al_id: int, unread: bool) -> None:
+    def test_an_unreachable_source_leaves_unread_a_looked_up_id_with_no_dated_answer(
+        self, al_id: int, unread: bool
+    ) -> None:
         store = FakeCacheStore()
         store.put_anilist_meta(3, _dateless_answer(3))
         store.put_anilist_meta(4, _stale_answer(4))
@@ -336,7 +338,7 @@ class TestUnread:
         assert gateway.air_dates_unread(1) is True
         assert gateway.air_dates_unread(2) is False
 
-    def test_a_record_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
+    def test_an_answer_stored_without_dates_is_not_unread_while_anilist_answers(self) -> None:
         # The cached answer without dates serves the lookup, and AniList was never unreachable.
         store = FakeCacheStore()
         store.put_anilist_meta(3, _dateless_answer(3))

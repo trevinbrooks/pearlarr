@@ -9,12 +9,12 @@ step the arr run happened to die in.
 
 These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - the
 error actually landing at column 0 - is pinned against the real renderer in
-`test_output_rich_renderer.TestUnwindPlacement`. The boundary calls of the arr run's finish
-are pinned in `test_import_wait.TestFinalizeRunOrdering` / `TestFinalizeRunUnwind`.
+`test_output_rich_renderer.TestUnwindPosition`. The boundary calls of the arr run's finish
+are pinned in `test_import_wait.TestFinishArrRunOrdering` / `TestFinishArrRunUnwind`.
 `ArrRunFinished` is emitted exactly once per arr run: the finish emits on success, and
 bootstrap's inner handler emits only when the arr run died first. The open scopes' close
 idempotency (`test_output_scope_path`) and the renderer no-op
-(`TestUnwindPlacement`) remain as defense in depth.
+(`TestUnwindPosition`) remain as defense in depth.
 
 `ArrRunDeps.build` is the failure site: it is the earliest thing inside the inner
 try, so it also exercises the `deps is None` path - no reporter exists yet, which
@@ -142,10 +142,10 @@ def _arr_run_fatal_error(recording: RecordingHub) -> tuple[int, Diagnostic]:
     )
 
 
-class TestUnwindEmitsRunFinished:
+class TestUnwindEmitsArrRunFinished:
     """Every arr-run-fatal path closes the run before its error is reported."""
 
-    def test_clean_arm_closes_the_run_before_logging(
+    def test_clean_branch_closes_the_run_before_logging(
         self,
         monkeypatch: pytest.MonkeyPatch,
         app_logger: logging.Logger,
@@ -162,7 +162,7 @@ class TestUnwindEmitsRunFinished:
         assert error.message == _SCHEMA_ERROR
         assert error.trace is None
 
-    def test_traceback_arm_closes_the_run_before_logging(
+    def test_traceback_branch_closes_the_run_before_logging(
         self,
         monkeypatch: pytest.MonkeyPatch,
         app_logger: logging.Logger,
@@ -271,7 +271,7 @@ def _run_completing_arr(
 class TestCompletedArrRunSingleClose:
     """An arr run that returns normally adds no ArrRunFinished of its own - the arr run's finish owns it."""
 
-    def test_completed_arr_run_emits_no_run_finished_from_bootstrap(
+    def test_completed_arr_run_emits_no_arr_run_finished_from_bootstrap(
         self,
         monkeypatch: pytest.MonkeyPatch,
         app_logger: logging.Logger,
@@ -281,5 +281,5 @@ class TestCompletedArrRunSingleClose:
         assert completed is True
         # The unwind emit fires only on a dying arr run. A normal return leaves the close
         # to the arr run's finish (faked to a no-op here). The real finish's emit is pinned in
-        # test_import_wait.TestFinalizeRunOrdering, so zero here proves nothing doubled.
+        # test_import_wait.TestFinishArrRunOrdering, so zero here proves nothing doubled.
         assert recording.of_type(ArrRunFinished) == []

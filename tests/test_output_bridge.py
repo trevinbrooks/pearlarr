@@ -114,7 +114,9 @@ class TestAdoption:
 
         assert recorder.of_type(Diagnostic) == []
 
-    def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_seat(self, app_logger: logging.Logger) -> None:
+    def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_renderer(
+        self, app_logger: logging.Logger
+    ) -> None:
         """At DEBUG config the bridge is a first-party record's ONLY console route, so DEBUG/INFO adopt visible."""
 
         recorder = RecordingRenderer()
@@ -604,7 +606,7 @@ class TestFullStackSeams:
         assert "handshake ok" not in _console_text(stream)  # file_only at INFO+
         assert _file_text(log_file).count("handshake ok") == 1
 
-    def test_warning_between_boot_steps_renders_at_the_ledger_indent(
+    def test_warning_between_boot_steps_renders_at_the_boot_step_indent(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
         """THE motivating scenario: a chmod-style warning fires after a boot step closes.
@@ -628,7 +630,7 @@ class TestFullStackSeams:
         assert mid_boot.startswith("  ⚠ ")
         assert after.startswith("⚠ ")
 
-    def test_dual_run_cycles_keep_one_bridge_and_the_fresh_console(
+    def test_two_scheduled_runs_keep_one_bridge_and_the_fresh_console(
         self,
         app_logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,

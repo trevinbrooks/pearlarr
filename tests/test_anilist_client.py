@@ -416,7 +416,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.param(httpx.ConnectError("down"), {}, id="unreachable"),
     ],
 )
-def test_give_up_trips_the_breaker(
+def test_give_up_marks_anilist_unreachable(
     monkeypatch: pytest.MonkeyPatch, effect: httpx.Response | Exception, returned: dict[str, object]
 ) -> None:
     """Exhausting the retries warns ONCE and marks AniList unreachable: later calls never touch the wire."""
@@ -463,7 +463,7 @@ def test_give_up_trips_the_breaker(
         ),
     ],
 )
-def test_dataless_answer_trips_the_breaker_once(
+def test_dataless_answer_marks_anilist_unreachable_once(
     response: httpx.Response, returned: dict[str, object], detail: str
 ) -> None:
     """Any dataless answer marks AniList unreachable on the first request: one warning, the body still returned, then no traffic."""
@@ -501,7 +501,7 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 
 
 @respx.mock
-def test_unknown_id_404_is_an_ordinary_miss() -> None:
+def test_unknown_id_404_is_an_ordinary_not_found() -> None:
     """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never marks it unreachable."""
 
     recording = _recording()
@@ -520,7 +520,7 @@ def test_unknown_id_404_is_an_ordinary_miss() -> None:
 # --- AniListMediaNode -----------------------------------------------------------
 
 
-def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
+def test_anilist_media_node_empty_dict_is_the_all_none_not_found_node() -> None:
     """`{}` (the reduced `Media: null` not-found answer) validates to the all-None node."""
 
     assert AniListMediaNode.model_validate({}) == AniListMediaNode()

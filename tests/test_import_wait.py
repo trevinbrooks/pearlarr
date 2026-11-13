@@ -236,7 +236,7 @@ def make_pollers(qbit: FakeQbit | None) -> WaitPollers:
 class TestPollTorrent:
     """poll_torrent turns a single qBittorrent read into a sanitized TorrentPoll."""
 
-    def test_missing_on_empty_list(self) -> None:
+    def test_gone_on_empty_list(self) -> None:
         pollers = make_pollers(FakeQbit({}))
 
         assert pollers.poll_torrent("h") == TorrentPoll(TorrentStatus.GONE, None)
@@ -281,7 +281,7 @@ class TestPollTorrent:
 
         assert pollers.poll_torrent("h") == TorrentPoll(None, None, observed=False)
 
-    def test_carries_live_download_telemetry(self) -> None:
+    def test_carries_live_download_progress(self) -> None:
         torrent = FakeTorrent(
             progress=0.64,
             dlspeed=3_200_000,
@@ -297,7 +297,7 @@ class TestPollTorrent:
             DownloadProgress(0.64, 3_200_000, 130, 1_800_000_000, 2_900_000_000),
         )
 
-    def test_sanitizes_junk_telemetry(self) -> None:
+    def test_sanitizes_junk_download_progress(self) -> None:
         # qB's "∞" eta sentinel, an idle (0) speed and a zero size all sanitize to
         # None so the wait view never renders a nonsense countdown / negative bar.
         torrent = FakeTorrent(progress=0.5, dlspeed=0, eta=8_640_000, completed=0, size=0)
@@ -306,7 +306,7 @@ class TestPollTorrent:
         assert pollers.poll_torrent("h") == TorrentPoll(None, None, DownloadProgress(0.5, None, None, None, None))
 
 
-class TestPollTelemetry:
+class TestPollDownloadProgress:
     """poll_download_progress: ONE batched, read-only info call for the wait region refresh."""
 
     def test_batches_and_matches_hashes_case_insensitively(self) -> None:
@@ -543,14 +543,14 @@ def make_orchestration_manager(
     return mgr
 
 
-class TestPendingRecordsGuardHydration:
+class TestPendingImportsGuardLoading:
     """The bug-fix pin: every claim of one title loads the SAME guard row.
 
     Claims of one title on torrents grabbed across different runs used to carry
     divergent frozen copies. The title's single `guard_facts` row now feeds them all.
     """
 
-    def test_claims_share_the_entry_row_and_others_stay_empty(self) -> None:
+    def test_claims_share_the_title_row_and_others_stay_empty(self) -> None:
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=None,
@@ -603,7 +603,7 @@ class RecordingWaitView(WaitView):
         return any(t.key == key and t.phase is phase for snap in self.snapshots for t in snap.torrents)
 
 
-class TestSnapshotPendingForSeries:
+class TestReportImportsForSeries:
     """report_imports_for_series reports CARRIED-OVER pending imports inline, no double-report."""
 
     def test_carried_over_imported_drops_and_classifies(self) -> None:
@@ -636,7 +636,7 @@ class TestSnapshotPendingForSeries:
         # series that grabbed several torrents).
         assert reporter.snapshot_calls[0].title == f"Show{SEP}SubGroup"
 
-    def test_carried_over_downloading_is_queued_and_kept(self) -> None:
+    def test_carried_over_unfinished_torrent_is_downloading_and_kept(self) -> None:
         # Still downloading -> DOWNLOADING, pending import kept, no import attempt.
         strategy = _RecordingStrategy()
         reporter = _RecordingReporter()
@@ -683,7 +683,7 @@ class TestSnapshotPendingForSeries:
         assert mgr._state.stats.imported == 0
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_reacquired_record_is_skipped(self) -> None:
+    def test_reacquired_pending_import_is_skipped(self) -> None:
         # A stored pending import re-seen in qBittorrent this run was already reported by
         # its title block: no poll, no row, no state. Only the tally counts it.
         strategy = _RecordingStrategy()
@@ -704,7 +704,7 @@ class TestSnapshotPendingForSeries:
         assert mgr._state.pending_import_states == {}
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_other_series_record_is_not_touched(self) -> None:
+    def test_other_series_pending_import_is_not_touched(self) -> None:
         # The report is series-scoped: a pending import for a different series is left
         # alone (the deferred or blocking wait pass handles it later).
         strategy = _RecordingStrategy()
@@ -727,7 +727,7 @@ class TestSnapshotPendingForSeries:
             pytest.param((8, 7), "S02 E01-E12", "https://releases.moe/22", id="second-series-scans-first"),
         ],
     )
-    def test_two_series_record_is_snapshotted_once_under_the_first_scan(
+    def test_two_series_pending_import_is_reported_once_under_the_first_scan(
         self,
         scan_order: tuple[int, int],
         coverage: str,
@@ -806,7 +806,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         cached_titles = {al_id: store.get_cached_title(Arr.SONARR, al_id) for al_id in (5, 6, 9)}
         return {al_id: cached.updated_at for al_id, cached in cached_titles.items() if cached is not None}
 
-    def test_the_scan_snapshot_clears_the_stamp_of_every_claiming_title(self) -> None:
+    def test_the_scan_report_clears_the_stamp_of_every_claiming_title(self) -> None:
         store = self._store()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, stored_pending_imports=[self._record()]
@@ -829,7 +829,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         assert mgr._pending_imports.rows() == {}
         assert self._stamps(store) == {5: None, 6: None, 9: self._CACHED_ON}
 
-    def test_an_imported_record_leaves_its_titles_cached(self) -> None:
+    def test_an_imported_pending_import_leaves_its_titles_cached(self) -> None:
         store = self._store()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -843,7 +843,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         assert mgr._pending_imports.rows() == {}
         assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
 
-    def test_the_end_pass_leaves_an_imported_records_titles_cached(self) -> None:
+    def test_the_end_pass_leaves_an_imported_pending_imports_titles_cached(self) -> None:
         store = self._store()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -870,7 +870,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         assert radarr_row is not None
         assert radarr_row.updated_at == self._CACHED_ON
 
-    def test_a_verified_import_whose_torrent_is_gone_leaves_its_titles_cached(self) -> None:
+    def test_a_confirmed_import_whose_torrent_is_gone_leaves_its_titles_cached(self) -> None:
         store = self._store()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({}),
@@ -885,10 +885,10 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
 
 
-class TestCheckOnce:
+class TestRunDeferred:
     """run_deferred runs ONE non-blocking poll over every carried-over pending import."""
 
-    def test_imports_ready_carried_over_record(self) -> None:
+    def test_imports_ready_carried_over_pending_import(self) -> None:
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=True),
         )
@@ -980,7 +980,7 @@ class TestCheckOnce:
             ),
         ],
     )
-    def test_check_outcome_refreshes_pending_state(
+    def test_check_outcome_refreshes_pending_import_state(
         self,
         torrent: FakeTorrent,
         make_strategy: Callable[[], _RecordingStrategy],
@@ -1022,7 +1022,7 @@ class TestCheckOnce:
         assert mgr._state.pending_import_states["h"] is PendingImportState.DOWNLOADING
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_check_fast_progress_verifies_within_the_single_cycle(self) -> None:
+    def test_check_progress_poll_confirms_within_the_single_poll(self) -> None:
         # The one deferred poll owns the cheap bar refresh too: the poll
         # issues the command, the progress read confirms every file, and the
         # pending import finishes IMPORTED instead of "import in progress".
@@ -1044,7 +1044,7 @@ class TestCheckOnce:
         assert mgr._pending_imports.rows() == {}
 
 
-class TestPendingStateFold:
+class TestPendingImportStateConversion:
     """The pinned Outcome -> PendingImportState conversion a wait pass classifies stored pending imports through."""
 
     @pytest.mark.parametrize(
@@ -1072,12 +1072,12 @@ class TestPendingStateFold:
 
         assert mgr._state.pending_import_states["h"] is state
 
-    def test_fold_covers_exactly_the_non_dropped_outcomes(self) -> None:
+    def test_conversion_covers_exactly_the_non_dropped_outcomes(self) -> None:
         # IMPORTED and MISSING leave the store, so the conversion never sees them.
         assert set(PENDING_IMPORT_STATE_FOR_OUTCOME) == {o for o in Outcome if not o.dropped}
 
 
-class TestUnmatchedGraduation:
+class TestUnmatchedRowFinish:
     """A result naming unplaced files finishes on the poll that returned it, in either wait mode, and stays stored."""
 
     _NAMES = ("a.mkv", "b.mkv")
@@ -1086,7 +1086,7 @@ class TestUnmatchedGraduation:
     def _strategy(cls) -> _RecordingStrategy:
         return _RecordingStrategy(completed=attempt_result(all_done=False, unmatched_files=cls._NAMES))
 
-    def test_check_once_graduates_unmatched_and_keeps_the_record(self) -> None:
+    def test_run_deferred_finishes_unmatched_and_keeps_the_pending_import(self) -> None:
         strategy = self._strategy()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -1106,7 +1106,7 @@ class TestUnmatchedGraduation:
         assert mgr._state.pending_import_states["h"] is PendingImportState.DOWNLOADED
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_run_monitor_graduates_unmatched_on_the_first_poll(self) -> None:
+    def test_run_blocking_finishes_unmatched_on_the_first_poll(self) -> None:
         # The result ends the wait on the poll that establishes it: no final attempt, no import clock.
         strategy = self._strategy()
         mgr, view = _run_blocking_wait(
@@ -1122,7 +1122,7 @@ class TestUnmatchedGraduation:
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY]
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_later_monitor_cycles_never_re_poll_a_graduated_row(self) -> None:
+    def test_later_polls_never_re_poll_a_finished_row(self) -> None:
         # A slower sibling keeps the wait pass running past the first poll. The finished row is not asked again.
         strategy = self._strategy()
         qbit = FakeQbit(
@@ -1152,7 +1152,7 @@ class TestUnmatchedGraduation:
         assert set(mgr._pending_imports.rows()) == {"h", "slow"}
 
 
-class TestHeldBackGraduation:
+class TestLeftForHandImportRowFinish:
     """A result naming hand-import files finishes as a partial import: kept for the hand import, never cleaned up."""
 
     _LEFT = order_only_hand_import_files()
@@ -1182,10 +1182,10 @@ class TestHeldBackGraduation:
         assert qbit.set_category_calls == []
 
 
-class TestMonitorRowDiscriminator:
+class TestBlockingWaitRowDiscriminator:
     """Wait rows carry `carried_over`, so _finish_arr_run can tell them from fresh grabs."""
 
-    def test_monitor_rows_tell_fresh_from_carried_over(self) -> None:
+    def test_wait_rows_tell_fresh_from_carried_over(self) -> None:
         # One fresh grab + one carried-over pending import, both import: only the
         # carried-over row is marked, even though the fresh import leaves
         # `grabbed_this_run` mid-pass.
@@ -1220,7 +1220,7 @@ class TestMonitorRowDiscriminator:
         assert mgr._state.pending_import_states == {}
         assert mgr._state.stats.imported == 0
 
-    def test_fresh_timeout_row_is_not_folded(self) -> None:
+    def test_fresh_timeout_row_is_not_converted(self) -> None:
         # A fresh grab's finished state never enters the carried-over states.
         fresh = pending_import(infohash="f")
         mgr = make_orchestration_manager(
@@ -1242,7 +1242,7 @@ class TestMonitorRowDiscriminator:
 class TestTallyCarriedOverIntoStats:
     """tally_carried_over_into_stats counts each still-waiting pending import once."""
 
-    def test_counts_states_defaults_queued_and_skips_errored(self) -> None:
+    def test_counts_states_defaults_downloading_and_skips_errored(self) -> None:
         # MUTATION PIN: both counters accumulate (a `+=` turned into `=` clamps
         # at one), the unobserved pending import defaults to DOWNLOADING, and ERRORED is
         # deliberately uncounted.
@@ -1283,7 +1283,7 @@ class TestTallyCarriedOverIntoStats:
         assert mgr._state.stats.downloading == 0
         assert mgr._state.stats.downloaded == 0
 
-    def test_counts_reacquired_records(self) -> None:
+    def test_counts_reacquired_pending_imports(self) -> None:
         # A reacquired pending import is skipped by the inline report but still counts
         # into the tally under downloading/downloaded like any carried-over one.
         mgr = make_orchestration_manager(
@@ -1317,10 +1317,10 @@ class TestTallyCarriedOverIntoStats:
         assert mgr._state.stats.downloaded == 0
 
 
-class TestMonitorWorkingSet:
+class TestBlockingWaitWorkingSet:
     """_imports_to_wait_on dedups per hash, the in-memory pending import winning."""
 
-    def test_in_memory_record_wins_the_store_collision(self) -> None:
+    def test_in_memory_pending_import_wins_the_store_collision(self) -> None:
         # MUTATION PIN: the first loop's `not in seen` flipped to `in seen` skips
         # every this-run grab, so the store's (older) copy would be waited on
         # instead. One hash in BOTH places, differing by title: exactly one
@@ -1406,7 +1406,7 @@ class _ExplodingPutStore(FakeCacheStore):
         raise RuntimeError("put boom")
 
 
-class TestRunMonitor:
+class TestRunBlocking:
     """run_blocking: interleaved, copy-aware wait+import over ALL pending imports."""
 
     def test_interleaved_fast_and_slow(self) -> None:
@@ -1455,7 +1455,7 @@ class TestRunMonitor:
             for t in snap.torrents
         )
 
-    def test_imported_only_when_files_present_two_cycles(self) -> None:
+    def test_imported_only_when_all_done_two_polls(self) -> None:
         # The copy is async: poll 1 issues the command (command_issued,
         # files NOT done) -> reads `importing`. Poll 2 confirms the files done
         # -> `imported`. imported is gated on done files, never command accept.
@@ -1479,7 +1479,7 @@ class TestRunMonitor:
         assert view.final("h").outcome is Outcome.IMPORTED  # poll 2, files done
         assert mgr._pending_imports.rows() == {}
 
-    def test_tier2_fast_poll_fills_bar_and_promotes_before_next_heavy_poll(self) -> None:
+    def test_progress_poll_fills_bar_and_promotes_before_the_next_poll(self) -> None:
         # Between polls the cheap progress poll fills the "files inserted" bar
         # as files get done and promotes the row to IMPORTED the instant all are done
         # - no second import_completed poll, no RefreshMonitoredDownloads.
@@ -1529,7 +1529,7 @@ class TestRunMonitor:
         assert last.content_path == "/d"
         assert last.attempt_kind is AttemptKind.FINAL
 
-    def test_landing_files_re_anchor_the_ready_deadline(self) -> None:
+    def test_each_rise_re_anchors_the_import_timeout(self) -> None:
         # A season pack Sonarr copies file-by-file: a baseline (t=0) then a rise
         # each poll. Every rise re-anchors the import timeout, so the wait pass
         # outlives ready_timeout (60s here) and finishes imported instead of
@@ -1558,7 +1558,7 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 4
         assert all(not c.attempt_kind.at_deadline for c in strategy.import_calls)
 
-    def test_deadline_attempt_rescued_by_a_same_cycle_landing(self) -> None:
+    def test_final_attempt_rescued_by_a_same_poll_rise(self) -> None:
         # The forced deadline attempt itself reports a fresh rise (0/3 -> 1/3 at
         # t=60): the row must NOT finish that poll - the done file re-anchors
         # the deadline instead - and only the NEXT quiet deadline (t=120) ends it.
@@ -1584,7 +1584,7 @@ class TestRunMonitor:
         # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
-    def test_stalled_record_walks_away_not_ready(self) -> None:
+    def test_stalled_pending_import_walks_away_not_ready(self) -> None:
         # No pause ever: the stall bound finishes the row "not ready" at
         # the final attempt, and the pending import stays for the next run.
         strategy = _RecordingStrategy(completed=attempt_result(all_done=False))
@@ -1598,7 +1598,7 @@ class TestRunMonitor:
         assert set(mgr._pending_imports.rows()) == {"h"}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True]
 
-    def test_sonarr_side_deferral_rides_out_a_serial_backlog(self) -> None:
+    def test_sonarr_side_pause_waits_out_a_serial_backlog(self) -> None:
         # Sonarr importing the download itself (or the release ahead of it): no
         # command of pearlarr's, yet every poll is paused, so the row waits the
         # backlog out to IMPORTED without a forced attempt.
@@ -1617,7 +1617,7 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 5
         assert all(not c.attempt_kind.at_deadline for c in strategy.import_calls)
 
-    def test_deadline_step_in_rides_its_own_copy_out(self) -> None:
+    def test_final_auto_import_waits_its_own_copy_out(self) -> None:
         # Two stalled polls, then the final attempt POSTs (ISSUED, paused):
         # the row is not finished "still importing" on that same poll, the
         # copy in flight keeps pausing the clock, and the done-check ends IMPORTED.
@@ -1640,7 +1640,7 @@ class TestRunMonitor:
         assert mgr._pending_imports.rows() == {}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, True, True]
 
-    def test_fresh_post_is_credited_once_per_row(self) -> None:
+    def test_fresh_post_pauses_once_per_row(self) -> None:
         # A POST whose files all fail inside Sonarr is re-POSTed every poll:
         # only the first pauses the clock, so the retry loop finishes at the
         # ordinary deadline (t=60), never going on to the cap.
@@ -1657,7 +1657,7 @@ class TestRunMonitor:
         assert set(mgr._pending_imports.rows()) == {"h"}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True]
 
-    def test_deferred_polls_never_walk_away_mid_copy(self) -> None:
+    def test_paused_polls_never_walk_away_mid_copy(self) -> None:
         # The auto import's copy in flight across the import timeout: every paused poll
         # gives its interval back, so the row waits the copy out to IMPORTED
         # instead of walking away.
@@ -1679,7 +1679,7 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 4
         assert all(not c.attempt_kind.at_deadline for c in strategy.import_calls)
 
-    def test_deferral_pauses_the_ready_clock_never_resets_it(self) -> None:
+    def test_pause_reason_pauses_the_import_clock_never_resets_it(self) -> None:
         # Two stalled polls burn the clock (t=0/30), the t=60 deadline poll
         # pauses: the pause spans only the paused interval, so the deadline
         # fires on the next clear shot (t=90) - a pause postpones the
@@ -1704,7 +1704,7 @@ class TestRunMonitor:
         # forced attempt.
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, True]
 
-    def test_deferral_credit_is_capped_so_a_wedged_command_ends_the_watch(self) -> None:
+    def test_pause_is_capped_so_a_wedged_command_ends_the_watch(self) -> None:
         # A command wedged in flight forever: paused polls stop pausing the
         # clock at the cap, the ordinary deadline resumes, and the watch ends
         # bounded ("still importing; left pending") instead of hanging until
@@ -1721,7 +1721,7 @@ class TestRunMonitor:
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_credit_cap_reads_still_importing_for_an_import_deferral(self) -> None:
+    def test_pause_cap_reads_still_importing_for_an_import_pause(self) -> None:
         # Sonarr's own import (or an unproven one) still running at the cap:
         # no command of pearlarr's, yet the label says "still importing", not "not
         # ready". Ready 60s + cap (6x) 360s -> finished by t=420.
@@ -1737,7 +1737,7 @@ class TestRunMonitor:
         assert strategy.import_calls[-1].attempt_kind.at_deadline is True
         assert len(strategy.import_calls) == 15
 
-    def test_credit_cap_reads_sonarr_busy_for_a_foreign_disk_command(self) -> None:
+    def test_pause_cap_reads_sonarr_busy_for_another_downloads_disk_command(self) -> None:
         # A foreign disk command holding the line to the cap: "sonarr busy",
         # left pending, never a false "still importing".
         strategy = _RecordingStrategy(completed=attempt_result(all_done=False, pause_reason=PauseReason.BUSY))
@@ -1774,7 +1774,7 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 3
         assert strategy.import_calls[-1].attempt_kind is AttemptKind.FINAL
 
-    def test_fast_lane_landing_re_anchors_the_deadline(self) -> None:
+    def test_a_progress_poll_rise_re_anchors_the_deadline(self) -> None:
         # The cheap progress poll sees a file get done (1/3 -> 2/3) even though the
         # poll's counts stay indeterminate. That rise alone must push the
         # deadline out one more poll (t=90, not t=60).
@@ -1812,7 +1812,7 @@ class TestRunMonitor:
             pytest.param({"h": [FakeTorrent(is_complete=True)]}, Outcome.NO_CONTENT_PATH, True, id="no-path-leaves"),
         ],
     )
-    def test_terminal_without_import_keeps_or_drops_the_record(
+    def test_a_finish_without_import_keeps_or_drops_the_pending_import(
         self,
         torrents: dict[str, list[QbitStep]],
         outcome: Outcome,
@@ -1898,7 +1898,7 @@ class TestRunMonitor:
         assert view.final("carried").outcome is Outcome.IMPORTED
         assert mgr._pending_imports.rows() == {}
 
-    def test_keyboard_interrupt_breaks_and_leaves_records(self) -> None:
+    def test_keyboard_interrupt_breaks_and_leaves_pending_imports(self) -> None:
         # Ctrl-C during the poll nap must break the loop (not propagate), so the
         # caller's finally still restores the terminal + saves the cache. The
         # in-flight pending import is left and a WaitResult is still returned.
@@ -1951,7 +1951,7 @@ class TestRunMonitor:
         (note,) = recording.of_type(Diagnostic)
         assert "1 left pending" in note.message
 
-    def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
+    def test_interrupt_mid_poll_still_finishes_that_polls_finished_rows(self) -> None:
         # A torrent that finished in the SAME poll the interrupt lands in
         # must still reach the view (the except handler pushes one final snapshot), so
         # the console tally/outcome lines can never undercount the returned WaitResult.
@@ -1976,7 +1976,7 @@ class TestRunMonitor:
         assert result is not None and result.waited == 1
         assert view.final("h1").outcome is Outcome.MISSING  # the interrupt-time push carried it
 
-    def test_import_exception_is_swallowed_announced_and_record_left(self) -> None:
+    def test_import_exception_is_swallowed_announced_and_pending_import_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate
         # and abort _finish_arr_run's cache save: the failure lands as an ERROR
         # Diagnostic carrying its traceback and the pending import is left.
@@ -1995,7 +1995,7 @@ class TestRunMonitor:
         assert "Manual import failed" in error.message
         assert error.trace is not None
 
-    def test_imported_terminal_row_carries_files_count(self) -> None:
+    def test_imported_finished_row_carries_files_count(self) -> None:
         # The finished row's outcome line states "(N files · elapsed)": a finished imported
         # row carries the done files count (the attempt result's file_map_episode_count).
         strategy = _RecordingStrategy(
@@ -2034,7 +2034,7 @@ class TestRunMonitor:
         assert wait_pass.results == []
         assert wait_pass.rows["h"].active
 
-    def test_failed_store_keep_leaves_no_result_row(self) -> None:
+    def test_failed_awaiting_cleanup_write_leaves_no_result_row(self) -> None:
         # The keep path's twin: the awaiting-cleanup upsert precedes the result-row append
         # exactly like the drop, so a raising put adds no phantom IMPORTED row.
         strategy = _RecordingStrategy(
@@ -2066,10 +2066,10 @@ def _wait_pass(
     return WaitPass(mgr, [pending], kind=WaitKind.MONITOR)
 
 
-class TestMonitorFastTelemetry:
+class TestBlockingWaitDownloadProgressRefresh:
     """refresh_download_progress: the refresh between polls - download progress only, no outcomes."""
 
-    def test_progress_wait_drives_the_telemetry_refresh(self) -> None:
+    def test_progress_wait_drives_the_download_progress_refresh(self) -> None:
         # The wiring test: between polls, _sleep_between_polls's download progress refresh pushes
         # a snapshot with fresh download progress (the row moves to 60% at
         # 999 B/s well before the next poll).
@@ -2108,7 +2108,7 @@ class TestMonitorFastTelemetry:
         )
         assert view.final("h").outcome is Outcome.IMPORTED
 
-    def test_views_that_render_no_telemetry_skip_the_read(self) -> None:
+    def test_views_that_render_no_download_progress_skip_the_read(self) -> None:
         # A view with wants_download_progress=False (the non-TTY progress line) must not cost a
         # qBittorrent read every refresh between polls: only the two polls hit the client.
         class NoDownloadProgressView(RecordingWaitView):
@@ -2165,7 +2165,7 @@ class TestMonitorFastTelemetry:
         assert view.speed_history == (100,)
         assert wait_pass.rows["h"].active
 
-    def test_unchanged_telemetry_reports_no_change(self) -> None:
+    def test_unchanged_download_progress_reports_no_change(self) -> None:
         pending = pending_import(infohash="h")
         qbit = FakeQbit(
             {"h": [FakeTorrent(progress=0.3, dlspeed=100)]},
@@ -2177,7 +2177,7 @@ class TestMonitorFastTelemetry:
         assert wait_pass.refresh_download_progress() is False
 
 
-class TestMonitorTransientPoll:
+class TestBlockingWaitTransientPoll:
     """A transient qBittorrent blip keeps the row's last real state on screen."""
 
     def test_unobserved_poll_keeps_bar_and_history(self) -> None:
@@ -2205,10 +2205,10 @@ class TestMonitorTransientPoll:
         assert view.speed_history == (100, 200)
 
 
-class TestMonitorSpeedHistory:
+class TestBlockingWaitSpeedHistory:
     """The downloading rows' sparkline window: one sample per poll, bounded."""
 
-    def test_accumulates_per_heavy_poll_with_stalls_as_zero(self) -> None:
+    def test_accumulates_per_poll_with_stalls_as_zero(self) -> None:
         pending = pending_import(infohash="h")
         qbit = FakeQbit(
             {
@@ -2397,7 +2397,7 @@ def _finalize_engine(
     )
 
 
-class TestFinalizeRunOrdering:
+class TestFinishArrRunOrdering:
     """_finish_arr_run brackets the finish with its close boundaries, summary before the blocking wait pass.
 
     `scan_finished` leads on every path - so the reconcile/tally diagnostics that
@@ -2406,7 +2406,7 @@ class TestFinalizeRunOrdering:
     wait steps in every active mode, before any wait pass reads the store.
     """
 
-    def test_blocking_summary_precedes_monitor_then_saves_last(self) -> None:
+    def test_blocking_summary_precedes_the_blocking_wait_then_saves_last(self) -> None:
         # The arr run summary must print before the blocking wait pass, and the save must be dead
         # last (so the store reflects the wait pass's drops).
         calls: list[str] = []
@@ -2420,7 +2420,7 @@ class TestFinalizeRunOrdering:
 
         assert calls == ["scan_finished", "cleanup", "tally", "summary", "monitor", "save", "run_finished"]
 
-    def test_deferred_does_not_run_monitor(self) -> None:
+    def test_deferred_does_not_run_blocking(self) -> None:
         # Deferred reconciles pre-summary but NEVER runs the blocking wait pass.
         calls: list[str] = []
         engine = _finalize_engine(
@@ -2434,7 +2434,7 @@ class TestFinalizeRunOrdering:
         assert "monitor" not in calls
         assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
-    def test_preview_skips_monitor_and_tally(self) -> None:
+    def test_dry_run_skips_the_blocking_wait_and_tally(self) -> None:
         # A dry run (no client) short-circuits reconcile/tally/blocking wait.
         calls: list[str] = []
         engine = _finalize_engine(calls, qbit=None, mode=ImportWaitMode.BLOCKING)
@@ -2445,7 +2445,7 @@ class TestFinalizeRunOrdering:
         # Even short-circuited, the summary still prints and the save still runs last.
         assert calls == ["scan_finished", "summary", "save", "run_finished"]
 
-    def test_non_monitor_strategy_reconciles_in_blocking_without_monitoring(self) -> None:
+    def test_strategy_without_blocking_wait_reconciles_in_blocking_without_a_wait_pass(self) -> None:
         # A Radarr-shaped strategy (no blocking wait) reconciles pre-summary in
         # BLOCKING too - the blocking wait pass would otherwise be its only reconcile - and
         # never enters the wait region.
@@ -2462,7 +2462,7 @@ class TestFinalizeRunOrdering:
         assert "monitor" not in calls
         assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
-    def test_non_monitor_strategy_reconciles_in_hybrid_without_monitoring(self) -> None:
+    def test_strategy_without_blocking_wait_reconciles_in_hybrid_without_a_wait_pass(self) -> None:
         # HYBRID gets the same treatment for a strategy with no blocking wait: reconcile, no blocking wait pass.
         calls: list[str] = []
         engine = _finalize_engine(
@@ -2478,7 +2478,7 @@ class TestFinalizeRunOrdering:
         assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
 
 
-class TestFinalizeRunUnwind:
+class TestFinishArrRunUnwind:
     """A raise in the finish leaves `arr_run_finished` to bootstrap's unwind emit.
 
     The scan is already closed either way, so the arr-run-fatal error the composition
@@ -2503,7 +2503,7 @@ class TestFinalizeRunUnwind:
         # saves so the run's staged writes persist rather than rolling back.
         assert calls == ["scan_finished", "cleanup", "check", "save"]
 
-    def test_monitor_raise_still_saves_but_leaves_the_run_open(self) -> None:
+    def test_blocking_wait_raise_still_saves_but_leaves_the_run_open(self) -> None:
         # arr_run_finished sits OUTSIDE the save's finally on purpose: emitting it there
         # would double up with bootstrap's unwind emit on this very path.
         calls: list[str] = []
@@ -2536,10 +2536,10 @@ class TestFinalizeRunUnwind:
         assert calls == ["scan_finished", "cleanup", "check", "tally", "save"]
 
 
-class TestFinalizeRunImportedBump:
+class TestFinishArrRunImportedBump:
     """_finish_arr_run owns the tally's `imported` bump, filtered to carried-over rows."""
 
-    def test_deferred_counts_snapshot_and_check_imports(self) -> None:
+    def test_deferred_counts_scan_report_and_check_imports(self) -> None:
         calls: list[str] = []
         check = WaitResult(
             (
@@ -2559,7 +2559,7 @@ class TestFinalizeRunImportedBump:
         # fresh row stays `added` and the non-imported ones stay out.
         assert engine._state.stats.imported == 2
 
-    def test_blocking_counts_carried_over_monitor_imports(self) -> None:
+    def test_blocking_counts_carried_over_waited_imports(self) -> None:
         calls: list[str] = []
         wait_result = WaitResult(
             (
@@ -2597,7 +2597,7 @@ def _pending_import_with_no_file_map(**overrides: object) -> PendingImport:
     return pending_import(**fields)
 
 
-class TestMonitorAbsorbsPlacements:
+class TestWaitPassStoresPlacements:
     """The placements a poll confirmed from Sonarr's history reach the pending import before any outcome reads it."""
 
     def test_check_pass_persists_the_placements(self) -> None:
@@ -2623,7 +2623,7 @@ class TestMonitorAbsorbsPlacements:
         assert [row.outcome for row in result.rows] == [Outcome.IMPORT_IN_PROGRESS]
         assert mgr._pending_imports.rows()["h"]["file_episode_map"] == _PLACED_ROW
 
-    def test_healed_record_reaches_the_next_poll_and_a_failed_retire_keeps_it(self) -> None:
+    def test_a_pending_import_with_placements_reaches_the_next_poll_and_a_failed_cleanup_keeps_it(self) -> None:
         # The next poll runs on the updated pending import (placed, so the fast
         # path is open to it), and the row kept awaiting cleanup carries the file map too.
         pending = _pending_import_with_no_file_map()
@@ -2671,10 +2671,10 @@ class TestMonitorAbsorbsPlacements:
         assert wait_pass.rows["h"].active
 
 
-class TestPendingRecordWrites:
+class TestPendingImportWrites:
     """`PendingImportStore.drop` / `save` / `save_history_placements` keep the durable store and the run list in step."""
 
-    def test_absorb_probe_persists_the_placements(self) -> None:
+    def test_storing_an_attempt_result_persists_the_placements(self) -> None:
         pending = pending_import(
             infohash="h",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -2700,7 +2700,7 @@ class TestPendingRecordWrites:
         assert mgr._pending_imports.rows()["h"]["file_episode_map"] == expected
         assert mgr._state.grabbed_this_run[pending.infohash] is healed
 
-    def test_absorb_probe_adding_nothing_is_a_no_op(self) -> None:
+    def test_storing_an_attempt_result_that_adds_nothing_is_a_no_op(self) -> None:
         # Placements the pending import already has: an exploding store proves no write fires.
         pending = pending_import(
             infohash="h",
@@ -2874,7 +2874,7 @@ class TestPostImportCategory:
         assert mgr._pending_imports.rows() == {}
         assert mgr._state.pending_import_states["h"] is PendingImportState.IMPORTED
 
-    def test_exhausted_move_retries_keep_the_record_for_cleanup(self) -> None:
+    def test_exhausted_move_retries_keep_the_pending_import_for_cleanup(self) -> None:
         # Every in-run attempt fails: the import still counts IMPORTED, but the
         # pending import survives marked `awaiting_cleanup` with ONE keep warn naming the
         # failed effect (the old per-move warn is gone).
@@ -2895,7 +2895,7 @@ class TestPostImportCategory:
         assert "(category move)" in warnings[0]
         assert "h" in mgr._cleanup._awaiting_cleanup_keys
 
-    def test_monitor_moves_imported_torrent(self) -> None:
+    def test_blocking_wait_moves_imported_torrent(self) -> None:
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=True),
         )
@@ -3026,7 +3026,7 @@ class TestPostImportCategoryOtherArrGate:
     one arr every title goes in the ONE pending import, so no same-arr sibling exists to wait for.
     """
 
-    def test_move_defers_while_the_other_arr_holds_the_hash(self) -> None:
+    def test_move_is_put_off_while_the_other_arr_holds_the_hash(self) -> None:
         # The Sonarr import is confirmed and its pending import drops, but the Radarr pending import still
         # claims the hash (the one lowercase key both arrs store): no move, while the close still runs.
         radarr_pending = pending_import(infohash="h", al_id=22, series_id=0, title="Movie")
@@ -3050,7 +3050,7 @@ class TestPostImportCategoryOtherArrGate:
         assert mgr._state.pending_import_states["h"] is PendingImportState.IMPORTED
         assert set(store.get_pending_import_rows(Arr.RADARR)) == {"h"}
 
-    def test_several_claims_on_one_record_move_once(self) -> None:
+    def test_several_claims_on_one_pending_import_move_once(self) -> None:
         # Two AniList titles (multi-cour) go in the one Sonarr pending import and no other arr
         # holds the hash: the confirmed import moves exactly once, under one wait region row.
         pending = _two_claim_pending_import()
@@ -3143,14 +3143,14 @@ class TestPostImportCategoryOtherArrGate:
         assert run2._pending_imports.rows() == {}
 
 
-class TestCloseTrackedDownload:
+class TestRemoveFromQueue:
     """_remove_from_queue: a confirmed import dismisses Sonarr's leftover queue record.
 
     One pending import spans every title on the torrent, so the close consults no sibling
     (see `ImportCompleter.remove_from_queue`). Only the category move waits on the other arr.
     """
 
-    def test_reconcile_import_closes_the_queue_entry(self) -> None:
+    def test_reconcile_import_closes_the_queue_record(self) -> None:
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         pending = pending_import(infohash="h", series_id=7)
         mgr = make_orchestration_manager(
@@ -3163,7 +3163,7 @@ class TestCloseTrackedDownload:
 
         assert [c.infohash for c in strategy.close_calls] == [pending.infohash]
 
-    def test_monitor_import_closes_the_queue_entry(self) -> None:
+    def test_blocking_wait_import_closes_the_queue_record(self) -> None:
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=True),
         )
@@ -3185,7 +3185,7 @@ class TestCloseTrackedDownload:
         assert view.final("h").outcome is Outcome.IMPORTED
         assert [c.infohash for c in strategy.close_calls] == [pending.infohash]
 
-    def test_record_with_two_claims_closes_once_on_retire(self) -> None:
+    def test_pending_import_with_two_claims_closes_once_on_cleanup(self) -> None:
         # Two titles (multi-cour) go in the one pending import: its confirmed import closes
         # the tracked download once, with no sibling left to wait for.
         pending = _two_claim_pending_import()
@@ -3215,7 +3215,7 @@ class TestCloseTrackedDownload:
         assert strategy.close_calls == []
         assert mgr._pending_imports.rows() == {}  # the import itself still drops
 
-    def test_missing_record_is_not_closed(self) -> None:
+    def test_missing_pending_import_is_not_closed(self) -> None:
         # MISSING also drops, but nothing was imported: the queue record (if
         # any) stays Sonarr's to resolve.
         strategy = _RecordingStrategy()
@@ -3251,7 +3251,7 @@ class TestCloseTrackedDownload:
         assert [c.infohash for c in strategy.close_calls] == [sonarr_pending.infohash]
 
 
-class TestRetireEffectOrder:
+class TestCleanupEffectOrder:
     """clean_up_and_drop: category move first, queue close second, drop last."""
 
     def test_move_runs_before_close(self) -> None:
@@ -3287,7 +3287,7 @@ class TestRetireEffectOrder:
 _ARR_URL = "http://arr.test"
 
 
-class TestRetireCategoryResolve:
+class TestCleanupCategoryResolve:
     """clean_up_and_drop resolves the post-import category at most once, feeding both effects."""
 
     @respx.mock
@@ -3334,7 +3334,7 @@ class TestRetireCategoryResolve:
         assert mgr._pending_imports.rows() == {}
 
 
-class TestCloseSkipWhenMoveUntracks:
+class TestCloseSkipOnMoveToUnwatched:
     """A move to an unwatched category supersedes the explicit queue removal.
 
     The gate reads `is_unwatched`, never this run's move outcome: firing the
@@ -3361,7 +3361,7 @@ class TestCloseSkipWhenMoveUntracks:
             ),
         )
 
-    def test_untracking_move_skips_the_explicit_close(self) -> None:
+    def test_move_to_unwatched_skips_the_explicit_close(self) -> None:
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._manager(grab="tv-sonarr", post_import="sonarr-done", qbit=qbit, strategy=strategy)
@@ -3580,7 +3580,7 @@ class TestCloseRetrySchedule:
         assert clock.sleeps == [1.0]
         assert mgr._pending_imports.rows() == {}
 
-    def test_exhausted_retries_keep_the_record(self) -> None:
+    def test_exhausted_retries_keep_the_pending_import(self) -> None:
         recording = install_recording_hub()
         clock = FakeClock()
         strategy = _RecordingStrategy(
@@ -3597,7 +3597,7 @@ class TestCloseRetrySchedule:
         [warn] = diagnostic_messages(recording, Severity.WARNING)
         assert "(queue removal)" in warn
 
-    def test_failed_close_is_terminal_after_one_call(self) -> None:
+    def test_failed_close_is_final_after_one_call(self) -> None:
         # FAILED (the queue read already retried in the transport) never re-attempts in-run.
         clock = FakeClock()
         strategy = _RecordingStrategy(
@@ -3613,10 +3613,10 @@ class TestCloseRetrySchedule:
         assert raw.get("awaiting_cleanup") is True
 
 
-class TestCleanupHeal:
+class TestCleanupRetry:
     """Pending imports awaiting cleanup: the observe steps skip them, `finish_cleanups` finishes them once per run."""
 
-    def test_keep_then_next_run_heal_success(self) -> None:
+    def test_keep_then_next_run_finishes_the_cleanup(self) -> None:
         # Run 1: the import is confirmed but the close fails -> awaiting cleanup, still
         # counted IMPORTED this run. Run 2: finishing the cleanup closes and drops.
         run1_strategy = _RecordingStrategy(
@@ -3649,7 +3649,7 @@ class TestCleanupHeal:
             "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
         )
 
-    def test_still_failing_heal_keeps_the_record_uncounted(self) -> None:
+    def test_a_cleanup_that_still_fails_keeps_the_pending_import_uncounted(self) -> None:
         recording = install_recording_hub()
         strategy = _RecordingStrategy(close_return=EffectStatus.FAILED)
         mgr = make_orchestration_manager(
@@ -3689,7 +3689,7 @@ class TestCleanupHeal:
         assert "h" not in mgr._state.pending_import_states
         assert mgr._pending_imports.rows()["h"].get("awaiting_cleanup") is True
 
-    def test_finalize_heal_skips_a_record_kept_this_run(self) -> None:
+    def test_the_arr_run_finish_leaves_alone_a_pending_import_kept_this_run(self) -> None:
         # A pending import kept mid-scan is in the cleanup's `_awaiting_cleanup_keys`: `finish_cleanups`
         # must not retry it in the same run.
         strategy = _RecordingStrategy(
@@ -3708,7 +3708,7 @@ class TestCleanupHeal:
 
         assert len(strategy.close_calls) == 1  # no same-run second attempt
 
-    def test_cleanup_records_are_invisible_to_every_observe_pass(self) -> None:
+    def test_pending_imports_awaiting_cleanup_are_invisible_to_every_observe_pass(self) -> None:
         reporter = _RecordingReporter()
         strategy = _RecordingStrategy()
         mgr = make_orchestration_manager(
@@ -3726,7 +3726,7 @@ class TestCleanupHeal:
         assert strategy.import_calls == []
         assert set(mgr._pending_imports.rows()) == {"h"}
 
-    def test_other_arr_cleanup_record_still_defers_the_move(self) -> None:
+    def test_other_arr_pending_import_awaiting_cleanup_still_puts_off_the_move(self) -> None:
         # The other arr's pending import awaiting cleanup still claims the hash: the confirmed cleanup
         # puts off the move, runs the close, and still drops this arr's pending import.
         radarr_awaiting_cleanup = pending_import(infohash="h", al_id=22, series_id=0, awaiting_cleanup=True)
@@ -3748,7 +3748,7 @@ class TestCleanupHeal:
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert mgr._pending_imports.rows() == {}
 
-    def test_heal_with_the_other_arr_on_the_hash_skips_the_move_and_drops(self) -> None:
+    def test_cleanup_with_the_other_arr_on_the_hash_leaves_out_the_move_and_drops(self) -> None:
         # A later Radarr grab claims the hash: that pending import owns the eventual move, so
         # the pending import confirmed again by the cleanup finish just closes and drops.
         radarr_pending = pending_import(infohash="h", al_id=22, series_id=0)
@@ -3771,7 +3771,7 @@ class TestCleanupHeal:
         assert mgr._pending_imports.rows() == {}
         assert set(store.get_pending_import_rows(Arr.RADARR)) == {"h"}
 
-    def test_keep_counts_once_on_entry_and_zero_on_heal(self) -> None:
+    def test_keep_counts_once_when_kept_and_zero_when_the_cleanup_finishes(self) -> None:
         # Entering run: the IMPORTED state feeds the finalize sum, the tally
         # skips the row awaiting cleanup. The run that finishes the cleanup: nothing counts anywhere.
         strategy = _RecordingStrategy(
@@ -3800,7 +3800,7 @@ class TestCleanupHeal:
         assert second_manager._state.stats.imported == 0
 
 
-class TestCleanupHealVerification:
+class TestCleanupRetryVerification:
     """The cleanup finish re-checks through the standard import check before any effect fires."""
 
     @staticmethod
@@ -3819,7 +3819,7 @@ class TestCleanupHealVerification:
             post_import_category=post_import_category,
         )
 
-    def test_verified_files_run_the_effects_at_deadline(self) -> None:
+    def test_done_files_run_the_effects_at_the_final_attempt(self) -> None:
         # Fresh evidence first: ONE attempt through the same check as any pending
         # import, at FINAL, then both effects fire and the pending import drops.
         recording = install_recording_hub()
@@ -3837,7 +3837,7 @@ class TestCleanupHealVerification:
             "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
         )
 
-    def test_unobserved_qbittorrent_holds_the_flag_without_effects(self) -> None:
+    def test_unobserved_qbittorrent_stays_awaiting_cleanup_without_effects(self) -> None:
         strategy = _RecordingStrategy()
         mgr = self._manager_with_awaiting_cleanup(
             strategy,
@@ -3851,7 +3851,7 @@ class TestCleanupHealVerification:
         assert mgr._pending_imports.rows()["h"].get("awaiting_cleanup") is True
         assert "h" not in mgr._state.pending_import_states
 
-    def test_transient_retry_probe_holds_the_flag(self) -> None:
+    def test_transient_retry_attempt_result_stays_awaiting_cleanup(self) -> None:
         # A waiting attempt result with no command is ambiguous (a blip, a busy queue): keep it awaiting cleanup and
         # retry next run.
         strategy = _RecordingStrategy(completed=attempt_result(all_done=False))
@@ -3876,7 +3876,7 @@ class TestCleanupHealVerification:
             ),
         ],
     )
-    def test_heal_pass_absorbs_placements_before_the_effects(
+    def test_cleanup_pass_stores_placements_before_the_effects(
         self, result: AttemptResult, awaiting_cleanup: bool
     ) -> None:
         # The placements are saved first, so the row awaiting cleanup and the demoted
@@ -3894,7 +3894,7 @@ class TestCleanupHealVerification:
         assert row.get("awaiting_cleanup") is awaiting_cleanup
         assert row["file_episode_map"] == _PLACED_ROW
 
-    def test_files_gone_and_reimport_issued_demotes_to_pending(self) -> None:
+    def test_files_gone_and_reimport_issued_demotes_to_a_carryover(self) -> None:
         # The files vanished and a fresh re-import command just went in (the
         # ISSUED reason): the pending import demotes to an ordinary carryover, no effect
         # fires, and this same run's wait pass takes it up.
@@ -3919,7 +3919,7 @@ class TestCleanupHealVerification:
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.IMPORT_IN_PROGRESS, True)]
 
-    def test_preowned_all_done_probe_retires_without_reimporting(self) -> None:
+    def test_preowned_all_done_attempt_result_cleans_up_without_reimporting(self) -> None:
         # The arr's file moved to another trusted group: the shared statuses
         # machinery reports all-done with NO command issued, so the cleanup finish cleans
         # up and never imports the old file over the new one (and never demotes).
@@ -3935,7 +3935,7 @@ class TestCleanupHealVerification:
         assert mgr._pending_imports.rows() == {}
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_own_command_in_flight_holds_without_a_false_demote(self) -> None:
+    def test_auto_import_command_in_flight_holds_without_a_false_demote(self) -> None:
         # An auto import command from an earlier wait pass is still running: files may
         # be fine, so no demote and no "files no longer present" warn.
         recording = install_recording_hub()
@@ -3951,7 +3951,7 @@ class TestCleanupHealVerification:
         assert "h" not in mgr._state.pending_import_states
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_deadline_probe_steps_past_a_clean_pending_entry(self) -> None:
+    def test_final_attempt_steps_past_a_clean_pending_queue_record(self) -> None:
         # A clean importPending holds every ORDINARY attempt (the strategy leaves it to
         # Sonarr), so an ORDINARY cleanup finish would wedge for good. The FINAL
         # attempt makes an auto import, confirms it, and cleans up.
@@ -3998,7 +3998,7 @@ class TestRadarrReconcile:
         assert mgr._pending_imports.rows() == {}
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
-    def test_no_event_keeps_record_and_defers_category(self) -> None:
+    def test_no_event_keeps_pending_import_and_puts_off_the_category_move(self) -> None:
         # Complete download, but Radarr hasn't imported it yet (empty history):
         # the pending import stays and the category is NOT moved.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -4016,7 +4016,7 @@ class TestRadarrReconcile:
         assert set(mgr._pending_imports.rows()) == {"h"}
         assert qbit.set_category_calls == []
 
-    def test_history_outage_keeps_record_and_never_moves(self) -> None:
+    def test_history_unreachable_keeps_pending_import_and_never_moves(self) -> None:
         # history_since -> None (Radarr unreachable): fail-open, never move on no evidence.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr, _ = _radarr_reconcile_manager(
@@ -4031,7 +4031,7 @@ class TestRadarrReconcile:
         assert set(mgr._pending_imports.rows()) == {"h"}
         assert qbit.set_category_calls == []
 
-    def test_flagged_record_heals_off_a_history_event(self) -> None:
+    def test_a_pending_import_awaiting_cleanup_finishes_it_off_a_history_event(self) -> None:
         # The cleanup finish confirms a Radarr pending import the way a carryover checks out:
         # through import history. A matching event cleans it up with its effects.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -4047,7 +4047,7 @@ class TestRadarrReconcile:
         assert mgr._pending_imports.rows() == {}
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
-    def test_flagged_record_holds_on_an_unreadable_history(self) -> None:
+    def test_a_pending_import_awaiting_cleanup_holds_on_an_unreadable_history(self) -> None:
         # No evidence, no effects: Radarr unreachable keeps the flag for a later run.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr, store = _radarr_reconcile_manager(
@@ -4062,7 +4062,7 @@ class TestRadarrReconcile:
         assert store.get_pending_import_rows(Arr.RADARR)["h"].get("awaiting_cleanup") is True
         assert qbit.set_category_calls == []
 
-    def test_tally_counts_a_carried_over_radarr_record(self) -> None:
+    def test_tally_counts_a_carried_over_radarr_pending_import(self) -> None:
         # A complete-but-not-yet-imported Radarr pending import checks out AWAITING_IMPORT
         # and the pre-summary tally counts it into the downloaded counter.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -4082,7 +4082,7 @@ class TestRadarrReconcile:
 class TestCrossArrCategoryGate:
     """A torrent shared by a Sonarr grab and a Radarr grab moves only after BOTH import."""
 
-    def test_sonarr_import_defers_until_radarr_reconciles(self) -> None:
+    def test_sonarr_import_puts_off_the_move_until_radarr_reconciles(self) -> None:
         # One torrent, two pending imports: a Sonarr title's part (imports first) and a Radarr
         # movie. The Sonarr import must NOT move the category while the Radarr
         # pending import still claims the hash; the later Radarr reconcile fires the move.
@@ -4164,10 +4164,10 @@ def make_add_engine(
     return engine, pipeline
 
 
-class TestRegisteredGrabSurvivesSnapshot:
+class TestRegisteredGrabSurvivesTheSeriesReport:
     """A this-run grab registered by the pipeline is owned by the blocking wait pass, not re-polled."""
 
-    def test_registered_already_added_survives_snapshot(self) -> None:
+    def test_registered_already_in_qbit_survives_the_series_report(self) -> None:
         # Integration: an ALREADY_IN_QBIT registered THIS run is a this-run grab, so
         # the per-series report skips it (no re-poll, no drop) and the end-of-run
         # blocking wait pass owns it via the working set.

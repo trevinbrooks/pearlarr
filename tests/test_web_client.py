@@ -186,7 +186,7 @@ def test_head_with_retries_sends_a_head_under_the_same_policy() -> None:
 
 
 @respx.mock
-def test_a_cookie_set_by_a_retryable_response_rides_the_retry() -> None:
+def test_a_cookie_set_by_a_retryable_response_is_sent_on_the_retry() -> None:
     cookies_sent: list[str | None] = []
 
     def _challenge(request: httpx.Request) -> httpx.Response:

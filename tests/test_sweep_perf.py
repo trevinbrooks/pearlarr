@@ -108,7 +108,7 @@ def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
     return _parse_is_fresh(row, window=_window(series_hash))
 
 
-class TestSeriesFingerprint:
+class TestSeriesHash:
     """`sonarr_series_hash` is order- and duplicate-independent and differs across different id sets.
 
     It is stable for the empty set.
@@ -138,17 +138,17 @@ class TestParseIsFresh:
     def test_matched_beyond_ttl_is_stale(self) -> None:
         assert not _fresh(_record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1))
 
-    def test_unmatched_fresh_when_fp_matches_and_within_backstop(self) -> None:
+    def test_unmatched_fresh_when_series_hash_matches_and_within_backstop(self) -> None:
         assert _fresh(_record(_UNMATCHED, days_ago=2, series_hash="fp"), series_hash="fp")
 
-    def test_unmatched_stale_on_fp_mismatch(self) -> None:
+    def test_unmatched_stale_on_series_hash_mismatch(self) -> None:
         assert not _fresh(_record(_UNMATCHED, days_ago=2, series_hash="old"), series_hash="fp")
 
     def test_unmatched_stale_beyond_backstop_ttl(self) -> None:
         aged = _record(_UNMATCHED, days_ago=SONARR_PARSE_UNMATCHED_TTL_DAYS + 1, series_hash="fp")
         assert not _fresh(aged, series_hash="fp")
 
-    def test_unmatched_rides_the_backstop_not_the_matched_ttl(self) -> None:
+    def test_unmatched_uses_the_backstop_not_the_matched_ttl(self) -> None:
         # Inside the 30-day matched TTL, past the 7-day backstop: the pin decides.
         assert not _fresh(_record(_UNMATCHED, days_ago=10, series_hash="fp"), series_hash="fp")
 
@@ -158,7 +158,7 @@ class TestParseIsFresh:
         assert not _fresh({"fetched_at": _stamp(1), "episodes": [{"season": 1, "episode": 1}]})
 
 
-class TestParseRecords:
+class TestParseCacheRows:
     """The parse-cache leaf: fresh-only reads and shape-owning writes."""
 
     @staticmethod
@@ -178,7 +178,7 @@ class TestParseRecords:
 
         assert rows.read("show - 01.mkv", window=_window()) == info
 
-    def test_unmatched_write_is_pinned_to_the_fingerprint(self) -> None:
+    def test_unmatched_write_is_pinned_to_the_series_hash(self) -> None:
         rows, store = self._parse_cache_rows()
 
         rows.write("show - 01.mkv", _UNMATCHED, window=_window("fp"))
@@ -188,7 +188,7 @@ class TestParseRecords:
         assert row["series_fp"] == "fp"
         assert rows.read("show - 01.mkv", window=_window("other")) is None
 
-    def test_matched_write_carries_no_fingerprint(self) -> None:
+    def test_matched_write_carries_no_series_hash(self) -> None:
         rows, store = self._parse_cache_rows()
 
         rows.write("show - 01.mkv", _matched(1, 1), window=_window("fp"))
@@ -389,7 +389,7 @@ class TestPrefetchEpisodes:
         eps.prefetch([_item(1), _item(2), _item(3)])
         assert eps._ep_list_cache == {1: _eps_for(1), 2: _eps_for(2)}
 
-    def test_skips_unmonitored_when_ignored(self) -> None:
+    def test_leaves_out_unmonitored_when_ignored(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
         eps.prefetch([_item(1, monitored=False), _item(2)])
@@ -437,7 +437,7 @@ class TestPrefetchEpisodes:
         assert len(rec.calls) == 2
         assert rec.calls[-1] == (1.0, "2/2")
 
-    def test_a_stop_mid_sweep_drops_the_queued_fetches(self) -> None:
+    def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
         sonarr = _GatedSonarr()
         series = range(1, 21)
         eps = make_sonarr_episodes(
@@ -504,7 +504,7 @@ class _Seadex:
         return self._entry if self._entry is not None else SeaDexNoEntry.NOT_FOUND
 
 
-class TestAlIdNeedsScan:
+class TestTitleNeedsCheck:
     """`ArrRunServices.title_needs_check` mirrors the per-title loop's no-entry + `is_unchanged` gates.
 
     It is side-effect-free, so `prefetch_episodes` warms only the series the loop would actually
@@ -516,27 +516,27 @@ class TestAlIdNeedsScan:
     def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> ArrRunServices:
         return make_services(_seadex=_Seadex(entry), cache_store=cache, **cfg)
 
-    def test_no_seadex_entry_does_not_need_scan(self) -> None:
+    def test_no_seadex_entry_does_not_need_check(self) -> None:
         run = self._run(entry=None, cache=FakeCacheStore())
         assert run.title_needs_check(7) is False
 
-    def test_uncached_entry_needs_scan(self) -> None:
+    def test_uncached_title_needs_check(self) -> None:
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=FakeCacheStore())
         assert run.title_needs_check(7) is True
 
-    def test_cached_and_matching_does_not_need_scan(self) -> None:
+    def test_cached_and_matching_does_not_need_check(self) -> None:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
         assert run.title_needs_check(7) is False
 
-    def test_cached_but_stale_needs_scan(self) -> None:
+    def test_cached_but_changed_needs_check(self) -> None:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
         assert run.title_needs_check(7) is True
 
-    def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
+    def test_ignore_update_times_forces_a_check_when_entry_exists(self) -> None:
         # A matching cached title is normally left unchecked. ignore_seadex_update_times
         # makes the loop re-check it, so the predicate must report needs-check.
         cache = FakeCacheStore()
@@ -548,12 +548,12 @@ class TestAlIdNeedsScan:
         )
         assert run.title_needs_check(7) is True
 
-    def test_ignore_update_times_still_skips_when_no_entry(self) -> None:
+    def test_ignore_update_times_still_needs_no_check_when_no_entry(self) -> None:
         # No SeaDex entry -> begin_check would stop regardless of the flag.
         run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
         assert run.title_needs_check(7) is False
 
-    def test_dirty_id_needs_scan_despite_matching_cache(self) -> None:
+    def test_dirty_id_needs_check_despite_matching_cache(self) -> None:
         # An arr-side file change re-warms the id even when the cache matches.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
@@ -561,7 +561,7 @@ class TestAlIdNeedsScan:
         run.mark_dirty([7])
         assert run.title_needs_check(7) is True
 
-    def test_dirty_id_without_seadex_entry_still_skips(self) -> None:
+    def test_dirty_id_without_seadex_entry_still_needs_no_check(self) -> None:
         # The no-entry short-circuit stays first: dirty or not, no entry -> no check.
         run = self._run(entry=None, cache=FakeCacheStore())
         run.mark_dirty([7])
@@ -573,18 +573,18 @@ class TestAlIdNeedsScan:
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1), "fallback_satisfied": True})
         return cache
 
-    def test_warn_mode_fallback_marker_needs_scan(self) -> None:
+    def test_warn_mode_fallback_marker_needs_check(self) -> None:
         # Prefetch must agree with is_unchanged's warn-mode resurfacing of
         # fallback-satisfied titles, or the re-checked title goes un-warmed.
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="warn")
         assert run.title_needs_check(7) is True
 
-    def test_fallback_mode_fallback_marker_does_not_need_scan(self) -> None:
+    def test_fallback_mode_fallback_marker_does_not_need_check(self) -> None:
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="fallback")
         assert run.title_needs_check(7) is False
 
 
-class TestPrefetchSkipsUnchanged:
+class TestPrefetchLeavesOutUnchanged:
     """`prefetch_episodes` warms only series with at least one title to check.
 
     A series whose every title is unchanged (or has no entry) is no longer
@@ -603,7 +603,7 @@ class TestPrefetchSkipsUnchanged:
         )
         return eps, sonarr
 
-    def test_skips_series_with_no_scannable_id(self) -> None:
+    def test_leaves_out_series_with_no_title_to_check(self) -> None:
         eps, sonarr = self._eps(needs_scan={1})
         assert eps.prefetch([_item(1), _item(2)]) == 1
         assert eps._ep_list_cache == {1: _eps_for(1)}  # series 2 never fetched
@@ -615,7 +615,7 @@ class TestPrefetchSkipsUnchanged:
         assert eps._ep_list_cache == {}
         assert sonarr.calls == []
 
-    def test_warms_series_with_any_scannable_id(self) -> None:
+    def test_warms_series_with_any_title_to_check(self) -> None:
         # A series whose mapping carries a title needing a check alongside an unchanged one is warmed.
         sonarr = _Sonarr()
         services = _Services(mapping={5: _ids(10, 11)}, needs_scan={11})
@@ -680,7 +680,7 @@ class TestParsedFilesUnmatchedCache:
         assert rec["parse"] == parse_to_json(_UNMATCHED)
         assert rec["series_fp"] == "fp"
 
-    def test_genuine_unmatched_is_cached_with_fp(self) -> None:
+    def test_genuine_unmatched_is_cached_with_series_hash(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED)
         parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
         self._assert_pinned(parse, "[X] Show - 01.mkv")
@@ -722,7 +722,7 @@ class TestParsedFilesUnmatchedCache:
         assert rec is not None
         assert rec["parse"] == parse_to_json(_matched(1, 1))
 
-    def test_a_row_without_a_series_title_is_re_parsed_by_the_warm_pass(self) -> None:
+    def test_a_row_without_a_series_title_is_re_parsed_by_the_cache_warm(self) -> None:
         # The cache warm sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
         names = ["[X] Show - 01.mkv", "[X] Show - 02.mkv"]
         parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse={names[0]: _untitled(_matched(1, 1))})
@@ -745,7 +745,7 @@ class TestParsedFilesUnmatchedCache:
         gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_hash="fp")
         assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
 
-    def test_concurrent_pass_caches_each_file(self) -> None:
+    def test_concurrent_warm_caches_each_file(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED, sleep_time=0)
         parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_hash="fp")
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):

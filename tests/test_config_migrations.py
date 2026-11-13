@@ -60,7 +60,7 @@ class TestMigrateMapping:
             assert migrate_mapping(mapping) is None
             assert mapping == {"config_version": version, "seadex": {"private_releases": "allow"}}
 
-    def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
+    def test_v0_converts_removed_schema_and_nothing_else(self) -> None:
         # Only removed keys/values convert. A never-valid value (the typo'd mode)
         # passes through untouched for validation to reject by name. wait_mode
         # is pinned so the v2 default-flip notice stays out of the count. The
@@ -327,7 +327,7 @@ class TestRenderMigratedConfig:
             ), f"template line matches no splice shape: {line!r}"
 
 
-class TestUpgradeConfigFile:
+class TestMigrateConfigFile:
     """Backup first, template rewrite second, and never touch what is current or unreadable."""
 
     def _write(self, tmp_path: Path, text: str) -> str:

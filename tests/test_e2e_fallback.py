@@ -779,7 +779,7 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
 
 
 @pytest.mark.parametrize("scenario", [_HISTORY_CLOSED, _HISTORY_CLOSED_V5], ids=["v4-500", "v5-empty"])
-def test_dead_tracked_download_imports_via_folder_scan(
+def test_history_closed_download_imports_via_folder_fetch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -836,7 +836,7 @@ def test_dead_tracked_download_imports_via_folder_scan(
         assert isinstance(path, str) and path.startswith(f"{_CONTENT_PATH}/")
 
 
-def test_transient_scan_blip_does_not_pin_folder_mode(
+def test_transient_fetch_blip_does_not_pin_folder_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -894,7 +894,7 @@ def test_absolute_batch_imports_the_grabs_map_and_the_excluded_sibling_stays_qui
     }
 
 
-def test_never_scanned_record_lands_from_history_on_the_first_check(
+def test_never_fetched_pending_import_lands_from_history_on_the_first_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -921,7 +921,7 @@ def test_never_scanned_record_lands_from_history_on_the_first_check(
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
 
 
-def test_numberless_files_graduate_unmatched_on_the_first_poll(
+def test_files_with_no_numbers_finish_unmatched_on_the_first_poll(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -948,7 +948,7 @@ def test_numberless_files_graduate_unmatched_on_the_first_poll(
     assert "not ready" not in out
 
 
-def test_numberless_files_imported_by_hand_verify_on_the_first_poll(
+def test_files_with_no_numbers_imported_by_hand_verify_on_the_first_poll(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -975,7 +975,7 @@ def test_numberless_files_imported_by_hand_verify_on_the_first_poll(
     assert "could not be matched" not in out
 
 
-def test_unscannable_download_defers_with_folder_warn(
+def test_unscannable_download_is_left_with_folder_warn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

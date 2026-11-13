@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# TestSelectionDigest reaches the private `_canonical_for_hash` (its set-order
+# TestSelectionHash reaches the private `_canonical_for_hash` (its set-order
 # guarantee is unobservable through the opaque hex hash). Strict re-flags that
 # and the repo disables reportPrivateUsage for tests.
 """Characterization tests for the Pydantic `AppConfig` model tree.
@@ -105,7 +105,7 @@ class TestFileLifecycle:
         assert cfg.imports.wait_mode is ImportWaitMode.HYBRID
         assert cfg.advanced.log_level == "INFO"
 
-    def test_checksum_matches_file_bytes(self, tmp_path: Path) -> None:
+    def test_config_hash_matches_file_bytes(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_bytes(b"seadex:\n  private_releases: warn\n")
         cfg = AppConfig.load(str(cfg_path))
@@ -167,7 +167,7 @@ class TestSchemaMigration:
         with pytest.raises(ValidationError, match="mode"):
             self._load(tmp_path, "imports:\n  mode: hardlink\n")
 
-    def test_removed_allow_value_folds_to_warn(self, tmp_path: Path) -> None:
+    def test_removed_allow_value_converts_to_warn(self, tmp_path: Path) -> None:
         cfg = self._load(tmp_path, "seadex:\n  private_releases: allow\n")
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
         outcome = cfg.migration()
@@ -287,7 +287,7 @@ class TestDefaults:
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"progress_poll_interval": -1})
 
-    def test_digest_interval_bounds(self) -> None:
+    def test_progress_line_interval_bounds(self) -> None:
         assert ImportsSettings.model_validate({"digest_interval": 1}).digest_interval == 1
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"digest_interval": 0})
@@ -650,7 +650,7 @@ class TestSecrets:
         assert cfg.missing_arr_keys(Arr.SONARR) == ("sonarr.api_key",)
 
 
-class TestSelectionDigest:
+class TestSelectionHash:
     """The selection hash moves with matching preferences only, and stably."""
 
     def test_stable_across_builds(self) -> None:

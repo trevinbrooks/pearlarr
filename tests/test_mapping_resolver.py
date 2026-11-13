@@ -433,7 +433,7 @@ class TestSpecialAliases:
 
         assert _aliases_of(graph, 500, 1) == {8: 7}
 
-    def test_an_alias_onto_a_special_another_entry_maps_is_dropped(self) -> None:
+    def test_an_alias_onto_a_special_another_title_maps_is_dropped(self) -> None:
         # Title 2 maps TVDB special 5 in its own season 0, so title 1's alias onto 5 is dropped. Its alias onto 4 stays.
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "4-5"}, "tmdb_show:900:s0": {"1-2": "4-5"}},
@@ -442,7 +442,7 @@ class TestSpecialAliases:
 
         assert _aliases_of(graph, 500, 1) == {4: 4}
 
-    def test_another_entry_mapping_the_whole_specials_season_drops_every_alias(self) -> None:
+    def test_another_title_mapping_the_whole_specials_season_drops_every_alias(self) -> None:
         # An empty dict covers the whole season, so title 2 maps every special and title 1 keeps no alias.
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "4-5"}, "tmdb_show:900:s0": {"1-2": "4-5"}},
@@ -588,7 +588,7 @@ class TestAnimeIdsParity:
         finally:
             resolver.close()
 
-    def test_candidate_sets_include_records_without_anilist(self) -> None:
+    def test_candidate_sets_include_objects_without_anilist(self) -> None:
         # The former full-dict walk added external ids even from anilist-less objects
         # (object E). The SQL distinct must keep that, even though lookups skip them.
         resolver = MappingResolver(
@@ -652,7 +652,7 @@ class _IgnoredIdLog:
         self.ids.append(al_id)
 
 
-class TestRunServicesIgnoredIds:
+class TestArrRunServicesIgnoredIds:
     """The run's two reads of one series' mappings: the titles it checks, and every title its listings fetch reads."""
 
     @staticmethod
@@ -674,13 +674,13 @@ class TestRunServicesIgnoredIds:
         finally:
             resolver.close()
 
-    def test_the_processed_entries_leave_out_the_ignored_one_and_log_it(self) -> None:
+    def test_the_checked_titles_leave_out_the_ignored_one_and_log_it(self) -> None:
         log = _IgnoredIdLog()
         with self._services(log) as services:
             assert list(services.title_mappings(ExternalIds(tvdb=74796))) == [269]
         assert log.ids == [270]
 
-    def test_the_listing_read_gets_the_ignored_entry_set_apart_and_logs_nothing(self) -> None:
+    def test_the_listing_read_gets_the_ignored_title_set_apart_and_logs_nothing(self) -> None:
         log = _IgnoredIdLog()
         with self._services(log) as services:
             resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
@@ -688,7 +688,7 @@ class TestRunServicesIgnoredIds:
         assert log.ids == []
 
 
-class TestVu1DegradedAniBridge:
+class TestVu1AniBridgeWithoutTvdbMappings:
     """VU1: an AniBridge id reachable via imdb but not tvdb has no TVDB mappings (no tvdb season ranges).
 
     In the Sonarr/tvdb context it must defer to Kometa (which has the precise season) and, with no Kometa
@@ -696,7 +696,7 @@ class TestVu1DegradedAniBridge:
     untouched.
     """
 
-    def test_sonarr_context_kometa_overrides_degraded(self) -> None:
+    def test_sonarr_context_kometa_overrides_a_mapping_without_tvdb_mappings(self) -> None:
         # AniBridge resolves AniList 400 ONLY via imdb (imdb_show:tt400, no tvdb_show)
         # -> an AniBridge mapping without TVDB mappings. Kometa carries the precise season for the same id on
         # the series' tvdb. In the Sonarr context (tvdb_id passed) Kometa must win.
@@ -764,7 +764,7 @@ class TestVu1DegradedAniBridge:
         finally:
             resolver.close()
 
-    def test_imdb_only_degraded_entry_makes_sonarr_skip(self) -> None:
+    def test_imdb_only_mapping_without_tvdb_mappings_makes_sonarr_skip(self) -> None:
         # End-to-end: the resolver emits an AniBridge mapping without TVDB mappings (no Kometa fallback), and
         # feeding THAT real mapping to mapping_episodes returns [] - the series is skipped,
         # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
@@ -978,7 +978,7 @@ class TestAnidbSkipTallies:
 # --------------------------------------------------------------------------- #
 
 
-class TestDigestGate:
+class TestSourceHashGate:
     """The hash gate skips re-parsing an unchanged source file and re-parses only when its content changes."""
 
     def test_unchanged_file_is_not_reparsed_changed_file_is(

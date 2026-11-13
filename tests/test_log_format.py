@@ -107,7 +107,7 @@ class TestHandlerGraph:
         build("rich")
         assert sorted(tmp_path.rglob("*")) == before
 
-    def test_no_rich_console_under_plain_so_live_views_degrade(self, build: _Builder) -> None:
+    def test_no_rich_console_under_plain_so_live_regions_degrade(self, build: _Builder) -> None:
         logger = build("plain")
         assert console_of(logger) is None
 
@@ -169,7 +169,7 @@ def _rich_setup(name: str, stream: io.StringIO | None = None) -> tuple[logging.L
     return logger, stream
 
 
-class TestRichHandlerSeam:
+class TestRichHandlerInterface:
     """The stand-down check: while a bridge is installed, the hub owns the raw-record stream outright.
 
     WARNING+ render in-context on an active console renderer (stderr fallback otherwise), DEBUG chatter at the

@@ -151,7 +151,7 @@ class TestParsedFileInfoFromRealBodies:
         assert info.matched_episodes == ()
 
 
-class TestResolvedIds:
+class TestWindowEpisodeIds:
     """`window_episode_ids`: the claim's window when the pending import carries one, else the file map's ids sorted."""
 
     def test_the_claims_window_wins(self) -> None:
@@ -159,7 +159,7 @@ class TestResolvedIds:
 
         assert pending.window_episode_ids() == [3, 1, 2]
 
-    def test_an_unscoped_claim_falls_back_to_its_seeds_sorted(self) -> None:
+    def test_a_claim_with_no_window_falls_back_to_its_file_map_episodes_sorted(self) -> None:
         pending = pending_import(
             file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
             ordered_episode_ids=[],
@@ -167,7 +167,7 @@ class TestResolvedIds:
 
         assert pending.window_episode_ids() == [5, 7]
 
-    def test_a_record_with_no_targets_reads_empty(self) -> None:
+    def test_a_pending_import_with_no_file_map_episodes_reads_empty(self) -> None:
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[])
 
         assert pending.window_episode_ids() == []
@@ -183,7 +183,7 @@ class TestClassifyRealQueue:
             records.setdefault(record.download_id or "", []).append(record)
         return records
 
-    def test_import_blocked_steps_in(self) -> None:
+    def test_import_blocked_gets_an_auto_import(self) -> None:
         records = self._records_by_download()
         unmatched = records["1111111111111111111111111111111111111111"]
         assert classify_queue(unmatched) is QueueState.STUCK
@@ -208,7 +208,7 @@ class TestPendingImportOrderedIds:
         assert again.claims[0].ordered_episode_ids == (8030, 8031, 8032)
         assert again == rec
 
-    def test_claim_without_ordered_ids_rehydrates_unscoped(self) -> None:
+    def test_claim_without_ordered_ids_loads_with_no_window(self) -> None:
         raw = pending_import().to_json()
         del raw["claims"][0]["ordered_episode_ids"]
 
@@ -284,7 +284,7 @@ class TestManualImportInFlightFixture:
             DownloadIdentifiers("no-such-hash", ContentPaths(raw="/nowhere", sonarr_visible="/nowhere"), {5645}),
         )
 
-    def test_disk_guard_defers_on_a_queued_disk_command(self) -> None:
+    def test_disk_guard_blocks_on_a_queued_disk_command(self) -> None:
         commands = _commands()
         queued_remainder = [c for c in commands if c.status != "started"]
         assert {c.id for c in in_flight_disk_commands(queued_remainder)} == {3732166, 3732185, 3732187}
@@ -376,7 +376,7 @@ class TestCapturedSpecialsEndToEnd:
         assert len(specials.sonarr.execute_calls) == 1
         assert specials.sonarr.execute_calls[0][1] == mode
 
-    def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
+    def test_import_completed_attempt_result_carries_complete_file_map_counts(self) -> None:
         # A complete file map gives the attempt result determinate counts over the file map episodes, none done yet.
         specials = _specials()
         ep_map = specials.grab_file_map
@@ -391,7 +391,7 @@ class TestCapturedSpecialsEndToEnd:
         assert result.file_map_episode_count == len(specials.files)
         assert result.imported_count == 0
 
-    def test_import_progress_is_read_only_and_counts_seed_targets(self) -> None:
+    def test_import_progress_is_read_only_and_counts_file_map_episodes(self) -> None:
         # The progress poll: a determinate count over the file map episodes, reading ONLY the episode files,
         # never the refresh, queue, or execute pipeline.
         specials = _specials()
@@ -412,7 +412,7 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.refresh_calls == 0
         assert specials.sonarr.queue_calls == 0
 
-    def test_import_progress_indeterminate_when_seed_map_incomplete(self) -> None:
+    def test_import_progress_indeterminate_when_file_map_incomplete(self) -> None:
         # No file map gives an indeterminate zero without a fetch: promotion is left to the poll.
         specials = _specials()
         pending = specials.pending(
@@ -427,7 +427,7 @@ class TestCapturedSpecialsEndToEnd:
         assert specials.sonarr.episodes_calls == []
         assert specials.sonarr.execute_calls == []
 
-    def test_import_progress_indeterminate_for_a_listless_record(self) -> None:
+    def test_import_progress_indeterminate_for_a_listless_pending_import(self) -> None:
         # A window with no SeaDex file list (a migrated legacy row merges its flat ids into the window)
         # has nothing to measure completeness against, so the row stays indeterminate.
         specials = _specials()
@@ -443,7 +443,7 @@ class TestCapturedSpecialsEndToEnd:
         assert progress == ImportProgress(0, 0, determinate=False)
         assert specials.sonarr.execute_calls == []
 
-    def test_excluded_files_make_the_heavy_counts_determinate_but_never_promote(self) -> None:
+    def test_excluded_files_make_the_poll_counts_determinate_but_never_promote(self) -> None:
         # File map and exclusions account for every file of a torrent carrying another title's files, so the
         # attempt counts THIS claim's files. The progress poll can promote, so a grab-time exclusion keeps it
         # indeterminate.

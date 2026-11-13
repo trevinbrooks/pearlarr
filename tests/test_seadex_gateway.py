@@ -115,7 +115,7 @@ class TestSeaDexPrefetch:
         gateway.prefetch([1, 2, 3])
         assert fake.filter_calls == ["alID=1 || alID=2 || alID=3"]
 
-    def test_prefetched_absent_id_is_no_entry_without_fallback(self) -> None:
+    def test_prefetched_absent_id_is_no_entry_without_a_per_id_call(self) -> None:
         fake = FakeSeaDex({1: _rec(1)})
         gateway = _gateway(fake)
         gateway.prefetch([1, 2])  # 2 has no SeaDex entry
@@ -132,13 +132,13 @@ class TestSeaDexPrefetch:
         assert gateway.entry(2) is SeaDexNoEntry.NOT_FOUND
         assert fake.from_id_calls == []  # never called per-id
 
-    def test_unprefetched_id_falls_back_to_from_id(self) -> None:
+    def test_unprefetched_id_is_looked_up_by_from_id(self) -> None:
         fake = FakeSeaDex({9: _rec(9)})
         gateway = _gateway(fake)
         assert gateway.entry(9) is fake.entries[9]
         assert fake.from_id_calls == [9]
 
-    def test_unprefetched_missing_id_is_no_entry(self) -> None:
+    def test_unprefetched_absent_id_is_no_entry(self) -> None:
         fake = FakeSeaDex({})
         gateway = _gateway(fake)
         assert gateway.entry(123) is SeaDexNoEntry.NOT_FOUND  # from_id raises EntryNotFound
@@ -160,7 +160,7 @@ class TestSeaDexPrefetch:
         assert gateway.entry(ids[-1]) is fake.entries[ids[-1]]
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_batch_outage_warns_once_and_short_circuits(self) -> None:
+    def test_batch_unreachable_warns_once_and_short_circuits(self) -> None:
         # A chunk failing TWICE (retry exhausted) marks SeaDex unreachable: it warns
         # once, later batches never hit the network, and every entry() degrades
         # straight to an UNREACHABLE `SeaDexNoEntry` with zero from_id calls.
@@ -191,7 +191,7 @@ class TestSeaDexPrefetch:
             (_status_error(503), "HTTP 503"),
         ],
     )
-    def test_outage_warning_names_the_failure(self, error: httpx.HTTPError, cause: str) -> None:
+    def test_unreachable_warning_names_the_failure(self, error: httpx.HTTPError, cause: str) -> None:
         fake = FakeSeaDex({1: _rec(1)}, filter_error=error)
         recording = install_recording_hub()
 
@@ -200,7 +200,7 @@ class TestSeaDexPrefetch:
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert f"SeaDex request failed ({cause})" in warning
 
-    def test_outage_prefetch_still_drives_progress_to_completion(self) -> None:
+    def test_unreachable_prefetch_still_drives_progress_to_completion(self) -> None:
         # The boot step sink must not hang when SeaDex turns unreachable mid-prefetch: every chunk
         # still reports, ending at 1.0.
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
@@ -220,7 +220,7 @@ class TestSeaDexPrefetch:
         gateway.prefetch([1])
         assert gateway.prefetch([1]) == 1
 
-    def test_single_lookup_timeout_degrades_to_outage_and_warns_once(self) -> None:
+    def test_single_lookup_timeout_marks_seadex_unreachable_and_warns_once(self) -> None:
         # The module contract: an unreachable SeaDex degrades to an UNREACHABLE `SeaDexNoEntry`. A
         # ReadTimeout on the per-id call (httpx.HTTPError, not just
         # ConnectError) must not unwind the run - and a SECOND lookup
@@ -249,7 +249,7 @@ class TestSeaDexPrefetch:
         assert fake.from_id_calls == [1, 1]  # the blip + its retry
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
-    def test_single_lookup_double_blip_declares_outage(self) -> None:
+    def test_single_lookup_double_blip_marks_seadex_unreachable(self) -> None:
         # The retry absorbs exactly one blip: a lookup failing twice flips the
         # run-wide unreachable flag with the single batch-path-style warning.
         fake = FakeSeaDex({1: _rec(1)}, from_id_blips=2)
@@ -270,12 +270,12 @@ class TestSeaDexPrefetch:
         gateway.prefetch(ids)
         assert len(fake.filter_calls) == 3
 
-    def test_prefetch_returns_missing_count(self) -> None:
+    def test_prefetch_returns_the_count_to_fetch(self) -> None:
         fake = FakeSeaDex({1: _rec(1), 2: _rec(2)})
         gateway = _gateway(fake)
         assert gateway.prefetch([1, 2]) == 2
 
-    def test_warm_prefetch_returns_zero_and_skips_sink(self) -> None:
+    def test_warm_prefetch_returns_zero_and_skips_progress(self) -> None:
         fake = FakeSeaDex({1: _rec(1)})
         gateway = _gateway(fake)
         gateway.prefetch([1])  # warm the per-run cache first

@@ -84,7 +84,7 @@ def _data_dir_text() -> str:
     return "\n".join(log.read_text(encoding="utf-8") for log in logs)
 
 
-class TestCliSurfaces:
+class TestCliOutputs:
     """`config show`, `config validate`, and a failed run's console + file log all redact every canary secret."""
 
     def test_config_show_is_canary_free(self) -> None:
@@ -138,7 +138,7 @@ class TestCliSurfaces:
         _assert_clean(result.output)
 
 
-class TestEnvOverrideSurfaces:
+class TestEnvOverrideOutputs:
     """A canary secret supplied via a `PEARLARR_*__*` environment override never leaks into config output."""
 
     ENV_KEY = "CANARY-env-key-6b2d19"

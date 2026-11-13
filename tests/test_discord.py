@@ -103,7 +103,7 @@ def test_to_payload_carries_optional_keys_and_stamp() -> None:
     assert _obj_at(payload, "footer")["text"].startswith("Pearlarr v")
 
 
-def test_to_payload_clamps_item_limits() -> None:
+def test_to_payload_clamps_text_limits() -> None:
     embed = DiscordEmbed(
         author_name="a" * 300,
         title="t" * 300,

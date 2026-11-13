@@ -27,7 +27,7 @@ class TestEpisodeFileStatuses:
     `import_ids` takes an episode that has a copy of this torrent's along with a needing one.
     """
 
-    def test_absent_recommended_other_unknown(self) -> None:
+    def test_absent_trusted_other_unknown(self) -> None:
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=0),
             sonarr_ep(1, 2, ep_id=2, episode_file_id=20, release_group="SubGroup"),
@@ -48,7 +48,7 @@ class TestEpisodeFileStatuses:
         statuses = episode_snapshot(episodes=episode_index([]), trusted={"subgroup": None}).statuses([99], {})
         assert statuses.by_id == {99: EpisodeFileStatus.ABSENT}
 
-    def test_dash_wrapped_group_counts_as_recommended(self) -> None:
+    def test_dash_wrapped_group_counts_as_trusted(self) -> None:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
         # guard must still match it against the trusted groups built from "Aergia".
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="-Aergia-")]
@@ -57,7 +57,7 @@ class TestEpisodeFileStatuses:
         statuses = episode_snapshot(episodes=episode_index(episodes), trusted={aergia: None}).statuses([5], {})
         assert statuses.by_id == {5: EpisodeFileStatus.TRUSTED}
 
-    def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
+    def test_no_group_file_the_grab_size_matched_is_trusted(self) -> None:
         # The planner declined to re-download this file because a preferred release's listed
         # size named it. The import must agree, or it copies over the very file
         # the grab decision called owned - a no-group twin stays unidentifiable.
@@ -73,7 +73,7 @@ class TestEpisodeFileStatuses:
             7: EpisodeFileStatus.UNKNOWN_GROUP,
         }
 
-    def test_owned_claim_lapses_when_the_file_changed_size(self) -> None:
+    def test_size_match_lapses_when_the_file_changed_size(self) -> None:
         # The identification froze at grab time; a DIFFERENT no-group file
         # arriving mid-wait must not inherit the claim - honoring the id alone
         # would mark an unchecked file done and never send this torrent's.
@@ -83,7 +83,7 @@ class TestEpisodeFileStatuses:
         )
         assert snapshot.statuses([6], {}).by_id == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
-    def test_owned_claim_needs_a_readable_file_record(self) -> None:
+    def test_size_match_needs_a_readable_file_record(self) -> None:
         # A truthy episodeFileId with a null/empty episodeFile payload carries
         # no size to check against, so the claim is rejected - not promoted
         # sight-unseen onto a file record Sonarr couldn't even describe.
@@ -93,14 +93,14 @@ class TestEpisodeFileStatuses:
         )
         assert snapshot.statuses([6], {}).by_id == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
-    def test_own_group_file_at_a_listed_size_is_recommended(self) -> None:
+    def test_this_torrents_group_file_at_a_listed_size_is_trusted(self) -> None:
         # This torrent's group's file at a size a listing carries now is this torrent's copy
         # (just imported, or an already-owned episode of the release).
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=1000)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": frozenset({1000})})
         assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.TRUSTED}
 
-    def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
+    def test_this_torrents_group_file_at_an_unlisted_size_is_replaced(self) -> None:
         # A same-group file at a size NO listing carries now is the outdated
         # copy this grab replaces. Reading it as done would close the pending import
         # with zero imports and strand the upgrade forever.
@@ -128,35 +128,35 @@ class TestEpisodeFileStatuses:
             owned_episode_sizes={5: 2000},
         )
 
-    def test_own_file_not_the_intended_one_is_misplaced(self) -> None:
+    def test_this_torrents_file_not_the_intended_one_is_misplaced(self) -> None:
         # Another listed file of this torrent's release sits where file 1000 belongs: the episode still lacks its own.
         assert self._holding(2000).status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
-    def test_own_file_that_is_the_intended_one_is_recommended(self) -> None:
+    def test_this_torrents_file_that_is_the_intended_one_is_trusted(self) -> None:
         assert self._holding(2000).status_of(5, 2000).status is EpisodeFileStatus.TRUSTED
 
-    def test_own_file_with_no_intended_size_is_recommended(self) -> None:
+    def test_this_torrents_file_with_no_intended_size_is_trusted(self) -> None:
         assert self._holding(2000).status_of(5, None).status is EpisodeFileStatus.TRUSTED
 
-    def test_statuses_read_each_targets_intended_size(self) -> None:
+    def test_statuses_read_each_file_map_episodes_intended_size(self) -> None:
         assert self._holding(2000).statuses([5], {5: 1000}).by_id == {5: EpisodeFileStatus.MISPLACED}
 
-    def test_own_file_at_an_unlisted_size_is_other_group(self) -> None:
+    def test_this_torrents_group_file_at_an_unlisted_size_is_other_group(self) -> None:
         # The outdated-size check runs first: a size no listing carries is the copy this grab replaces.
         assert self._holding(4000).status_of(5, 1000).status is EpisodeFileStatus.OTHER_GROUP
 
-    def test_own_file_at_a_size_only_a_sibling_lists_is_recommended(self) -> None:
+    def test_this_torrents_group_file_at_a_size_only_a_sibling_lists_is_trusted(self) -> None:
         # 3000 is trusted through a sibling's listing: not one of this torrent's files, so not a misplaced one.
         assert self._holding(3000).status_of(5, 1000).status is EpisodeFileStatus.TRUSTED
 
-    def test_a_trusted_groups_file_at_one_of_our_sizes_not_intended_here_is_misplaced(self) -> None:
+    def test_a_trusted_groups_file_at_one_of_this_torrents_sizes_not_intended_here_is_misplaced(self) -> None:
         # A same-files sibling lists byte-identical files, so its misfile is pearlarr's to repair too.
         assert self._holding(2000, "Other").status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
-    def test_untagged_file_at_the_recorded_size_not_the_intended_one_is_misplaced(self) -> None:
+    def test_no_group_file_at_the_recorded_size_not_the_intended_one_is_misplaced(self) -> None:
         assert self._holding(2000, None).status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
-    def test_untagged_file_at_the_recorded_size_that_is_the_intended_one_is_recommended(self) -> None:
+    def test_no_group_file_at_the_recorded_size_that_is_the_intended_one_is_trusted(self) -> None:
         assert self._holding(2000, None).status_of(5, 2000).status is EpisodeFileStatus.TRUSTED
 
     @pytest.mark.parametrize(
@@ -169,7 +169,7 @@ class TestEpisodeFileStatuses:
             pytest.param(1000, "SubGroup", None, False, id="tagged"),
         ],
     )
-    def test_an_untagged_copy_is_a_groupless_file_at_a_listed_size_intended_here(
+    def test_has_torrent_size_no_group_is_a_groupless_file_at_a_listed_size_intended_here(
         self, size: int, group: str | None, intended: int | None, copy: bool
     ) -> None:
         judgment = self._holding(size, group).status_of(5, intended)
@@ -186,24 +186,24 @@ class TestEpisodeFileStatuses:
             episode_index([]), OwnedAtGrab(), GrabbedGroups(TorrentGroup("-SubGroup-", (1000,)))
         )
 
-    def test_guarded_carries_the_own_release(self) -> None:
+    def test_guarded_carries_the_torrent_group(self) -> None:
         assert self._guarded().torrent_group == TorrentGroup("-SubGroup-", (1000,))
 
     def test_a_misplaced_file_is_not_done(self) -> None:
         assert episode_statuses({1: EpisodeFileStatus.MISPLACED}).all_trusted() is False
 
-    def test_all_done_only_when_all_recommended(self) -> None:
+    def test_all_trusted_only_when_every_status_is_trusted(self) -> None:
         rec = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED})
         mixed = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.OTHER_GROUP})
         assert rec.all_trusted() is True
         assert mixed.all_trusted() is False
         assert episode_statuses({}).all_trusted() is False
 
-    def test_filled_by_hand_needs_a_target(self) -> None:
+    def test_all_done_needs_a_file_map_episode(self) -> None:
         assert episode_statuses({1: EpisodeFileStatus.TRUSTED}).all_done() is True
         assert episode_statuses({}).all_done() is False
 
-    def test_unfilled_splits_the_targets_left_by_whether_they_hold_a_file(self) -> None:
+    def test_still_needed_splits_the_file_map_episodes_left_by_whether_they_hold_a_file(self) -> None:
         statuses = EpisodeStatuses(
             {
                 401: EpisodeFileStatus.ABSENT,
@@ -218,7 +218,7 @@ class TestEpisodeFileStatuses:
 
         assert statuses.still_needed() == StillNeeded(missing=(401,), untrusted=(403, 404))
 
-    def test_needing_import_excludes_only_recommended(self) -> None:
+    def test_needing_import_excludes_only_trusted(self) -> None:
         statuses = episode_statuses(
             {
                 1: EpisodeFileStatus.ABSENT,
@@ -230,7 +230,7 @@ class TestEpisodeFileStatuses:
         )
         assert statuses.needing_import() == {1, 3, 4, 5}
 
-    def test_import_ids_takes_our_copy_along_with_a_needing_id_in_order(self) -> None:
+    def test_import_ids_takes_this_torrents_copy_along_with_a_needing_id_in_order(self) -> None:
         statuses = episode_statuses(
             {1: EpisodeFileStatus.ABSENT, 2: EpisodeFileStatus.TRUSTED, 3: EpisodeFileStatus.TRUSTED},
             frozenset({2}),
@@ -241,7 +241,7 @@ class TestEpisodeFileStatuses:
         statuses = episode_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED}, frozenset({1, 2}))
         assert statuses.import_ids([1, 2]) == ()
 
-    def test_holding_own_copy_is_the_targets_with_a_file_at_one_of_our_sizes(self) -> None:
+    def test_at_torrent_size_is_the_file_map_episodes_with_a_file_at_one_of_this_torrents_sizes(self) -> None:
         # Episodes 1 and 3 are both done, but only episode 1's file is at one of this torrent's listed sizes.
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=300),
@@ -276,7 +276,7 @@ def _series(
     return episode_snapshot(episodes=episode_index(episodes), trusted=trusted or {})
 
 
-class TestRecordSnapshot:
+class TestImportSnapshot:
     """`ImportSnapshot`: one series snapshot per claim series, the window indexes derived, each episode routed."""
 
     @staticmethod
@@ -293,7 +293,7 @@ class TestRecordSnapshot:
         )
         return ImportSnapshot(pending, {7: first, 8: second}, by_claim or {})
 
-    def test_statuses_judge_each_target_against_its_intended_size(self) -> None:
+    def test_statuses_classify_each_file_map_episode_against_its_intended_size(self) -> None:
         # Both episodes have this torrent's file at 200, which is intended on episode 2 only.
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=200),
@@ -314,7 +314,7 @@ class TestRecordSnapshot:
             2: EpisodeFileStatus.TRUSTED,
         }
 
-    def test_statuses_note_the_targets_holding_a_copy_of_our_own(self) -> None:
+    def test_statuses_note_the_file_map_episodes_holding_a_copy_of_this_torrents(self) -> None:
         # Episode 1 has a file at one of this torrent's listed sizes, episode 2 one at another, and no snapshot
         # classifies 3.
         episodes = [
@@ -326,7 +326,7 @@ class TestRecordSnapshot:
 
         assert snapshot.file_map_statuses([1, 2, 3], {}).at_torrent_size == {1}
 
-    def test_statuses_route_each_target_to_its_series(self) -> None:
+    def test_statuses_route_each_file_map_episode_to_its_series(self) -> None:
         # Each id classifies under the series whose index holds it (the same group is trusted on one
         # and not the other), input order is kept, and an id no index holds is absent.
         statuses = self._snapshot().file_map_statuses([2, 3, 1, 2], {})
@@ -337,7 +337,7 @@ class TestRecordSnapshot:
             (1, EpisodeFileStatus.TRUSTED),
         ]
 
-    def test_a_claimed_id_is_judged_under_its_holding_claims_snapshot(self) -> None:
+    def test_a_claimed_id_is_classified_under_its_holding_claims_snapshot(self) -> None:
         # Claim 1's window names id 1, so its own snapshot (the same index, the group untrusted) classifies
         # it ahead of the series' merged one. Id 2 routes to claim 2, the only one with no window, whose own snapshot
         # is absent here, so it reads the series'.
@@ -356,7 +356,7 @@ class TestRecordSnapshot:
         # Without a per-claim snapshot the holding claim's id falls back to the series' view.
         assert self._snapshot().file_map_statuses([1], {}).by_id == {1: EpisodeFileStatus.TRUSTED}
 
-    def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
+    def test_route_names_the_first_claim_with_a_window_holding_the_id(self) -> None:
         # Two windows hold id 2: the earlier claim classifies it, as the placer's first window decides, so the
         # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
         first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
@@ -368,7 +368,7 @@ class TestRecordSnapshot:
         assert snapshot.route(9) == Route(None, None)
         assert (snapshot.preowned(2), snapshot.preowned(3)) == (False, True)
 
-    def test_route_judges_a_series_under_its_lone_unscoped_claim(self) -> None:
+    def test_route_classifies_a_series_under_its_sole_claim_with_no_window(self) -> None:
         # One claim with no window on series 7 classifies every id its index holds. Two claims with no window on
         # series 8 merge: their ids route to the series alone, and preowned reads off either of them.
         only_claim = title_claim(al_id=1)

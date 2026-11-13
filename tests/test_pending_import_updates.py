@@ -110,14 +110,14 @@ def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> Truste
     return trusted_groups(own.claims[0].guards, GrabbedGroups(own.torrent_group, [s.torrent_group for s in siblings]))
 
 
-class TestBuildPendingSeeds:
+class TestBuildPendingImportUpdates:
     """`build_pending_import_updates` builds a `PendingImportUpdate` per download+hash video release.
 
     Filenames are placed onto episode ids through the parse cache and the
     whole-series index. Releases with no video files are skipped.
     """
 
-    def test_seeds_only_download_with_hash(self) -> None:
+    def test_builds_updates_only_for_grabs_with_a_hash(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
@@ -155,7 +155,7 @@ class TestBuildPendingSeeds:
         assert claim.claimed_coverage == "S01 E01"
         assert claim.ordered_episode_ids == (101,)
 
-    def test_stale_parse_record_is_a_miss(self) -> None:
+    def test_stale_parse_row_is_an_unread_parse(self) -> None:
         # The placement reads the sweep's rows under the sweep's freshness rule: a
         # row the sweep rejected and could not refresh must not place a file here.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
@@ -181,7 +181,7 @@ class TestBuildPendingSeeds:
 
         assert dict(updates["h1"].file_map) == {}
 
-    def test_seed_copies_the_plan_guard_groups(self) -> None:
+    def test_update_copies_the_plan_guard_groups(self) -> None:
         # entry_groups/stale_groups are the PLAN's findings, copied through
         # verbatim (see the planner's group-verdict tests for the derivation)
         # so the import guard reads exactly what the grab decision found.
@@ -203,7 +203,7 @@ class TestBuildPendingSeeds:
         assert claim.guards.entry_groups == ("RG", "Kept")
         assert claim.guards.stale_groups == ("Stale",)
 
-    def test_seed_records_the_listing_sizes(self) -> None:
+    def test_update_records_the_listing_sizes(self) -> None:
         # The grabbed release's file sizes go with the pending import so the import can tell
         # this release's files from an outdated same-group copy.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
@@ -224,7 +224,7 @@ class TestBuildPendingSeeds:
         assert updates["h1"].facts.sizes_by_name == {"show - 01.mkv": 1000}
         assert _record(updates["h1"]).sizes_by_name == {"show - 01.mkv": 1000}
 
-    def test_seed_marks_targets_already_holding_a_pick(self) -> None:
+    def test_update_marks_file_map_episodes_already_holding_a_preferred_release(self) -> None:
         # An episode already with another preferred release's file at grab time was never
         # this torrent's to import: it goes in preowned_episode_ids so the
         # wait's done counts start at zero, not at the pre-existing files.
@@ -259,7 +259,7 @@ class TestBuildPendingSeeds:
 
         assert updates["h1"].claim.preowned_episode_ids == (101,)
 
-    def test_seed_carries_the_plan_identified_episodes(self) -> None:
+    def test_update_carries_the_plan_size_matched_episodes(self) -> None:
         # The plan resolved which no-group files a preferred release's listed size named
         # (see the planner's owned-episodes tests). The update persists the
         # (id, size) pairs so the import doesn't copy over the very file the
@@ -290,7 +290,7 @@ class TestBuildPendingSeeds:
 
         assert updates["h1"].claim.guards.owned_episodes == ((101, 1000),)
 
-    def test_multi_file_pack_maps_each_file_to_its_own_episode(self) -> None:
+    def test_multi_file_torrent_maps_each_file_to_its_own_episode(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": parsed_info(season=1, episodes=(1,)),
@@ -325,7 +325,7 @@ class TestBuildPendingSeeds:
         # union bug (a whole season put onto one file) is out.
         assert _record(update).file_map_episode_ids() == [101, 102]
 
-    def test_empty_entry_seeds_nothing_and_excludes_nothing(self) -> None:
+    def test_empty_title_places_nothing_and_excludes_nothing(self) -> None:
         # A title that resolved no episodes has no window to place into. An empty
         # index must never read as "no window" (which places against the live index).
         series = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
@@ -344,7 +344,7 @@ class TestBuildPendingSeeds:
         assert dict(updates["h1"].file_map) == {}
         assert updates["h1"].excluded == ()
 
-    def test_unread_series_map_seeds_nothing(self) -> None:
+    def test_unread_series_map_places_nothing(self) -> None:
         # The count steps need no index, but an update is final where an import poll is retried,
         # so the whole placement waits for a served list. Two files with no name number over two episodes
         # would otherwise zip in name order.
@@ -371,7 +371,7 @@ class TestBuildPendingSeeds:
         assert updates["h1"].excluded == ()
         assert updates["h1"].claim.ordered_episode_ids == (101, 102)
 
-    def test_sibling_slice_files_are_excluded_not_intended(self) -> None:
+    def test_sibling_window_files_are_excluded_not_intended(self) -> None:
         # A Part 1 title over a Part 1+2 torrent: files resolving in the series index
         # but OUTSIDE this title's set go in the exclusions, so file map + excluded
         # account for every file and the pending import stays determinate (a real progress
@@ -430,7 +430,7 @@ class TestBuildPendingSeeds:
         assert dict(updates["h1"].file_map) == {}
         assert updates["h1"].excluded == ()
 
-    def test_collision_refused_duplicate_is_excluded(self) -> None:
+    def test_collision_rejected_duplicate_is_excluded(self) -> None:
         # Two claimants on one episode (a v2 beside its v1): the placement takes the
         # later version AND excludes the other, so this pending import will never
         # import it, so completeness may account for it.
@@ -462,7 +462,7 @@ class TestBuildPendingSeeds:
         assert dict(update.file_map) == {normalize_name("Show - 01v2.mkv"): (101,)}
         assert update.excluded == (normalize_name("Show - 01.mkv"),)
 
-    def test_unparsed_and_vetoed_files_stay_possibly_ours(self) -> None:
+    def test_unparsed_and_rejected_files_stay_possibly_this_torrents(self) -> None:
         # A file with no cached parse and a full-season-rejected zip: neither is
         # KNOWABLY another title's, so neither is excluded - the pending import stays
         # indeterminate (conservative) rather than trusting an incomplete file map.
@@ -495,7 +495,7 @@ class TestBuildPendingSeeds:
         assert set(update.file_map) == {normalize_name("Show - 01.mkv")}
         assert update.excluded == ()
 
-    def test_sibling_per_episode_torrents_get_distinct_slice_labels(self) -> None:
+    def test_sibling_per_episode_torrents_get_distinct_coverage_labels(self) -> None:
         # The live shape that motivated the claimed coverage: one title, one group, one
         # torrent per episode. Identical name·group labels made "which episodes
         # imported?" unanswerable from the wait report / notification.
@@ -522,7 +522,7 @@ class TestBuildPendingSeeds:
         assert _record(updates["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
         assert _record(updates["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
 
-    def test_an_unparsed_video_still_seeds_with_an_empty_map(self) -> None:
+    def test_an_unparsed_video_still_builds_an_update_with_an_empty_map(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
             "RG": rg_group(
@@ -544,7 +544,7 @@ class TestBuildPendingSeeds:
         # Nothing claimed -> the claimed coverage is the whole window it is checked against.
         assert updates["h1"].claim.claimed_coverage == "S01 E01"
 
-    def test_unclaimed_record_labels_with_the_whole_window(self) -> None:
+    def test_unclaimed_pending_import_labels_with_the_whole_window(self) -> None:
         # Two releases over one window: the parsed file claims its episode, the
         # unparsed one claims nothing, so its label names every episode it
         # is checked against rather than losing the claimed coverage.
@@ -569,7 +569,7 @@ class TestBuildPendingSeeds:
         assert dict(updates["h2"].file_map) == {}
         assert _record(updates["h2"]).display_label == f"Show{SEP}RG{SEP}S01 E01-E02"
 
-    def test_no_video_files_is_not_seeded(self) -> None:
+    def test_no_video_files_builds_no_update(self) -> None:
         # A release with only non-video files (subs) has nothing to import.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
@@ -589,7 +589,7 @@ class TestBuildPendingSeeds:
         assert updates == {}
 
 
-class TestSeedGuards:
+class TestFileMapGuards:
     """The grab's file map guards.
 
     A full-season parse never places, colliding claims resolve first-wins in
@@ -597,7 +597,7 @@ class TestSeedGuards:
     out of the file map, and the import never places it.
     """
 
-    def test_full_season_parse_never_seeds(self) -> None:
+    def test_full_season_parse_never_places(self) -> None:
         # An OP/ED whose plain-"S05" name Sonarr matches to the whole season:
         # the parse carries all 12 matched pairs, and none of them may place
         # (the old behavior imported this one file as every episode).
@@ -624,7 +624,7 @@ class TestSeedGuards:
         assert dict(updates["h1"].file_map) == {}
         assert updates["h1"].facts.seadex_files == ("Show S05 Ending.mkv",)
 
-    def test_small_full_season_parse_never_seeds(self) -> None:
+    def test_small_full_season_parse_never_places(self) -> None:
         # A plain-"S01" OP/ED Sonarr matched to a whole season of only two
         # episodes: the pair count slips under the span cap, so Sonarr's own
         # fullSeason flag on the parse is what keeps it out of the file map.
@@ -651,7 +651,7 @@ class TestSeedGuards:
         assert set(updates) == {"h1"}
         assert dict(updates["h1"].file_map) == {}
 
-    def test_legitimate_double_episode_span_still_seeds(self) -> None:
+    def test_legitimate_double_episode_span_still_places(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2))}
         seadex_dict = {
@@ -668,7 +668,7 @@ class TestSeedGuards:
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
 
-    def test_partially_resolving_span_is_not_seeded(self) -> None:
+    def test_partially_resolving_span_is_not_placed(self) -> None:
         # A double-episode file straddling the title boundary: only episode 1
         # is in this title's list, so placing it on [101] would half-import the file.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
@@ -689,7 +689,7 @@ class TestSeedGuards:
 
         assert dict(updates["h1"].file_map) == {}
 
-    def test_second_claim_of_a_seeded_id_is_not_seeded(self) -> None:
+    def test_second_claim_of_an_id_in_the_file_map_is_not_placed(self) -> None:
         # "13" and "13v2" both parse to S02E13: the later version wins,
         # deterministically, and the other claimant is left out of the file map.
         ep_list = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
@@ -718,7 +718,7 @@ class TestSeedGuards:
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
 
-    def test_partial_collision_refuses_the_whole_later_file(self) -> None:
+    def test_partial_collision_leaves_the_whole_later_file_unplaced(self) -> None:
         # The later file claims one already-placed id and one unplaced one: placement
         # leaves the whole file unplaced on any collision, so it is rejected whole
         # rather than placing the other half.
@@ -748,7 +748,7 @@ class TestSeedGuards:
 
         assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
 
-    def test_duplicate_leaf_names_seed_once(self) -> None:
+    def test_duplicate_file_names_place_once(self) -> None:
         # The same file name in two folders collapses in the name-keyed
         # file map: the first occurrence's claim stands and the copy is rejected,
         # so the file map is deterministic and never double-claims the id.
@@ -778,7 +778,7 @@ class TestSeedGuards:
         assert updates["h1"].facts.seadex_files == ("Show - 01.mkv", "Show - 01.mkv")
 
 
-class TestParseWriteFeedsSeeds:
+class TestParseWriteFeedsUpdates:
     """One `/parse` per file name: the gather asks Sonarr, persists the parse, and the placement places by it."""
 
     @staticmethod
@@ -788,7 +788,7 @@ class TestParseWriteFeedsSeeds:
         sonarr = FakeSonarrClient(parse_fn=lambda _f: parse)
         return make_sonarr_sync(sonarr=sonarr, cache_store=FakeCacheStore(), ep_list_cache={7: ep_list}), sonarr
 
-    def test_parse_write_feeds_seed_build(self) -> None:
+    def test_parse_write_feeds_the_update_build(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parse = parsed_info(season=1, episodes=(1,), matched=((1, 1),))
         strat, sonarr = self._cold(parse, ep_list)
@@ -809,7 +809,7 @@ class TestParseWriteFeedsSeeds:
         assert sonarr.parse_calls == ["Show - 01.mkv"]
         assert strat._parse.cache_store.get_sonarr_parse("Show - 01.mkv") is not None
 
-    def test_full_season_flag_flows_from_parse_write_to_seed_refusal(self) -> None:
+    def test_full_season_flag_flows_from_parse_write_to_rejection(self) -> None:
         # End-to-end through the real write path: a fullSeason parse persists the
         # flag on the cached parse, and the placement rejects the file by it.
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
@@ -839,7 +839,7 @@ class TestParseWriteFeedsSeeds:
 class TestNetInsertedCounts:
     """Preowned episodes never count toward this torrent's done files."""
 
-    def test_progress_counts_exclude_preowned_targets(self) -> None:
+    def test_progress_counts_exclude_preowned_file_map_episodes(self) -> None:
         # 101 already had another preferred release's file at grab time (preowned); only
         # 102 is this torrent's to import. The bar must read 0 of 1, not 1 of 2
         # - a pre-existing file shown as done overstates the import.
@@ -867,7 +867,7 @@ class TestNetInsertedCounts:
 class TestTrustedGroups:
     """The trusted groups: the torrent's group + its entry's preferred groups + sibling GRABBED groups only."""
 
-    def test_sibling_entry_picks_never_contaminate(self) -> None:
+    def test_sibling_entry_preferred_groups_never_contaminate(self) -> None:
         # Another title's pending import contributes its grabbed group, never its preferred
         # list: a group trusted for one season says nothing about another
         # season's episodes.
@@ -881,7 +881,7 @@ class TestTrustedGroups:
 
         assert set(_trust(own, [sibling])) == {"ours", "otherpick", "sibgrab"}
 
-    def test_sibling_vote_refused_for_a_group_this_plan_judged_stale(self) -> None:
+    def test_sibling_grabbed_group_refused_for_a_group_this_plan_found_outdated(self) -> None:
         # A sibling pending import grabbed group B earlier; THIS title's plan found its
         # B copy in the arr outdated and excluded it from entry_groups. The sibling's
         # group must not re-admit B, or the outdated files it shields read done and
@@ -894,7 +894,7 @@ class TestTrustedGroups:
 
         assert set(_trust(own, [sibling])) == {"ours"}
 
-    def test_own_group_survives_its_own_stale_verdict(self) -> None:
+    def test_this_torrents_group_survives_its_own_outdated_verdict(self) -> None:
         # A same-group size update lists its group as outdated. The group must
         # stay trusted (it is the identity of the files being imported) -
         # the outdated copies are told apart by size instead.
@@ -902,14 +902,14 @@ class TestTrustedGroups:
 
         assert _trust(own) == {"ours": frozenset({1000})}
 
-    def test_own_group_without_sizes_is_trusted_by_name(self) -> None:
+    def test_this_torrents_group_without_sizes_is_trusted_by_name(self) -> None:
         # No listed sizes (an older pending import, or a blind listing) means no size
         # gate: the None value tells the classifier to trust the name alone.
         own = pending_import(release_group="Ours")
 
         assert _trust(own) == {"ours": None}
 
-    def test_own_group_sizes_union_same_group_siblings(self) -> None:
+    def test_this_torrents_group_sizes_union_same_group_siblings(self) -> None:
         # Two pending imports grabbing the same group (a per-cour torrent each) each
         # list their sizes; a file either pending import's listing carries is an
         # owned copy, so the size gate reads their union.
@@ -918,7 +918,7 @@ class TestTrustedGroups:
 
         assert _trust(own, [sibling])["ours"] == frozenset({1000, 2000})
 
-    def test_seed_statuses_read_sibling_votes_from_the_store(self) -> None:
+    def test_file_map_statuses_read_sibling_grabbed_groups_from_the_store(self) -> None:
         # The store round trip behind the pure merge: a sibling pending import persisted
         # by an earlier grab loads and its group protects the arr's file.
         sibling = pending_import(infohash="s1", al_id=999, release_group="SibGrab")
