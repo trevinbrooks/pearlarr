@@ -1,4 +1,4 @@
-"""The Sonarr strategy: series/episode coverage and per-AniList-id processing over the services hub."""
+"""The Sonarr strategy: series/episode coverage and per-title checks over the arr run services."""
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
@@ -65,7 +65,7 @@ def releases_overlap(seadex_dict: SeadexDict) -> bool:
 
 
 def _file_and_why(placement: Placement) -> str:
-    """One unplaced file for the debug line: its name and its verdict's words, with the order's key when it has one."""
+    """One unplaced file for the debug line: its name, its verdict's words, and the order's episode when it has one."""
 
     key = "" if placement.order_only is None else f": {placement.order_only.label}"
     return f"{placement.name} ({placement.verdict}{key})"
@@ -82,7 +82,7 @@ def _override_line(url: str, override: SizeOverName) -> str:
 
 
 class SonarrStrategy(ArrStrategy[SonarrItem]):
-    """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
+    """Sonarr strategy: owns the Sonarr REST client + episode domain logic.
 
     See `ArrStrategy` for the shared DI/hook-wiring regime.
     """
@@ -101,7 +101,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 directly is unpacked off it, and it's handed to the Sonarr
                 collaborators for the cache/AniList gateway/log formatter they
                 read.
-            services: The services hub the per-id hooks call into.
+            services: The services the per-title hooks call into.
             sonarr_client: A pre-built client to use instead of constructing
                 the real `SonarrClient` (which needs the connection keys).
                 None builds the real one.
@@ -113,7 +113,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Set up Sonarr. An injected client (tests) is used as-is. Otherwise the
         # connection keys are required only now (when a Sonarr run runs) and the
-        # real client is built over the run's shared httpx client (parse fires
+        # real client is built over the arr run's shared httpx client (parse fires
         # one request per file, so its keep-alive removes a per-file handshake).
         if sonarr_client is not None:
             self.sonarr: AbstractSonarrClient = sonarr_client
@@ -122,20 +122,20 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             # bind raises require_connection's error here, the same point as before.
             base = deps.arr_http or bind_arr_http(Arr.SONARR, self._config, deps.http)
             self.sonarr = SonarrClient(
-                # Streak re-warns pace with the wait view's digest cadence.
+                # Streak re-warns pace with the wait pass's progress-line cadence.
                 http=replace(base, rewarn_s=self._config.imports.digest_interval),
                 logger=self.logger,
             )
 
-        # Episode-domain collaborator: owns the per-run episode cache + series-id
-        # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built
+        # Episode-domain collaborator: owns the per-run episode cache + series
+        # hash and the (series, al_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes / prefetch_orders to it, reads its series_hash for the parse
         # cache, and builds every episode index with its orders_for.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Reads every SeaDex entry of the series once per run, for each entry's episode window and the size
-        # identities files are placed by. Window names come from the title ladder an entry's own run uses.
+        # Reads every SeaDex entry of the series once per run, for each title's window and the size
+        # matches files are placed by. Window names are the ones a title's own check resolves.
         self._listings = SeriesListings(
             deps.seadex,
             self._episodes,
@@ -145,18 +145,18 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
-        # The run's series fingerprint is threaded per call.
+        # The run's series hash is threaded per call.
         self._parse = SonarrParseCache(deps, self.sonarr)
 
-        # Import-execution collaborator: builds + POSTs the authoritative manual
-        # import from the record's map, owns the per-run quality/language
-        # caches + the once-per-record rescan, and exposes the queue/command reads
+        # Import-execution collaborator: builds + POSTs the authoritative auto
+        # import from the pending import's file map, owns the per-run quality/language
+        # caches + the once-per-pending-import rescan, and exposes the queue/command reads
         # import_completed consults. Built from the shared deps + this client.
-        # Its caches reset in get_items, the run-start hook.
+        # Its caches reset in get_items, the arr run's start hook.
         self._executor = ImportExecutor(deps, self.sonarr)
 
         # Import-reconcile collaborator: the import_completed decision + the
-        # grab-time pending-seed build. Composes the episode collaborator + the
+        # grab-time pending import update build. Composes the episode collaborator + the
         # executor. The import_completed / check_title hooks delegate to it.
         self._reconciler = ImportReconciler(self._services.pending_imports, self._episodes, self._executor)
 
@@ -166,8 +166,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def get_items(self) -> list[SonarrItem]:
         """Every Sonarr series with AniList mapping info.
 
-        Also the run-start hook: reset the per-run import scratch here, and let the
-        episode collaborator reset its own cache + re-fingerprint the series-id set
+        Also the arr run's start hook: reset the per-run import scratch here, and let the
+        episode collaborator reset its own cache + recompute the series hash
         as it enumerates (this is called once, before the per-item loop).
         """
 
@@ -207,16 +207,16 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         """Warm the per-series episode lists before the scan loop.
 
         Delegates to the episode collaborator's concurrent prefetch. Returns how
-        many series it warmed (the needs-scan subset), for the caller's ledger.
+        many series it warmed (the needs-check subset), for the caller's boot step.
         """
 
         return self._episodes.prefetch(items, progress=progress)
 
     @override
     def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
-        """Refetch the due TVDB orders of the series the scan reads and of every stored record's series.
+        """Refetch the due TVDB orders of the series the scan reads and of every stored pending import's series.
 
-        A record's series is read at grab and import whether or not its own item needs a scan.
+        A pending import's series is read at grab and import whether or not its own item needs a check.
         """
 
         series_ids = self._episodes.titles_needing_check(items)
@@ -240,7 +240,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         al_id: int,
         mapping: TitleMapping,
     ) -> None:
-        """Process one AniList id for a Sonarr series.
+        """Check one title for a Sonarr series.
 
         The middle is the episode-aware part: resolve the relevant episode list,
         its coverage and release groups, parse the SeaDex file lists into
@@ -255,7 +255,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         sd_url = sd_entry.url
         sonarr_series_id = item.id
 
-        # Skip if already cached. The one-time backfill on a legacy record adds
+        # Stop if unchanged. The one-time backfill on a legacy row adds
         # the URL and the season/episode coverage. The coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
         if services.is_unchanged(
@@ -291,27 +291,28 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         if not ep_list:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
-            # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
+            # AniBridge with no ranges): stop, don't mislabel "unmonitored" or grab orphans.
             services.log_no_episodes(title.name)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
-                # Sonarr-library gap): a WARNING under the skip row naming the cause.
-                # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
-                # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
-                # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
+                # Sonarr-library gap): a WARNING under the no-episodes row naming the cause.
+                # Keys off source, so it covers BOTH an empty-{} tvdb mapping (kind
+                # EPISODE_RANGES) and an imdb/tmdb-resolved mapping without TVDB mappings
+                # (kind SEASON_OFFSET), while a legit Kometa whole-series mapping (source
+                # ANIME_IDS) stays quiet.
                 hub_warn(f"AniBridge has no usable season ranges for {title.name} - skipping")
             services.owe_pause()
             return
 
-        # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
+        # If all episodes are unmonitored, then stop if ignore_unmonitored is switched on
         if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
             services.log_arr_item_unmonitored(title.name)
             services.owe_pause()
             return
 
-        # Now that we have the episodes, log the active entry with its
+        # Now that we have the episodes, log the active title with its
         # season/episode coverage + URL, and remember them for the cache so
-        # future cached runs can show the same detail
+        # a later run that finds it unchanged can show the same detail
         coverage = _coverage.coverage_string(
             _coverage.episodes_from_ep_list(ep_list),
         )
@@ -334,15 +335,15 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         seadex_dict = services.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            # Nothing is placed here, so only the entry whose window gave the coverage counts.
+            # Nothing is placed here, so only the title whose window gave the coverage counts.
             services.report_no_releases(al_id, update, metadata_unread=self._episodes.any_air_dates_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # Place every listed file now: the import imports this map and places nothing, so the grab is judged by
-        # it. Placed under every listing entry's window and every stored claim's, a stored torrent as its record's
-        # leftover. The series maps are the whole-series lists (a per-run cache hit each).
+        # Place every listed file now: the import imports this file map and places nothing, so the grab goes by
+        # it. Placed under every listed title's window and every stored claim's, a stored torrent as its pending
+        # import's leftover. The series indexes are the whole-series lists (a per-run cache hit each).
         waits_on_imports = services.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = (
@@ -376,14 +377,14 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
-            # Every token was invalid: skip WITHOUT caching (grab_and_cache would
-            # cache the title as done and suppress it forever) so it re-prompts
+            # Every token was invalid: stop WITHOUT caching (grab_and_cache would
+            # cache the title and suppress it forever) so it re-prompts
             # next run.
             if len(seadex_dict) == 0:
                 services.report_invalid_selection()
                 return
 
-        # Filter downloads by whether the episodes in each torrent match the release
+        # Filter grabs by whether the episodes in each torrent match the release
         # group we have in Sonarr
         plan = services.filter_seadex_downloads(
             seadex_dict=seadex_dict,
@@ -393,10 +394,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         seadex_dict = plan.seadex_dict
         self._warn_overrides(placed, seadex_dict)
 
-        # Build the per-torrent seeds the engine persists at the add site: one per release marked for download
-        # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
-        # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
-        # a CLI override agrees with the engine's persist/reconcile/blocking gates.
+        # Build the per-torrent pending import updates the grab pipeline persists at the add site: one per release
+        # marked to grab (to_grab + hash), carrying pearlarr's file map (file name -> Sonarr episode ids) so the later
+        # auto import never trusts Sonarr's blind parse. Gated on the RESOLVED wait mode (cli > config), not the raw
+        # config, so a CLI override agrees with the arr run loop's persist/reconcile/blocking gates.
         pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
         if waits_on_imports:
             pending_import_updates = build_pending_import_updates(
@@ -424,7 +425,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 coverage=coverage,
                 pending_import_updates=pending_import_updates,
                 input_unread_groups=placed.input_unread_groups(seadex_dict),
-                # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
+                # Every title of the series: the placement reads the window of each one SeaDex has an entry for.
                 metadata_unread=(
                     self._episodes.any_air_dates_unread(resolved.kept_and_ignored)
                     or self._episodes.orders_unread(series_ids)
@@ -453,10 +454,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         }
 
     def _warn_overrides(self, placed: EntryPlacements, seadex_dict: SeadexDict) -> None:
-        """Warn once per url this run grabs if any of its files were placed by size over their names.
+        """Warn once per release this run grabs if any of its files were placed by size over their names.
 
         The warning shows the first such file, and the rest go to the debug log. `seadex_dict` must be the
-        download plan's, so urls the run doesn't grab never warn.
+        grab plan's, so releases the run doesn't grab never warn.
         """
 
         for planned in releases_to_grab(seadex_dict):
@@ -468,13 +469,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                     self.logger.debug(_override_line(planned.url, override))
 
     def _log_placements(self, placed: EntryPlacements) -> None:
-        """One debug line per url with video files: its coverage, then each file set aside or held for a hand import."""
+        """One debug line per release with video files: coverage, then each file excluded or left for a hand import."""
 
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
-            # The hold and the failed read explain an empty coverage on a listed release. A url held on the read
-            # names it once, in its hold.
+            # The skip and the failed read explain an empty coverage on a listed release. A release skipped on the
+            # read names it once, in its skip reason.
             assignment = placement.placements
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
@@ -489,10 +490,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @override
     def pending_import_series_id(self, item: SonarrItem) -> int | None:
-        """The Sonarr series id whose carried-over pending records this item owns.
+        """The Sonarr series id whose carried-over pending imports belong to this item.
 
-        The engine's per-item snapshot hook keys off this. A Sonarr series owns
-        its pending records by `series_id`, which is the Sonarr series id.
+        The arr run loop's per-item snapshot hook keys off this. A pending import
+        belongs to a Sonarr series by `series_id`, which is the Sonarr series id.
         """
 
         return item.id
@@ -504,7 +505,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         content_path: str,
         attempt_kind: AttemptKind,
     ) -> AttemptResult:
-        """One reconcile/import poll for a completed download (delegated).
+        """One reconcile/import attempt for a completed torrent (delegated).
 
         The @abstractmethod hook stays here so the ABC instantiates. The reconcile
         decision lives on `ImportReconciler`.
@@ -514,19 +515,19 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Cheap read-only files-landed count for the wait bar (delegated)."""
+        """Cheap read-only imported-files count for the wait bar (delegated)."""
 
         return self._reconciler.import_progress(pending)
 
     @override
     def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
-        """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.remove_from_queue`)."""
+        """Dismiss the torrent's remaining Sonarr queue record (see `ImportExecutor.remove_from_queue`)."""
 
         return self._executor.remove_from_queue(pending)
 
     @property
     @override
     def supports_blocking_wait(self) -> bool:
-        """Sonarr owns the interleaved end-of-run wait/import monitor cockpit."""
+        """Sonarr has the interleaved blocking wait pass and its wait region."""
 
         return True

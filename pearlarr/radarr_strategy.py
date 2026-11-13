@@ -1,4 +1,4 @@
-"""The Radarr strategy: movie matching and per-AniList-id processing over the services hub."""
+"""The Radarr strategy: movie mapping and per-title checks over the arr run services."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,24 +22,24 @@ from .releases import releases_to_grab
 from .stamps import parse_stamp_aware
 from .wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportProgress, ImportWaitMode
 
-# Clock-skew cushion subtracted from the oldest pending record's `added_at` before the history query.
-# The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
-# gap. A window starting after a real import event would miss its evidence and strand the record until its
+# Clock-skew cushion subtracted from the oldest pending import's `added_at` before the history query.
+# The added_at stamps are converted to UTC first, so this covers only genuine NTP drift, never a timezone
+# gap. A query starting after a real import event would miss its evidence and strand the pending import until its
 # torrent leaves qBittorrent.
 _HISTORY_SKEW_HOURS = 2
 
 
 @dataclass(frozen=True, slots=True)
 class _ImportEvidence:
-    """One end-of-run check's Radarr import-history evidence, fetched once and memoized."""
+    """One wait pass's Radarr import-history evidence, fetched once and memoized."""
 
     imported_hashes: frozenset[str]
     readable: bool
-    """False when the history read failed: the check then never moves a torrent."""
+    """False when the history read failed: the wait pass then never moves a torrent."""
 
 
 class RadarrStrategy(ArrStrategy[RadarrItem]):
-    """Radarr sync strategy: owns the Radarr REST client and the movie domain logic."""
+    """Radarr strategy: owns the Radarr REST client and the movie domain logic."""
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
-        # The check's Radarr import history, memoized. Reset at run start (get_items) so it can't stale.
+        # The wait pass's Radarr import history, memoized. Reset at the arr run's start (get_items) so it can't stale.
         self._evidence: _ImportEvidence | None = None
         # Two id sources for collect_anime_movies: the resolver's Anime-IDs candidate sets
         # (from SQL), and the AniBridge view's own.
@@ -134,7 +134,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         al_id: int,
         mapping: TitleMapping,
     ) -> None:
-        """Process one AniList id for a Radarr movie."""
+        """Check one title for a Radarr movie."""
 
         services = self._services
 
@@ -175,8 +175,8 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
-            # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
-            # title as done and suppress it forever. It re-prompts next run.
+            # Every token was invalid: stop WITHOUT caching, since grab_and_cache would cache the
+            # title and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
                 services.report_invalid_selection()
                 return
@@ -186,9 +186,10 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             arr_files=radarr_files,
         ).seadex_dict
 
-        # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
-        # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
-        # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
+        # Build a pending import update per grabbed torrent so the grab pipeline's gate persists it: the category move
+        # then comes only after Radarr imports the movie, and for a torrent shared with a Sonarr grab only after both
+        # arrs clear. A torrent already in qBittorrent under a stored pending import takes this title's claim
+        # (planning the grab again replaces it).
         pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
         if services.import_wait_mode is not ImportWaitMode.OFF:
             planned = releases_to_grab(seadex_dict)
@@ -208,7 +209,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 update=update,
-                # Every edition's tagged group, not just the first file's.
+                # Every edition's group, not just the first file's.
                 replaced_groups=radarr_files.groups(),
                 pending_import_updates=pending_import_updates,
             ),
@@ -216,7 +217,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
     @override
     def pending_import_series_id(self, item: RadarrItem) -> int | None:
-        """None: a Radarr record is not keyed by series."""
+        """None: a Radarr pending import is not keyed by series."""
 
         del item
         return None
@@ -235,13 +236,13 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
         del content_path, attempt_kind
         evidence = self._import_evidence()
-        # An outage is no evidence, so wait. Never move a torrent on a missing read.
+        # An unread history is no evidence, so wait. Never move a torrent on an unread history.
         imported = evidence.readable and pending.infohash.casefold() in evidence.imported_hashes
         return AttemptResult.imported() if imported else AttemptResult.waiting()
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Indeterminate zero: a Radarr record reaches no bar."""
+        """Indeterminate zero: a Radarr pending import reaches no bar."""
 
         del pending
         return NO_PROGRESS
@@ -249,12 +250,12 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
     @property
     @override
     def supports_blocking_wait(self) -> bool:
-        """No waiting monitor: Radarr records run the one-cycle check off import history."""
+        """No blocking wait pass: Radarr pending imports run the deferred wait pass off import history."""
 
         return False
 
     def _import_evidence(self) -> _ImportEvidence:
-        """The check's Radarr import history, fetched once then memoized (reset at run start)."""
+        """The wait pass's Radarr import history, fetched once then memoized (reset at the arr run's start)."""
 
         if self._evidence is None:
             self._evidence = self._fetch_import_evidence()
@@ -277,7 +278,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         """Aware-UTC start of the history query.
 
         The oldest pending `added_at`, no earlier than the look-back cap, minus skew. An import event older
-        than the cap goes unseen, and its record waits until its torrent leaves qBittorrent.
+        than the cap goes unseen, and its pending import waits until its torrent leaves qBittorrent.
         """
 
         floor = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS)
@@ -304,7 +305,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         self,
         radarr_movie_id: int,
     ) -> ArrFiles:
-        """Fold the movie's existing files into an `ArrFiles`."""
+        """Convert the movie's existing files into an `ArrFiles`."""
 
         # A movie can carry several files (an upgrade or a multi-edition), so every size is kept.
         return ArrFiles.from_files(

@@ -1,13 +1,13 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These assert on the loop/hub/strategy's private wiring (_filter / _ctx / _parse /
+# These assert on the loop/services/strategy's private wiring (_filter / _state / _parse /
 # _reconciler), which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Construction-seam tests: the REAL `__init__` + `begin_run` rebind.
+"""Construction tests: the REAL `__init__` + `bind_arr_run` rebind.
 
-The rest of the suite builds the hub/loop/strategy via `make_bare_instance`
+The rest of the suite builds the services/loop/strategy via `make_bare_instance`
 (`object.__new__`), which bypasses `__init__`. These drive the real
 `ArrRunServices` / `ArrRunLoop` / `SonarrStrategy` constructors off a hand-built
-`ArrRunDeps` so the collaborator wiring and the `begin_run` two-phase rebind
+`ArrRunDeps` so the collaborator wiring and the `bind_arr_run` two-phase rebind
 have an in-suite guard (previously only an offline smoke).
 """
 
@@ -34,11 +34,11 @@ from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
 def _state_holders(loop: ArrRunLoop, services: ArrRunServices) -> list[object]:
-    """Structurally discover every rebindable ctx-holder hanging off the pair.
+    """Structurally discover every rebindable state holder hanging off the pair.
 
     Introspective on purpose: a hand-enumerated holder list silently passes when
-    a future collaborator is constructed with a ctx but missed by a `begin_run`
-    cascade - discovery here means its stale `_state` fails the identity asserts.
+    a future collaborator is constructed with a state but missed by a `bind_arr_run`
+    cascade - discovery here means its old `_state` fails the identity asserts.
     """
 
     return [
@@ -54,30 +54,30 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     services = ArrRunServices(deps, Arr.SONARR)
     loop = ArrRunLoop(deps, services)
 
-    # Phase 1 (adoption): the runner adopts the hub's single placeholder - no
-    # second mint - and every ctx-holding collaborator is bound to that object.
+    # Phase 1 (adoption): the arr run loop adopts the services' single placeholder - no
+    # second mint - and every state-holding collaborator is bound to that object.
     holders = _state_holders(loop, services)
-    # The discovery itself is load-bearing: wait manager + hub + filter + pipeline.
+    # The discovery itself is load-bearing: wait manager + services + filter + pipeline.
     assert len(holders) >= 4
     assert loop._state is services.state
     assert all(vars(c)["_state"] is loop._state for c in holders)
 
     # Phase 2 (fresh mint): start_arr_run swaps a fresh ArrRunState AND rebinds
-    # every ctx-holding collaborator to it. A missed rebind would route a
-    # collaborator's writes into the orphaned prior context (the drift the
-    # bind_arr_run fold guards against).
+    # every state-holding collaborator to it. A missed rebind would route a
+    # collaborator's writes into the orphaned prior state (the drift the
+    # bind_arr_run cascade guards against).
     first_state = loop._state
     loop.start_arr_run(dry_run=False)
 
-    assert loop._state is not first_state  # a fresh ctx was swapped in
-    assert services.state is loop._state  # the hub rebound to it
+    assert loop._state is not first_state  # a fresh state was swapped in
+    assert services.state is loop._state  # the services rebound to it
     assert all(vars(c)["_state"] is loop._state for c in holders)
 
 
 def test_services_read_selection_staleness_from_the_store_at_construction() -> None:
-    # The real __init__ compares the store's vouched digest against the config's:
-    # an older vouch arms the run-wide re-check. A matching vouch or a fresh
-    # store (nothing vouched yet) stays quiet.
+    # The real __init__ compares the store's selection hash against the config's:
+    # an older hash turns on the arr-run-wide re-check. A matching hash or a fresh
+    # store (no hash stored yet) stays quiet.
     config = make_config()
 
     vouched_old = FakeCacheStore()
@@ -94,12 +94,12 @@ def test_services_read_selection_staleness_from_the_store_at_construction() -> N
 
 
 def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
-    # The parse-cache writer (SonarrParseCache) and the seed reader (ImportReconciler,
-    # through the hub's record seam) must share the strat's cache_store by identity, or
+    # The parse-cache writer (SonarrParseCache) and the pending import update builder (ImportReconciler,
+    # through the services' pending import store) must share the strat's cache_store by identity, or
     # a staged parse write would not be visible to build_pending_import_updates.
     deps = make_run_deps()
     services = ArrRunServices(deps, Arr.SONARR)
-    # Inject a typed fake through the sonarr_client seam so the collaborator wiring
+    # Inject a typed fake through the sonarr_client argument so the collaborator wiring
     # runs off the REAL __init__ without connection keys - an incomplete fake here
     # is a pyright error and un-instantiable, unlike the old stringly-typed
     # monkeypatch.
@@ -107,12 +107,12 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
 
     assert strat._parse.cache_store is deps.cache_store
     assert strat._reconciler._pending_imports is services.pending_imports
-    # The seam's store is private, and this identity is the invariant the comment above names.
+    # `PendingImportStore._store` is private, and this identity is the invariant the comment above names.
     assert services.pending_imports._store is deps.cache_store
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
-    # The radarr_client seam lets RadarrStrategy's REAL __init__ run under test: the
+    # The radarr_client argument lets RadarrStrategy's REAL __init__ run under test: the
     # injected fake skips require_connection, so no config keys are needed.
     deps = make_run_deps()
     services = ArrRunServices(deps, Arr.RADARR)
@@ -140,7 +140,7 @@ def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
 
 
 def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`ArrRunDeps.build` constructs the run's httpx client with THIS arr's `verify_ssl`.
+    """`ArrRunDeps.build` constructs the arr run's httpx client with THIS arr's `verify_ssl`.
 
     It's the per-arr escape hatch for a self-signed HTTPS arr.
     """
@@ -160,7 +160,7 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
 
 
 class _PassingQbit:
-    """A `qbittorrentapi.Client` stand-in whose login succeeds (build's seam)."""
+    """A `qbittorrentapi.Client` stand-in whose login succeeds (build's qBittorrent client)."""
 
     def __init__(self, **kwargs: object) -> None:
         del kwargs
@@ -194,7 +194,7 @@ def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
     deps = _build_deps(config, tmp_path)
     try:
         # Boot did no category I/O: an arr restarting under the boot must not
-        # cost the run its post-import moves (the use-time fetch retries).
+        # cost the arr run its post-import moves (the use-time fetch retries).
         assert route.call_count == 0
         assert deps.categories.grab_category() == "tv-sonarr"
         assert deps.categories.post_import_category() == "sonarr-done"
@@ -207,7 +207,7 @@ def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
 
 @respx.mock
 def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> None:
-    """No qBittorrent client (perpetual preview): no category is ever applied, so `build` never contacts the arr."""
+    """No qBittorrent client (perpetual dry run): no category is ever applied, so `build` never contacts the arr."""
 
     route = respx.get("http://sonarr/api/v3/downloadclient").respond(json=[])
     config = make_config(url="http://sonarr", api_key="key")
@@ -222,7 +222,7 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
 
 
 def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
-    """`build` binds this arr's transport once: label from the arr, default heartbeat."""
+    """`build` binds this arr's transport once: label from the arr, default rewarn interval."""
 
     deps = _build_deps(make_config(url="http://sonarr", api_key="key"), tmp_path)
     deps.close()
@@ -249,7 +249,7 @@ def test_rundeps_build_category_handle_derives_from_arr_http(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """The category handle is the arr transport's no-retry derivation - one shared streak ledger."""
+    """The category handle is the arr transport's no-retry derivation - one shared set of failure streaks."""
 
     monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
     config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")

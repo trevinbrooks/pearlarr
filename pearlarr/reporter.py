@@ -1,4 +1,4 @@
-"""The run reporter: the typed emission path the run logs through."""
+"""The arr run reporter: the typed emission path the arr run logs through."""
 
 import time
 from typing import ClassVar
@@ -45,8 +45,8 @@ from .releases import SeadexDict
 from .torrent_service import AddStatus, GrabResult
 from .wait_types import ImportWaitMode, PendingImportState
 
-# The first cause present wins. PRIVATE_ONLY can't co-occur with the fallback-mode kinds
-# (private_releases is run-wide), so this only breaks ties between no-fallback and stale.
+# The first cause present wins. PRIVATE_ONLY can't co-occur with the `fallback` causes
+# (private_releases is run-wide), so this only breaks ties between no-fallback and outdated.
 _TIP_PRECEDENCE: tuple[NeedsActionCause, ...] = (
     NeedsActionCause.PRIVATE_ONLY,
     NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
@@ -64,7 +64,7 @@ def _summary_tip(needs: tuple[NeedsActionRow, ...]) -> NeedsActionCause | None:
 
 
 class RunReporter:
-    """Owns the producer surface: each method emits a typed output event."""
+    """The arr run's emitting interface: each method emits a typed output event."""
 
     def __init__(
         self,
@@ -79,35 +79,35 @@ class RunReporter:
         self._counts = counts
         self.cache_store = cache_store
         self.anilist = anilist
-        # The entry block currently open, None between entries. Boundaries and sibling rows close it first.
+        # The title scope currently open, None between titles. Boundaries and sibling rows close it first.
         self._title_scope: TitleScope | None = None
 
-    # --- entry-scope lifecycle + emit helpers --------------------------------
+    # --- title-scope lifecycle + emit helpers --------------------------------
 
     def _close_title_scope(self) -> None:
-        """Close the open entry scope, if any (idempotent)."""
+        """Close the open title scope, if any (idempotent)."""
 
         if self._title_scope is not None:
             self._title_scope.close()
             self._title_scope = None
 
     def _open_title_scope(self, header: TitleHeader) -> None:
-        """Close any open entry, then open a fresh one carrying its header."""
+        """Close any open title scope, then open a fresh one carrying its header."""
 
         self._close_title_scope()
         self._title_scope = self._scopes.title(header)
 
     def _block(self, header: TitleHeader) -> None:
-        """Emit a self-contained entry block: open its scope, then close it."""
+        """Emit a self-contained title block: open its scope, then close it."""
 
         self._open_title_scope(header)
         self._close_title_scope()
 
     def _post(self, fact: TitleEvent) -> None:
-        """Post an entry fact on the open scope, else emit it scope-free.
+        """Post a title fact on the open scope, else emit it scope-free.
 
-        The scope-free arm is load-bearing, not defensive: the titled-row paths post details after `_emit_title_row`
-        closed the entry.
+        The scope-free branch is load-bearing, not defensive: the titled-row paths post details after `_emit_title_row`
+        closed the title scope.
         """
 
         if self._title_scope is not None:
@@ -116,25 +116,25 @@ class RunReporter:
             self._emit(fact)
 
     def detail(self, label: str, value: StyledValue, *, severity: Severity = Severity.INFO) -> None:
-        """The ONE entry-detail path: routes through the open scope, else scope-free."""
+        """The ONE title-detail path: routes through the open scope, else scope-free."""
 
         self._post(TitleDetail(label=label, value=value, severity=severity))
 
     def post(self, fact: ReleaseSkipped | GrabFailed) -> None:
-        """The ONE path for the typed release-level facts: via the open entry scope, else scope-free."""
+        """The ONE path for the typed release-level facts: via the open title scope, else scope-free."""
 
         self._post(fact)
 
     def _emit_title_row(self, state: TitleState, label: str) -> None:
-        """Close any open entry, then emit a scope-free (col-0) ledger row."""
+        """Close any open title scope, then emit a scope-free (col-0) title row."""
 
         self._close_title_scope()
         self._emit(TitleRow(state, label))
 
-    # --- run / item boundaries -----------------------------------------------
+    # --- arr run / item boundaries -------------------------------------------
 
     def log_arr_start(self, arr: Arr, n_items: int) -> None:
-        """Announce the start of the run (the per-arr scan-open boundary)."""
+        """Announce the start of the scan (the per-arr scan-open boundary)."""
 
         self._close_title_scope()
         self._emit(ScanStarted(arr=arr, total=n_items))
@@ -146,7 +146,7 @@ class RunReporter:
         n_item: int,
         n_items: int,
     ) -> None:
-        """Announce the start of one Arr item (closes the previous item/entry)."""
+        """Announce the start of one Arr item (closes the previous item/title)."""
 
         self._close_title_scope()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
@@ -154,75 +154,75 @@ class RunReporter:
     # The two close boundaries carry no `log_` prefix: they state a boundary rather than report one, and no
     # renderer draws a line for either.
     def scan_finished(self, arr: Arr) -> None:
-        """Close the scan and its open entry (the per-arr scan-close boundary)."""
+        """Close the scan and its open title scope (the per-arr scan-close boundary)."""
 
         self._close_title_scope()
         self._emit(ScanFinished(arr=arr))
 
     def arr_run_finished(self, arr: Arr) -> None:
-        """Close the run (the leg-close boundary). bootstrap emits it on unwind."""
+        """Close the arr run (the arr-run-close boundary). bootstrap emits it on unwind."""
 
         self._close_title_scope()
         self._emit(ArrRunFinished(arr=arr))
 
-    # --- self-contained ledger rows ------------------------------------------
+    # --- self-contained title rows -------------------------------------------
 
     def log_no_episodes(self, title: str) -> None:
-        """Report a title whose mapping resolved no episodes, as a self-contained (col-0) ledger row."""
+        """Report a title whose mapping resolved no episodes, as a self-contained (col-0) title row."""
 
         self._emit_title_row(TitleState.NO_EPISODES, title)
 
     def log_arr_item_unmonitored(self, state: ArrRunState, item_title: str) -> None:
-        """Report skipping an unmonitored item (bumps the tally, emits its row)."""
+        """Report an unmonitored item (bumps the tally, emits its row)."""
 
         state.stats.unmonitored += 1
         self._emit_title_row(TitleState.UNMONITORED, item_title)
 
     def log_no_anilist_mappings(self, state: ArrRunState, title: str) -> None:
-        """Report a title with no AniList mappings (bumps the tally, emits its row)."""
+        """Report a library item with no AniList mappings (bumps the tally, emits its row)."""
 
         state.stats.no_mappings += 1
         self._emit_title_row(TitleState.NO_MAPPING, title)
 
     def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
-        """Report an AniList ID skipped via the ignore list.
+        """Report an AniList ID the ignore list leaves out.
 
-        No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
+        No AniList lookup: an ignored id is dropped before the prefetch, so the arr item's own name
         is the only one in hand and asking would cost a request per ignored id.
         """
 
         self._titled_row(TitleState.IGNORED, title_from_names(al_id, (), state.arr_title))
 
     def log_no_sd_entry(self, state: ArrRunState, al_id: int) -> None:
-        """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
+        """Report a title with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         state.stats.no_seadex_entry += 1
         self._titled_row(TitleState.NO_ENTRY, self._display_title(state, al_id, None))
 
     def log_seadex_unreachable(self, state: ArrRunState, al_id: int) -> None:
-        """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
+        """Report a title whose SeaDex lookup didn't happen (SeaDex unreachable)."""
 
         state.stats.seadex_unreachable += 1
         # The stored name wins: a prior run resolved it, so no lookup is needed.
         cached = self.cache_store.get_cached_title(state.arr, al_id)
         title = self._display_title(state, al_id, cached.name if cached is not None else None)
         self._titled_row(TitleState.SKIPPED, title)
-        # Scope-free (the titled row closed the entry): the reason rides col-0.
+        # Scope-free (the titled row closed the title scope): the reason goes in col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
     def _display_title(self, state: ArrRunState, al_id: int, stored: str | None) -> Title:
-        """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
+        """The title's label: the stored name, else AniList, else the arr item's own name, else the id form."""
 
         return title_from_names(al_id, (stored,) if stored else self.anilist.titles(al_id), state.arr_title)
 
     def _titled_row(self, state: TitleState, title: Title) -> None:
-        """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
+        """A title row for a title with no title block, the id repeated only when the row shows a name."""
 
         self._emit_title_row(state, title.name)
         if title.resolved:
             self.detail("anilist", StyledValue(str(title.al_id)))
 
-    # --- entry-block headers -------------------------------------------------
+    # --- title-block headers -------------------------------------------------
 
     def open_title_block(
         self,
@@ -231,13 +231,13 @@ class RunReporter:
         sd_entry: EntryRecord,
         coverage: str | None = None,
     ) -> None:
-        """Open the active-entry block: a "checking" header plus coverage/URL.
+        """Open the active title's block: a "checking" header plus coverage/URL.
 
         `coverage` is a one-line range (e.g. "S04 E01-E12"). None or "" renders the URL only.
         """
 
         # Remembered so grab_releases and the summary can attribute what they grab, and show the files we
-        # mapped from the Arr even when a release's own file list can't be parsed.
+        # read from the Arr even when a release's own file list can't be parsed.
         state.per_title.title_name = title
         state.per_title.entry_url = sd_entry.url
         state.per_title.entry_coverage = coverage
@@ -254,7 +254,7 @@ class RunReporter:
         )
 
     def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
-        """Emit a cached entry's self-contained block, read from the cache record."""
+        """Emit an unchanged title's self-contained block, read from its cached row."""
 
         state.stats.unchanged += 1
 
@@ -272,7 +272,7 @@ class RunReporter:
             ),
         )
 
-    # MISSING and ERRORED have no ledger vocabulary, so they render nothing inline.
+    # GONE and ERRORED have no title-row vocabulary, so they render nothing inline.
     _TITLE_STATE_FOR_PENDING_IMPORT: ClassVar[dict[PendingImportState, TitleState]] = {
         PendingImportState.DOWNLOADING: TitleState.QUEUED,
         PendingImportState.DOWNLOADED: TitleState.DOWNLOADED,
@@ -280,9 +280,9 @@ class RunReporter:
     }
 
     def log_pending_import(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:
-        """Emit a carried-over pending record's self-contained block inline in the series block.
+        """Emit a carried-over pending import's self-contained block inline in the series block.
 
-        The header reads the record's claim on `series_id`. Bumps no counter: the engine owns the
+        The header reads the pending import's claim on `series_id`. Bumps no counter: the wait manager owns the
         drop and count bookkeeping.
         """
 
@@ -290,7 +290,7 @@ class RunReporter:
         if title_state is None:
             return
         claim = pending.claim_for(series_id)
-        # Row style is renderer policy keyed on state, so the producer passes no style.
+        # Row style is renderer policy keyed on state, so the reporter passes no style.
         self._block(
             TitleHeader(
                 title_state,
@@ -300,10 +300,10 @@ class RunReporter:
             ),
         )
 
-    # --- entry-block details -------------------------------------------------
+    # --- title-block details -------------------------------------------------
 
     def log_no_seadex_releases(self, state: ArrRunState) -> None:
-        """Report no suitable SeaDex releases (a status detail on the open entry)."""
+        """Report no suitable SeaDex releases (a status detail on the open title)."""
 
         state.stats.no_releases += 1
         self.detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
@@ -316,12 +316,12 @@ class RunReporter:
         dry_run: bool,
         waiting_to_import: bool,
     ) -> None:
-        """Post the action block for a title that differs from SeaDex's pick, after the adding has run.
+        """Post the action block for a title that differs from SeaDex's preferred releases, after the grabs have run.
 
-        Posts nothing when no release was added or already in qBittorrent.
+        Posts nothing when no release was grabbed or already in qBittorrent.
         """
 
-        # Nothing was added and nothing was already in qBittorrent, in a real run or a preview: the skipped, failed
+        # Nothing was grabbed and nothing was already in qBittorrent, in a real run or a dry run: the skipped, failed
         # and held-by-cap rows say why.
         if not results:
             return
@@ -336,7 +336,7 @@ class RunReporter:
             elif r.outcome is AddStatus.ALREADY_IN_QBIT:
                 downloading.append(ReleaseLabel(r.name or "", r.group))
 
-        # `added` first, so a preview says "would add" only for a title it would add something for.
+        # `added` first, so a dry run says "would add" only for a title it would grab something for.
         if not added:
             status = GrabStatus.ALREADY_DOWNLOADING
         elif dry_run:
@@ -362,26 +362,26 @@ class RunReporter:
         )
 
     def log_max_torrents_added(self, cap: int) -> None:
-        """Report hitting the per-run torrent cap (advanced.max_torrents_to_add)."""
+        """Report hitting the per-arr-run torrent cap (advanced.max_torrents_to_add)."""
 
-        # Close the entry first: the cap line is a run-level fact and the capped title logs nothing further, so a
-        # still-open entry frontier would misplace it under that title.
+        # Close the title scope first: the cap line is an arr-run-level fact and the capped title logs nothing
+        # further, so a still-open title scope would misplace it under that title.
         self._close_title_scope()
         self._emit(CapReached(cap=cap))
 
     # --- summary boundary ----------------------------------------------------
 
     def counts_mark(self) -> CountsMark:
-        """The counts mark run start stamps. `log_arr_run_summary` diffs against it."""
+        """The counts mark taken at the arr run's start. `log_arr_run_summary` diffs against it."""
 
         return self._counts().bound_mark()
 
     def log_arr_run_summary(self, state: ArrRunState, *, dry_run: bool, has_client: bool) -> None:
-        """Emit the end-of-run scoreboard."""
+        """Emit the arr run summary."""
 
         self._close_title_scope()
 
-        # The mark carries the counter it was stamped on, so this diff can never read a different hub.
+        # The mark carries the counter it was taken on, so this diff can never read a different hub.
         since = state.counts_mark.since()
 
         dry_run_note = None

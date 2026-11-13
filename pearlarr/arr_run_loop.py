@@ -1,4 +1,4 @@
-"""The per-arr run loop shared by both Arr strategies."""
+"""The arr run loop shared by both Arr strategies."""
 
 import time
 from typing import final
@@ -20,10 +20,10 @@ from .wait_view import (
 
 @final
 class ArrRunLoop:
-    """The Arr-agnostic run loop driving an injected strategy."""
+    """The Arr-agnostic arr run loop driving an injected strategy."""
 
     def __init__(self, deps: ArrRunDeps, services: ArrRunServices) -> None:
-        """Receive the shared collaborators + services hub and set up per-run state."""
+        """Receive the shared collaborators + services and set up the arr run state."""
 
         self._config = deps.config
         self._arr_config = deps.arr_config
@@ -39,18 +39,18 @@ class ArrRunLoop:
         self._services = services
 
         # (Re)set at the top of run_arr. The None placeholder is replaced before any import hook runs.
-        # Held under the narrow, non-generic ImportCompleter ABC (a concrete ArrStrategy subclasses it), so no ItemT cast.
+        # Typed as the narrow, non-generic ImportCompleter ABC (a concrete ArrStrategy subclasses it), so no ItemT cast.
         self._active_strategy: ImportCompleter | None = None
 
-        # Adopt the hub's placeholder ctx, never mint a second one.
-        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_arr.
+        # Adopt the services' placeholder state, never mint a second one.
+        # Its dry_run=False and OFF wait mode keep every dry-run and pending-import path a safe no-op before run_arr.
         self._state = services.state
 
         self._wait_manager = ImportWaitManager(deps=deps, state=self._state, pending_imports=services.pending_imports)
         self.bind_arr_run(self._state)
 
     def bind_arr_run(self, state: ArrRunState) -> None:
-        """Bind the fresh run context to every per-run collaborator."""
+        """Bind the fresh arr run state to every per-arr-run collaborator."""
 
         self._services.bind_arr_run(state)
         self._wait_manager.bind_arr_run(state, self._active_strategy)
@@ -60,7 +60,7 @@ class ArrRunLoop:
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
-        """Start a fresh run context and the run clock, and rebind collaborators."""
+        """Start a fresh arr run state and its clock, and rebind collaborators."""
 
         self._state = ArrRunState(
             arr=self._services.arr,
@@ -74,11 +74,11 @@ class ArrRunLoop:
 
     @property
     def _wait_active(self) -> bool:
-        """Whether the wait machinery runs this pass (an active mode, not preview)."""
+        """Whether the wait machinery runs this arr run (an active wait mode, not a dry run)."""
 
         return self._state.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_dry_run()
 
-    # --- Run orchestration --------------------------------------------------
+    # --- Arr run orchestration ----------------------------------------------
 
     def run_arr[ItemT: ArrItem](
         self,
@@ -89,14 +89,14 @@ class ArrRunLoop:
         import_wait_mode: ImportWaitMode | None = None,
         boot: BootFlow,
     ) -> None:
-        """Shared run scaffolding for both Arr syncers.
+        """Shared arr run scaffolding for both Arr strategies.
 
         Args:
             strategy: The Arr-specific strategy to drive.
             item_id: If set, only run for the single item with this id (TMDB for Radarr, TVDB for Sonarr).
-            dry_run: Simulate the run without grabbing torrents, writing the cache, or sending notifications.
+            dry_run: Simulate the arr run without grabbing releases, writing the cache, or sending notifications.
             import_wait_mode: The CLI `--import-wait-mode` override. None falls back to `imports.wait_mode`.
-            boot: The startup cockpit's producer facade.
+            boot: The boot facade.
         """
 
         self._active_strategy = strategy
@@ -115,7 +115,7 @@ class ArrRunLoop:
             n_items = len(all_items)
             fetching.note(arr_item_noun(arr, n_items))
 
-        # The activity scan must run before the prefetches, which warm exactly the dirty subset it marks.
+        # The activity read must run before the prefetches, which warm exactly the dirty subset it marks.
         activity: ArrActivityReader | None = None
         if self._config.advanced.detect_arr_activity and not self._config.seadex.ignore_seadex_update_times:
             with boot.step(f"Checking {arr.capitalize()} activity") as step:
@@ -149,7 +149,7 @@ class ArrRunLoop:
             else:
                 step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
-        # Batched OR-filter queries collapse the per-id from_id round-trips. An outage mid-prefetch
+        # Batched OR-filter queries collapse the per-id from_id round-trips. SeaDex turning unreachable mid-prefetch
         # must not claim "N entries" it never fetched.
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
@@ -164,7 +164,7 @@ class ArrRunLoop:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
                 step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
-            # Like the episode step, after the SeaDex warm and the activity scan's dirty marks: both pick their
+            # Like the episode step, after the SeaDex warm and the activity read's dirty marks: both choose their
             # series through `title_needs_check`, which reads them.
             with boot.step("Fetching TVDB orders") as step:
                 fetched = strategy.prefetch_orders(all_items, progress=step)
@@ -176,12 +176,12 @@ class ArrRunLoop:
         else:
             strategy.prefetch_episodes(all_items)
 
-        # Tear the cockpit down before the scan logs anything, or it reflows above a stale spinner.
+        # Tear the boot region down before the scan logs anything, or it reflows above an old spinner.
         boot.end_boot()
 
         self._reporter.log_arr_start(arr, n_items)
 
-        # Only on a full run, mirroring the vouch: a single-item run re-checks just its id, so the
+        # Only on a full run, like storing the selection hash: a single-item run re-checks just its id, so the
         # whole-library note would overstate it and recur every time.
         if item_id is None and self._services.selection_changed and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
@@ -192,31 +192,33 @@ class ArrRunLoop:
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
-            # Commit after each title, not inside one, where paired writes (a record and its guard row) may be half
-            # done. A stop or kill loses only the title in flight. A title that raised still commits what it staged,
-            # as the end save always did.
+            # Commit after each library item, not inside one, where paired writes (a pending import and its guard row)
+            # may be half done. A stop or kill loses only the library item in flight. A library item that raised still
+            # commits what it staged, as the end save always did.
             self.cache_store.save(dry_run=self._services.is_dry_run())
 
-        # ONE full-coverage predicate for both gates below: a checkpoint committed on an outage run would consume
-        # drift events the run never acted on. A SkyHook outage counts too: a series it left unrefreshed was read by
-        # its old order record, and with neither committed the next pass repeats the re-checks they drive (a settings
-        # change, a file change in the arr) against the refreshed one. A title held past the cap, or one whose check
-        # didn't cache it as done, holds back neither: `is_unchanged` cleared its stamp, so the next run checks
-        # it whatever is committed here. An AniList outage is left out: a Sonarr title whose check read an entry
-        # with no stored record of its air dates isn't cached as done, and Radarr reads AniList only for display.
+        # ONE full-coverage predicate for both gates below: a checkpoint committed on a run that found SeaDex
+        # unreachable would consume drift events the run never acted on. An unreachable SkyHook counts too: a series it
+        # left unrefreshed was read by its old stored orders, and with neither committed the next run repeats the
+        # re-checks they drive (a settings change, a file change in the arr) against the refreshed one. A title held
+        # past the cap, or one whose check didn't cache it, blocks neither: `is_unchanged` cleared its stamp, so the
+        # next run checks it whatever is committed here. An unreachable AniList is left out: a Sonarr title whose
+        # check read an entry with no stored answer for its air dates isn't cached, and Radarr reads AniList only for
+        # display.
         full_scan = item_id is None and not self._seadex.unreachable and not self._skyhook.unreachable
 
-        # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
-        # dedup absorb the replay). The staged write persists only at _finish_arr_run's non-preview save.
+        # Left unstaged while a source is unreachable so the next healthy run re-derives the same dirty ids (the query
+        # overlap and id dedup cover the replay). The staged write persists only at _finish_arr_run's save outside a
+        # dry run.
         if activity is not None and full_scan:
             activity.stage_checkpoint()
 
-        # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
-        # whose check raised past the cached-entry gate is checked again next run all the same.
+        # A contained per-id error still stores the selection hash: otherwise one flaky title re-checks the library
+        # every run. A title whose check raised past the `is_unchanged` gate is checked again next run all the same.
         if full_scan:
             self.cache_store.store_selection_hash(arr, self._config.selection_hash())
 
-        # The finalize save persists the checkpoint and vouch with the tail's own writes.
+        # The finish save persists the checkpoint and selection hash with the tail's own writes.
         self._finish_arr_run()
 
     def _scan_item[ItemT: ArrItem](
@@ -226,7 +228,7 @@ class ArrRunLoop:
         item_idx: int,
         n_items: int,
     ) -> None:
-        """Scan one library item: every AniList id it maps to, then its pending-record snapshot."""
+        """Scan one library item: every title it maps to, then its pending-import snapshot."""
 
         arr = self._services.arr
         item_title = item.title
@@ -251,32 +253,32 @@ class ArrRunLoop:
             return
 
         for al_id, mapping in al_mappings.items():
-            # The previous id's pause is slept here, not at the end of that id, so a stop during it never rolls back
-            # a title that finished.
+            # The previous title's pause is slept here, not at the end of its check, so a stop during it never rolls
+            # back a title that finished.
             self._services.pay_pause()
-            # Past the run cap a title is still checked (a torrent already downloading keeps its mapping), its grab
+            # Past the cap a title is still checked (a torrent already in qBittorrent keeps its mapping), its grab
             # held for the next run.
             try:
                 strategy.check_title(item=item, al_id=al_id, mapping=mapping)
             except Exception as e:
-                # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
+                # Contain the failure to THIS title: one bad season must not stop the item's others.
                 hub_error(
                     f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - skipping this AniList id",
                     exc=e,
                 )
                 continue
 
-        # A snapshot, never an import: the end pass owns that. Radarr returns None here.
-        # Placed after all of the item's AniList ids so it covers the cached, grabbed and no-entry paths alike.
+        # A snapshot, never an import: the wait pass owns that. Radarr returns None here.
+        # Put after all of the item's titles so it covers the unchanged, grabbed and no-entry paths alike.
         if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
             self._wait_manager.report_imports_for_series(sid)
 
     # --- Wait-for-completion orchestration ----------------------------------
 
     def _finish_arr_run(self) -> None:
-        """Shared run tail: the one-cycle check + tally, print the summary, THEN the waiting monitor."""
+        """Shared arr run tail: the deferred wait pass + tally, print the summary, THEN the blocking wait pass."""
 
-        # Close the scan before anything below logs: these diagnostics are run-level facts.
+        # Close the scan before anything below logs: these diagnostics are arr-run-level facts.
         # Always ScanStarted-paired: run_arr, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._state.arr)
 
@@ -288,18 +290,19 @@ class ArrRunLoop:
             ImportWaitMode.HYBRID,
         )
 
-        # The finally guards the whole tail: a raise in check, tally, summary or monitor must not let bootstrap's
-        # close roll back the run's staged writes. The save trails the monitor to also capture its drops.
+        # The finally guards the whole tail: a raise in either wait pass, tally or summary must not let bootstrap's
+        # close roll back the arr run's staged writes. The save trails the blocking wait pass to also capture its drops.
         try:
             if self._wait_active:
-                # Heal earlier runs' kept-for-cleanup records before this run's passes read the store.
+                # Finish the cleanup of earlier runs' pending imports awaiting cleanup before this arr run's wait pass
+                # reads the store.
                 self._wait_manager.finish_cleanups()
                 if not end_pass_waits:
                     check = self._wait_manager.run_deferred()
                     if check is not None:
                         self._state.stats.imported += check.carried_over_imported
-                # This owns the tally's `imported` bump: the snapshot's verified imports land in
-                # `pending_import_states`, the passes report theirs on their carried-over result rows.
+                # This owns the tally's `imported` bump: the snapshot's confirmed imports are in
+                # `pending_import_states`, the wait passes report theirs on their carried-over result rows.
                 self._state.stats.imported += sum(
                     1 for state in self._state.pending_import_states.values() if state is PendingImportState.IMPORTED
                 )
@@ -315,7 +318,7 @@ class ArrRunLoop:
                 result = self._wait_manager.run_blocking()
                 if result is not None:
                     self._state.stats.imported += result.carried_over_imported
-                    # _notify_wait_complete swallows its own errors, so a bad webhook can never skip the save below.
+                    # _notify_wait_complete swallows its own errors, so a bad webhook can never stop the save below.
                     if result.waited:
                         self._notify_wait_complete(result)
         finally:

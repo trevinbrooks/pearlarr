@@ -1,18 +1,18 @@
 # pyright: strict
 """Characterization tests for RunReporter + ArrRunState.
 
-The run loop and the end-of-run summary had no coverage before this phase, so
-these pin the run-state contracts the orchestrator depends on: the stats-tally
+The arr run loop and the arr run summary had no coverage before this phase, so
+these pin the arr run state contracts the orchestrator depends on: the stats-tally
 counters each `log_*` method bumps, the active-title attribution set by
 `open_title_block`, and that the summary renders without error on both the real
 and dry-run paths. Presentation is captured as EMITTED events (via the `emit`
-seam) and, where a test pins output, re-derived to lines through the shipped
+callback) and, where a test pins output, re-derived to lines through the shipped
 builders. Most tests just assert on the `ArrRunState` mutations.
 
 The collaborators are real, not mocks: the reporter is built with the shared
 in-memory `FakeCacheStore` (typed by `AbstractCacheStore`) and a real
 `AniListGateway` whose own cache store is faked - the "construct the
-composite, fake its leaves" seam - so the whole file type-checks at strict.
+composite, fake its leaves" pattern - so the whole file type-checks at strict.
 """
 
 import time
@@ -80,7 +80,7 @@ def _make_reporter(
     cache_store: AbstractCacheStore | None = None,
     client: AniListClient | None = None,
 ) -> RunReporter:
-    """The reporter alone, for the ctx/stats-mutation tests (events discarded)."""
+    """The reporter alone, for the state/stats-mutation tests (events discarded)."""
 
     reporter, _events = _record(cache_store, client)
     return reporter
@@ -93,7 +93,7 @@ def _event_messages(events: list[Event]) -> list[str]:
 
 
 def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
-    """A FakeCacheStore with one entry row (arr=Sonarr, al_id=1) preseeded."""
+    """A FakeCacheStore with one cached title (arr=Sonarr, al_id=1) preseeded."""
 
     store = FakeCacheStore()
     store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(name=name, coverage=coverage, url=url))
@@ -103,7 +103,7 @@ def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
 class TestStatsCounters:
     """Each `RunReporter` `log_*` method increments its matching `ArrRunStats` counter.
 
-    Cached/outage-skip paths resolve a title via the AniList gateway only when
+    The cached and SeaDex-unreachable paths resolve a title's name via the AniList gateway only when
     no name is already stored.
     """
 
@@ -136,13 +136,13 @@ class TestStatsCounters:
         reporter.log_no_sd_entry(state, 42)
         assert state.stats.no_seadex_entry == 1
         # Routed through the gateway: its al_cache is warmed in place and the
-        # lookup rode its bound wire client (which carries the transport and the
-        # per-run retry narration by construction).
+        # lookup went through its bound wire client (which carries the transport and the
+        # per-arr-run retry narration by construction).
         assert 42 in reporter.anilist.al_cache
         assert client.query_calls == [42]
 
     def test_cached_without_stored_name_falls_back_to_gateway_title(self) -> None:
-        # A legacy record predating name storage: the title fallback routes
+        # A legacy row predating name storage: the name fallback routes
         # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
         store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
@@ -154,9 +154,9 @@ class TestStatsCounters:
         assert client.query_calls == [1]
 
     def test_outage_skip_tallies_and_renders_distinctly(self) -> None:
-        # A SeaDex-unreachable skip lands in its own counter and its ledger row
-        # reads "skipped" with the reason - never "no entry". An UNCACHED id has
-        # no stored name, so the title still comes from the gateway lookup.
+        # A title SeaDex was unreachable for lands in its own counter and its title row
+        # reads "skipped" with the reason - never "no entry". An UNCACHED title has
+        # no stored name, so the name still comes from the gateway lookup.
         client = ScriptedAniListClient()
         reporter, events = _record(client=client)
         state = ArrRunState(arr=Arr.SONARR)
@@ -171,8 +171,8 @@ class TestStatsCounters:
         assert client.query_calls == [42]
 
     def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
-        # A prior run resolved the title and stored it on the cache row, so the
-        # outage skip renders the stored name with no AniList lookup at all.
+        # A prior run resolved the name and stored it on the cache row, so the
+        # SeaDex-unreachable row renders the stored name with no AniList lookup at all.
         client = ScriptedAniListClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         state = ArrRunState(arr=Arr.SONARR)
@@ -185,7 +185,7 @@ class TestStatsCounters:
         assert client.query_calls == []  # the stored name spared the lookup
 
     def test_cached_without_a_name_falls_back_to_the_arr_title(self) -> None:
-        # The stored name is empty and AniList still has none: the arr's own title labels the block.
+        # The stored name is empty and AniList still has none: the arr item's own name labels the block.
         store = FakeCacheStore()
         store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient(None)
@@ -199,7 +199,7 @@ class TestStatsCounters:
 
 
 class TestActiveTitle:
-    """`open_title_block` sets the context's current title, url, and coverage for the open entry."""
+    """`open_title_block` sets the state's title name, url, and coverage for the open title."""
 
     def test_log_al_title_sets_current(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
@@ -211,7 +211,7 @@ class TestActiveTitle:
 
 
 class TestEntryHeaderAlId:
-    """G1: `al_id` on the emitted `TitleHeader` is producer-unverified.
+    """G1: `al_id` on the emitted `TitleHeader` is reporter-unverified.
 
     Garbage in either header-opening path passed the whole suite, so pin it on both.
     """
@@ -234,10 +234,10 @@ class TestEntryHeaderAlId:
 
 
 class TestCloseBoundaries:
-    """`scan_finished` / `arr_run_finished` close the open entry, then state the boundary.
+    """`scan_finished` / `arr_run_finished` close the open title scope, then state the boundary.
 
-    Closing entry-first is what keeps a later diagnostic (a reconcile warning, a
-    leg-fatal error) from rendering inside the entry the scan happened to end on.
+    Closing the title scope first is what keeps a later diagnostic (a reconcile warning, an
+    arr-run-fatal error) from rendering inside the title the scan happened to end on.
     """
 
     def test_scan_finished_closes_the_open_entry_first(self) -> None:
@@ -257,7 +257,7 @@ class TestCloseBoundaries:
 
     def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
         # scan_finished already closed it, so arr_run_finished's defensive close is a no-op:
-        # a second ScopeClosed would demote every later fact on that stale scope.
+        # a second ScopeClosed would demote every later fact on that closed scope.
         reporter, events = _record()
         reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
 
@@ -268,12 +268,12 @@ class TestCloseBoundaries:
 
 
 class TestCompleteBlocksSelfClose:
-    """D6: a cached / carried-over-pending block is COMPLETE on return, so it self-closes.
+    """D6: a cached title's / carried-over pending import's block is COMPLETE on return, so it self-closes.
 
     Nothing follows it - the header carries the whole row. Self-closing keeps
-    the frontier honest: a gap diagnostic (e.g. a retry WARNING while resolving
-    the next title) and the breadcrumb path attribute to the open item, never
-    to the finished block. Contrast a CHECKING entry, which legitimately
+    the open scopes honest: a gap diagnostic (e.g. a retry WARNING while resolving
+    the next title) and the scope path attribute to the open item, never
+    to the finished block. Contrast a CHECKING title, which legitimately
     accrues followers and stays open until a boundary.
     """
 
@@ -290,7 +290,7 @@ class TestCompleteBlocksSelfClose:
 
 
 class TestRunSummary:
-    """`log_arr_run_summary` emits a `ArrRunSummaryReady` scoreboard from the run's stats.
+    """`log_arr_run_summary` emits a `ArrRunSummaryReady` summary from the arr run's stats.
 
     The dry-run note wording tracks whether a qBittorrent client is configured.
     """
@@ -361,7 +361,7 @@ class TestRunSummary:
 
         state = self._state_with_data()
         state.counts_mark = reporter.counts_mark()
-        counters[-1].record(Severity.WARNING)  # the run's own post-mark warning
+        counters[-1].record(Severity.WARNING)  # the arr run's own post-mark warning
 
         # The "hub swap": the source now resolves to a fresh counter soaking up
         # unrelated errors.
@@ -371,7 +371,7 @@ class TestRunSummary:
 
         reporter.log_arr_run_summary(state, dry_run=False, has_client=True)
         summary = self._summary_of(events).summary
-        assert summary.warnings == 1  # the original counter's record, not garbage
+        assert summary.warnings == 1  # the original counter's warning, not garbage
         assert summary.errors == 0  # the swapped-in counter's errors never leak
 
 
@@ -380,7 +380,7 @@ def _summary_messages(
     *,
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
 ) -> list[str]:
-    """The messages log_run_summary re-derives to, for row-presence assertions."""
+    """The messages log_arr_run_summary re-derives to, for row-presence assertions."""
 
     state.import_wait_mode = import_wait_mode
     reporter, events = _record()
@@ -389,7 +389,7 @@ def _summary_messages(
 
 
 class TestPendingSnapshot:
-    """log_pending_snapshot renders the inline carried-over row + bumps NO counter."""
+    """log_pending_import renders the inline carried-over row + bumps NO counter."""
 
     def test_renders_and_bumps_no_counter(self) -> None:
         reporter, events = _record()
@@ -399,7 +399,7 @@ class TestPendingSnapshot:
         reporter.log_pending_import(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
 
         assert any(isinstance(e, TitleHeader) for e in events)
-        # The reporter never touches the counters - the engine owns drop/count.
+        # The reporter never touches the counters - the wait manager owns drop/count.
         assert state.stats.imported == 0
         assert state.stats.downloading == 0
         assert state.stats.downloaded == 0
@@ -413,7 +413,7 @@ class TestPendingSnapshot:
         assert events == []
 
     def test_header_reads_the_claim_on_the_reported_series(self) -> None:
-        # A two-series record is reported once per series it claims: the header carries that
+        # A two-series pending import is reported once per series it claims: the header carries that
         # claim's coverage and link, and the label names every claim.
         reporter, events = _record()
         pending = pending_import(
@@ -481,7 +481,7 @@ class TestSummaryPendingCounters:
 
     def test_this_run_grab_shows_added_only_no_queued(self) -> None:
         # REGRESSION (double-report): a this-run grab is `added`. With the counters
-        # left at 0 (the engine never bumps them for this-run grabs), the summary
+        # left at 0 (the wait manager never bumps them for this-run grabs), the summary
         # shows `added` but no `queued` row for the same torrent.
         state = ArrRunState(arr=Arr.SONARR)
         state.torrents_added = 1
@@ -517,7 +517,7 @@ class TestSummaryNoReleaseRow:
 
 
 class TestSummarySeadexDownRow:
-    """Outage skips get their own gated "seadex down" row.
+    """Titles SeaDex was unreachable for get their own gated "seadex down" row.
 
     It's never the alarming (and untrue) "no entry" count.
     """
@@ -538,7 +538,7 @@ class TestSummarySeadexDownRow:
 
 
 class TestPrivateOnlyTip:
-    """The private-only guidance tip gates on the record's KIND, never on the display `reason` text.
+    """The private-only guidance tip gates on the row's CAUSE, never on the display `reason` text.
 
     Rewording the string must not kill the tip.
     """
@@ -563,14 +563,14 @@ class TestPrivateOnlyTip:
         assert not any("private_releases: allow" in m for m in messages)
 
     def test_no_fallback_kind_tip_omits_the_fallback_suggestion(self) -> None:
-        # Fallback mode found nothing public: suggesting private_releases: fallback
-        # (already on) would be nonsense, so that kind's tip names no setting at all.
+        # The `fallback` setting found nothing public: suggesting private_releases: fallback
+        # (already on) would be nonsense, so that cause's tip names no setting at all.
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK))
         assert not any("private_releases" in m for m in messages)
         assert any("re-checked every run" in m for m in messages)
 
     def test_stale_kind_renders_the_owned_stale_tip(self) -> None:
-        # The fallback-never-replaces-an-owned-copy hold: the tip names the two
+        # The fallback-never-replaces-an-owned-copy skip: the tip names the two
         # ways out (update or delete) and, with fallback already on, no setting.
         messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_STALE))
         assert not any("private_releases" in m for m in messages)
@@ -598,7 +598,7 @@ def _action_messages(
 ) -> list[str]:
     """The status + per-release rows log_seadex_action re-derives to.
 
-    Passes an empty `seadex_dict` so the recommended-group rows are skipped and
+    Passes an empty `seadex_dict` so the preferred-group rows are left out and
     the assertions key only on the status line and the per-release outcome rows.
     """
 
@@ -608,7 +608,7 @@ def _action_messages(
 
 
 class TestLogSeadexAction:
-    """log_seadex_action renders adding / would add / already-downloading distinctly."""
+    """log_seadex_action renders adding / would add / already in qBittorrent distinctly."""
 
     def test_added_status_and_label(self) -> None:
         messages = _action_messages(
@@ -646,7 +646,7 @@ class TestLogSeadexAction:
 
     @pytest.mark.parametrize("dry_run", [False, True], ids=["wait mode off", "preview"])
     def test_already_downloading_not_waiting(self, dry_run: bool) -> None:
-        # State the fact, but don't promise an import, and in a preview don't say "would add".
+        # State the fact, but don't promise an import, and in a dry run don't say "would add".
         messages = _action_messages(
             [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="X", group="G")],
             dry_run=dry_run,
@@ -660,7 +660,7 @@ class TestLogSeadexAction:
 
     def test_mixed_added_and_already_added_reads_adding(self) -> None:
         # A fresh grab happened, so the headline is "adding". The per-release rows
-        # disambiguate (one added, one still downloading).
+        # disambiguate (one added, one already in qBittorrent).
         messages = _action_messages(
             [
                 GrabResult(outcome=AddStatus.ADDED, name="new", group="G"),
@@ -694,8 +694,8 @@ class TestLogSeadexAction:
         assert messages == []
 
     def test_recommended_group_tags_are_sorted(self) -> None:
-        # G2: the tags ride a frozenset (StrEnum hash is per-process random), so
-        # the producer sorts them. Feed several unordered and pin the emitted order.
+        # G2: the tags are carried in a frozenset (StrEnum hash is per-process random), so
+        # the reporter sorts them. Feed several unordered and pin the emitted order.
         reporter, events = _record()
         seadex_dict = {
             "NAN0": rg_group(

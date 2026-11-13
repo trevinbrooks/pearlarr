@@ -5,8 +5,8 @@
 # Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
-Covers the parse-cache record (freshness, the leaf's reads and writes), the
-series-id fingerprint, worker gating, and concurrent fresh episode prefetch.
+Covers the parse cache rows (freshness, the leaf's reads and writes), the
+series-id hash, worker gating, and concurrent fresh episode prefetch.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ _MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
 _UNMATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_UNMATCHED_TTL_DAYS)
 
 # The parse Sonarr returns when it matched no series at all: the cacheable
-# unmatched record, pinned to the series fingerprint on write.
+# unmatched row, pinned to the series hash on write.
 _UNMATCHED = ParsedFileInfo()
 
 
@@ -77,7 +77,7 @@ def _stamp(days_ago: float) -> str:
 
 
 def _window(series_hash: str = "fp") -> ParseFreshness:
-    """The pass window anchored at `_NOW` (never the wall clock)."""
+    """The parse freshness anchored at `_NOW` (never the wall clock)."""
 
     return ParseFreshness(
         now_str=_NOW.strftime(STAMP_FORMAT),
@@ -88,7 +88,7 @@ def _window(series_hash: str = "fp") -> ParseFreshness:
 
 
 def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_hash: str | None = None) -> dict[str, object]:
-    """One persisted parse row, stamped `days_ago` and optionally pinned to a fingerprint."""
+    """One persisted parse row, stamped `days_ago` and optionally pinned to a series hash."""
 
     row: dict[str, object] = {"fetched_at": _stamp(days_ago), "parse": parse_to_json(info)}
     if series_hash is not None:
@@ -109,7 +109,10 @@ def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
 
 
 class TestSeriesFingerprint:
-    """`sonarr_series_hash` is order- and duplicate-independent, differs across different id sets, and is stable for the empty set."""
+    """`sonarr_series_hash` is order- and duplicate-independent and differs across different id sets.
+
+    It is stable for the empty set.
+    """
 
     def test_order_and_duplicate_independent(self) -> None:
         assert sonarr_series_hash([3, 1, 2]) == sonarr_series_hash([2, 2, 1, 3])
@@ -122,10 +125,10 @@ class TestSeriesFingerprint:
 
 
 class TestParseIsFresh:
-    """`_parse_is_fresh` dispatches on the fingerprint key: a matched row rides the 30-day TTL.
+    """`_parse_is_fresh` dispatches on the series hash key: a matched row gets the 30-day TTL.
 
     An unmatched one (pinned with `series_fp`) is fresh only under the same
-    fingerprint and the short backstop. A legacy row carrying no whole parse is
+    series hash and the short backstop. A legacy row carrying no whole parse is
     never fresh.
     """
 
@@ -278,8 +281,8 @@ class _Sonarr:
     """A scripted Sonarr client for the prefetch warm.
 
     By default `episodes(sid)` returns a distinguishable one-episode list per
-    series (`_eps_for`). `return_none` degrades every fetch to a transient
-    miss, and `raise_on` makes the listed ids raise (the worker-degradation
+    series (`_eps_for`). `return_none` turns every fetch into a transient
+    failure, and `raise_on` makes the listed ids raise (the worker-failure
     case). Records each `(series_id, quiet)` call so the dedup / not-fetched /
     quiet assertions read recorded state.
     """
@@ -325,12 +328,12 @@ class _StopOnFirstProgress:
 
 
 class _Services:
-    """A stand-in for the run machinery the prefetch consults.
+    """A stand-in for the arr run services the prefetch consults.
 
-    `get_anilist_ids` resolves a series' tvdb id to its `{al_id -> mapping}`
+    `title_mappings` resolves a series' tvdb id to its `{al_id -> mapping}`
     dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
-    always-mapped helper). `title_needs_check` is the per-id needs-scan gate
-    (`needs_scan=None` reports every id as scannable).
+    always-mapped helper). `title_needs_check` is the per-title needs-check gate
+    (`needs_scan=None` reports every title as needing a check).
     """
 
     def __init__(
@@ -362,7 +365,7 @@ class _Services:
 
 
 class TestPrefetchEpisodes:
-    """`SonarrEpisodes.prefetch` warms only mapped, monitored, scannable series, deduped by id.
+    """`SonarrEpisodes.prefetch` warms only mapped, monitored series with a title to check, deduped by id.
 
     It tolerates a raising or `None`-returning worker (that series stays
     unwarmed, the rest still warm) and reports the attempted (not cached)
@@ -372,7 +375,7 @@ class TestPrefetchEpisodes:
     def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
         sonarr = _Sonarr()
         # Only "mapped" series resolve to a non-empty AniList mapping. needs_scan
-        # defaults to "every id scannable".
+        # defaults to "every title needs a check".
         services = _Services(mapping={sid: _ids(1) for sid in mapped})
         eps = make_sonarr_episodes(
             sonarr=sonarr,
@@ -477,7 +480,7 @@ class TestCachedEpisodes:
 
     def test_failed_fetch_is_none_and_not_cached(self) -> None:
         # None is the unreadable list, distinct from a series with no episodes:
-        # every map-dependent verdict refuses on it instead of reading empty.
+        # every verdict that depends on the episode index places nothing on it instead of reading empty.
         eps, _ = self._eps(return_none=True)
 
         assert eps.cached_episodes(1) is None
@@ -491,7 +494,7 @@ def _entry(dt: datetime) -> EntryRecord:
 
 
 class _Seadex:
-    """A SeaDex gateway stand-in returning one fixed entry (or a miss) for any al_id."""
+    """A SeaDex gateway stand-in returning one fixed entry (or a not-found) for any al_id."""
 
     def __init__(self, entry: EntryRecord | None) -> None:
         self._entry = entry
@@ -502,10 +505,10 @@ class _Seadex:
 
 
 class TestAlIdNeedsScan:
-    """`ArrRunServices.title_needs_check` mirrors the per-id loop's no-entry + `is_unchanged` gates, side-effect-free.
+    """`ArrRunServices.title_needs_check` mirrors the per-title loop's no-entry + `is_unchanged` gates.
 
-    So `prefetch_episodes` warms only the series the loop would actually
-    process (the SeaDex-modification-times fix). Pinned against the same
+    It is side-effect-free, so `prefetch_episodes` warms only the series the loop would actually
+    check (the SeaDex-modification-times fix). Pinned against the same
     cases as `is_unchanged`.
     """
 
@@ -534,8 +537,8 @@ class TestAlIdNeedsScan:
         assert run.title_needs_check(7) is True
 
     def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
-        # A matching cached entry is normally skipped. ignore_seadex_update_times
-        # makes the loop re-process it, so the predicate must report needs-scan.
+        # A matching cached title is normally left unchecked. ignore_seadex_update_times
+        # makes the loop re-check it, so the predicate must report needs-check.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(
@@ -546,7 +549,7 @@ class TestAlIdNeedsScan:
         assert run.title_needs_check(7) is True
 
     def test_ignore_update_times_still_skips_when_no_entry(self) -> None:
-        # No SeaDex entry -> begin_check would skip regardless of the flag.
+        # No SeaDex entry -> begin_check would stop regardless of the flag.
         run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
         assert run.title_needs_check(7) is False
 
@@ -559,7 +562,7 @@ class TestAlIdNeedsScan:
         assert run.title_needs_check(7) is True
 
     def test_dirty_id_without_seadex_entry_still_skips(self) -> None:
-        # The no-entry short-circuit stays first: dirty or not, no entry -> no scan.
+        # The no-entry short-circuit stays first: dirty or not, no entry -> no check.
         run = self._run(entry=None, cache=FakeCacheStore())
         run.mark_dirty([7])
         assert run.title_needs_check(7) is False
@@ -572,7 +575,7 @@ class TestAlIdNeedsScan:
 
     def test_warn_mode_fallback_marker_needs_scan(self) -> None:
         # Prefetch must agree with is_unchanged's warn-mode resurfacing of
-        # fallback-satisfied entries, or the reprocessed id goes un-warmed.
+        # fallback-satisfied titles, or the re-checked title goes un-warmed.
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="warn")
         assert run.title_needs_check(7) is True
 
@@ -582,9 +585,9 @@ class TestAlIdNeedsScan:
 
 
 class TestPrefetchSkipsUnchanged:
-    """`prefetch_episodes` warms only series with at least one scannable id.
+    """`prefetch_episodes` warms only series with at least one title to check.
 
-    A series whose every SeaDex entry is unchanged (or absent) is no longer
+    A series whose every title is unchanged (or has no entry) is no longer
     fetched, the regression this change fixes.
     """
 
@@ -613,7 +616,7 @@ class TestPrefetchSkipsUnchanged:
         assert sonarr.calls == []
 
     def test_warms_series_with_any_scannable_id(self) -> None:
-        # A series whose mapping carries a stale id alongside a fresh one is warmed.
+        # A series whose mapping carries a title needing a check alongside an unchanged one is warmed.
         sonarr = _Sonarr()
         services = _Services(mapping={5: _ids(10, 11)}, needs_scan={11})
         eps = make_sonarr_episodes(
@@ -642,7 +645,7 @@ class _ParseSonarr:
 
 
 class TestParsedFilesUnmatchedCache:
-    """`parsed_files` caches a genuine unmatched parse with the series fingerprint.
+    """`parsed_files` caches a genuine unmatched parse with the series hash.
 
     It skips a fresh hit's network call, never caches a transient `None`, and
     never parses audio files.
@@ -701,7 +704,7 @@ class TestParsedFilesUnmatchedCache:
 
     def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
         # A row whose parse this build cannot validate is a miss, so `_parse_for`
-        # re-asks Sonarr and overwrites it with a readable record. Every field is
+        # re-asks Sonarr and overwrites it with a readable row. Every field is
         # present, so the key check passes it and validation is what misses.
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
@@ -720,7 +723,7 @@ class TestParsedFilesUnmatchedCache:
         assert rec["parse"] == parse_to_json(_matched(1, 1))
 
     def test_a_row_without_a_series_title_is_re_parsed_by_the_warm_pass(self) -> None:
-        # The warm pass sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
+        # The cache warm sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
         names = ["[X] Show - 01.mkv", "[X] Show - 02.mkv"]
         parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse={names[0]: _untitled(_matched(1, 1))})
 
@@ -737,7 +740,7 @@ class TestParsedFilesUnmatchedCache:
         assert sonarr.calls == []
 
     def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
-        # Every url gets an entry, video files only, each with its listed size and its parse.
+        # Every release gets a key, video files only, each with its listed size and its parse.
         parse, _ = self._parse(parse_result=_matched(1, 1))
         gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_hash="fp")
         assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
@@ -752,8 +755,8 @@ class TestParsedFilesUnmatchedCache:
 class TestIsVideoCandidate:
     """Checksum and sidecar files never enter the candidate pool.
 
-    A seeded checksum file is never offered by Sonarr's manual-import scan,
-    so it would stick a record on "intended file missing" until the deadline.
+    A seeded checksum file is never offered among Sonarr's ManualImport candidates,
+    so it would stick a pending import on "intended file missing" until the deadline.
     All of these extensions were observed in real SeaDex releases.
     """
 
@@ -770,7 +773,7 @@ class TestIsVideoCandidate:
             assert not is_video_candidate(name)
 
     def test_bundled_reading_matter_rejected(self) -> None:
-        # Manga volumes and books ride beside the video in some releases.
+        # Manga volumes and books sit beside the video in some releases.
         for name in (
             "[X] Show - Volume 01.cbz",
             "[X] Show - Volume 02.cbr",
