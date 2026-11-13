@@ -176,7 +176,7 @@ class _ImportContext:
 
         return self.snapshot.map_statuses(self.pending.resolved_ids(), file_map)
 
-    def held_back(self, leftover: DiskLeftover, unfilled: UnfilledTargets) -> HeldBack:
+    def left_for_hand_import(self, leftover: DiskLeftover, unfilled: UnfilledTargets) -> HeldBack:
         """The hand-import files on disk by leaf, with their order-only keys and the window episodes left unfilled."""
 
         names, keys = leftover.hand_import_files, self.pending.order_only
@@ -578,11 +578,11 @@ class ImportExecutor:
                 # the record.
                 window = context.window_statuses(authoritative)
                 by_hand = self._imported_by_hand(context, window)
-                hand_import = ImportProbe.hand_import(context.held_back(leftover, window.unfilled()))
+                hand_import = ImportProbe.hand_import(context.left_for_hand_import(leftover, window.unfilled()))
                 probe = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they verified, so a row that never verifies is re-derived next
         # run, not pinned.
-        verified = probe.files_present or bool(probe.held_back.files)
+        verified = probe.files_present or bool(probe.left_for_hand_import.files)
         return replace(probe, placements=recovered if verified else {})
 
     def _verify_or_import(self, context: _ImportContext, authoritative_map: FileEpisodeMap) -> ImportProbe:

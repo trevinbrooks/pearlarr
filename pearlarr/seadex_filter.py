@@ -118,7 +118,7 @@ class SeadexReleaseFilter:
                 is_public=_is_public_torrent(t),
                 is_dual_audio=t.is_dual_audio,
                 infohash=t.infohash,
-                download=False,
+                to_grab=False,
                 is_fallback=t.url in fallback_urls,
             )
 

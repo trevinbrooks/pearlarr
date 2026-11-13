@@ -170,7 +170,7 @@ class TestClassifyCommands:
         # The download-id proof alone owns the copy (survives restarts).
         cmds = [_command(files=[{"downloadId": "ABC"}])]
         block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda _: False)
-        assert block is CommandBlock.OWN_IMPORT
+        assert block is CommandBlock.AUTO_IMPORT
 
     def test_unproven_folder_match_blocks_without_a_claim(self) -> None:
         # Possibly foreign: it blocks (and the wait is credited) but never claims the import.
@@ -181,7 +181,7 @@ class TestClassifyCommands:
     def test_issued_id_owns_an_unproven_folder_match(self) -> None:
         cmds = [_command(command_id=7, files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
         block = classify_commands(cmds, DownloadMatch("abc", _paths("/d"), set()), lambda cid: cid == 7)
-        assert block is CommandBlock.OWN_IMPORT
+        assert block is CommandBlock.AUTO_IMPORT
 
     def test_own_disk_command_blocks_without_claiming_the_import(self) -> None:
         cmds = [_command(command_id=7, name="RenameFiles")]
@@ -195,7 +195,7 @@ class TestClassifyCommands:
 
 
 _BLOCK_WAITS = {
-    CommandBlock.OWN_IMPORT: (True, Deferral.IMPORT),
+    CommandBlock.AUTO_IMPORT: (True, Deferral.IMPORT),
     CommandBlock.IN_FLIGHT_IMPORT: (False, Deferral.IMPORT),
     CommandBlock.DISK_COMMAND: (False, Deferral.BUSY),
     CommandBlock.DISK_COMMAND_CHANGED: (False, Deferral.BUSY),

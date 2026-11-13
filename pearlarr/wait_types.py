@@ -222,7 +222,7 @@ class ImportProbe:
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
-    held_back: HeldBack = NO_HELD_BACK
+    left_for_hand_import: HeldBack = NO_HELD_BACK
     """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
     placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `files_present`
     and `command_issued` False."""
@@ -258,7 +258,7 @@ class ImportProbe:
     def hand_import(cls, held: HeldBack) -> "ImportProbe":
         """Every placed file is in, but files the grab left for a hand import keep the record pending."""
 
-        return cls(files_present=False, command_issued=False, held_back=held)
+        return cls(files_present=False, command_issued=False, left_for_hand_import=held)
 
 
 LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)

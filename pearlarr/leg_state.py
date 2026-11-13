@@ -112,7 +112,7 @@ class RunStats:
     checked: int = 0
     added: list[GrabbedRow] = field(default_factory=list[GrabbedRow])
     up_to_date: int = 0
-    cached: int = 0
+    unchanged: int = 0
     no_seadex_entry: int = 0
     seadex_unreachable: int = 0
     """Lookups skipped this run, counted apart from `no_seadex_entry`."""
@@ -150,7 +150,7 @@ class PerTitleState:
     """Group names of the unsupported-tracker skip, riding along for the summary."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    held_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
+    skipped_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
     """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
     run, and a hand-import hold re-warns until the import covers it. `GrabHold.INPUT_UNREAD` also carries the
     groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
@@ -172,7 +172,7 @@ class PerTitleState:
         """
 
         if groups:
-            self.held_groups.setdefault(hold, []).extend(groups)
+            self.skipped_groups.setdefault(hold, []).extend(groups)
 
     def absorb_skips(self, skips: "PrivateOnlySkips") -> None:
         """Fold a planner private-only skip result onto this title's flags."""
@@ -213,7 +213,7 @@ class RunContext:
     """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
 
 
-def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
+def is_dry_run(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
     """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured."""
 
     return ctx.dry_run or qbit is None

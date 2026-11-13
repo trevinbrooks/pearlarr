@@ -446,7 +446,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def close(self) -> None: ...
     @abstractmethod
-    def selection_stale(self, arr: Arr, digest: str) -> bool: ...
+    def selection_changed(self, arr: Arr, digest: str) -> bool: ...
     @abstractmethod
     def vouch_selection(self, arr: Arr, digest: str) -> None: ...
     @abstractmethod
@@ -454,7 +454,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def update_cache(self, arr: Arr, al_id: int, cache_details: CachedTitleUpdate) -> None: ...
     @abstractmethod
-    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None: ...
+    def uncache_title(self, arr: Arr, al_id: int) -> None: ...
     @abstractmethod
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]: ...
     @abstractmethod
@@ -515,7 +515,7 @@ class CacheStore(AbstractCacheStore):
         cls,
         path: str,
         *,
-        config_checksum: str,
+        config_hash: str,
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
 
@@ -534,7 +534,7 @@ class CacheStore(AbstractCacheStore):
         if fell_back:
             exists = False
         store = cls(conn, path, on_memory=not exists)
-        store._reconcile(config_checksum)
+        store._reconcile(config_hash)
         return store
 
     @classmethod
@@ -546,11 +546,11 @@ class CacheStore(AbstractCacheStore):
 
         return cls(connect(path, ensure_wal=False), path, on_memory=False)
 
-    def _reconcile(self, config_checksum: str) -> None:
+    def _reconcile(self, config_hash: str) -> None:
         """Stamp the current package version and config checksum into `kv`."""
 
         self._set_kv("pearlarr_version", __version__)
-        self._set_kv("config_checksum", config_checksum)
+        self._set_kv("config_checksum", config_hash)
 
     @override
     def save(self, *, preview: bool) -> None:
@@ -611,7 +611,7 @@ class CacheStore(AbstractCacheStore):
         return None if row is None else str(row[0])
 
     @override
-    def selection_stale(self, arr: Arr, digest: str) -> bool:
+    def selection_changed(self, arr: Arr, digest: str) -> bool:
         """Whether the arr's cached verdicts predate `digest` (matching settings moved)."""
 
         stored = self._get_kv(selection_digest_key(arr))
@@ -669,7 +669,7 @@ class CacheStore(AbstractCacheStore):
         )
 
     @override
-    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
+    def uncache_title(self, arr: Arr, al_id: int) -> None:
         """Clear an entry's stamp: the arr's own runs stop skipping the title until a check caches it as done again.
 
         The rest of the row stays. Without a row this does nothing. Staged like any write.

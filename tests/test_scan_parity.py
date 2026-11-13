@@ -312,7 +312,7 @@ _FRESH_ADDED = (
     ReleaseName(name="", group="GroupB"),
 )
 
-ACTION_FRESH = GrabAction(status=GrabStatus.ADDING, groups=_FRESH_GROUPS, added=_FRESH_ADDED, downloading=())
+ACTION_FRESH = GrabAction(status=GrabStatus.ADDING, groups=_FRESH_GROUPS, added=_FRESH_ADDED, in_qbit=())
 ACTION_FRESH_LINES: tuple[Line, ...] = (
     _detail(
         "    status    adding SeaDex's recommended release",
@@ -326,7 +326,7 @@ ACTION_FRESH_LINES: tuple[Line, ...] = (
     _detail("    added     GroupB", "added", "GroupB", style="green"),
 )
 
-ACTION_DRY = GrabAction(status=GrabStatus.WOULD_ADD, groups=_FRESH_GROUPS, added=_FRESH_ADDED, downloading=())
+ACTION_DRY = GrabAction(status=GrabStatus.WOULD_ADD, groups=_FRESH_GROUPS, added=_FRESH_ADDED, in_qbit=())
 ACTION_DRY_LINES: tuple[Line, ...] = (
     _detail(
         "    status    would add SeaDex's recommended release (dry run)",
@@ -352,7 +352,7 @@ ACTION_DOWNLOADING_WAITING = GrabAction(
     status=GrabStatus.ALREADY_DOWNLOADING,
     groups=_ONE_GROUP,
     added=(),
-    downloading=_DOWNLOADING,
+    in_qbit=_DOWNLOADING,
     waiting_to_import=True,
 )
 ACTION_DOWNLOADING_WAITING_LINES: tuple[Line, ...] = (
@@ -377,7 +377,7 @@ ACTION_DOWNLOADING_NO_WAIT = GrabAction(
     status=GrabStatus.ALREADY_DOWNLOADING,
     groups=_ONE_GROUP,
     added=(),
-    downloading=_DOWNLOADING,
+    in_qbit=_DOWNLOADING,
 )
 ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
     _detail(
@@ -401,7 +401,7 @@ ACTION_MIXED = GrabAction(
     status=GrabStatus.ADDING,
     groups=_FRESH_GROUPS,
     added=(ReleaseName(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
-    downloading=_DOWNLOADING,
+    in_qbit=_DOWNLOADING,
 )
 ACTION_MIXED_LINES: tuple[Line, ...] = (
     _detail(
@@ -465,7 +465,7 @@ def _rich_stats() -> RunStats:
             ),
         ],
         up_to_date=1,
-        cached=3,
+        unchanged=3,
         no_seadex_entry=2,
         seadex_unreachable=1,
         no_releases=1,
@@ -1203,7 +1203,7 @@ class TestActionBlockParity:
             "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
         }
         results = [
-            ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+            ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
         ]
         harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=True)
         assert harness.lines() == ACTION_DOWNLOADING_WAITING_LINES
@@ -1217,7 +1217,7 @@ class TestActionBlockParity:
         # results order, is the pinned contract.
         harness = _Harness()
         results = [
-            ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+            ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
             ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
         ]
         harness.reporter.log_seadex_action(self._SEADEX_DICT, results, preview=False, waiting_to_import=False)

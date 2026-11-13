@@ -249,8 +249,8 @@ def _fields_grab_action(event: GrabAction) -> tuple[Field, ...]:
         fields.append(Field("groups", "; ".join(group.display for group in event.groups)))
     if event.added:
         fields.append(Field("added", _names_text(event.added)))
-    if event.downloading:
-        fields.append(Field("downloading", _names_text(event.downloading)))
+    if event.in_qbit:
+        fields.append(Field("downloading", _names_text(event.in_qbit)))
     return tuple(fields)
 
 
@@ -258,7 +258,7 @@ def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
-    held = event.held_back
+    held = event.left_for_hand_import
     if held.explained_by_order:
         lead, reason = held_back_sentences(held)
         fields.append(Field("detail", f"{lead} {reason}."))
@@ -316,7 +316,7 @@ def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
             if value:
                 fields.append(Field(key, value))
     fields.append(Field("up_to_date", tally.up_to_date))
-    fields.append(Field("cached", tally.cached))
+    fields.append(Field("cached", tally.unchanged))
     for key, value in (
         ("no_mappings", tally.no_mappings),
         ("no_seadex_entry", tally.no_seadex_entry),

@@ -293,7 +293,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- selection digest --
     @override
-    def selection_stale(self, arr: Arr, digest: str) -> bool:
+    def selection_changed(self, arr: Arr, digest: str) -> bool:
         stored = self._kv.get(selection_digest_key(arr))
         return stored is not None and stored != digest
 
@@ -321,7 +321,7 @@ class FakeCacheStore(AbstractCacheStore):
             self._entries.setdefault((str(arr), al_id), {}).update(supplied)
 
     @override
-    def clear_entry_stamp(self, arr: Arr, al_id: int) -> None:
+    def uncache_title(self, arr: Arr, al_id: int) -> None:
         """Drop the entry's stored timestamp. No row, no effect."""
 
         entry = self._entries.get((str(arr), al_id))
@@ -791,7 +791,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     return SeadexReleaseFilter(deps=deps, ctx=ctx)
 
 
-# A truthy stand-in for a logged-in qBittorrent client, so is_preview() is False.
+# A truthy stand-in for a logged-in qBittorrent client, so is_dry_run() is False.
 CLIENT_SENTINEL = object()
 
 
@@ -1042,7 +1042,7 @@ def url_item(
         is_public=is_public,
         is_dual_audio=is_dual_audio,
         infohash=infohash,
-        download=download,
+        to_grab=download,
         is_fallback=is_fallback,
         upgrade=upgrade,
         episodes=episodes or [],
@@ -1474,7 +1474,7 @@ def import_probe(
     deferral: Deferral = Deferral.NONE,
     placements: FileEpisodeMap | None = None,
     unmatched_files: tuple[str, ...] = (),
-    held_back: HeldBack = NO_HELD_BACK,
+    left_for_hand_import: HeldBack = NO_HELD_BACK,
 ) -> ImportProbe:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
@@ -1486,7 +1486,7 @@ def import_probe(
         deferral=deferral,
         placements=placements or {},
         unmatched_files=unmatched_files,
-        held_back=held_back,
+        left_for_hand_import=left_for_hand_import,
     )
 
 

@@ -54,9 +54,11 @@ def _grad(
     *,
     files: int | None = None,
     waited: float = 0.0,
-    held_back: HeldBack = NO_HELD_BACK,
+    left_for_hand_import: HeldBack = NO_HELD_BACK,
 ) -> TorrentGraduated:
-    return TorrentGraduated(label=label, outcome=outcome, files=files, waited_s=waited, held_back=held_back)
+    return TorrentGraduated(
+        label=label, outcome=outcome, files=files, waited_s=waited, left_for_hand_import=left_for_hand_import
+    )
 
 
 # --- the shared PulseThrottle -----------------------------------------------------------
@@ -375,15 +377,15 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
 
 def test_graduation_tail_counts_unmatched_files_and_names_the_action() -> None:
     # Never "retries".
-    event = _grad("A", Outcome.UNMATCHED, waited=15, held_back=held_files("a.mkv", "b.mkv"))
+    event = _grad("A", Outcome.UNMATCHED, waited=15, left_for_hand_import=held_files("a.mkv", "b.mkv"))
     assert graduation_tail(event) == "2 files matched no episode · import by hand in Sonarr"
-    assert graduation_tail(_grad("A", Outcome.UNMATCHED, held_back=held_files("a.mkv"))) == (
+    assert graduation_tail(_grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files("a.mkv"))) == (
         "1 file matched no episode · import by hand in Sonarr"
     )
 
 
 def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
-    event = _grad("A", Outcome.PARTIAL, waited=15, held_back=held_files("a.mkv", "b.mkv"))
+    event = _grad("A", Outcome.PARTIAL, waited=15, left_for_hand_import=held_files("a.mkv", "b.mkv"))
     assert graduation_tail(event) == "2 files held back · import by hand in Sonarr"
 
 
@@ -417,7 +419,7 @@ _SEVERAL = order_only_held_back(
     ],
 )
 def test_an_order_only_record_leads_with_its_unfilled_episodes(held: HeldBack, coda: str, lead: str) -> None:
-    assert graduation_tail(_grad("A", Outcome.PARTIAL, held_back=held)) == coda
+    assert graduation_tail(_grad("A", Outcome.PARTIAL, left_for_hand_import=held)) == coda
     assert held_back_sentences(held)[0] == lead
 
 
@@ -432,7 +434,7 @@ def test_a_lone_order_only_file_reads_in_the_singular() -> None:
 
 def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
     held = HeldBack(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
-    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, held_back=held), detect_capabilities(None))
+    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
     assert [line.message for line in lines[1:3]] == [
         "    reason      this pack is numbered by the DVD order, and 1 of its files is one of the DVD",
         "                episodes that aren't in Sonarr's list, so Pearlarr can't tell where it belongs",
@@ -449,7 +451,7 @@ def test_files_keyed_by_two_orders_name_both_orders() -> None:
 
 
 def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> None:
-    event = _grad("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, held_back=order_only_held_back())
+    event = _grad("Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_held_back())
     lines = wait_graduation_lines(event, detect_capabilities(None))
     assert [line.message for line in lines] == [
         "  ~ partial     Show Ending · grp · S04 E01-E12  (S04 E01 still missing in Sonarr)",
@@ -464,7 +466,7 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
 def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
     names = tuple(f"[grp] Show - Part {n:02d}.mkv" for n in range(1, 8))
     lines = wait_graduation_lines(
-        _grad("A", Outcome.UNMATCHED, held_back=held_files(*names)), detect_capabilities(None)
+        _grad("A", Outcome.UNMATCHED, left_for_hand_import=held_files(*names)), detect_capabilities(None)
     )
     assert [line.message for line in lines[1:]] == [
         "    files       [grp] Show - Part 01.mkv",
@@ -475,7 +477,7 @@ def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
 
 def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
     held = HeldBack(files=(order_only_held_back().files[0], HeldFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv")))
-    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, held_back=held), detect_capabilities(None))
+    lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
     assert [line.message for line in lines] == [
         f"  ~ partial     A  (2 files held back{SEP}import by hand in Sonarr)",
         "    files       DVD S07E01  [grp] Show Ending S1 - 01 [ABCD1234].mkv",

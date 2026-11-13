@@ -695,7 +695,7 @@ class _TerminalDetail:
     """The coda facts a terminal outcome carries: the imported files count, or the files a hand import places."""
 
     files: int | None = None
-    held_back: HeldBack = NO_HELD_BACK
+    left_for_hand_import: HeldBack = NO_HELD_BACK
 
 
 _NO_DETAIL = _TerminalDetail()
@@ -740,7 +740,7 @@ class _MonitorRow:
             outcome=outcome,
             import_done=detail.files,
             import_total=detail.files,
-            held_back=detail.held_back,
+            left_for_hand_import=detail.left_for_hand_import,
             phase_elapsed_s=now - self.dl_start,
         )
 
@@ -885,7 +885,7 @@ class MonitorPass:
                 label=record.display_label,
                 outcome=outcome,
                 carried_over=row.carried_over,
-                held_back=row.view.held_back,
+                left_for_hand_import=row.view.left_for_hand_import,
             )
         )
 
@@ -960,10 +960,10 @@ class MonitorPass:
             self._terminal(Outcome.IMPORTED, row, _TerminalDetail(files=probe.target_count or None))
         elif probe.unmatched_files:
             # Nothing to wait for: the deadline would only repeat the answer. Kept for a human, re-reported next run.
-            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(held_back=_unmatched(probe)))
-        elif probe.held_back.files:
+            self._terminal(Outcome.UNMATCHED, row, _TerminalDetail(left_for_hand_import=_unmatched(probe)))
+        elif probe.left_for_hand_import.files:
             # The placed files are in and the rest wait on a hand import: kept, re-reported next run.
-            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(held_back=probe.held_back))
+            self._terminal(Outcome.PARTIAL, row, _TerminalDetail(left_for_hand_import=probe.left_for_hand_import))
         elif at_deadline and not landed and not deferred:
             self._terminal(_exhausted_outcome(probe), row)
         elif not probe.attempted:

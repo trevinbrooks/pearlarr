@@ -126,7 +126,7 @@ def _build_cache(tmp_path: Path) -> None:
     behind (entry `(SONARR, 7)` with `name="X"`).
     """
 
-    store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
+    store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
     store.update_cache(Arr.SONARR, 7, {"name": "X"})
     store.save(preview=False)
     store.close()

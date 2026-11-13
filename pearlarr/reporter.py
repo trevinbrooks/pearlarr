@@ -256,7 +256,7 @@ class RunReporter:
     def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
         """Emit a cached entry's self-contained block, read from the cache record."""
 
-        ctx.stats.cached += 1
+        ctx.stats.unchanged += 1
 
         entry = self.cache_store.get_entry(ctx.arr, al_id)
         title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
@@ -333,7 +333,7 @@ class RunReporter:
         for r in results:
             if r.added:
                 added.append(ReleaseName(r.name or "", r.group))
-            elif r.outcome is AddOutcome.ALREADY_ADDED:
+            elif r.outcome is AddOutcome.ALREADY_IN_QBIT:
                 downloading.append(ReleaseName(r.name or "", r.group))
 
         # `added` first, so a preview says "would add" only for a title it would add something for.
@@ -348,7 +348,7 @@ class RunReporter:
         groups = tuple(
             RecommendedGroup(name=srg, tags=tuple(sorted(map(str, srg_item.tags))))
             for srg, srg_item in seadex_dict.items()
-            if any(u.download for u in srg_item.releases.values())
+            if any(u.to_grab for u in srg_item.releases.values())
         )
 
         self._post(
@@ -356,7 +356,7 @@ class RunReporter:
                 status=status,
                 groups=groups,
                 added=tuple(added),
-                downloading=tuple(downloading),
+                in_qbit=tuple(downloading),
                 waiting_to_import=waiting_to_import,
             ),
         )

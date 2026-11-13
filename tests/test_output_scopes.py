@@ -220,7 +220,7 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
         ),
     )
     entry.post(
-        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), downloading=()),
+        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
     )
 
     assert len(recorder.of_type(EntryDetail)) == 0

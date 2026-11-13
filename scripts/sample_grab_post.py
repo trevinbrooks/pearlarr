@@ -72,7 +72,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
                     size=[f.size for f in t.files],
                     tracker=t.tracker,
                     is_dual_audio=t.is_dual_audio,
-                    download=True,
+                    to_grab=True,
                 ),
             },
             tags=frozenset(t.tags),

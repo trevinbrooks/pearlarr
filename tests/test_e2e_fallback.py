@@ -679,7 +679,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         excluded_files=tuple(normalize_basename(name) for name in siblings),
         claims=(claim,),
     )
-    store = CacheStore.load(str(cache_path), config_checksum=checksum)
+    store = CacheStore.load(str(cache_path), config_hash=checksum)
     try:
         store.put_pending(Arr.SONARR, record.infohash, record.to_json())
         store.save(preview=False)
@@ -690,7 +690,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
 def _pending_after(cache_path: Path, checksum: str) -> frozenset[str]:
     """The pending infohashes still in the durable store after the run."""
 
-    store = CacheStore.load(str(cache_path), config_checksum=checksum)
+    store = CacheStore.load(str(cache_path), config_hash=checksum)
     try:
         return frozenset(store.get_pending(Arr.SONARR))
     finally:

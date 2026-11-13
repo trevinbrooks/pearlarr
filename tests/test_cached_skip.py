@@ -85,7 +85,7 @@ class TestCachedEntrySkip:
 
     @staticmethod
     def _run(cache: FakeCacheStore) -> RunServices:
-        # cached_entry_skip touches only cache_store + _config (real, default
+        # is_unchanged touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
         # name backfill asks. ctx defaults to a SONARR RunContext (make_services).
         return make_services(
@@ -103,19 +103,19 @@ class TestCachedEntrySkip:
             _reporter=reporter,
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
         )
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
         assert reporter.cached == [7]
 
     def test_does_not_skip_when_entry_absent(self) -> None:
         run = self._run(FakeCacheStore())
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_does_not_skip_when_timestamp_is_stale(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         # SeaDex entry now carries a newer updated_at -> stale -> re-process.
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
 
     @pytest.mark.parametrize(
         "case",
@@ -181,7 +181,7 @@ class TestCachedEntrySkip:
         client = ScriptedAniListClient(case.anilist)
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=make_anilist_gateway(client))
 
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=_FRESH, url="sd-url"), lambda: "S01") is True
+        assert run.is_unchanged(7, make_entry_record(updated_at=_FRESH, url="sd-url"), lambda: "S01") is True
 
         assert cache.updates == case.updates
         assert client.query_calls == case.queries
@@ -198,7 +198,7 @@ class TestCachedEntrySkip:
             _reporter=_RecordingReporter(),
             ignore_seadex_update_times=True,
         )
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
         # An arr-side file change bypasses the skip despite a matching timestamp.
@@ -206,14 +206,14 @@ class TestCachedEntrySkip:
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([7])
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_selection_stale_reprocesses_even_when_fresh(self) -> None:
         # A matching-preference change bypasses the skip despite a matching timestamp.
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_stale=True)
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_non_dirty_sibling_still_skips(self) -> None:
         # Marking one id dirty must not widen the bypass to other cached ids.
@@ -221,7 +221,7 @@ class TestCachedEntrySkip:
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([8])
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
     def test_begin_run_clears_the_dirty_set(self) -> None:
         # Dirty ids are per-run state: the next run's rebind must reset them.
@@ -237,7 +237,7 @@ class TestCachedEntrySkip:
         )
         run.mark_dirty([7])
         run.begin_run(run.ctx)
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
+        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
 _CACHED_ON = datetime(2026, 1, 1)
@@ -287,7 +287,7 @@ class TestACheckedTitleLosesItsStamp:
         run = self._run(cache)
         run.mark_dirty([7])
 
-        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
 
         entry = cache.get_entry(Arr.SONARR, 7)
         assert entry is not None
@@ -297,38 +297,38 @@ class TestACheckedTitleLosesItsStamp:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
 
-        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
-        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
+        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
+        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
 
     def test_a_recheck_whose_grab_fails_is_checked_again_next_run(self) -> None:
         # The row matched SeaDex's current update before the re-check, and nothing forces the next run.
         cache = FakeCacheStore()
         run = self._rechecking(cache, FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")}))
 
-        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
         self._grab(run)
 
-        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
 
     def test_a_recheck_held_past_the_add_cap_is_checked_again_next_run(self) -> None:
         cache = FakeCacheStore()
         run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}), add_cap=1)
         run.ctx.torrents_added = 1
 
-        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
         self._grab(run)
 
         assert run.ctx.stats.held_by_cap == 1
-        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
 
     def test_a_recheck_that_caches_the_title_as_done_is_skipped_next_run(self) -> None:
         cache = FakeCacheStore()
         run = self._rechecking(cache, FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")}))
 
-        assert run.cached_entry_skip(7, self._ENTRY, lambda: "") is False
+        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
         self._grab(run)
 
-        assert self._run(cache).cached_entry_skip(7, self._ENTRY, lambda: "") is True
+        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
 
 
 class TestFallbackSatisfiedResurfacing:
@@ -352,7 +352,7 @@ class TestFallbackSatisfiedResurfacing:
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
             private_releases=private_releases,
         )
-        return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
+        return run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
 
     def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
         # Fresh timestamp, but the title was satisfied by a fallback: warn mode

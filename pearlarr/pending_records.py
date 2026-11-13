@@ -152,7 +152,7 @@ class PendingImportStore:
 
         self.drop(record.infohash)
         for claim in record.claims:
-            self._store.clear_entry_stamp(self._ctx.arr, claim.al_id)
+            self._store.uncache_title(self._ctx.arr, claim.al_id)
 
     def other_arr_holds(self, infohash: str) -> bool:
         """Whether the other arr still holds a record on the torrent (the category move defers on it)."""

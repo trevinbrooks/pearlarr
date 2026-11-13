@@ -764,7 +764,7 @@ class AppConfig(_ConfigBase):
     _path: str = PrivateAttr(default="")
     _checksum: str = PrivateAttr(default="")
     _migration: MigrationOutcome | None = PrivateAttr(default=None)
-    # Memoized on first `selection_digest()` call (immutable model). "" = not yet computed.
+    # Memoized on first `selection_hash()` call (immutable model). "" = not yet computed.
     _selection_digest: str = PrivateAttr(default="")
 
     @field_validator("config_version")
@@ -813,7 +813,7 @@ class AppConfig(_ConfigBase):
 
         return self._checksum
 
-    def selection_digest(self) -> str:
+    def selection_hash(self) -> str:
         """SHA-256 hex over the selection-affecting settings (the cache's re-check key).
 
         Covers the whole `seadex` group plus `imports.languages_*` - the settings

@@ -1096,9 +1096,11 @@ class TestUnmatchedGraduation:
         result = mgr.check_once(view=view)
 
         assert result is not None
-        assert [(row.outcome, row.held_back) for row in result.rows] == [(Outcome.UNMATCHED, held_files(*self._NAMES))]
+        assert [(row.outcome, row.left_for_hand_import) for row in result.rows] == [
+            (Outcome.UNMATCHED, held_files(*self._NAMES))
+        ]
         assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
-        assert view.final("h").held_back.names == self._NAMES
+        assert view.final("h").left_for_hand_import.names == self._NAMES
         assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
         assert set(mgr._records.rows()) == {"h"}
 
@@ -1113,7 +1115,7 @@ class TestUnmatchedGraduation:
 
         final = view.final("h")
         assert final.outcome is Outcome.UNMATCHED
-        assert final.held_back.names == self._NAMES
+        assert final.left_for_hand_import.names == self._NAMES
         assert final.phase_elapsed_s < 600
         assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
         assert set(mgr._records.rows()) == {"h"}
@@ -1156,7 +1158,7 @@ class TestHeldBackGraduation:
     def _run(self, store: FakeCacheStore, qbit: FakeQbit) -> tuple[ImportWaitManager, WaitResult | None]:
         """One run's check pass over the shared store, every poll naming the hand-import files."""
 
-        strategy = _RecordingStrategy(completed=import_probe(files_present=False, held_back=self._HELD))
+        strategy = _RecordingStrategy(completed=import_probe(files_present=False, left_for_hand_import=self._HELD))
         mgr = make_orchestration_manager(
             qbit=qbit, strategy=strategy, store=store, post_import_category="pearlarr-done"
         )
@@ -1172,7 +1174,7 @@ class TestHeldBackGraduation:
 
         for result in (first, second):
             assert result is not None
-            assert [(row.outcome, row.held_back) for row in result.rows] == [(Outcome.PARTIAL, self._HELD)]
+            assert [(row.outcome, row.left_for_hand_import) for row in result.rows] == [(Outcome.PARTIAL, self._HELD)]
         assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
         assert set(mgr._records.rows()) == {"h"}
         assert qbit.set_category_calls == []
@@ -4156,7 +4158,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         # Integration: an ALREADY_ADDED registered THIS run is a this-run grab, so
         # the per-series snapshot skips it (no re-poll, no drop) and the end-of-run
         # monitor owns it via the working set.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "Show")})
         strategy = _RecordingStrategy()
         engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
         seeds = {"h1": pending_seed("h1", series_id=7)}
