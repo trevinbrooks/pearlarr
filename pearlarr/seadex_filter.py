@@ -321,6 +321,6 @@ class SeadexReleaseFilter:
 
         # Carry the skip flags/groups onto the run context (reset per title in the
         # prologue. grab_releases may append more before grab_and_cache reads them).
-        self._ctx.per_title.absorb_skips(result.skips)
+        self._ctx.per_title.add_private_only_notices(result.skips)
 
         return result

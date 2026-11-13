@@ -40,7 +40,7 @@ class SkyHookGateway:
         self,
         series: Sequence[SonarrSeriesOrders],
         *,
-        preview: bool,
+        dry_run: bool,
         progress: ProgressSink | None = None,
     ) -> int:
         """Refetch every due series, one at a time, writing each one's record whole. Returns how many were written.
@@ -58,7 +58,7 @@ class SkyHookGateway:
                 break
             self._cache.put_tvdb_orders(facts.tvdb_id, answer)
             self._answers[facts.tvdb_id] = answer
-            self._cache.save(preview=preview)
+            self._cache.save(dry_run=dry_run)
             written += 1
             if progress is not None:
                 progress.progress(done / len(due), f"{done}/{len(due)}")

@@ -204,7 +204,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
     service = _service(qbit, category="anime", tags=["seadex"])
 
     outcome, name, _ = service.add(
-        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=False
     )
 
     assert outcome is AddStatus.ADDED
@@ -226,7 +226,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=False
     )
 
     assert outcome is AddStatus.ALREADY_IN_QBIT
@@ -242,7 +242,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), dry_run=False
     )
 
     assert outcome is AddStatus.ADDED
@@ -272,7 +272,7 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
     service = _service(qbit)
 
     outcome, name, _ = service.add(
-        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), dry_run=False
     )
 
     assert outcome is AddStatus.ADDED
@@ -290,7 +290,7 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     # The message names the release URL and qBittorrent's response (it surfaces
     # verbatim in the pipeline's containment warning).
     with pytest.raises(TorrentAddError, match=r"rejected the torrent from https://nyaa.si/view/1 .*'Fails\.'"):
-        service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False)
+        service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), dry_run=False)
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,7 +307,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(TrackerPageError, match="Could not extract a torrent download link from"):
         service.add(
             item=Release(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None),
-            preview=False,
+            dry_run=False,
         )
 
     assert qbit.add_calls == []
@@ -345,11 +345,11 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     service = _service(_FakeQbit())
 
     if tracker in PARSEABLE_TRACKERS:
-        outcome, _, _ = service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), preview=True)
+        outcome, _, _ = service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), dry_run=True)
         assert outcome is AddStatus.ADDED
     else:
         with pytest.raises(ValueError, match="Unable to parse torrent links"):
-            service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), preview=True)
+            service.add(item=Release(url="https://example/1", tracker=tracker, infohash=None), dry_run=True)
 
 
 def test_grab_failures_covers_every_expected_boundary_error() -> None:
@@ -421,7 +421,7 @@ def test_add_already_present_reads_the_add_time(
     service = _service(qbit)
 
     outcome, _, when = service.add(
-        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=False
     )
 
     assert outcome is AddStatus.ALREADY_IN_QBIT
@@ -442,7 +442,7 @@ def test_add_preview_with_the_torrent_in_qbit_reports_it_without_fetching(monkey
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 
-    result = service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=True)
+    result = service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=True)
 
     assert (result.outcome, result.name) == (AddStatus.ALREADY_IN_QBIT, "Existing Name")
     assert fetched == []
@@ -464,8 +464,8 @@ def test_add_a_torrent_two_entries_list_is_fetched_once(monkeypatch: pytest.Monk
     service = _service(qbit)
     item = Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH)
 
-    first = service.add(item=item, preview=False)
-    second = service.add(item=item, preview=False)
+    first = service.add(item=item, dry_run=False)
+    second = service.add(item=item, dry_run=False)
 
     assert (first.outcome, second.outcome) == (AddStatus.ADDED, AddStatus.ALREADY_IN_QBIT)
     assert fetched == ["https://nyaa.si/view/1"]
@@ -669,7 +669,7 @@ def test_add_a_marked_url_is_its_cross_seed() -> None:
     qbit = _FakeQbit(present={_CROSS: "Cross"})
     item = replace(_url(), cross_seed_hash=_CROSS)
 
-    result = _service(qbit).add(item=item, preview=False)
+    result = _service(qbit).add(item=item, dry_run=False)
 
     assert (result.outcome, result.name) == (AddStatus.ALREADY_IN_QBIT, "Cross")
     assert qbit.add_calls == []
@@ -682,6 +682,6 @@ def test_add_a_marked_url_whose_cross_seed_left_raises(monkeypatch: pytest.Monke
     qbit = _FakeQbit()
 
     with pytest.raises(TorrentAddError, match="left qBittorrent"):
-        _service(qbit).add(item=replace(_url(), cross_seed_hash=_CROSS), preview=False)
+        _service(qbit).add(item=replace(_url(), cross_seed_hash=_CROSS), dry_run=False)
 
     assert qbit.add_calls == []

@@ -10,11 +10,11 @@ import qbittorrentapi
 from .config import Arr
 from .output import CountsMark, SeverityCounter
 from .pending_import import PendingImport, TitleNames
-from .releases import GrabHold
+from .releases import PlacementSkip
 from .wait_types import ImportWaitMode, PendingImportState
 
 if TYPE_CHECKING:
-    # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.
+    # Annotation-only (PerTitleState.add_private_only_notices). planner doesn't import us.
     from .planner import PrivateOnlyNotices
 
 
@@ -142,7 +142,7 @@ class PerTitleState:
     """A private-only release forced a skip, so the title must not be cached as done."""
     private_only_groups: list[str] = field(default_factory=list[str])
     """Group names of the private-only skip, riding along for the run summary's "needs action" list."""
-    private_only_stale_held: bool = False
+    private_only_outdated: bool = False
     """A stale owned private pick is held because only a fallback covers it."""
     unsupported_tracker_skipped: bool = False
     """The tracker has no parser, so the title must not be cached as done."""
@@ -150,7 +150,7 @@ class PerTitleState:
     """Group names of the unsupported-tracker skip, riding along for the summary."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    skipped_groups: dict[GrabHold, list[str]] = field(default_factory=dict[GrabHold, list[str]])
+    skipped_groups: dict[PlacementSkip, list[str]] = field(default_factory=dict[PlacementSkip, list[str]])
     """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
     run, and a hand-import hold re-warns until the import covers it. `GrabHold.INPUT_UNREAD` also carries the
     groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
@@ -165,21 +165,21 @@ class PerTitleState:
     entry_coverage: str | None = None
     """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
 
-    def add_held(self, hold: GrabHold, groups: Sequence[str]) -> None:
+    def add_skipped(self, skip_reason: PlacementSkip, groups: Sequence[str]) -> None:
         """List `groups` under `hold` in `held_groups`.
 
         No groups adds no key, so an empty `held_groups` means nothing held the title.
         """
 
         if groups:
-            self.skipped_groups.setdefault(hold, []).extend(groups)
+            self.skipped_groups.setdefault(skip_reason, []).extend(groups)
 
-    def absorb_skips(self, skips: "PrivateOnlyNotices") -> None:
+    def add_private_only_notices(self, skips: "PrivateOnlyNotices") -> None:
         """Fold a planner private-only skip result onto this title's flags."""
 
         self.private_only_skipped |= skips.warned
         self.private_only_groups.extend(skips.groups)
-        self.private_only_stale_held |= skips.stale_held
+        self.private_only_outdated |= skips.outdated
 
 
 @dataclass

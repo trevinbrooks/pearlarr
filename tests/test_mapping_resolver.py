@@ -1077,11 +1077,11 @@ class TestUnwritableDbFallback:
         real_replace = MappingStore.replace_anime_ids
         calls = {"n": 0}
 
-        def flaky_replace(self: MappingStore, digest: str, rows: list[AnimeIdRow]) -> None:
+        def flaky_replace(self: MappingStore, source_hash: str, rows: list[AnimeIdRow]) -> None:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise sqlite3.OperationalError("attempt to write a readonly database")
-            real_replace(self, digest, rows)
+            real_replace(self, source_hash, rows)
 
         monkeypatch.setattr(MappingStore, "replace_anime_ids", flaky_replace)
         db = str(tmp_path / "mappings.db")
@@ -1107,7 +1107,7 @@ class TestUnwritableDbFallback:
 
     def test_memory_db_write_failure_reraises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # ":memory:" IS the fallback, so it has none: the error propagates.
-        def broken_replace(self: MappingStore, digest: str, rows: list[AnimeIdRow]) -> None:
+        def broken_replace(self: MappingStore, source_hash: str, rows: list[AnimeIdRow]) -> None:
             raise sqlite3.OperationalError("disk I/O error")
 
         monkeypatch.setattr(MappingStore, "replace_anime_ids", broken_replace)

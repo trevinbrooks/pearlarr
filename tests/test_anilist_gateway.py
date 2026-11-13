@@ -93,7 +93,7 @@ class TestPrefetch:
             store.put_anilist_meta(al_id, _fresh_record(al_id))
         gateway.load_cache()
 
-        assert gateway.prefetch([1, 2], preview=True) == 0
+        assert gateway.prefetch([1, 2], dry_run=True) == 0
         assert client.batch_calls == []
 
     def test_51_missing_chunks_merges_persists_and_reports(self) -> None:
@@ -105,7 +105,7 @@ class TestPrefetch:
         sink = _RecordingSink()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, preview=False, progress=sink)
+        fetched = gateway.prefetch(ids, dry_run=False, progress=sink)
 
         # Returns how many NEEDED fetching (the absent id still counted as work).
         assert fetched == len(ids)
@@ -131,7 +131,7 @@ class TestPrefetch:
         assert gateway.titles(2) == ()
 
         before = _now_str()
-        gateway.prefetch([1, 2, 3], preview=False)
+        gateway.prefetch([1, 2, 3], dry_run=False)
 
         assert client.batch_calls == [[3]]
         # A loaded fresh row keeps its stamp, so the refresh age can actually reach it.
@@ -152,7 +152,7 @@ class TestPrefetch:
         gateway = make_anilist_gateway(client, store)
         store.put_anilist_meta(1, _stale_record(1))
 
-        gateway.prefetch([3], preview=True)
+        gateway.prefetch([3], dry_run=True)
 
         assert client.batch_calls == [[3]]
         assert gateway.al_cache[3] == anilist_body(3)
@@ -166,7 +166,7 @@ class TestPrefetch:
         sink = _RecordingSink()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, preview=False, progress=sink)
+        fetched = gateway.prefetch(ids, dry_run=False, progress=sink)
 
         assert fetched == len(ids)
         assert gateway.unreachable is True
@@ -185,7 +185,7 @@ class TestPrefetch:
         store.put_anilist_meta(9, _stale_record(9))
         gateway.load_cache()
 
-        gateway.prefetch([1], preview=False)
+        gateway.prefetch([1], dry_run=False)
 
         assert gateway.unreachable is True
         # Nothing evicted: the aged rows are what is serving this run.
@@ -205,7 +205,7 @@ class TestPrefetch:
         store.put_anilist_meta(2, _fresh_record(2))
         gateway.load_cache()
 
-        assert gateway.prefetch(asked, preview=False) == 1
+        assert gateway.prefetch(asked, dry_run=False) == 1
 
         assert client.batch_calls == [[1]]
         written = store.get_anilist_meta(1)
@@ -221,7 +221,7 @@ class TestPrefetch:
         gateway.load_cache()
 
         before = _now_str()
-        assert gateway.prefetch([1, 2], preview=False) == 2
+        assert gateway.prefetch([1, 2], dry_run=False) == 2
 
         assert client.batch_calls == [[1, 2]]
         # Returned: rewritten with a fresh stamp, the count serves again.
@@ -380,6 +380,6 @@ class TestLogPluralization:
         store.put_anilist_meta(1, _stale_record(1))
         handler = self._captured(gateway)
 
-        gateway.save_cache(preview=False)
+        gateway.save_cache(dry_run=False)
 
         assert [r.getMessage().strip() for r in handler.records] == ["Evicted 1 stale AniList meta record"]

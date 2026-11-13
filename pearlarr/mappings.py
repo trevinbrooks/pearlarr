@@ -35,7 +35,7 @@ import httpx
 from .anibridge import AniBridge, AniBridgeGraph, AniBridgeLookup, AniBridgeRawMapping, SpecialAliasing, TvdbMappings
 from .arr_models import SonarrItem
 from .mapping_store import (
-    INLINE_DIGEST,
+    INLINE_HASH,
     SOURCE_ANIBRIDGE,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
@@ -275,7 +275,7 @@ DOWNLOAD_TIMEOUT_S = 30
 MAX_DOWNLOAD_BYTES = 128 << 20
 
 
-def _file_digest(path: str) -> str:
+def _file_hash(path: str) -> str:
     """sha256 of a file's bytes - the content key that gates a re-parse."""
 
     h = hashlib.sha256()
@@ -540,7 +540,7 @@ class MappingResolver(KnownExternalIds):
         else:
             assert isinstance(sources.anime, dict)
             self._anime_enabled = True
-            self._store.replace_anime_ids(INLINE_DIGEST, _anime_ids_rows(sources.anime))
+            self._store.replace_anime_ids(INLINE_HASH, _anime_ids_rows(sources.anime))
 
         if sources.anidb is False:
             self._anidb_enabled = False
@@ -552,7 +552,7 @@ class MappingResolver(KnownExternalIds):
             self._anidb_enabled = True
             # Inline sources have no summary line. The skip tallies are dropped.
             parsed = _anidb_rows(sources.anidb)
-            self._store.replace_anidb(INLINE_DIGEST, parsed.rows, parsed.ambiguous)
+            self._store.replace_anidb(INLINE_HASH, parsed.rows, parsed.ambiguous)
 
         if sources.anibridge is False:
             self.anibridge = None
@@ -561,7 +561,7 @@ class MappingResolver(KnownExternalIds):
         else:
             assert isinstance(sources.anibridge, dict)
             ab = AniBridge(sources.anibridge, logger=self.logger)
-            self._store.replace_anibridge(INLINE_DIGEST, ab.to_rows())
+            self._store.replace_anibridge(INLINE_HASH, ab.to_rows())
             self.anibridge = AniBridge.from_store(self._store)
 
     def _download_file(self, url: str, dest: str, *, label: str) -> None:
@@ -647,28 +647,28 @@ class MappingResolver(KnownExternalIds):
         """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
 
         self._maybe_download(self._anime_ids_path, ANIME_IDS_URL, "anime_ids.json")
-        digest = _file_digest(self._anime_ids_path)
-        if self._store.is_fresh(SOURCE_ANIME_IDS, digest):
+        file_hash = _file_hash(self._anime_ids_path)
+        if self._store.is_fresh(SOURCE_ANIME_IDS, file_hash):
             self._log("anime_ids.json unchanged; using cached index")
             return
         self._log("Parsing + indexing anime_ids.json ...")
         t0 = time.perf_counter()
         rows = _anime_ids_rows(_parse_anime_mappings(self._anime_ids_path))
-        self._store.replace_anime_ids(digest, rows)
+        self._store.replace_anime_ids(file_hash, rows)
         self._log(f"Indexed anime_ids.json ({len(rows)} records, {time.perf_counter() - t0:.2f}s)")
 
     def _load_anidb(self) -> None:
         """Download + (re)index the AniDB anime-list XML only if its content changed."""
 
         self._maybe_download(self._anidb_path, ANIDB_MAPPINGS_URL, "anidb anime-list")
-        digest = _file_digest(self._anidb_path)
-        if self._store.is_fresh(SOURCE_ANIDB, digest):
+        file_hash = _file_hash(self._anidb_path)
+        if self._store.is_fresh(SOURCE_ANIDB, file_hash):
             self._log("anidb anime-list unchanged; using cached index")
             return
         self._log("Parsing + indexing anidb anime-list ...")
         t0 = time.perf_counter()
         parsed = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
-        self._store.replace_anidb(digest, parsed.rows, parsed.ambiguous)
+        self._store.replace_anidb(file_hash, parsed.rows, parsed.ambiguous)
         # The skip tallies ride the summary only when nonzero: malformed is 0 on
         # healthy upstream data. Unsupported forms number in the hundreds.
         skips = f", {parsed.malformed} malformed skipped" if parsed.malformed else ""
@@ -682,8 +682,8 @@ class MappingResolver(KnownExternalIds):
         """Download + (re)index the anibridge graph only if its content changed."""
 
         self._maybe_download(self._anibridge_path, ANIBRIDGE_MAPPINGS_URL, "anibridge mappings")
-        digest = _file_digest(self._anibridge_path)
-        if self._store.is_fresh(SOURCE_ANIBRIDGE, digest):
+        file_hash = _file_hash(self._anibridge_path)
+        if self._store.is_fresh(SOURCE_ANIBRIDGE, file_hash):
             self._log("anibridge mappings unchanged; using cached index")
         else:
             self._log("Parsing + indexing anibridge mappings ...")
@@ -691,7 +691,7 @@ class MappingResolver(KnownExternalIds):
             with open(self._anibridge_path, encoding="utf-8") as f:
                 graph = json.load(f)
             ab = AniBridge(graph, logger=self.logger)
-            self._store.replace_anibridge(digest, ab.to_rows())
+            self._store.replace_anibridge(file_hash, ab.to_rows())
             self._log(f"Indexed anibridge mappings ({len(ab)} AniList ids, {time.perf_counter() - t0:.2f}s)")
         self.anibridge = AniBridge.from_store(self._store)
 

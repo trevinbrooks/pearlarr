@@ -340,7 +340,7 @@ def trusted_groups(guards: OwnedAtGrab, votes: GrabbedGroups) -> TrustedGroups:
     Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.
     """
 
-    stale = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
+    outdated = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
     trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
     own_norm = normalize_rg(votes.own.release_group)
     own_sizes = set(votes.own.sizes)
@@ -350,7 +350,7 @@ def trusted_groups(guards: OwnedAtGrab, votes: GrabbedGroups) -> TrustedGroups:
             continue
         if norm == own_norm:
             own_sizes.update(sibling.sizes)
-        if norm not in stale:
+        if norm not in outdated:
             trusted.setdefault(norm, None)
     if own_norm:
         trusted[own_norm] = frozenset(own_sizes) or None

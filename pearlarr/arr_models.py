@@ -186,26 +186,26 @@ class ArrFiles:
     Keys hold the tag as the arr wrote it, and only an EMPTY tag makes a file untagged.
     """
 
-    tagged: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
+    by_group: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
     """Each tagged release group's existing-file sizes, insertion-ordered."""
 
-    untagged: tuple[int, ...] = ()
+    no_group: tuple[int, ...] = ()
     """Sizes of files with no release group (Radarr only)."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
-        object.__setattr__(self, "tagged", MappingProxyType(dict(self.tagged)))
+        object.__setattr__(self, "by_group", MappingProxyType(dict(self.by_group)))
 
     def __hash__(self) -> int:
         # The generated hash would reject the Mapping field. Eq ignores key order.
-        return hash((frozenset(self.tagged.items()), self.untagged))
+        return hash((frozenset(self.by_group.items()), self.no_group))
 
     @classmethod
     def from_files(
         cls,
         files: "Iterable[MovieFile | SonarrEpisodeFile]",
         *,
-        keep_untagged: bool,
+        keep_no_group: bool,
     ) -> Self:
         """Fold arr file records into one per-entry record.
 
@@ -219,27 +219,27 @@ class ArrFiles:
                 sizes = tagged.setdefault(arr_file.release_group, [])
                 if arr_file.size is not None:
                     sizes.append(arr_file.size)
-            elif keep_untagged:
+            elif keep_no_group:
                 untagged.append(arr_file.size or 0)
         return cls(
-            tagged={rg: tuple(sizes) for rg, sizes in tagged.items()},
-            untagged=tuple(untagged),
+            by_group={rg: tuple(sizes) for rg, sizes in tagged.items()},
+            no_group=tuple(untagged),
         )
 
     def group_count(self) -> int:
         """How many entries `groups_label` renders: tagged names, plus one for untagged files."""
 
-        return len(self.tagged) + (1 if self.untagged else 0)
+        return len(self.by_group) + (1 if self.no_group else 0)
 
     def groups_label(self) -> str:
         """The group names comma-joined for a log line: `(none)` marks untagged files, `(no files)` an empty record."""
 
-        return ", ".join([*self.tagged, *(["(none)"] if self.untagged else [])]) or "(no files)"
+        return ", ".join([*self.by_group, *(["(none)"] if self.no_group else [])]) or "(no files)"
 
     def groups(self) -> tuple[str, ...]:
         """Every tagged name a grab would replace (the notify `Replacing` field)."""
 
-        return tuple(self.tagged)
+        return tuple(self.by_group)
 
 
 # --- Sonarr manual-import (candidate read views + outgoing file payload) -----

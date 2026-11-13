@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# TestSelectionDigest reaches the private `_digest_canonical` (its set-order
+# TestSelectionDigest reaches the private `_canonical_for_hash` (its set-order
 # guarantee is unobservable through the opaque hex digest). Strict re-flags that
 # and the repo disables reportPrivateUsage for tests.
 """Characterization tests for the Pydantic `AppConfig` model tree.
@@ -32,7 +32,7 @@ from pearlarr.config import (
     PrivateReleaseAction,
     QbittorrentSettings,
     SeadexSettings,
-    _digest_canonical,
+    _canonical_for_hash,
     config_permissions_loose,
     secret_value,
 )
@@ -109,7 +109,7 @@ class TestFileLifecycle:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_bytes(b"seadex:\n  private_releases: warn\n")
         cfg = AppConfig.load(str(cfg_path))
-        assert cfg.checksum() == hashlib.md5(b"seadex:\n  private_releases: warn\n").hexdigest()
+        assert cfg.config_hash() == hashlib.md5(b"seadex:\n  private_releases: warn\n").hexdigest()
 
     def test_load_parses_yaml_quirk_values_end_to_end(self, tmp_path: Path) -> None:
         # Guards the real file -> yaml.safe_load -> AppConfig.load path (not just
@@ -221,7 +221,7 @@ class TestSchemaMigration:
         assert cfg_path.read_text(encoding="utf-8") == text
         # The checksum (the cache descriptor) hashes the on-disk bytes, so an
         # in-memory migration cannot shift it between runs.
-        assert cfg.checksum() == hashlib.md5(text.encode()).hexdigest()
+        assert cfg.config_hash() == hashlib.md5(text.encode()).hexdigest()
 
     def test_direct_validation_keeps_the_version_floor(self) -> None:
         with pytest.raises(ValidationError, match="config_version"):
@@ -687,5 +687,5 @@ class TestSelectionDigest:
         # Set iteration order is hash-seed dependent (it differs across processes).
         # without sorting, the digest would move between container restarts and
         # trigger phantom re-checks.
-        assert _digest_canonical({"b", "c", "a"}) == ["a", "b", "c"]
-        assert _digest_canonical({"ids": {3, 1, 2}}) == {"ids": ["1", "2", "3"]}
+        assert _canonical_for_hash({"b", "c", "a"}) == ["a", "b", "c"]
+        assert _canonical_for_hash({"ids": {3, 1, 2}}) == {"ids": ["1", "2", "3"]}

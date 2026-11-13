@@ -2282,7 +2282,7 @@ class _FinalizeReporter:
         self,
         ctx: ArrRunState,
         *,
-        preview: bool,
+        dry_run: bool,
         has_client: bool,
     ) -> bool:
         self._calls.append("summary")
@@ -2300,7 +2300,7 @@ class _RecordingCacheStore(FakeCacheStore):
         self._calls = calls
 
     @override
-    def save(self, *, preview: bool) -> None:
+    def save(self, *, dry_run: bool) -> None:
         self._calls.append("save")
 
 

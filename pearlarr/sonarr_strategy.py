@@ -27,7 +27,7 @@ from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressSink
-from .releases import GrabHold, SeadexDict, ignore_tag_set, releases_to_grab
+from .releases import PlacementSkip, SeadexDict, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -424,7 +424,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 replaced_groups=sonarr_releases.groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
-                input_missing_groups=placed.input_missing_groups(seadex_dict),
+                input_unread_groups=placed.input_unread_groups(seadex_dict),
                 # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
                 metadata_unread=(
                     self._episodes.any_air_dates_unread(resolved.kept_and_ignored)
@@ -449,13 +449,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         download plan's, so urls the run doesn't grab never warn.
         """
 
-        for flagged in releases_to_grab(seadex_dict):
-            if overrides := identity_overrides(placed.by_url[flagged.url], placed.scope.series_index):
+        for planned in releases_to_grab(seadex_dict):
+            if overrides := identity_overrides(placed.by_url[planned.url], placed.scope.series_index):
                 first, *rest = overrides
                 more = f" ({count_noun(len(rest), 'more file')} in the debug log)" if rest else ""
-                hub_warn(f"{_override_line(flagged.url, first)}{more}")
+                hub_warn(f"{_override_line(planned.url, first)}{more}")
                 for override in rest:
-                    self.logger.debug(_override_line(flagged.url, override))
+                    self.logger.debug(_override_line(planned.url, override))
 
     def _log_placements(self, placed: EntryPlacements) -> None:
         """One debug line per url with video files: its coverage, then each file set aside or held for a hand import."""
@@ -468,11 +468,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             assignment = placement.assignment
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
-            hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
-            note_read_failed = not placement.inputs_read and placement.hold is not GrabHold.INPUT_UNREAD
+            not_grabbed_note = "" if placement.skip_reason is None else f" (not grabbed: {placement.skip_reason})"
+            note_read_failed = not placement.inputs_read and placement.skip_reason is not PlacementSkip.INPUT_UNREAD
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(list(placement.episodes)) or 'nothing'}"
-                f"{' (a read failed)' if note_read_failed else ''}{hold}"
+                f"{' (a read failed)' if note_read_failed else ''}{not_grabbed_note}"
                 f"{f'; set aside: {aside}' if aside else ''}"
                 f"{f'; left for a hand import: {by_hand}' if by_hand else ''}"
             )

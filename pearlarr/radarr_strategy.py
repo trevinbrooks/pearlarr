@@ -191,12 +191,12 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
         pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
-            flagged = releases_to_grab(seadex_dict)
-            stored = run.pending_imports.stored_pending_imports(f.qbit_hash for f in flagged)
+            planned = releases_to_grab(seadex_dict)
+            stored = run.pending_imports.stored_pending_imports(f.qbit_hash for f in planned)
             facts = TitleFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
-            pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in flagged}
+            pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in planned}
 
         run.grab_and_cache(
             GrabRequest(
@@ -307,5 +307,5 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         # A movie can carry several files (an upgrade or a multi-edition), so every size is kept.
         return ArrFiles.from_files(
             self.radarr.movie_files(radarr_movie_id),
-            keep_untagged=True,
+            keep_no_group=True,
         )

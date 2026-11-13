@@ -40,7 +40,7 @@ from pearlarr.cache import (
     CachedTitleUpdate,
     CacheStats,
     HistoryCheckpoint,
-    selection_digest_key,
+    selection_hash_key,
 )
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
@@ -284,8 +284,8 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- lifecycle --
     @override
-    def save(self, *, preview: bool) -> None:
-        del preview
+    def save(self, *, dry_run: bool) -> None:
+        del dry_run
 
     @override
     def close(self) -> None:
@@ -293,13 +293,13 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- selection digest --
     @override
-    def selection_changed(self, arr: Arr, digest: str) -> bool:
-        stored = self._kv.get(selection_digest_key(arr))
-        return stored is not None and stored != digest
+    def selection_changed(self, arr: Arr, selection_hash: str) -> bool:
+        stored = self._kv.get(selection_hash_key(arr))
+        return stored is not None and stored != selection_hash
 
     @override
-    def vouch_selection(self, arr: Arr, digest: str) -> None:
-        self._kv[selection_digest_key(arr)] = digest
+    def store_selection_hash(self, arr: Arr, selection_hash: str) -> None:
+        self._kv[selection_hash_key(arr)] = selection_hash
 
     # -- per-entry records (entries) --
     @override
@@ -713,7 +713,7 @@ def make_services(**overrides: Any) -> ArrRunServices:
         "_ctx": ArrRunState(arr=Arr.SONARR),
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
-        "_selection_stale": False,
+        "_selection_changed": False,
         "_clock": FakeClock(),
         # `bind_arr_run` tells the torrent service who imports.
         "_torrents": _real_torrents(logger, httpx.Client(), make_categories()),
@@ -819,11 +819,11 @@ class FakeTorrents:
         self,
         *,
         item: Release,
-        preview: bool,
+        dry_run: bool,
     ) -> AddResult:
         """Return the scripted `AddResult` for the url item's infohash, or raise its scripted error."""
 
-        del preview
+        del dry_run
         infohash = item.infohash
         self.calls.append(infohash)
         if infohash in self._raises:
@@ -1109,7 +1109,7 @@ def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
     """The episodes' files folded per tagged group, as `get_sonarr_releases` reports them."""
 
     return ArrFiles.from_files(
-        [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_untagged=False
+        [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_no_group=False
     )
 
 

@@ -43,7 +43,7 @@ def carries_ignored_tag(torrent: TorrentRecord, ignore_tags: frozenset[str]) -> 
     return not ignore_tags.isdisjoint(tag.casefold() for tag in torrent.tags)
 
 
-class GrabHold(StrEnum):
+class PlacementSkip(StrEnum):
     """Why the placement refuses to grab a flagged url this run."""
 
     MISNUMBERED = "misnumbered"
@@ -67,23 +67,23 @@ class GrabHold(StrEnum):
     hand-import hold: the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
 
     @property
-    def hand_import(self) -> bool:
+    def left_for_hand_import(self) -> bool:
         """Whether the pack is left for a hand import."""
 
-        return self in _HAND_IMPORT_HOLDS
+        return self in _HAND_IMPORT_SKIPS
 
 
-_HAND_IMPORT_HOLDS = frozenset({GrabHold.MISNUMBERED, GrabHold.TITLE_REFUTED})
+_HAND_IMPORT_SKIPS = frozenset({PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ElsewhereCounts:
+class AnotherTitlesCounts:
     """How the files of a url held as another title's (`GrabHold.PLACED_ELSEWHERE`) split, for its skip line.
 
     Built by keyword, so the two counts can't silently transpose.
     """
 
-    elsewhere: int
+    another_titles: int
     """The files another title SeaDex lists the torrent with holds: placed or left for a hand import by its window,
     or stored on its episodes."""
 
@@ -91,7 +91,7 @@ class ElsewhereCounts:
     """The other files, which nothing placed."""
 
 
-NO_ELSEWHERE = ElsewhereCounts(elsewhere=0, unplaced=0)
+NO_ANOTHER_TITLES_COUNTS = AnotherTitlesCounts(another_titles=0, unplaced=0)
 """The counts of a url not held as another title's."""
 
 
@@ -117,9 +117,9 @@ class Release:
     is_upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[ReleaseEpisode] = field(default_factory=list[ReleaseEpisode])
-    skip_reason: GrabHold | None = None
+    skip_reason: PlacementSkip | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
-    hold_counts: ElsewhereCounts = NO_ELSEWHERE
+    another_titles_counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
     """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
 
     def __post_init__(self) -> None:
@@ -134,10 +134,10 @@ class Release:
         return self.cross_seed_hash or self.infohash
 
     @property
-    def hand_import(self) -> bool:
+    def left_for_hand_import(self) -> bool:
         """Whether the placement left the url's pack for a hand import (`GrabHold.hand_import`)."""
 
-        return self.skip_reason is not None and self.skip_reason.hand_import
+        return self.skip_reason is not None and self.skip_reason.left_for_hand_import
 
     def plan_grab(self, *, upgrade: bool = False) -> None:
         """Mark the url to grab, `upgrade` marking a replacement of held files. Never clears an upgrade already set."""

@@ -199,7 +199,7 @@ class RunReporter:
         ctx.stats.no_seadex_entry += 1
         self._titled_row(TitleState.NO_ENTRY, self._display_title(ctx, al_id, None))
 
-    def log_seadex_outage_skip(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_seadex_unreachable(self, ctx: ArrRunState, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
 
         ctx.stats.seadex_unreachable += 1
@@ -313,7 +313,7 @@ class RunReporter:
         seadex_dict: SeadexDict,
         results: list[GrabResult],
         *,
-        preview: bool,
+        dry_run: bool,
         waiting_to_import: bool,
     ) -> None:
         """Post the action block for a title that differs from SeaDex's pick, after the adding has run.
@@ -339,7 +339,7 @@ class RunReporter:
         # `added` first, so a preview says "would add" only for a title it would add something for.
         if not added:
             status = GrabStatus.ALREADY_DOWNLOADING
-        elif preview:
+        elif dry_run:
             status = GrabStatus.WOULD_ADD
         else:
             status = GrabStatus.ADDING
@@ -376,7 +376,7 @@ class RunReporter:
 
         return self._counts().bound_mark()
 
-    def log_run_summary(self, ctx: ArrRunState, *, preview: bool, has_client: bool) -> None:
+    def log_run_summary(self, ctx: ArrRunState, *, dry_run: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard."""
 
         self._close_title_scope()
@@ -385,7 +385,7 @@ class RunReporter:
         since = ctx.counts_mark.since()
 
         dry_run_note = None
-        if preview:
+        if dry_run:
             dry_run_note = "nothing grabbed" if has_client else "qBittorrent not configured; nothing grabbed"
 
         tally = ArrRunTally.from_stats(ctx.stats)

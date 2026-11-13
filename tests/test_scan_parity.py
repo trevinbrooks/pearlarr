@@ -57,7 +57,7 @@ from pearlarr.output import (
 from pearlarr.output.console_text import ConsoleRender, KeyValue, SectionRule, StyledLine, TitledRule, group_highlight
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
-from pearlarr.releases import ElsewhereCounts, SeadexDict
+from pearlarr.releases import AnotherTitlesCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
 from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
@@ -929,7 +929,7 @@ class TestTitledEntryParity:
 
     def test_outage_skip_with_cached_name(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_seadex_outage_skip(ArrRunState(arr=Arr.SONARR), 1)
+        harness.reporter.log_seadex_unreachable(ArrRunState(arr=Arr.SONARR), 1)
         assert harness.lines() == OUTAGE_LINES
 
 
@@ -1038,7 +1038,7 @@ class TestExternalDetailParity:
                 tracker="Nyaa",
                 reason=SkipReason.PLACED_ELSEWHERE,
                 url="https://x/1",
-                counts=ElsewhereCounts(elsewhere=12, unplaced=6),
+                counts=AnotherTitlesCounts(another_titles=12, unplaced=6),
             ),
             _xdetail(
                 _W,
@@ -1055,7 +1055,7 @@ class TestExternalDetailParity:
                 tracker="Nyaa",
                 reason=SkipReason.PLACED_ELSEWHERE,
                 url="https://x/1",
-                counts=ElsewhereCounts(elsewhere=1, unplaced=0),
+                counts=AnotherTitlesCounts(another_titles=1, unplaced=0),
             ),
             _xdetail(
                 _W,
@@ -1186,14 +1186,14 @@ class TestActionBlockParity:
     def test_fresh_add(self) -> None:
         harness = _Harness()
         harness.reporter.log_seadex_action(
-            self._SEADEX_DICT, self._FRESH_RESULTS, preview=False, waiting_to_import=False
+            self._SEADEX_DICT, self._FRESH_RESULTS, dry_run=False, waiting_to_import=False
         )
         assert harness.lines() == ACTION_FRESH_LINES
 
     def test_dry_run(self) -> None:
         harness = _Harness()
         harness.reporter.log_seadex_action(
-            self._SEADEX_DICT, self._FRESH_RESULTS, preview=True, waiting_to_import=False
+            self._SEADEX_DICT, self._FRESH_RESULTS, dry_run=True, waiting_to_import=False
         )
         assert harness.lines() == ACTION_DRY_LINES
 
@@ -1205,11 +1205,11 @@ class TestActionBlockParity:
         results = [
             GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
         ]
-        harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=True)
+        harness.reporter.log_seadex_action(seadex_dict, results, dry_run=False, waiting_to_import=True)
         assert harness.lines() == ACTION_DOWNLOADING_WAITING_LINES
 
         harness.events.clear()
-        harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=False)
+        harness.reporter.log_seadex_action(seadex_dict, results, dry_run=False, waiting_to_import=False)
         assert harness.lines() == ACTION_DOWNLOADING_NO_WAIT_LINES
 
     def test_mixed_results_group_added_before_downloading(self) -> None:
@@ -1220,7 +1220,7 @@ class TestActionBlockParity:
             GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
             GrabResult(outcome=AddStatus.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
         ]
-        harness.reporter.log_seadex_action(self._SEADEX_DICT, results, preview=False, waiting_to_import=False)
+        harness.reporter.log_seadex_action(self._SEADEX_DICT, results, dry_run=False, waiting_to_import=False)
         assert harness.lines() == ACTION_MIXED_LINES
 
     def test_max_torrents(self) -> None:
@@ -1232,7 +1232,7 @@ class TestActionBlockParity:
 def _summary_lines(
     ctx: ArrRunState,
     *,
-    preview: bool,
+    dry_run: bool,
     has_client: bool,
     warnings: int = 0,
     errors: int = 0,
@@ -1249,7 +1249,7 @@ def _summary_lines(
         harness.counts.record(Severity.WARNING)
     for _ in range(errors):
         harness.counts.record(Severity.ERROR)
-    harness.reporter.log_run_summary(ctx, preview=preview, has_client=has_client)
+    harness.reporter.log_run_summary(ctx, dry_run=dry_run, has_client=has_client)
     return harness.lines()
 
 
@@ -1265,31 +1265,31 @@ class TestRunSummaryParity:
         ctx = ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING, stats=_rich_stats())
         ctx.torrents_added = 2
         ctx.started_monotonic = 38.0
-        assert _summary_lines(ctx, preview=False, has_client=True, warnings=2, errors=1) == SUMMARY_RICH_LINES
+        assert _summary_lines(ctx, dry_run=False, has_client=True, warnings=2, errors=1) == SUMMARY_RICH_LINES
 
     def test_dry_run_with_client(self) -> None:
         ctx = ArrRunState(arr=Arr.SONARR, stats=_dry_stats())
         ctx.torrents_added = 1
-        assert _summary_lines(ctx, preview=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
+        assert _summary_lines(ctx, dry_run=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
 
     def test_dry_run_without_client(self) -> None:
         ctx = ArrRunState(arr=Arr.RADARR, stats=_preview_stats())
         ctx.torrents_added = 1
-        assert _summary_lines(ctx, preview=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
+        assert _summary_lines(ctx, dry_run=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
 
     def test_minimal_all_zeros(self) -> None:
         ctx = ArrRunState(arr=Arr.SONARR)
-        assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_MINIMAL_LINES
+        assert _summary_lines(ctx, dry_run=False, has_client=True) == SUMMARY_MINIMAL_LINES
 
     def test_wait_mode_off_hides_pending_rows(self) -> None:
         ctx = ArrRunState(arr=Arr.SONARR, stats=_wait_off_stats())
-        assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
+        assert _summary_lines(ctx, dry_run=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
 
     def test_warnings_only_issues_row_renders_yellow(self) -> None:
         # The style ladder's middle rung (warnings without errors) has no golden
         # of its own: bold-red needs errors, yellow needs warnings alone.
         ctx = ArrRunState(arr=Arr.SONARR)
-        lines = _summary_lines(ctx, preview=False, has_client=True, warnings=2)
+        lines = _summary_lines(ctx, dry_run=False, has_client=True, warnings=2)
         expected = _srow("  issues       : 2 warnings, 0 errors", "issues", "2 warnings, 0 errors", style="yellow")
         assert expected in lines
 
@@ -1384,7 +1384,7 @@ class TestScopeLifecycle:
         harness.reporter.log_seadex_action(
             {},
             [GrabResult(outcome=AddStatus.ADDED, name="X", group="G")],
-            preview=False,
+            dry_run=False,
             waiting_to_import=False,
         )
 

@@ -212,7 +212,7 @@ class TestCachedEntrySkip:
         # A matching-preference change bypasses the skip despite a matching timestamp.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_stale=True)
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_changed=True)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_non_dirty_sibling_still_skips(self) -> None:
@@ -400,7 +400,7 @@ class _TailReporter:
         self.no_sd_entry_ids.append(al_id)
         return True
 
-    def log_seadex_outage_skip(self, ctx: ArrRunState, al_id: int) -> bool:
+    def log_seadex_unreachable(self, ctx: ArrRunState, al_id: int) -> bool:
         del ctx
         self.outage_skip_ids.append(al_id)
         return True

@@ -142,7 +142,7 @@ class ArrRunLoop:
             )
 
         with boot.step("Fetching AniList metadata") as step:
-            fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_dry_run(), progress=step)
+            fetched = self._anilist.prefetch(prefetch_ids, dry_run=self._services.is_dry_run(), progress=step)
             if self._anilist.unreachable:
                 # Terse: the client already warned once with the failure detail.
                 step.warn("unavailable")
@@ -186,7 +186,6 @@ class ArrRunLoop:
         if item_id is None and self._services.selection_changed and not self._config.seadex.ignore_seadex_update_times:
             hub_note("Matching settings changed - rechecking cached entries")
 
-        preview = self._services.is_dry_run()
         for item_idx, item in enumerate(all_items):
             try:
                 self._scan_item(strategy, item, item_idx, n_items)
@@ -196,7 +195,7 @@ class ArrRunLoop:
             # Commit after each title, not inside one, where paired writes (a record and its guard row) may be half
             # done. A stop or kill loses only the title in flight. A title that raised still commits what it staged,
             # as the end save always did.
-            self.cache_store.save(preview=preview)
+            self.cache_store.save(dry_run=self._services.is_dry_run())
 
         # ONE full-coverage predicate for both gates below: a checkpoint committed on an outage run would consume
         # drift events the run never acted on. A SkyHook outage counts too: a series it left unrefreshed was read by
@@ -215,7 +214,7 @@ class ArrRunLoop:
         # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
         # whose check raised past the cached-entry gate is checked again next run all the same.
         if full_scan:
-            self.cache_store.vouch_selection(arr, self._config.selection_hash())
+            self.cache_store.store_selection_hash(arr, self._config.selection_hash())
 
         # The finalize save persists the checkpoint and vouch with the tail's own writes.
         self._finalize_run()
@@ -281,7 +280,7 @@ class ArrRunLoop:
         # Always ScanStarted-paired: run_arr, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._ctx.arr)
 
-        preview = self._services.is_dry_run()
+        dry_run = self._services.is_dry_run()
 
         supports_monitor = self._active_strategy is not None and self._active_strategy.supports_blocking_monitor
         end_pass_waits = supports_monitor and self._ctx.import_wait_mode in (
@@ -308,7 +307,7 @@ class ArrRunLoop:
 
             self._reporter.log_run_summary(
                 self._ctx,
-                preview=preview,
+                dry_run=dry_run,
                 has_client=self.qbit is not None,
             )
 
@@ -320,7 +319,7 @@ class ArrRunLoop:
                     if result.waited:
                         self._notify_wait_complete(result)
         finally:
-            self.cache_store.save(preview=preview)
+            self.cache_store.save(dry_run=dry_run)
 
         # Deliberately outside the finally: on a raise, bootstrap's unwind emits it, so it lands once.
         self._reporter.run_finished(self._ctx.arr)

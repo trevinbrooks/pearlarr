@@ -263,7 +263,7 @@ class TorrentService:
         self,
         *,
         item: Release,
-        preview: bool,
+        dry_run: bool,
     ) -> AddResult:
         """Add a release to qBittorrent, parsing its tracker page only when qBittorrent doesn't have it yet.
 
@@ -283,7 +283,7 @@ class TorrentService:
         if parsed_url is None:
             raise TrackerPageError(f"Could not extract a torrent download link from {item.url}")
 
-        name = self._add_to_qbit(item=item, torrent_url=parsed_url, preview=preview)
+        name = self._add_to_qbit(item=item, torrent_url=parsed_url, dry_run=dry_run)
 
         return AddResult(AddStatus.ADDED, name or source_name)
 
@@ -305,7 +305,7 @@ class TorrentService:
         *,
         item: Release,
         torrent_url: str,
-        preview: bool,
+        dry_run: bool,
     ) -> str | None:
         """Add `torrent_url` to qBittorrent and return the name it reports.
 
@@ -314,7 +314,7 @@ class TorrentService:
 
         infohash = item.infohash
 
-        if preview:
+        if dry_run:
             return None
 
         # Past the preview gate there is always a client, so this raise is defensive.

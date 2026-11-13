@@ -111,8 +111,8 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-02T00:00:00Z", 9))
 
     # Selection digest: an initial vouch then an upsert (only the last survives).
-    store.vouch_selection(Arr.SONARR, "digest-old")
-    store.vouch_selection(Arr.SONARR, "digest-new")
+    store.store_selection_hash(Arr.SONARR, "digest-old")
+    store.store_selection_hash(Arr.SONARR, "digest-new")
 
     # TVDB orders: a record replaced whole (the dvd order goes), an empty listed order, a series with no orders.
     row = (OrderRow(1, 1, 101, 1),)
@@ -292,7 +292,7 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
 
         # save is a no-op for the fake and stages+promotes for the real. Neither must
         # disturb the observable reads that follow.
-        fake.save(preview=False)
-        real.save(preview=False)
+        fake.save(dry_run=False)
+        real.save(dry_run=False)
 
         assert _observe(fake) == _observe(real)

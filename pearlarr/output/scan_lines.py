@@ -221,7 +221,7 @@ def _skip_text(event: ReleaseSkipped) -> str:
             return f"{event.url or event.group} (file titles contradict its numbering)"
         case SkipReason.PLACED_ELSEWHERE:
             counts = event.counts
-            text = f"{count_noun(counts.elsewhere, 'file')} {'is' if counts.elsewhere == 1 else 'are'} another title's"
+            text = f"{count_noun(counts.another_titles, 'file')} {'is' if counts.another_titles == 1 else 'are'} another title's"
             if counts.unplaced:
                 text += f", {counts.unplaced} could not be placed"
             return f"{event.url or event.group} ({text})"

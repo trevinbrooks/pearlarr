@@ -270,7 +270,7 @@ class WindowedAssignment:
         `imports` are the positions whose files the entry's record imports (`WindowOrder.imports`).
         """
 
-        elsewhere = PlacementVerdict.ANOTHER_TITLES
+        another_titles = PlacementVerdict.ANOTHER_TITLES
         hand_claims = {
             file.merged.verdict
             for file in self.files
@@ -279,7 +279,7 @@ class WindowedAssignment:
         return TitleView(
             BatchPlacements(
                 tuple(
-                    Placement(file.name, (), elsewhere) if file.listed_elsewhere(imports) else file.merged
+                    Placement(file.name, (), another_titles) if file.listed_elsewhere(imports) else file.merged
                     for file in self.files
                 )
             ),

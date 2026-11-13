@@ -303,7 +303,7 @@ class SonarrEpisodes:
             for sid in series_ids
             if (facts := self._order_facts.get(sid)) is not None and facts.tvdb_id > 0
         }
-        return self._skyhook.prefetch(list(by_tvdb.values()), preview=self._services.is_dry_run(), progress=progress)
+        return self._skyhook.prefetch(list(by_tvdb.values()), dry_run=self._services.is_dry_run(), progress=progress)
 
     def orders_for(self, series_id: int) -> IndexOrders:
         """The orders the series' episode indexes are built with, read once per run.
@@ -537,9 +537,9 @@ class SonarrEpisodes:
                 StyledValue(missing_coverage or f"{len(missing)}/{len(ep_list)}", Accent.CAUTION),
             )
 
-        # keep_untagged=False: untagged episode files ride the episode list
+        # keep_no_group=False: untagged episode files ride the episode list
         # into the planner's identity pass instead (pinned).
         return ArrFiles.from_files(
             [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
-            keep_untagged=False,
+            keep_no_group=False,
         )
