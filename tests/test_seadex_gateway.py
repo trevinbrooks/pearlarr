@@ -6,7 +6,7 @@ import pytest
 from seadex import EntryNotFoundError, EntryRecord
 
 from pearlarr.output import Severity
-from pearlarr.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexMiss
+from pearlarr.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexNoEntry
 
 from .builders import make_entry_record
 from .fakes import diagnostic_messages, install_recording_hub
@@ -119,7 +119,7 @@ class TestSeaDexPrefetch:
         fake = FakeSeaDex({1: _rec(1)})
         gateway = _gateway(fake)
         gateway.prefetch([1, 2])  # 2 has no SeaDex entry
-        assert gateway.entry(2) is SeaDexMiss.NO_ENTRY
+        assert gateway.entry(2) is SeaDexNoEntry.NOT_FOUND
         assert fake.from_id_calls == []  # known-absent -> no fallback call
 
     def test_second_prefetch_skips_known_absent_id(self) -> None:
@@ -129,7 +129,7 @@ class TestSeaDexPrefetch:
         n = len(fake.filter_calls)
         gateway.prefetch([1, 2])  # both known: 1 cached, 2 prefetched-absent
         assert len(fake.filter_calls) == n  # no re-fetch of known ids
-        assert gateway.entry(2) is SeaDexMiss.NO_ENTRY
+        assert gateway.entry(2) is SeaDexNoEntry.NOT_FOUND
         assert fake.from_id_calls == []  # never fell back to per-id
 
     def test_unprefetched_id_falls_back_to_from_id(self) -> None:
@@ -141,7 +141,7 @@ class TestSeaDexPrefetch:
     def test_unprefetched_missing_id_is_no_entry(self) -> None:
         fake = FakeSeaDex({})
         gateway = _gateway(fake)
-        assert gateway.entry(123) is SeaDexMiss.NO_ENTRY  # from_id raises EntryNotFound
+        assert gateway.entry(123) is SeaDexNoEntry.NOT_FOUND  # from_id raises EntryNotFound
         assert fake.from_id_calls == [123]
 
     def test_transient_batch_blip_recovers_on_retry(self) -> None:
@@ -163,7 +163,7 @@ class TestSeaDexPrefetch:
     def test_batch_outage_warns_once_and_short_circuits(self) -> None:
         # A chunk failing TWICE (retry exhausted) declares the outage: it warns
         # once, later batches never hit the network, and every entry() degrades
-        # straight to an OUTAGE miss with zero from_id calls.
+        # straight to an UNREACHABLE miss with zero from_id calls.
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
         fake = FakeSeaDex({i: _rec(i) for i in ids}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
@@ -177,7 +177,7 @@ class TestSeaDexPrefetch:
         assert len(warnings) == 1
         assert "SeaDex request failed (ConnectError)" in warnings[0]
         # The per-id fallback is muted too: no fresh timeout per title.
-        assert gateway.entry(ids[0]) is SeaDexMiss.UNREACHABLE
+        assert gateway.entry(ids[0]) is SeaDexNoEntry.UNREACHABLE
         assert fake.from_id_calls == []
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1  # still just the one
 
@@ -221,7 +221,7 @@ class TestSeaDexPrefetch:
         assert gateway.prefetch([1]) == 1
 
     def test_single_lookup_timeout_degrades_to_outage_and_warns_once(self) -> None:
-        # The module contract: a SeaDex outage degrades to an OUTAGE miss. A
+        # The module contract: a SeaDex outage degrades to an UNREACHABLE miss. A
         # ReadTimeout on the per-id fallback (httpx.HTTPError, not just
         # ConnectError) must not unwind the run - and a SECOND lookup
         # short-circuits without another network attempt or warning.
@@ -230,8 +230,8 @@ class TestSeaDexPrefetch:
         recording = install_recording_hub()
 
         assert gateway.unreachable is False
-        assert gateway.entry(1) is SeaDexMiss.UNREACHABLE
-        assert gateway.entry(2) is SeaDexMiss.UNREACHABLE
+        assert gateway.entry(1) is SeaDexNoEntry.UNREACHABLE
+        assert gateway.entry(2) is SeaDexNoEntry.UNREACHABLE
         assert gateway.unreachable is True
         assert fake.from_id_calls == [1, 1]  # the retry, then id 2 never hit the network
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1
@@ -256,7 +256,7 @@ class TestSeaDexPrefetch:
         gateway = _gateway(fake)
         recording = install_recording_hub()
 
-        assert gateway.entry(1) is SeaDexMiss.UNREACHABLE
+        assert gateway.entry(1) is SeaDexNoEntry.UNREACHABLE
         assert gateway.unreachable is True
         assert fake.from_id_calls == [1, 1]
         warnings = diagnostic_messages(recording, Severity.WARNING)

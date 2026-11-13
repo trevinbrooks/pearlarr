@@ -63,7 +63,7 @@ _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
 # anibridge xref axes - a DIFFERENT vocabulary from the anime_ids columns above
 # ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints, imdb ids are strs.
-type AniBridgeAxis = Literal["tvdb", "tmdb_movie", "imdb"]
+type AniBridgeIdKind = Literal["tvdb", "tmdb_movie", "imdb"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -279,7 +279,7 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
-def _ext_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -> T:
+def _external_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -> T:
     """Pin a stored anibridge ext id to the type its axis owns.
 
     The write path coerced these, so a mismatch means the db is corrupt - raise
@@ -545,7 +545,7 @@ class MappingStore:
     def anibridge_distinct(self, id_kind: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...
     @overload
     def anibridge_distinct(self, id_kind: Literal["imdb"]) -> set[str]: ...
-    def anibridge_distinct(self, id_kind: AniBridgeAxis) -> set[int] | set[str]:
+    def anibridge_distinct(self, id_kind: AniBridgeIdKind) -> set[int] | set[str]:
         """The set of all ext ids on `axis` (for the library-filter id sets).
 
         Unlike the anime_ids columns, the AniBridge write path coerces every ext
@@ -558,8 +558,8 @@ class MappingStore:
             (id_kind,),
         ).fetchall()
         if id_kind == "imdb":
-            return {_ext_id_as(r[0], str, id_kind) for r in rows}
-        return {_ext_id_as(r[0], int, id_kind) for r in rows}
+            return {_external_id_as(r[0], str, id_kind) for r in rows}
+        return {_external_id_as(r[0], int, id_kind) for r in rows}
 
     def anibridge_len(self) -> int:
         """Number of AniList entries (backs `AniBridge.__len__` / `__bool__`)."""

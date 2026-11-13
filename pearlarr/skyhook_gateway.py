@@ -6,7 +6,7 @@ from types import MappingProxyType
 
 from .cache import AbstractCacheStore
 from .progress import ProgressSink
-from .skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
+from .skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
 from .tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, OrderRow, OrdersByName, SonarrSeriesOrders
 
@@ -100,21 +100,21 @@ class SkyHookGateway:
     def _fetch_series(self, facts: SonarrSeriesOrders, now: datetime) -> CachedOrders | None:
         """The series' new record: official first, then each other order it lists. None on an outage."""
 
-        official = self._client.fetch(facts.tvdb_id, AIRED_ORDER)
-        if official is SkyHookMiss.OUTAGE:
+        aired_reply = self._client.fetch(facts.tvdb_id, AIRED_ORDER)
+        if aired_reply is SkyHookNoReply.UNREACHABLE:
             return None
         orders: dict[str, tuple[OrderRow, ...]] = {}
         quiet = False
-        if official is not SkyHookMiss.NOT_FOUND:
-            orders[AIRED_ORDER] = _rows(official)
-            quiet = _is_quiet(official, now)
-            for listed in official.season_types:
+        if aired_reply is not SkyHookNoReply.NOT_FOUND:
+            orders[AIRED_ORDER] = _rows(aired_reply)
+            quiet = _is_quiet(aired_reply, now)
+            for listed in aired_reply.season_types:
                 if listed.type in orders:
                     continue
                 reply = self._client.fetch(facts.tvdb_id, listed.type)
-                if reply is SkyHookMiss.OUTAGE:
+                if reply is SkyHookNoReply.UNREACHABLE:
                     return None
-                orders[listed.type] = () if reply is SkyHookMiss.NOT_FOUND else _rows(reply)
+                orders[listed.type] = () if reply is SkyHookNoReply.NOT_FOUND else _rows(reply)
         fresh_for = timedelta(days=QUIET_FRESH_DAYS if quiet else ACTIVE_FRESH_DAYS)
         return CachedOrders(
             fetched_at=stamp_of(now),
@@ -133,9 +133,9 @@ def _rows(reply: SkyHookReply) -> tuple[OrderRow, ...]:
     )
 
 
-def _is_quiet(official: SkyHookReply, now: datetime) -> bool:
+def _is_quiet(aired_reply: SkyHookReply, now: datetime) -> bool:
     """Whether the series has ended and its newest episode aired more than `QUIET_AFTER_DAYS` ago."""
 
-    aired = [row.air_date_utc for row in official.episodes if row.air_date_utc is not None]
+    aired = [row.air_date_utc for row in aired_reply.episodes if row.air_date_utc is not None]
     cutoff = now.astimezone(UTC) - timedelta(days=QUIET_AFTER_DAYS)
-    return official.ended and bool(aired) and max(aired) < cutoff
+    return aired_reply.ended and bool(aired) and max(aired) < cutoff

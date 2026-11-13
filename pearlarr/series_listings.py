@@ -6,7 +6,7 @@ from .listing_fold import ListedTitle, build_listings
 from .mappings import ResolvedMappings
 from .pending_import import TitleNames, TitleWindow
 from .placement_types import FetchedListings
-from .seadex_gateway import SeaDexMiss, SeaDexSource
+from .seadex_gateway import SeaDexNoEntry, SeaDexSource
 from .sonarr_episodes import SonarrEpisodes
 
 
@@ -62,8 +62,8 @@ class SeriesListings:
         listed: list[ListedTitle] = []
         for al_id, mapping in resolved.kept_and_ignored.items():
             entry = self._seadex.entry(al_id)
-            if isinstance(entry, SeaDexMiss):
-                if entry is SeaDexMiss.UNREACHABLE:
+            if isinstance(entry, SeaDexNoEntry):
+                if entry is SeaDexNoEntry.UNREACHABLE:
                     return None
                 continue
             try:

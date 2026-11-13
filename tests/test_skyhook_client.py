@@ -7,7 +7,7 @@ import respx
 
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.output.recording import RecordingHub
-from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookMiss, SkyHookReply
+from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookNoReply, SkyHookReply
 
 from .fakes import FakeSkyHookClient, install_recording_hub
 from .http_mock import skyhook_fixture
@@ -30,7 +30,7 @@ def _warnings(recording: RecordingHub) -> list[str]:
     return [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
-def _reply(tvdb_id: int, order_type: str, body: object) -> SkyHookReply | SkyHookMiss:
+def _reply(tvdb_id: int, order_type: str, body: object) -> SkyHookReply | SkyHookNoReply:
     """One fetch answered with `body`."""
 
     with respx.mock:
@@ -158,7 +158,7 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
 
         assert route.call_count == sent
 
-    assert first is second is SkyHookMiss.OUTAGE
+    assert first is second is SkyHookNoReply.UNREACHABLE
     assert client.unreachable is True
     assert _warnings(recording) == [
         f"SkyHook failed ({detail} for TVDB {_SERIES} official) - re-checking cached titles until it answers"
@@ -174,7 +174,7 @@ def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:
         missed = client.fetch(1, "official")
         served = client.fetch(_SERIES, "official")
 
-    assert missed is SkyHookMiss.NOT_FOUND
+    assert missed is SkyHookNoReply.NOT_FOUND
     assert isinstance(served, SkyHookReply)
     assert client.unreachable is False
 

@@ -54,7 +54,7 @@ class SkyHookReply(ApiModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _fold_bad_rows(cls, data: object) -> object:
+    def _episodes_all_or_none(cls, data: object) -> object:
         """Read `episodes[]` all-or-nothing: one bad row empties it and sets `rows_failed`. A null is no rows."""
 
         if not isinstance(data, dict):
@@ -98,10 +98,10 @@ class SkyHookError(ApiModel):
 SKYHOOK_URL = "https://skyhook.sonarr.tv/v2/tvdb/shows/eng"
 
 
-class SkyHookMiss(Enum):
+class SkyHookNoReply(Enum):
     """Why a fetch has no reply."""
 
-    OUTAGE = auto()
+    UNREACHABLE = auto()
     """SkyHook is unreachable this run, or answered with a status that says nothing about the series."""
 
     NOT_FOUND = auto()
@@ -117,7 +117,7 @@ class AbstractSkyHookClient(ABC):
         """True once SkyHook has been declared unreachable for this run."""
 
     @abstractmethod
-    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookMiss:
+    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookNoReply:
         """One series' reply for one order.
 
         A reply that fails validation or doesn't match the request comes back with no episodes. After an outage
@@ -133,38 +133,38 @@ class SkyHookClient(AbstractSkyHookClient):
 
         self._client = client
         self._sleep = sleep
-        self._outage = False
+        self._unreachable = False
 
     @property
     @override
     def unreachable(self) -> bool:
-        return self._outage
+        return self._unreachable
 
-    def _note_outage(self, detail: str) -> SkyHookMiss:
+    def _note_unreachable(self, detail: str) -> SkyHookNoReply:
         """Warn that SkyHook failed and latch the outage, muting every later call this run."""
 
         # The latch also trips on one series SkyHook keeps failing, so `detail` names the request.
         hub_warn(f"SkyHook failed ({detail}) - re-checking cached titles until it answers")
-        self._outage = True
-        return SkyHookMiss.OUTAGE
+        self._unreachable = True
+        return SkyHookNoReply.UNREACHABLE
 
     @override
-    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookMiss:
-        if self._outage:
-            return SkyHookMiss.OUTAGE
+    def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookNoReply:
+        if self._unreachable:
+            return SkyHookNoReply.UNREACHABLE
         asked = f"for TVDB {tvdb_id} {order_type}"
         try:
             response = get_with_retries(self._client, f"{SKYHOOK_URL}/{tvdb_id}/{order_type}", sleep=self._sleep)
         except httpx.RequestError as e:
-            return self._note_outage(f"{failure_detail(e)} {asked}")
+            return self._note_unreachable(f"{failure_detail(e)} {asked}")
         if response.is_success:
             return _read_reply(response, tvdb_id, order_type)
         if _says_not_found(response):
             hub_note(f"SkyHook has no TVDB series {tvdb_id} ({order_type} order)", severity=Severity.DEBUG)
-            return SkyHookMiss.NOT_FOUND
+            return SkyHookNoReply.NOT_FOUND
         # Any other status is about the host, not the series: an edge block (403), a moved route (a bare 404), a
         # rate limit. Read as a miss, it would store every series empty for a week.
-        return self._note_outage(f"HTTP {response.status_code} {asked}")
+        return self._note_unreachable(f"HTTP {response.status_code} {asked}")
 
 
 def _says_not_found(response: httpx.Response) -> bool:

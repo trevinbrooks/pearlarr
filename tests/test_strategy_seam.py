@@ -68,7 +68,7 @@ from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacementSkip, ReleaseEpisode, SeadexDict
-from pearlarr.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.sonarr_episodes import sonarr_series_hash
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
@@ -259,9 +259,9 @@ class _FakeRunServices(ArrRunServices):
         return Title(al_id=al_id, name=self._anilist_title, names=TitleNames(anilist=(self._anilist_title,)))
 
     @override
-    def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
+    def new_cached_title_update(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         # A pure builder over its arguments (no hub state), so the real one serves the fake.
-        return super().new_cache_details(title, sd_entry)
+        return super().new_cached_title_update(title, sd_entry)
 
     @override
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
@@ -444,7 +444,7 @@ class TestRunStartHook:
         assert strat._episodes._ep_list_cache == {}
         assert strat._episodes._orderings == {}
         assert strat._episodes._picks_logged == set()
-        assert strat._episodes._series_fp == sonarr_series_fingerprint([5, 7])
+        assert strat._episodes._series_hash == sonarr_series_hash([5, 7])
 
 
 class TestSonarrPrefetchDelegates:

@@ -80,12 +80,12 @@ def _failing_build(exc: Exception) -> object:
         cache: str = "cache.db",
         *,
         logger: logging.Logger,
-        mappings: MappingResolver,
+        resolver: MappingResolver,
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
     ) -> ArrRunDeps:
-        del arr, cache, logger, mappings, app_config, web, boot
+        del arr, cache, logger, resolver, app_config, web, boot
         raise exc
 
     return build
@@ -227,12 +227,12 @@ def _completing_build() -> object:
         cache: str = "cache.db",
         *,
         logger: logging.Logger,
-        mappings: MappingResolver,
+        resolver: MappingResolver,
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
     ) -> _StubDeps:
-        del arr, cache, logger, mappings, app_config, web, boot
+        del arr, cache, logger, resolver, app_config, web, boot
         return _StubDeps()
 
     return build

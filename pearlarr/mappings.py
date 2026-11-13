@@ -59,7 +59,7 @@ A loosely-shaped producer dict: a flat record carrying mixed-typed fields
 object, so it stays a loose `dict[str, Any]` like `AniBridgeEntry`.
 """
 
-type AnimeIdsMap = dict[str, AnimeIdsRawMapping]
+type AnimeIdsByName = dict[str, AnimeIdsRawMapping]
 """The parsed Kometa Anime-IDs JSON: `{name -> record}` (~16k entries)."""
 
 
@@ -122,7 +122,7 @@ class TitleMapping:
             object.__setattr__(self, "special_aliasing", SpecialAliasing(tmdb_id, MappingProxyType(dict(aliases))))
 
     @property
-    def mode(self) -> MappingKind:
+    def kind(self) -> MappingKind:
         """Which episode-mapping mode this entry drives.
 
         ANIBRIDGE iff `tvdb_mappings` was attached. Tested with `is not
@@ -195,7 +195,7 @@ def _mapping_from_anime_id_row(row: AnimeIdRow) -> TitleMapping:
     )
 
 
-def _is_degraded_anibridge(mapping: TitleMapping) -> bool:
+def _is_anibridge_without_tvdb_mappings(mapping: TitleMapping) -> bool:
     """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
 
     Such an entry carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
@@ -285,15 +285,15 @@ def _file_hash(path: str) -> str:
     return h.hexdigest()
 
 
-def _parse_anime_mappings(path: str) -> AnimeIdsMap:
+def _parse_anime_mappings(path: str) -> AnimeIdsByName:
     """Load the Kometa Anime-IDs JSON map from disk."""
 
     with open(path, encoding="utf-8") as f:
         # Raw JSON boundary: json.load returns Any. Narrow to the known map shape.
-        return cast("AnimeIdsMap", json.load(f))
+        return cast("AnimeIdsByName", json.load(f))
 
 
-def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
+def _anime_ids_rows(anime_mappings: AnimeIdsByName) -> list[AnimeIdRow]:
     """Flatten the Kometa map into anime_ids store rows (first-seen order).
 
     Every record yields a row (a NULL `anilist_id` is kept so it feeds the
@@ -361,7 +361,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
     """
 
     counts: dict[int, int] = {}
-    season_maps: dict[int, dict[int, dict[int, int]]] = {}
+    episodes_by_anidb_id: dict[int, dict[int, dict[int, int]]] = {}
     malformed = 0
     unsupported = 0
     for anime in root.findall("anime"):
@@ -376,7 +376,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
             continue
         counts[aid] = counts.get(aid, 0) + 1
 
-        season_map: dict[int, dict[int, int]] = {}
+        episodes_by_season: dict[int, dict[int, int]] = {}
         for ms in anime.findall("mapping-list"):
             for i in ms.findall("mapping"):
                 if not i.text:
@@ -386,18 +386,18 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
                     season = int(i.attrib["tvdbseason"])
                     pairs = [x.split("-") for x in i.text.strip(";").split(";")]
                     # orientation {tvdb_ep: anidb_ep}. Last <mapping> per season wins
-                    season_map[season] = {int(p[1]): int(p[0]) for p in pairs}
+                    episodes_by_season[season] = {int(p[1]): int(p[0]) for p in pairs}
                 except (KeyError, ValueError, IndexError):
                     unsupported += 1
                     continue
-        season_maps[aid] = season_map
+        episodes_by_anidb_id[aid] = episodes_by_season
 
     rows: list[AnidbMappingRow] = []
-    for aid, season_map in season_maps.items():
+    for aid, episodes_by_season in episodes_by_anidb_id.items():
         if counts[aid] > 1:
             # Ambiguous: never read (lookup raises first), so store no rows.
             continue
-        for season, mapping in season_map.items():
+        for season, mapping in episodes_by_season.items():
             for tvdb_ep, anidb_ep in mapping.items():
                 rows.append(AnidbMappingRow(aid, season, tvdb_ep, anidb_ep))
 
@@ -413,7 +413,7 @@ class MappingSources:
     it, and a pre-parsed value is used inline (tests / standalone use).
     """
 
-    anime: AnimeIdsMap | bool | None
+    anime: AnimeIdsByName | bool | None
     anidb: ElementTree.Element | bool | None
     anibridge: AniBridgeGraph | bool | None
 
@@ -811,7 +811,7 @@ class MappingResolver(KnownExternalIds):
             if self._anime_enabled:
                 for al_id, mapping in self.mappings_from_anime_ids(ids).items():
                     existing = anilist_mappings.get(al_id)
-                    if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
+                    if existing is None or (ids.tvdb is not None and _is_anibridge_without_tvdb_mappings(existing)):
                         anilist_mappings[al_id] = mapping
 
             # Set aside any AniList ids configured to be ignored.

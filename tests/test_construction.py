@@ -20,7 +20,7 @@ import qbittorrentapi
 import respx
 
 from pearlarr import arr_run_services
-from pearlarr.arr_http import HEARTBEAT_INTERVAL_S
+from pearlarr.arr_http import REWARN_INTERVAL_S
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
@@ -132,7 +132,7 @@ def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("pearlarr.test"),
-        mappings=make_bare_instance(MappingResolver),
+        resolver=make_bare_instance(MappingResolver),
         app_config=app_config,
         web=httpx.Client(),
         boot=BootFlow(),
@@ -231,7 +231,7 @@ def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
     assert deps.arr_http.label == "Sonarr"
     assert deps.arr_http.base_url == "http://sonarr"
     # digest_interval is the Sonarr client's own replace, never build's bind.
-    assert deps.arr_http.rewarn_s == HEARTBEAT_INTERVAL_S
+    assert deps.arr_http.rewarn_s == REWARN_INTERVAL_S
 
 
 def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:

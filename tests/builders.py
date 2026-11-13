@@ -85,7 +85,7 @@ from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, Release, ReleaseEpisode, SeadexDict
 from pearlarr.reporter import RunReporter
 from pearlarr.seadex_filter import SeadexReleaseFilter
-from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
+from pearlarr.seadex_gateway import SeaDexNoEntry, SeaDexSource
 from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
@@ -243,7 +243,7 @@ class ScriptedAniListClient(AniListClient):
         self.batch_calls: list[list[int]] = []
 
     def _trip(self) -> None:
-        self._note_outage(f"request failed after {MAX_RETRIES} retries")
+        self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
 
     @override
     def query(self, al_id: int) -> dict[str, Any]:
@@ -472,7 +472,7 @@ class FakeSeaDexSource(SeaDexSource):
 
     def __init__(self, entries: dict[int, EntryRecord] | None = None, *, outage: bool = False) -> None:
         self._entries: dict[int, EntryRecord] = dict(entries or {})
-        self._outage = outage
+        self._unreachable = outage
         self.prefetch_calls: list[list[int]] = []
         self.entry_calls: list[int] = []
 
@@ -484,17 +484,17 @@ class FakeSeaDexSource(SeaDexSource):
         return len(ids)
 
     @override
-    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
+    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
         self.entry_calls.append(al_id)
         found = self._entries.get(al_id)
         if found is not None:
             return found
-        return SeaDexMiss.UNREACHABLE if self._outage else SeaDexMiss.NO_ENTRY
+        return SeaDexNoEntry.UNREACHABLE if self._unreachable else SeaDexNoEntry.NOT_FOUND
 
     @property
     @override
     def unreachable(self) -> bool:
-        return self._outage
+        return self._unreachable
 
 
 def make_logger(name: str = "pearlarr-test") -> logging.Logger:
@@ -1531,7 +1531,7 @@ def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
 
     defaults: dict[str, Any] = {
         "_ep_list_cache": {},
-        "_series_fp": "",
+        "_series_hash": "",
         "_order_facts": {},
         "_orderings": {},
         "_picks_logged": set[int](),

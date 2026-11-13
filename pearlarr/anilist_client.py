@@ -304,20 +304,20 @@ class AniListClient:
 
         self._client = client
         # Set once AniList gave no answer or exhausted its retries: every later call short-circuits this run.
-        self._outage = False
+        self._unreachable = False
 
     @property
     def unreachable(self) -> bool:
         """True once AniList has been declared unavailable for this run."""
 
-        return self._outage
+        return self._unreachable
 
-    def _note_outage(self, detail: str) -> None:
+    def _note_unreachable(self, detail: str) -> None:
         """Warn ONCE that AniList is unavailable, muting every later call via the flag."""
 
-        if not self._outage:
+        if not self._unreachable:
             hub_warn(f"AniList {detail}, skipping further lookups this run")
-        self._outage = True
+        self._unreachable = True
 
     def query(self, al_id: int) -> dict[str, Any]:
         """Fetch one AniList Media by id (see _post_with_retry for the retry policy)."""
@@ -353,7 +353,7 @@ class AniListClient:
         tripped. Retry exhaustion and any dataless answer trip the breaker for the run.
         """
 
-        if self._outage:
+        if self._unreachable:
             return {}
 
         for attempt in range(MAX_RETRIES + 1):
@@ -364,7 +364,7 @@ class AniListClient:
             except httpx.HTTPError as e:
                 # Network blip: back off and retry, then trip the breaker with an empty result.
                 if attempt >= MAX_RETRIES:
-                    self._note_outage(f"request failed after {MAX_RETRIES} retries")
+                    self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
                     return {}
                 wait = _exp_backoff(attempt)
                 _log_wait(f"request failed ({type(e).__name__})", wait, attempt + 1, severity=Severity.DEBUG)
@@ -410,9 +410,9 @@ class AniListClient:
             # Terminal: exhausted retries and any dataless answer trip the breaker. The
             # body (possibly an error payload) still returns so the caller degrades.
             if retryable:
-                self._note_outage(f"request failed after {MAX_RETRIES} retries")
+                self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
             elif (detail := _refusal(resp.status_code, body)) is not None:
-                self._note_outage(detail)
+                self._note_unreachable(detail)
             return body if body is not None else {}
 
         return {}

@@ -236,7 +236,7 @@ class _PendingImportV4:
         }
 
 
-def _fold_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str, Any]:
+def _merge_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str, Any]:
     """One torrent's v4 rows (`al_id` order) as the v5 record: the first row's facts, the maps unioned."""
 
     first = rows[0]
@@ -279,7 +279,7 @@ def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
     )
     conn.executemany(
         "INSERT INTO pending_imports_v5 (arr, infohash, record) VALUES (?, ?, jsonb(?))",
-        [(arr, infohash, json.dumps(_fold_v4_rows(infohash, rows))) for (arr, infohash), rows in grouped.items()],
+        [(arr, infohash, json.dumps(_merge_v4_rows(infohash, rows))) for (arr, infohash), rows in grouped.items()],
     )
     conn.execute("DROP TABLE pending_imports")
     conn.execute("ALTER TABLE pending_imports_v5 RENAME TO pending_imports")

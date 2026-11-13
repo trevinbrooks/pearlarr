@@ -27,7 +27,7 @@ from .config import (
     ArrTarget,
     config_permissions_loose,
     env_variables_for,
-    upgrade_config_file,
+    migrate_config_file,
 )
 from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
 from .log import apply_log_level
@@ -135,7 +135,7 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
     notes = "; ".join(outcome.notes)
     note_to_file_log(f"Config schema v{outcome.from_version} -> v{CONFIG_VERSION}: {notes or 'no functional changes'}")
     try:
-        upgraded = upgrade_config_file(config, expected_hash=loaded.config_hash())
+        migrated = migrate_config_file(config, expected_hash=loaded.config_hash())
     except Exception as e:
         note_to_file_log(
             f"Could not rewrite {config} in place ({_one_line_reason(e)}) - continuing on the in-memory migration",
@@ -145,10 +145,10 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
         return
     # backup_path is None only when the file turned current between the load and
     # this rewrite (nothing was written) - then there is nothing to announce.
-    if upgraded.backup_path is not None:
+    if migrated.backup_path is not None:
         # The detail line above rides at INFO: only promise it when the file log admits it.
         hint = " (details in the log)" if notes and file_log_admits(Severity.INFO) else ""
-        hub_note(f"Config migrated to the current schema - previous file saved as {upgraded.backup_path}{hint}")
+        hub_note(f"Config migrated to the current schema - previous file saved as {migrated.backup_path}{hint}")
 
 
 def load_shared_config(
@@ -375,7 +375,7 @@ def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
                 arr_name,
                 ctx.cache,
                 logger=ctx.logger,
-                mappings=ctx.resolver,
+                resolver=ctx.resolver,
                 app_config=ctx.app_config,
                 web=ctx.web,
                 boot=ctx.boot,
@@ -528,14 +528,14 @@ def run_arrs(
                 return False
 
             # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-            mappings = build_resolver(app_config, paths.mappings_db, logger, boot, retry, web)
-            if mappings is None:
+            resolver = build_resolver(app_config, paths.mappings_db, logger, boot, retry, web)
+            if resolver is None:
                 return False
             all_arrs_completed = True
             ctx = RunContext(
                 cache=paths.cache_db,
                 logger=logger,
-                resolver=mappings,
+                resolver=resolver,
                 app_config=app_config,
                 web=web,
                 boot=boot,
@@ -551,7 +551,7 @@ def run_arrs(
             finally:
                 # The resolver owns mappings.db (shared across both arrs). Close it once
                 # the cycle is done so the connection / WAL handles are released.
-                mappings.close()
+                resolver.close()
         finally:
             boot.close()
             web.close()

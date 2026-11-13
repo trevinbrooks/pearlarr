@@ -86,7 +86,7 @@ def collect_anime_items[ItemT: ArrItem](
 
 def build_id_filters(
     fields: tuple[IdField, ...],
-    mappings: KnownExternalIds,
+    known_ids: KnownExternalIds,
     anibridge: AniBridge | None,
 ) -> tuple[IdFilter, ...]:
     """Build one `IdFilter` per id space for `collect_anime_items`.
@@ -100,7 +100,7 @@ def build_id_filters(
     return tuple(
         IdFilter(
             field,
-            anime_ids=mappings.anime_id_set(field.mapping_key),
+            anime_ids=known_ids.anime_id_set(field.mapping_key),
             anibridge_ids=anibridge.id_set(field.mapping_key) if anibridge else set(),
         )
         for field in fields

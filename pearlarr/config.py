@@ -906,11 +906,11 @@ def _mapping_annotation(annotation: object) -> bool:
     if get_origin(annotation) is dict:
         return True
     if get_origin(annotation) in (UnionType, Union):
-        return any(get_origin(arm) is dict for arm in get_args(annotation))
+        return any(get_origin(member) is dict for member in get_args(annotation))
     return False
 
 
-def _overlay_path(name: str) -> list[str]:
+def _override_key_path(name: str) -> list[str]:
     """The key path a qualifying variable's name addresses.
 
     Model-addressed segments fold to lowercase (matching the file's key style).
@@ -946,11 +946,11 @@ def env_variables_for(key_path: Sequence[str]) -> list[str]:
     return [
         name
         for name, _ in _qualifying_env(os.environ)
-        if all(mine == theirs for mine, theirs in zip(_overlay_path(name), key_path, strict=False))
+        if all(mine == theirs for mine, theirs in zip(_override_key_path(name), key_path, strict=False))
     ]
 
 
-def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
+def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     """The environment's config-key overrides as a nested mapping.
 
     Each qualifying variable's name (minus the prefix) splits on `__` into a
@@ -962,7 +962,7 @@ def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
     file key.
     """
 
-    overlay: dict[str, object] = {}
+    overrides: dict[str, object] = {}
     for name, raw_value in _qualifying_env(environ):
         try:
             value: object = yaml.safe_load(raw_value)
@@ -982,8 +982,8 @@ def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
                 ],
                 hide_input=True,
             ) from None
-        path = _overlay_path(name)
-        cursor = overlay
+        path = _override_key_path(name)
+        cursor = overrides
         for segment in path[:-1]:
             branch = cursor.get(segment)
             if not isinstance(branch, dict):
@@ -993,17 +993,17 @@ def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
             else:
                 cursor = cast("dict[str, object]", branch)
         cursor[path[-1]] = value
-    return overlay
+    return overrides
 
 
-def _deep_merge(base: dict[str, object], overlay: Mapping[str, object]) -> None:
+def _deep_merge(base: dict[str, object], overrides: Mapping[str, object]) -> None:
     """Merge `overlay` into `base` in place: a leaf overrides, two dicts merge per key.
 
     So `PEARLARR_SONARR__URL` replaces `sonarr.url` without clobbering the file's
     sibling `sonarr.api_key`.
     """
 
-    for key, value in overlay.items():
+    for key, value in overrides.items():
         existing = base.get(key)
         if isinstance(existing, dict) and isinstance(value, dict):
             _deep_merge(cast("dict[str, object]", existing), cast("Mapping[str, object]", value))
@@ -1043,7 +1043,7 @@ class ConfigRewriteError(Exception):
 
 
 @dataclass(frozen=True)
-class ConfigUpgrade:
+class ConfigMigration:
     """What `upgrade_config_file` did: both fields are None for an already-current file."""
 
     migration: MigrationOutcome | None
@@ -1073,15 +1073,15 @@ def _validate_with_env(parsed: object, environ: Mapping[str, str]) -> AppConfig:
     it, and env secrets must never land on disk.
     """
 
-    overlay = _env_overlay(environ)
-    if overlay and is_json_obj(parsed):
+    overrides = _env_overrides(environ)
+    if overrides and is_json_obj(parsed):
         merged = copy.deepcopy(cast("dict[str, object]", parsed))
-        _deep_merge(merged, overlay)
+        _deep_merge(merged, overrides)
         return AppConfig.model_validate(merged)
     return AppConfig.model_validate(parsed)
 
 
-def upgrade_config_file(path: str, expected_hash: str | None = None) -> ConfigUpgrade:
+def migrate_config_file(path: str, expected_hash: str | None = None) -> ConfigMigration:
     """Rewrite an older config file at the current schema, keeping a backup.
 
     The rewrite is the current annotated template with this file's values (and
@@ -1118,7 +1118,7 @@ def upgrade_config_file(path: str, expected_hash: str | None = None) -> ConfigUp
     # The narrowing re-check is for the types: a non-mapping document cannot
     # have validated above.
     if migration is None or not is_json_obj(parsed):
-        return ConfigUpgrade(migration=None, backup_path=None)
+        return ConfigMigration(migration=None, backup_path=None)
 
     rendered = render_migrated_config(starter_template_text(), parsed)
     try:
@@ -1149,4 +1149,4 @@ def upgrade_config_file(path: str, expected_hash: str | None = None) -> ConfigUp
         with contextlib.suppress(OSError):
             os.remove(backup)
         raise
-    return ConfigUpgrade(migration=migration, backup_path=backup)
+    return ConfigMigration(migration=migration, backup_path=backup)

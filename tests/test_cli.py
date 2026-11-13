@@ -1465,7 +1465,7 @@ class TestConfigAutoMigrate:
         def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
             raise boom
 
-        monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
+        monkeypatch.setattr("pearlarr.bootstrap.migrate_config_file", refuse)
         _rewrite_old_config(str(config), loaded, dry_run=False)
 
         reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
@@ -1490,7 +1490,7 @@ class TestConfigAutoMigrate:
         def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
             raise boom
 
-        monkeypatch.setattr("pearlarr.bootstrap.upgrade_config_file", refuse)
+        monkeypatch.setattr("pearlarr.bootstrap.migrate_config_file", refuse)
         _rewrite_old_config(str(config), loaded, dry_run=False)
 
         reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)

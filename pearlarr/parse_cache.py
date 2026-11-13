@@ -23,7 +23,7 @@ from .stamps import stamp_of
 SONARR_PARSE_CACHE_TTL_DAYS = 30
 
 # How long an UNMATCHED parse (Sonarr matched no series) stays usable. Pinned to
-# the series-id set (see sonarr_episodes.sonarr_series_fingerprint) so adding the
+# the series-id set (see sonarr_episodes.sonarr_series_hash) so adding the
 # series self-heals it. This TTL is only a backstop, so it is short.
 SONARR_PARSE_UNMATCHED_TTL_DAYS = 7
 

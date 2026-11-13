@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The overlay unit tests read the private `_env_overlay`/`_hash_config_bytes` to pin
+# The overlay unit tests read the private `_env_overrides`/`_hash_config_bytes` to pin
 # the nested-mapping shape and the digest formula directly (both unobservable
 # through a validated AppConfig). Strict re-flags that and the repo disables
 # reportPrivateUsage for tests.
@@ -19,7 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from pearlarr.bootstrap import format_validation_errors
-from pearlarr.config import AppConfig, _env_overlay, _hash_config_bytes
+from pearlarr.config import AppConfig, _env_overrides, _hash_config_bytes
 from pearlarr.wait_types import ImportWaitMode
 
 
@@ -27,32 +27,32 @@ class TestOverlayShape:
     """`_env_overlay` maps a qualifying name to a key path with a YAML value."""
 
     def test_path_mapping_and_lowercasing(self) -> None:
-        assert _env_overlay({"PEARLARR_SONARR__URL": "http://x"}) == {"sonarr": {"url": "http://x"}}
+        assert _env_overrides({"PEARLARR_SONARR__URL": "http://x"}) == {"sonarr": {"url": "http://x"}}
 
     def test_only_delimiter_segments_split_underscores_within_a_key_survive(self) -> None:
         # A single underscore is part of the key. Only `__` nests.
-        assert _env_overlay({"PEARLARR_SEADEX__WANT_BEST": "false"}) == {"seadex": {"want_best": False}}
+        assert _env_overrides({"PEARLARR_SEADEX__WANT_BEST": "false"}) == {"seadex": {"want_best": False}}
 
     def test_deeper_paths_nest_preserving_free_form_key_case(self) -> None:
         # Keys below qbittorrent.options reach qbittorrentapi verbatim and
         # case-sensitively. Folding them would make VERIFY_WEBUI_CERTIFICATE unreachable.
-        assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE": "false"}) == {
+        assert _env_overrides({"PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE": "false"}) == {
             "qbittorrent": {"options": {"VERIFY_WEBUI_CERTIFICATE": False}},
         }
 
     def test_segments_below_a_free_form_table_stay_verbatim_all_the_way_down(self) -> None:
-        assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__REQUESTS_ARGS__timeout": "5"}) == {
+        assert _env_overrides({"PEARLARR_QBITTORRENT__OPTIONS__REQUESTS_ARGS__timeout": "5"}) == {
             "qbittorrent": {"options": {"REQUESTS_ARGS": {"timeout": 5}}},
         }
 
     def test_two_vars_share_a_group(self) -> None:
-        overlay = _env_overlay({"PEARLARR_SONARR__URL": "http://x", "PEARLARR_SONARR__API_KEY": "k"})
-        assert overlay == {"sonarr": {"url": "http://x", "api_key": "k"}}
+        overrides = _env_overrides({"PEARLARR_SONARR__URL": "http://x", "PEARLARR_SONARR__API_KEY": "k"})
+        assert overrides == {"sonarr": {"url": "http://x", "api_key": "k"}}
 
     def test_delimiter_less_names_are_reserved(self) -> None:
         # The operational vars (data dir, Docker) carry no `__` and must never be
         # swallowed into config. A non-prefixed name is ignored too.
-        overlay = _env_overlay(
+        overrides = _env_overrides(
             {
                 "PEARLARR_DATA_DIR": "/data",
                 "PEARLARR_CRON": "* * * * *",
@@ -60,34 +60,34 @@ class TestOverlayShape:
                 "OTHER": "x",
             },
         )
-        assert overlay == {}
+        assert overrides == {}
 
 
 class TestOverlayValueParsing:
     """A value is `yaml.safe_load`ed, so it means exactly what the same text means in the file."""
 
     def test_int_bool_and_flow_list(self) -> None:
-        overlay = _env_overlay(
+        overrides = _env_overrides(
             {
                 "PEARLARR_ADVANCED__SLEEP_TIME": "0",
                 "PEARLARR_SONARR__VERIFY_SSL": "false",
                 "PEARLARR_SEADEX__IGNORE_TAGS": "[Dolby Vision, Deband Required]",
             },
         )
-        assert overlay["advanced"] == {"sleep_time": 0}
-        assert overlay["sonarr"] == {"verify_ssl": False}
-        assert overlay["seadex"] == {"ignore_tags": ["Dolby Vision", "Deband Required"]}
+        assert overrides["advanced"] == {"sleep_time": 0}
+        assert overrides["sonarr"] == {"verify_ssl": False}
+        assert overrides["seadex"] == {"ignore_tags": ["Dolby Vision", "Deband Required"]}
 
     def test_quotes_force_a_string(self) -> None:
         # An API key that reads as a number needs quoting, exactly as in the file.
-        assert _env_overlay({"PEARLARR_SONARR__API_KEY": "'123'"}) == {"sonarr": {"api_key": "123"}}
+        assert _env_overrides({"PEARLARR_SONARR__API_KEY": "'123'"}) == {"sonarr": {"api_key": "123"}}
 
     def test_empty_value_parses_to_none(self) -> None:
-        assert _env_overlay({"PEARLARR_SONARR__URL": ""}) == {"sonarr": {"url": None}}
+        assert _env_overrides({"PEARLARR_SONARR__URL": ""}) == {"sonarr": {"url": None}}
 
     def test_malformed_yaml_names_only_the_variable(self) -> None:
         with pytest.raises(ValidationError, match=r"PEARLARR_SONARR__API_KEY") as excinfo:
-            _env_overlay({"PEARLARR_SONARR__API_KEY": "'unterminated"})
+            _env_overrides({"PEARLARR_SONARR__API_KEY": "'unterminated"})
         assert "unterminated" not in str(excinfo.value)
         # The invalid-configuration arms render this like a bad file key.
         assert "PEARLARR_SONARR__API_KEY" in format_validation_errors(excinfo.value)
