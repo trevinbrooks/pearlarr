@@ -3,7 +3,7 @@
 import os
 from collections.abc import Iterator, Sequence
 
-from .manual_import import path_leaf
+from .file_paths import path_leaf
 
 TORRENT_FILENAMES_TO_SKIP = [
     "NCED",

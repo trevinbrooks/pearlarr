@@ -5,7 +5,7 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.manual_import import EntryNames
+from pearlarr.pending_import import EntryNames
 from pearlarr.release_names import RangeKey, RunMember, TitleGround, range_key, read_name, read_names
 
 _NO_TITLES = TitleGround.of(EntryNames())

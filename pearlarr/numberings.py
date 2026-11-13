@@ -25,7 +25,7 @@ from types import MappingProxyType
 from typing import Self
 
 from .arr_models import ParsedFileInfo, SonarrEpisode
-from .manual_import import EntryWindow
+from .pending_import import EntryWindow
 from .placement_types import EpisodeIndex, PlacementBatch, SeedScope
 from .placer import NameFacts
 from .releases import season_episode_key

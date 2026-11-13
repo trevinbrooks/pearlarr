@@ -8,17 +8,9 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .arr_models import SonarrEpisodeFile
-from .manual_import import (
-    EntryClaim,
-    FileEpisodeMap,
-    GuardFacts,
-    OwnGroup,
-    PendingImport,
-    normalize_group,
-    normalize_rg,
-    sizes_by_episode,
-)
+from .pending_import import EntryClaim, FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, sizes_by_episode
 from .placement_types import EpisodeIndex
+from .releases import normalize_group, normalize_rg
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
 """Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""

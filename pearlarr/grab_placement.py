@@ -8,7 +8,10 @@ from typing import Self
 from .arr_models import ParsedFileInfo
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
-from .manual_import import (
+from .file_paths import normalized_leaf
+from .numberings import NumberingReader
+from .pairs import unambiguous
+from .pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
     EntryClaim,
@@ -19,11 +22,8 @@ from .manual_import import (
     OwnGroup,
     PendingImport,
     joined_map,
-    normalized_leaf,
     sizes_by_episode,
 )
-from .numberings import NumberingReader
-from .pairs import unambiguous
 from .placement_types import (
     EMPTY_LISTING,
     NO_SEEDED,

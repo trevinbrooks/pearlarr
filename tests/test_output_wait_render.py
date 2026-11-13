@@ -17,7 +17,6 @@ import pytest
 
 from pearlarr.console_caps import Capabilities, detect_capabilities
 from pearlarr.log import StyledLine
-from pearlarr.manual_import import NO_HELD_BACK, HeldBack, HeldFile, Outcome
 from pearlarr.output import (
     Phase,
     TorrentGraduated,
@@ -40,6 +39,7 @@ from pearlarr.output.wait_lines import (
     wait_tally_lines,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
+from pearlarr.wait_types import NO_HELD_BACK, HeldBack, HeldFile, Outcome
 
 from .builders import SEP, held_files, order_only_held_back
 

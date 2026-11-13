@@ -8,6 +8,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
+from pearlarr.file_paths import normalize_basename, normalized_leaf
 from pearlarr.grab_placement import (
     EntryPlacements,
     IdentityOverride,
@@ -26,15 +27,7 @@ from pearlarr.grab_placement import (
     identity_overrides,
     place_release,
 )
-from pearlarr.manual_import import (
-    NO_ORDER_ONLY,
-    EntryNames,
-    EntryWindow,
-    FileEpisodeMap,
-    PendingImport,
-    normalize_basename,
-    normalized_leaf,
-)
+from pearlarr.pending_import import NO_ORDER_ONLY, EntryNames, EntryWindow, FileEpisodeMap, PendingImport
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_EVIDENCE,

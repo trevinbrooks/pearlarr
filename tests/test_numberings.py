@@ -12,8 +12,8 @@ from collections.abc import Iterable, Mapping, Sequence
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.manual_import import EntryNames, EntryWindow
 from pearlarr.numberings import NumberingReader, _marked_title, _norm_title, _raw_title
+from pearlarr.pending_import import EntryNames, EntryWindow
 from pearlarr.placement_types import EpisodeIndex, SeedScope, TargetScope, episode_index
 from pearlarr.placer import assign_episode_ids
 from pearlarr.releases import EpisodeKey

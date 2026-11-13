@@ -7,8 +7,10 @@ from enum import Enum, auto
 from typing import NamedTuple
 
 from .arr_models import CommandResource, HistoryPage, QueueRecord
-from .manual_import import Deferral, ImportProbe, PendingImport, fold_path_separators, normalized_leaf
+from .file_paths import fold_path_separators, normalized_leaf
+from .pending_import import PendingImport
 from .stamps import parse_stamp_aware
+from .wait_types import Deferral, ImportProbe
 
 
 class QueueVerdict(Enum):

@@ -1,133 +1,35 @@
 # pyright: strict
-"""The pure manual-import vocabulary: normalizers, `PendingImport`, the wait states, telemetry, path translation.
-
-The planning modules' tests sit beside this file, one per module: `test_placement_types`, `test_placer`,
-`test_episode_state`, `test_import_files`, `test_probe_verdicts`, `test_import_quality`.
-"""
+"""Direct tests for the pending import record: building it, its placements, claims and windows, and its JSON form."""
 
 import json
 from collections.abc import Callable
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
-from pearlarr.arr_models import RemotePathMapping
-from pearlarr.manual_import import (
-    LEAVE_PROBE,
+from pearlarr.file_paths import normalize_basename
+from pearlarr.pending_import import (
     NO_ORDER_ONLY,
-    Deferral,
     EntryClaim,
     EntryNames,
     EntryWindow,
     GuardFacts,
-    HeldBack,
-    HeldFile,
-    ImportProbe,
     OwnedEpisode,
     PendingImport,
-    PendingState,
-    TorrentTelemetry,
-    WaitOutcome,
     added_at_of,
-    classify_pending,
     joined_map,
-    normalize_basename,
-    normalize_group,
-    normalize_rg,
-    normalized_leaf,
-    path_leaf,
-    sanitize_torrent_telemetry,
     sizes_by_episode,
-    translate_download_path,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
-from .builders import (
-    SEP,
-    claim_al_ids,
-    entry_claim,
-    entry_window,
-    order_only_held_back,
-    pending_import,
-    sonarr_ep,
-)
+from .builders import SEP, claim_al_ids, entry_claim, entry_window, pending_import, sonarr_ep
 
-_HALVES = tuple(normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
+HALVES = tuple(normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
 """The two halves of a split opener, which only the DVD order numbers."""
 
 _HALF_KEYS = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
 """The halves' DVD-order keys."""
-
-
-class TestNormalize:
-    """`normalize_basename`/`normalize_group` casefold and strip for stable comparison.
-
-    Interior dashes in a group name are never stripped, only wrapping ones.
-    """
-
-    def test_nfc_nfd_match(self) -> None:
-        # Same text, NFC (composed) vs NFD (decomposed) "é". Both fold equal.
-        nfc = "Café - 01.mkv"
-        nfd = "Café - 01.mkv"
-        assert normalize_basename(nfc) == normalize_basename(nfd)
-
-    def test_strips_and_casefolds(self) -> None:
-        assert normalize_basename("  Show - 01.MKV  ") == "show - 01.mkv"
-
-    def test_folding_a_folded_key_gives_the_same_key(self) -> None:
-        # MUTATION PIN: casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
-        # uncomposed, until the NFC after the casefold composes it. A stored record folds its keys again on
-        # every load, so without that NFC the second pass would re-key it.
-        name = "Der Weiß\u0323e Ritter - 01.mkv"
-        once = normalize_basename(name)
-        assert once == "der weis\u1e63e ritter - 01.mkv"
-        assert normalize_basename(once) == once
-
-    def test_canonically_equal_names_fold_alike_when_casefold_turns_a_mark_into_a_letter(self) -> None:
-        # MUTATION PIN: casefold turns U+0345 (the Greek iota below) into a letter, so the NFC before it is what
-        # makes these two spellings of one name fold alike. With only the NFC after it, they fold apart.
-        assert normalize_basename("\u1fb4 - 01.mkv") == normalize_basename("\u03b1\u0345\u0301 - 01.mkv")
-
-    def test_windows_paths_and_trailing_separators_still_fold_to_a_leaf(self) -> None:
-        # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
-        # sees no separator at all and would key the whole path.
-        assert normalized_leaf("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
-        # And a directory entry never folds to the empty leaf, which every other
-        # unnamed thing would then collide with.
-        assert normalized_leaf("Show/NC/") == "nc"
-
-    def test_path_leaf_folds_separators_but_preserves_the_name(self) -> None:
-        # The parser-input twin of normalized_leaf: same separator folding, but
-        # case/unicode intact - Sonarr's /parse and the video gate must see the
-        # real filename, never a whole Windows path or a folded one.
-        assert path_leaf("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"
-        assert path_leaf("Show/NC/") == "NC"
-
-    def test_path_leaf_keeps_a_leaf_that_looks_like_a_drive(self) -> None:
-        # MUTATION PIN: catches a path_leaf on os.path only on the Windows CI leg, where os.path is ntpath and
-        # reads the leading "K:" as a drive, so the grab's key for the file never matches the one Sonarr's path
-        # gives.
-        assert path_leaf("K: Return of Kings - 01.mkv") == "K: Return of Kings - 01.mkv"
-
-    def test_group_casefold(self) -> None:
-        assert normalize_group("SubGroup") == normalize_group("subgroup")
-
-    def test_group_strip_only_removes_wrapping_dashes(self) -> None:
-        # MUTATION PIN: strip("-") widened to a multi-char strip set would eat
-        # the X off an X-edged group. Only wrapping dashes (and whitespace) go,
-        # and interior dashes always stay.
-        assert normalize_group("Xrays-") == "xrays"
-        assert normalize_group("X-Raws") == "x-raws"
-
-    def test_group_dash_wrapped_agrees_with_planner(self) -> None:
-        # normalize_group is the single source of truth normalize_rg delegates to.
-        # A dash-wrapped group must compare equal on both ends or a release the
-        # planner grabbed gets re-imported over by the overwrite guard.
-        assert normalize_group("-Aergia-") == "aergia"
-        assert normalize_group("-Aergia-") == normalize_rg("-Aergia-")
-        assert normalize_group("Aergia") == normalize_rg("-Aergia-")
 
 
 class TestPendingImportBuild:
@@ -174,12 +76,12 @@ class TestPendingImportBuild:
 
     def test_the_order_only_keys_fold_onto_the_hand_import_files(self) -> None:
         pending = pending_import(
-            file_episode_map={_HALVES[0]: [401]},
-            hand_import_files=list(_HALVES),
-            order_only={_HALVES[0]: _HALF_KEYS[0], _HALVES[1].upper(): _HALF_KEYS[1]},
+            file_episode_map={HALVES[0]: [401]},
+            hand_import_files=list(HALVES),
+            order_only={HALVES[0]: _HALF_KEYS[0], HALVES[1].upper(): _HALF_KEYS[1]},
         )
 
-        assert pending.order_only == {_HALVES[1]: _HALF_KEYS[1]}
+        assert pending.order_only == {HALVES[1]: _HALF_KEYS[1]}
 
     def test_the_map_is_detached_and_read_only(self) -> None:
         # The record copies the caller's map at construction and wraps it read-only, so neither the
@@ -244,13 +146,13 @@ class TestPendingImportPlacements:
         assert dict(healed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
 
     def test_with_hand_import_files_keeps_the_stored_key_of_a_name_it_keys(self) -> None:
-        pending = pending_import(hand_import_files=[_HALVES[0]], order_only={_HALVES[0]: _HALF_KEYS[0]})
+        pending = pending_import(hand_import_files=[HALVES[0]], order_only={HALVES[0]: _HALF_KEYS[0]})
 
         healed = pending.with_hand_import_files(
-            [_HALVES[0].upper(), _HALVES[1]], {_HALVES[0].upper(): _HALF_KEYS[1], _HALVES[1]: _HALF_KEYS[1]}
+            [HALVES[0].upper(), HALVES[1]], {HALVES[0].upper(): _HALF_KEYS[1], HALVES[1]: _HALF_KEYS[1]}
         )
 
-        assert healed.order_only == {_HALVES[0]: _HALF_KEYS[0], _HALVES[1]: _HALF_KEYS[1]}
+        assert healed.order_only == {HALVES[0]: _HALF_KEYS[0], HALVES[1]: _HALF_KEYS[1]}
 
     def test_with_placements_lifts_a_placed_name_out_of_the_exclusions(self) -> None:
         # A name an earlier poll excluded that a later import placed is a placement, never both.
@@ -661,12 +563,10 @@ class TestPendingImportRoundTrip:
         assert PendingImport.from_json(raw, guards={}).hand_import_files == ()
 
     def test_a_malformed_order_only_entry_reads_as_absent(self) -> None:
-        raw = pending_import(
-            hand_import_files=_HALVES, order_only=dict(zip(_HALVES, _HALF_KEYS, strict=True))
-        ).to_json()
-        raw["order_only"][_HALVES[1]] = {"order": "dvd", "season": 7}
+        raw = pending_import(hand_import_files=HALVES, order_only=dict(zip(HALVES, _HALF_KEYS, strict=True))).to_json()
+        raw["order_only"][HALVES[1]] = {"order": "dvd", "season": 7}
 
-        assert PendingImport.from_json(raw, guards={}).order_only == {_HALVES[0]: _HALF_KEYS[0]}
+        assert PendingImport.from_json(raw, guards={}).order_only == {HALVES[0]: _HALF_KEYS[0]}
 
     def test_a_record_predating_sizes_by_name_lists_no_sizes(self) -> None:
         # Its own group is then judged by listed size alone.
@@ -715,238 +615,3 @@ class TestPendingImportRoundTrip:
         assert added_at_of({"added_at": "2026-06-24 00:00:00"}) == "2026-06-24 00:00:00"
         assert added_at_of({}) == ""
         assert added_at_of({"added_at": 20260624}) == ""
-
-
-class TestPendingStateAndProbe:
-    """The shared carried-over status vocabulary + the import probe value object."""
-
-    def test_pending_state_members(self) -> None:
-        assert {s.name for s in PendingState} == {
-            "QUEUED",
-            "DOWNLOADED",
-            "IMPORTED",
-            "ERRORED",
-            "MISSING",
-        }
-
-    def test_pending_state_is_its_string(self) -> None:
-        assert PendingState.DOWNLOADED == "downloaded"
-        assert PendingState.QUEUED == "queued"
-
-    def test_imported_probe_claims_the_files_without_a_command(self) -> None:
-        probe = ImportProbe.imported()
-        assert probe.files_present is True
-        assert probe.command_issued is False
-
-    def test_waiting_probe_carries_the_attempt_flags(self) -> None:
-        probe = ImportProbe.waiting(command_issued=True, deferral=Deferral.IMPORT)
-        assert probe.files_present is False
-        assert probe.command_issued is True
-        assert probe.deferral is Deferral.IMPORT
-        assert probe.deferred is True
-        assert probe.attempted is True
-
-    def test_waiting_probe_defaults_to_no_deferral(self) -> None:
-        probe = ImportProbe.waiting()
-        assert probe.deferral is Deferral.NONE
-        assert probe.deferred is False
-
-    def test_leave_probe_records_no_attempt(self) -> None:
-        assert LEAVE_PROBE.attempted is False
-        assert LEAVE_PROBE.files_present is False
-        assert LEAVE_PROBE.command_issued is False
-
-    def test_a_probes_placements_are_detached_and_read_only(self) -> None:
-        placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
-        probe = ImportProbe(files_present=False, command_issued=True, placements=placed)
-        placed["show - 02.mkv"] = (102,)
-        mutable = cast("dict[str, tuple[int, ...]]", probe.placements)
-
-        with pytest.raises(TypeError):
-            mutable["show - 02.mkv"] = (102,)
-        assert dict(probe.placements) == {"show - 01.mkv": (101,)}
-
-    @pytest.mark.parametrize(
-        ("held", "explained"),
-        [
-            pytest.param(order_only_held_back(), True, id="both keyed, an episode missing"),
-            pytest.param(
-                order_only_held_back(missing=(), not_recommended=(EpisodeKey(4, 1),)),
-                True,
-                id="both keyed, an episode holding another file",
-            ),
-            pytest.param(
-                HeldBack(files=(order_only_held_back().files[0], HeldFile(_HALVES[1])), missing=(EpisodeKey(4, 1),)),
-                False,
-                id="one of two keyed",
-            ),
-            pytest.param(order_only_held_back(missing=()), False, id="no unfilled episode to name"),
-            pytest.param(HeldBack(missing=(EpisodeKey(4, 1),)), False, id="no file"),
-        ],
-    )
-    def test_the_order_explains_only_keyed_files_with_an_unfilled_episode(
-        self, held: HeldBack, explained: bool
-    ) -> None:
-        assert held.explained_by_order is explained
-
-
-class TestClassifyPending:
-    """`classify_pending` folds a poll's outcome + the files-present flag into a state."""
-
-    def test_missing(self) -> None:
-        assert classify_pending(WaitOutcome.MISSING, False) is PendingState.MISSING
-
-    def test_errored(self) -> None:
-        assert classify_pending(WaitOutcome.ERRORED, False) is PendingState.ERRORED
-
-    def test_still_downloading_is_queued(self) -> None:
-        assert classify_pending(None, False) is PendingState.QUEUED
-
-    def test_complete_and_files_present_is_imported(self) -> None:
-        assert classify_pending(WaitOutcome.COMPLETE, True) is PendingState.IMPORTED
-
-    def test_complete_without_files_is_importing(self) -> None:
-        # The copy is still in flight -> downloaded, never imported, until the
-        # files are verified present.
-        assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.DOWNLOADED
-
-
-class TestSanitizeTorrentTelemetry:
-    """MUTATION PIN: pins the pure telemetry sanitizer's clamps and sentinel folds.
-
-    Covers the numeric-string `_as_float` path too - a cluster of ~10 surviving mutants.
-    """
-
-    @pytest.mark.parametrize(
-        ("progress", "dlspeed", "eta", "completed", "size", "expected"),
-        [
-            # All-None getattr reads fold to the empty telemetry.
-            (None, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
-            # A clean row passes through untouched.
-            (0.64, 3_200_000, 130, 1_800, 2_900, TorrentTelemetry(0.64, 3_200_000, 130, 1_800, 2_900)),
-            # NaN progress (float and string) folds to 0.0, not a poisoned bar.
-            (float("nan"), 100, 130, 50, 200, TorrentTelemetry(0.0, 100, 130, 50, 200)),
-            ("nan", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
-            # Numeric-string progress parses. Junk folds to 0.0.
-            ("0.75", None, None, None, None, TorrentTelemetry(0.75, None, None, None, None)),
-            ("fast", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
-            # Progress clamps to [0, 1] on both ends.
-            (1.5, None, None, None, None, TorrentTelemetry(1.0, None, None, None, None)),
-            (-0.25, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
-            # Idle (0) and negative speeds read as "no speed", never a 0 B/s row.
-            (0.5, 0, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
-            (0.5, -5, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
-            # qBittorrent's 8_640_000 "infinite" eta and a 0/negative eta are unknown.
-            # The last finite second still renders.
-            (0.5, 100, 8_640_000, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
-            (0.5, 100, 0, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
-            (0.5, 100, 8_639_999, None, None, TorrentTelemetry(0.5, 100, 8_639_999, None, None)),
-            # Zero/negative byte counts are unknown, not empty-progress readings.
-            (0.5, None, None, 0, 0, TorrentTelemetry(0.5, None, None, None, None)),
-            (0.5, None, None, -3, -1, TorrentTelemetry(0.5, None, None, None, None)),
-            # An over-count clamps done to the total, never a >100% bar.
-            (0.5, None, None, 500, 200, TorrentTelemetry(0.5, None, None, 200, 200)),
-            # Bytes done without a known total still renders.
-            (0.5, None, None, 100, None, TorrentTelemetry(0.5, None, None, 100, None)),
-        ],
-    )
-    def test_edge_inputs(
-        self,
-        progress: object,
-        dlspeed: object,
-        eta: object,
-        completed: object,
-        size: object,
-        expected: TorrentTelemetry,
-    ) -> None:
-        row = SimpleNamespace(progress=progress, dlspeed=dlspeed, eta=eta, completed=completed, size=size)
-
-        assert sanitize_torrent_telemetry(row) == expected
-
-    def test_attrless_row_folds_to_the_zero_reading(self) -> None:
-        # The fields are read best-effort off the row: a row missing them all is the empty telemetry.
-        assert sanitize_torrent_telemetry(object()) == TorrentTelemetry(0.0, None, None, None, None)
-
-
-def test_wait_outcome_members_exist() -> None:
-    assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "MISSING"}
-
-
-def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathMapping:
-    """One remote path mapping from the raw API field names."""
-
-    return RemotePathMapping.model_validate({"host": host, "remotePath": remote, "localPath": local})
-
-
-class TestTranslateDownloadPath:
-    """The remote-path translation behind the folder-scan fallback."""
-
-    def test_no_mappings_is_a_no_op(self) -> None:
-        assert translate_download_path("/d/folder", [], "qbit") == "/d/folder"
-
-    def test_prefix_translates_and_suffix_survives(self) -> None:
-        # The live incident mapping: trailing slash on both stored paths.
-        mappings = [_mapping("/home/u/torrents/4k-tv/", "/remote/torrents/4k-tv/")]
-        assert (
-            translate_download_path("/home/u/torrents/4k-tv/Show S01", mappings, None)
-            == "/remote/torrents/4k-tv/Show S01"
-        )
-
-    def test_exact_match_translates_to_local_root(self) -> None:
-        mappings = [_mapping("/downloads", "/data")]
-        assert translate_download_path("/downloads", mappings, None) == "/data"
-
-    def test_separator_boundary_is_respected(self) -> None:
-        # /downloads must NOT prefix-match /downloads-x/f.
-        mappings = [_mapping("/downloads", "/data")]
-        assert translate_download_path("/downloads-x/f", mappings, None) == "/downloads-x/f"
-
-    def test_trailing_slash_tolerated_on_either_side(self) -> None:
-        assert translate_download_path("/d/f", [_mapping("/d/", "/l")], None) == "/l/f"
-        assert translate_download_path("/d/f", [_mapping("/d", "/l/")], None) == "/l/f"
-
-    def test_suffix_case_is_preserved(self) -> None:
-        # Compare case-insensitively but never fold the suffix: POSIX targets
-        # are case-sensitive.
-        mappings = [_mapping("/Downloads", "/data")]
-        assert translate_download_path("/downloads/Show S01/Ep.MKV", mappings, None) == "/data/Show S01/Ep.MKV"
-
-    def test_windows_backslash_remote_path(self) -> None:
-        mappings = [_mapping("C:\\torrents\\", "/data/torrents")]
-        assert translate_download_path("C:\\torrents\\Show\\ep.mkv", mappings, None) == "/data/torrents/Show/ep.mkv"
-
-    def test_longest_prefix_wins(self) -> None:
-        mappings = [
-            _mapping("/d", "/short"),
-            _mapping("/d/tv", "/long"),
-        ]
-        assert translate_download_path("/d/tv/Show", mappings, None) == "/long/Show"
-
-    def test_host_equality_tiebreaks_equal_prefixes(self) -> None:
-        mappings = [
-            _mapping("/d", "/other-client", host="other"),
-            _mapping("/d", "/ours", host="qbit.local"),
-        ]
-        assert translate_download_path("/d/Show", mappings, "QBIT.LOCAL") == "/ours/Show"
-
-    def test_host_mismatch_never_excludes(self) -> None:
-        # Sonarr's host is the download-client host as SONARR knows it -
-        # routinely a different string from our qBittorrent host.
-        mappings = [_mapping("/d", "/data", host="sonarr-view-of-qbit")]
-        assert translate_download_path("/d/Show", mappings, "localhost") == "/data/Show"
-
-    def test_longer_prefix_beats_host_match(self) -> None:
-        mappings = [
-            _mapping("/d", "/host-matched", host="qbit"),
-            _mapping("/d/tv", "/longer", host="other"),
-        ]
-        assert translate_download_path("/d/tv/Show", mappings, "qbit") == "/longer/Show"
-
-    def test_mapping_missing_either_path_is_skipped(self) -> None:
-        mappings = [_mapping("", "/data"), _mapping("/d", "")]
-        assert translate_download_path("/d/Show", mappings, None) == "/d/Show"
-
-    def test_single_file_content_path_translates(self) -> None:
-        # A single-FILE torrent's content_path is the file itself.
-        mappings = [_mapping("/d/", "/data/")]
-        assert translate_download_path("/d/Show - 01.mkv", mappings, None) == "/data/Show - 01.mkv"

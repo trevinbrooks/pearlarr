@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from pearlarr.bootstrap import format_validation_errors
 from pearlarr.config import AppConfig, _config_checksum, _env_overlay
-from pearlarr.manual_import import ImportWaitMode
+from pearlarr.wait_types import ImportWaitMode
 
 
 class TestOverlayShape:

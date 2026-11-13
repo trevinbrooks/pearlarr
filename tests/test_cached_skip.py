@@ -20,7 +20,7 @@ import pytest
 
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
-from pearlarr.manual_import import EntryNames
+from pearlarr.pending_import import EntryNames
 from pearlarr.reporter import EntryTitle, RunContext
 from pearlarr.run_services import RunServices
 

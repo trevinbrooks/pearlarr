@@ -16,8 +16,9 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
+from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_placement import SeedFile, place_release
-from pearlarr.manual_import import EntryNames, normalize_basename
+from pearlarr.pending_import import EntryNames
 from pearlarr.placement_types import SeedScope, episode_index
 from pearlarr.releases import EpisodeRecord
 

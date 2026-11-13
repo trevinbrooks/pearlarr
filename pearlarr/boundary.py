@@ -82,7 +82,7 @@ def validate_each[ModelT: ApiModel](
         try:
             validated.append(model.model_validate(record))
         except ValidationError as e:
-            # Deferred: a top-level .output import cycles back here through manual_import.
+            # Deferred: a top-level .output import cycles back here through wait_types.
             # Skip-arm only, so the all-valid hot path never touches the import machinery.
             from .output import hub_warn
 

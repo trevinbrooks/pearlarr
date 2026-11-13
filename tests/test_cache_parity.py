@@ -18,7 +18,7 @@ from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
-from pearlarr.manual_import import GuardFacts
+from pearlarr.pending_import import GuardFacts
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import FakeCacheStore, entry_claim, pending_import

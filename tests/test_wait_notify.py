@@ -31,11 +31,11 @@ from pearlarr.discord import (
     DiscordEmbed,
     EmbedField,
 )
-from pearlarr.manual_import import Outcome
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.output import Severity
 from pearlarr.releases import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import SEP, held_files, make_entry_record, order_only_held_back, rg_group, url_item

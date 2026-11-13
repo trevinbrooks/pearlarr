@@ -3,8 +3,8 @@
 from collections.abc import Callable
 
 from .listing_fold import EntryListing, fold_listings
-from .manual_import import EntryNames, EntryWindow
 from .mappings import ResolvedMappings
+from .pending_import import EntryNames, EntryWindow
 from .placement_types import ListingsRead
 from .seadex_gateway import SeaDexMiss, SeaDexSource
 from .sonarr_episodes import SonarrEpisodes

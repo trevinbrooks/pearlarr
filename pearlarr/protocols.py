@@ -3,9 +3,10 @@
 from abc import ABC, abstractmethod
 
 from .arr_models import ArrItem, HistoryRecord
-from .manual_import import AttemptKind, EffectStatus, ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
+from .pending_import import PendingImport
 from .progress import ProgressSink
+from .wait_types import AttemptKind, EffectStatus, ImportProbe, ImportProgress
 
 
 class ImportCompleter(ABC):

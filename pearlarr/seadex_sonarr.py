@@ -19,16 +19,9 @@ from .grab_placement import (
     identity_overrides,
 )
 from .log import count_noun, pluralize
-from .manual_import import (
-    AttemptKind,
-    EffectStatus,
-    ImportProbe,
-    ImportProgress,
-    ImportWaitMode,
-    PendingImport,
-)
 from .mappings import ExternalIds, MappingEntry, MappingSource
 from .output import hub_warn
+from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, Placement, SeedScope, episode_index
 from .planner import get_episode_keys
 from .progress import ProgressSink
@@ -40,6 +33,7 @@ from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_parse import SonarrParseCache
 from .torrent_listings import SeriesListings
+from .wait_types import AttemptKind, EffectStatus, ImportProbe, ImportProgress, ImportWaitMode
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:

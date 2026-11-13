@@ -32,7 +32,6 @@ from .config import (
 )
 from .console_caps import CapsCache
 from .log import LogLevel, resolve_console_format, setup_logger
-from .manual_import import ImportWaitMode
 from .output import (
     CacheBackedUp,
     CacheIntegrityReported,
@@ -64,6 +63,7 @@ from .output.cli_surface import cli_surface
 from .output.rich_renderer import RichRenderer
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
+from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator

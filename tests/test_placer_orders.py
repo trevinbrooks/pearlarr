@@ -4,7 +4,7 @@
 from typing import ClassVar
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.manual_import import EntryNames
+from pearlarr.pending_import import EntryNames
 from pearlarr.placement_types import NO_EVIDENCE, EpisodeAssignment, ListingEvidence, PlacementVerdict, TargetScope
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 from pearlarr.tvdb_orders import OrderRow, SeriesOrders

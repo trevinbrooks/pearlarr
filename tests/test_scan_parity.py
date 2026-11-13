@@ -36,7 +36,6 @@ from pearlarr.log import (
     TitledRule,
     group_highlight,
 )
-from pearlarr.manual_import import ImportWaitMode, PendingState
 from pearlarr.output import (
     Accent,
     CapReached,
@@ -75,6 +74,7 @@ from pearlarr.reporter import (
     RunStats,
 )
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.wait_types import ImportWaitMode, PendingState
 
 from .builders import (
     FakeCacheStore,

@@ -7,8 +7,8 @@ from dataclasses import replace
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.manual_import import EntryClaim, EntryNames, EntryWindow, FileEpisodeMap
 from pearlarr.numberings import NumberingReading
+from pearlarr.pending_import import EntryClaim, EntryNames, EntryWindow, FileEpisodeMap
 from pearlarr.placement_types import (
     NO_EVIDENCE,
     NO_SEEDED,

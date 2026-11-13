@@ -14,7 +14,7 @@ from seadex import Tracker
 
 from .arr_categories import ArrCategoryResolver
 from .boundary import coerce_int
-from .manual_import import normalized_leaf, torrent_errored, torrent_finished
+from .file_paths import normalized_leaf
 from .output import hub_warn
 from .releases import SeadexDict, SeadexUrlItem, normalized_infohash
 from .torrent import (
@@ -24,6 +24,7 @@ from .torrent import (
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
+from .wait_types import torrent_errored, torrent_finished
 
 
 class TorrentAddError(Exception):

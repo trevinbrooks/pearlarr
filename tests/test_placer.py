@@ -11,7 +11,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo
-from pearlarr.manual_import import EntryNames
+from pearlarr.pending_import import EntryNames
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_IDENTIFIED,

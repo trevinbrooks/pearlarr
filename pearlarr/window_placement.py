@@ -33,8 +33,8 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
-from .manual_import import EntryClaim, EntryWindow
 from .numberings import NumberingReading
+from .pending_import import EntryClaim, EntryWindow
 from .placement_types import (
     EpisodeAssignment,
     EpisodeIndex,

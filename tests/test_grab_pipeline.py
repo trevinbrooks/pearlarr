@@ -24,6 +24,7 @@ from seadex import Tracker
 from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
+from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import (
     _HOLD_ROWS,
     NO_SEEDS,
@@ -32,7 +33,6 @@ from pearlarr.grab_pipeline import (
     HoldRow,
 )
 from pearlarr.grab_placement import PendingSeed
-from pearlarr.manual_import import GuardFacts, ImportWaitMode, PendingImport, normalize_basename
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
@@ -45,11 +45,13 @@ from pearlarr.output import (
     severity_of,
 )
 from pearlarr.output.recording import RecordingHub
+from pearlarr.pending_import import GuardFacts, PendingImport
 from pearlarr.releases import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     CLIENT_SENTINEL,

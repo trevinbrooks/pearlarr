@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, assert_never
 from .trace import CapturedTrace
 from ..config import Arr
 from ..log import EntryState
-from ..manual_import import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 from ..releases import NO_ELSEWHERE, ElsewhereCounts
+from ..wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 
 if TYPE_CHECKING:
     from ..reporter import RunStats

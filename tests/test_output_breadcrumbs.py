@@ -8,7 +8,6 @@ closes, and the label-only read APIs (path text, path_for, during).
 
 from pearlarr.config import Arr
 from pearlarr.log import EntryState
-from pearlarr.manual_import import OutcomeCategory
 from pearlarr.output import (
     KIND_DEPTH,
     BootStepFinished,
@@ -35,6 +34,7 @@ from pearlarr.output import (
     WaitStarted,
 )
 from pearlarr.reporter import RunStats
+from pearlarr.wait_types import OutcomeCategory
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)

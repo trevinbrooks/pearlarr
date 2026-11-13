@@ -12,7 +12,6 @@ from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .grab_placement import PendingSeed
-from .manual_import import ImportWaitMode
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingRecords
@@ -26,6 +25,7 @@ from .reporter import (
 )
 from .stamps import now_stamp, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
+from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).

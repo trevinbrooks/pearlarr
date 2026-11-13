@@ -5,8 +5,9 @@ from typing import Any
 
 from .cache import AbstractCacheStore
 from .config import Arr
-from .manual_import import EntryClaim, GuardFacts, ImportProbe, PendingImport, hydrate_pending, is_awaiting_cleanup
+from .pending_import import EntryClaim, GuardFacts, PendingImport, hydrate_pending, is_awaiting_cleanup
 from .reporter import RunContext
+from .wait_types import ImportProbe
 
 
 class PendingRecords:

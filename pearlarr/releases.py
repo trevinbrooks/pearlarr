@@ -252,3 +252,17 @@ def season_episode_key(season: int | None, episode: int | None) -> EpisodeKey:
         season if season is not None else SONARR_MISSING_KEY,
         episode if episode is not None else SONARR_MISSING_KEY,
     )
+
+
+def normalize_group(group: str) -> str:
+    """Normalize a release group for comparison: strip whitespace/wrapping dashes, casefold."""
+
+    return group.strip().strip("-").casefold()
+
+
+def normalize_rg(name: str | None) -> str | None:
+    """`normalize_group` with None-tolerance: None for a missing/blank name."""
+
+    if not name:
+        return None
+    return normalize_group(name)

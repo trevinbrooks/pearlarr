@@ -29,7 +29,6 @@ import pearlarr.torrents as torrents
 from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr, ArrSettings
-from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
@@ -43,6 +42,7 @@ from pearlarr.torrents import (
     TorrentAddError,
     TorrentService,
 )
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     download_client_json,

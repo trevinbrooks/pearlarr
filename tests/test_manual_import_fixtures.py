@@ -21,8 +21,9 @@ from pearlarr.arr_models import (
     SonarrEpisode,
 )
 from pearlarr.config import AppConfig
+from pearlarr.file_paths import normalize_basename
 from pearlarr.import_quality import ParsedQuality, quality_axes_from_model, resolve_quality
-from pearlarr.manual_import import AttemptKind, ImportProgress, PendingImport, normalize_basename
+from pearlarr.pending_import import PendingImport
 from pearlarr.probe_verdicts import (
     ContentPaths,
     DownloadMatch,
@@ -32,6 +33,7 @@ from pearlarr.probe_verdicts import (
     manual_import_in_flight,
 )
 from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.wait_types import AttemptKind, ImportProgress
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, pending_import
 from .fakes import FakeSonarrClient

@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from seadex import EntryRecord
 
 from .anibridge import NO_ALIASES, SpecialAliasing
-from .manual_import import EntryWindow, path_leaf
+from .file_paths import path_leaf
 from .pairs import unambiguous
+from .pending_import import EntryWindow
 from .placement_types import ListingsRead, SizeIdentities, TorrentListing
 from .releases import carries_ignored_tag, normalized_infohash
 from .video_files import is_video_candidate

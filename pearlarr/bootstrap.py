@@ -51,9 +51,9 @@ if TYPE_CHECKING:
     # that use them, so their deps aren't pulled at CLI module load.
     import httpx
 
-    from .manual_import import ImportWaitMode
     from .mappings import MappingResolver
     from .paths import AppPaths
+    from .wait_types import ImportWaitMode
 
 
 def validation_error_lines(e: ValidationError) -> list[str]:

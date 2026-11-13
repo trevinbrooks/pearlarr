@@ -69,7 +69,7 @@ from .events import (
 from .hub import Renderer
 from .wait_lines import PulseThrottle, held_back_names, held_back_sentences
 from ..log import LOG_NAME
-from ..manual_import import OutcomeCategory
+from ..wait_types import OutcomeCategory
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
 

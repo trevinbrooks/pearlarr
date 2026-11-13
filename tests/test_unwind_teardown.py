@@ -34,12 +34,12 @@ from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import run_arrs
 from pearlarr.cache import CacheSchemaError
 from pearlarr.config import AppConfig, Arr, ArrTarget
-from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.output import Diagnostic, FileLogSink, RunFinished, Severity, install_bridge, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import resolve_paths
 from pearlarr.run_services import RunDeps
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config
 
