@@ -6,6 +6,7 @@ from typing import override
 
 from . import coverage as _coverage
 from .arr_models import HistoryRecord, SonarrItem
+from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
@@ -27,7 +28,6 @@ from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_ind
 from .planner import get_episode_keys
 from .progress import ProgressSink
 from .releases import GrabHold, SeadexDict, ignore_tag_set, releases_to_grab
-from .run_services import LegDeps, LegServices, bind_arr_http
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -89,8 +89,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     def __init__(
         self,
-        deps: LegDeps,
-        services: LegServices,
+        deps: ArrRunDeps,
+        services: ArrRunServices,
         *,
         sonarr_client: AbstractSonarrClient | None = None,
     ) -> None:

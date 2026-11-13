@@ -6,10 +6,13 @@ deterministic close-deeper behavior, unwind close-all, idempotent defensive
 closes, and the label-only read APIs (path text, path_for, during).
 """
 
+from pearlarr.arr_run_state import ArrRunStats
 from pearlarr.config import Arr
-from pearlarr.leg_state import ArrRunStats
 from pearlarr.output import (
     KIND_DEPTH,
+    ArrRunFinished,
+    ArrRunSummary,
+    ArrRunTally,
     BootStepFinished,
     BootStepStarted,
     CycleStarted,
@@ -17,9 +20,6 @@ from pearlarr.output import (
     EntryHeader,
     Event,
     ItemStarted,
-    LegFinished,
-    LegSummary,
-    LegTally,
     OpenScopes,
     RunStarted,
     RunSummaryReady,
@@ -55,11 +55,11 @@ def _kinds(fold: OpenScopes) -> list[ScopeKind]:
 
 def _summary_ready() -> RunSummaryReady:
     return RunSummaryReady(
-        LegSummary(
+        ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=LegTally.from_stats(ArrRunStats()),
+            tally=ArrRunTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -181,12 +181,12 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
         ScopeOpened(scope=_ENTRY, label="A"),
-        LegFinished(arr=Arr.SONARR),
+        ArrRunFinished(arr=Arr.SONARR),
     )
     assert fold.nodes() == ()
 
     # The defensive teardown close re-emits it, a no-op on an empty stack.
-    fold.apply(LegFinished(arr=Arr.SONARR))
+    fold.apply(ArrRunFinished(arr=Arr.SONARR))
     assert fold.nodes() == ()
 
 

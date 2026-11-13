@@ -3,9 +3,9 @@
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from .arr_run_state import ArrRunState
 from .cache import AbstractCacheStore
 from .config import Arr
-from .leg_state import ArrRunState
 from .pending_import import OwnedAtGrab, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
 from .wait_types import AttemptResult
 
@@ -23,7 +23,7 @@ class PendingImportStore:
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context the views and writes read."""
 
         self._ctx = state

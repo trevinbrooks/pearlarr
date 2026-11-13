@@ -32,8 +32,8 @@ from .config import (
 from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
 from .log import apply_log_level
 from .output import (
+    ArrRunFinished,
     FileLogRenderer,
-    LegFinished,
     Severity,
     emit_to_hub,
     file_log_admits,
@@ -324,7 +324,7 @@ def configured_arrs(
 
 
 @dataclass(frozen=True)
-class LegContext:
+class RunContext:
     """The run-invariant collaborators every arr leg shares (built once per run).
 
     Bundles the cross-leg scaffolding so `_run_leg` takes one context plus the
@@ -341,7 +341,7 @@ class LegContext:
     import_wait_mode: ImportWaitMode | None
 
 
-def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
+def _run_arr(target: ArrTarget, ctx: RunContext) -> bool:
     """Run one arr leg end to end: True on a clean completion, False for each caught arm.
 
     Re-does its own lazy imports of the heavy run machinery (the boot-cockpit
@@ -352,26 +352,26 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
 
     from .arr_http import ArrAuthError, ArrUnreachableError
     from .arr_models import ArrItem
+    from .arr_run_loop import ArrRunLoop
+    from .arr_run_services import ArrRunDeps, ArrRunServices, QbitConnectionError
     from .arr_strategy import ArrStrategy
     from .boundary import BoundaryContractError
     from .cache import CacheSchemaError
     from .radarr_strategy import RadarrStrategy
-    from .run_loop import LegLoop
-    from .run_services import LegDeps, LegServices, QbitConnectionError
     from .sonarr_strategy import SonarrStrategy
 
     arr_name = target.arr
     item_id = target.external_id
-    # Bound before the try so a LegDeps.build failure can't hit an
+    # Bound before the try so an ArrRunDeps.build failure can't hit an
     # UnboundLocalError in the finally's close.
-    deps: LegDeps | None = None
+    deps: ArrRunDeps | None = None
     try:
         # An inner handler so a dying leg's open output frames close
         # BEFORE the except arms below log: a leg-fatal error is a
         # cycle-level fact, not a detail of the entry / item / boot step
         # it died in. A completed leg's single close comes from the run tail.
         try:
-            deps = LegDeps.build(
+            deps = ArrRunDeps.build(
                 arr_name,
                 ctx.cache,
                 logger=ctx.logger,
@@ -380,13 +380,13 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
                 web=ctx.web,
                 boot=ctx.boot,
             )
-            services = LegServices(deps, arr_name)
-            runner = LegLoop(deps, services)
+            services = ArrRunServices(deps, arr_name)
+            runner = ArrRunLoop(deps, services)
 
-            # The concrete strategy differs per arr, but the run_leg kwargs don't -
+            # The concrete strategy differs per arr, but the run_arr kwargs don't -
             # capture them once so a signature change edits a single place.
             def drive[ItemT: ArrItem](strategy: ArrStrategy[ItemT]) -> None:
-                runner.run_leg(
+                runner.run_arr(
                     strategy,
                     item_id=item_id,
                     dry_run=ctx.dry_run,
@@ -401,9 +401,9 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
                     drive(RadarrStrategy(deps, services))
         except BaseException:
             # Through the hub seam, not the reporter (deps is None when
-            # LegDeps.build itself failed). hub.emit contains renderer errors,
+            # ArrRunDeps.build itself failed). hub.emit contains renderer errors,
             # so the emit cannot mask the in-flight leg-fatal Exception.
-            emit_to_hub(LegFinished(arr=arr_name))
+            emit_to_hub(ArrRunFinished(arr=arr_name))
             raise
     except (QbitConnectionError, CacheSchemaError) as e:
         # A user-facing environment problem (wrong host/credentials, a
@@ -431,7 +431,7 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
         return False
     finally:
         # Cap this arr's boot section so the next arr opens a fresh
-        # one. A no-op on the happy path (run_leg already ended it
+        # one. A no-op on the happy path (run_arr already ended it
         # before scanning), the safety net when a step failed.
         ctx.boot.end_section()
         if deps is not None:
@@ -494,7 +494,7 @@ def run_arrs(
         # log per cycle, and "which data dir is this?" is the first support question.
         boot = BootFlow(paths.data_dir)
         boot.banner()
-        # The heavy run machinery is imported inside `_run_leg` (the boot-cockpit
+        # The heavy run machinery is imported inside `_run_arr` (the boot-cockpit
         # invariant: nothing heavy at module load). Only the shared web client is
         # needed out here.
         from .web_client import make_web_client
@@ -532,7 +532,7 @@ def run_arrs(
             if mappings is None:
                 return False
             all_arrs_completed = True
-            ctx = LegContext(
+            ctx = RunContext(
                 cache=paths.cache_db,
                 logger=logger,
                 resolver=mappings,
@@ -546,7 +546,7 @@ def run_arrs(
                 for target in runnable:
                     # Each leg logs + closes independently (a False return = a caught
                     # arm), so one crashing doesn't drop the other.
-                    if not _run_leg(target, ctx):
+                    if not _run_arr(target, ctx):
                         all_arrs_completed = False
             finally:
                 # The resolver owns mappings.db (shared across both arrs). Close it once

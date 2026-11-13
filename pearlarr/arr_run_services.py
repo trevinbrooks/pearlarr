@@ -21,12 +21,12 @@ from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver, CategorySources
 from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_arr_client
 from .arr_models import ArrFiles, SonarrEpisode
+from .arr_run_state import ArrRunState, PerTitleState, Title, is_dry_run, resolve_entry_title
 from .boot_flow import BootFlow
 from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStore
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .leg_state import ArrRunState, PerTitleState, Title, is_dry_run, resolve_entry_title
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
@@ -64,7 +64,7 @@ def bind_arr_http(arr: Arr, config: AppConfig, client: httpx.Client) -> ArrHttp:
 
 
 @dataclass(frozen=True)
-class LegDeps:
+class ArrRunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
 
     A plain value object the composition root (`bootstrap.py`) builds via
@@ -124,7 +124,7 @@ class LegDeps:
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
-    ) -> "LegDeps":
+    ) -> "ArrRunDeps":
         """Construct the shared collaborators in dependency order.
 
         Args:
@@ -287,7 +287,7 @@ class LegDeps:
 
 # Deliberately NOT @final: the strategy-seam tests subclass this with a
 # scripted fake (_FakeRunServices), so the seam stays overridable.
-class LegServices:
+class ArrRunServices:
     """The per-AniList-id services hub the strategies call.
 
     Receives its shared collaborators as a `RunDeps` bundle (built and
@@ -300,7 +300,7 @@ class LegServices:
     down via `begin_run`, so the strategies never see the loop type.
     """
 
-    def __init__(self, deps: LegDeps, arr: Arr) -> None:
+    def __init__(self, deps: ArrRunDeps, arr: Arr) -> None:
         """Receive the shared collaborators and set up the per-id pipeline.
 
         `arr` is the authority for the run's arr. Every fresh run context
@@ -336,7 +336,7 @@ class LegServices:
         # fresh at the start of each run by the loop's start_arr_run. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
-        # before run_leg. The run loop ADOPTS it (via `ctx`) at construction.
+        # before run_arr. The run loop ADOPTS it (via `ctx`) at construction.
         self._ctx = ArrRunState(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
@@ -344,11 +344,11 @@ class LegServices:
         self._dirty_al_ids: set[int] = set()
 
         # The shared per-id collaborators, built from the deps hub + the
-        # placeholder ctx. bind_leg rebinds their ctx at the top of each run.
+        # placeholder ctx. bind_arr_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
         self._records = PendingImportStore(deps.cache_store)
-        self._records.bind_leg(self._ctx)
+        self._records.bind_arr_run(self._ctx)
         self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
 
     @property
@@ -371,7 +371,7 @@ class LegServices:
 
         return self._selection_stale
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
 
         Driven by the run loop's `begin_run`: once with the placeholder at
@@ -383,11 +383,11 @@ class LegServices:
         self._ctx = state
         # Per-run state: the loop's activity scan re-marks dirty ids after this.
         self._dirty_al_ids.clear()
-        self._filter.bind_leg(state)
-        self._grab_pipeline.bind_leg(state)
-        self._records.bind_leg(state)
+        self._filter.bind_arr_run(state)
+        self._grab_pipeline.bind_arr_run(state)
+        self._records.bind_arr_run(state)
         # Radarr imports its own downloads, and so does Sonarr with the wait off.
-        self._torrents.bind_leg(
+        self._torrents.bind_arr_run(
             pearlarr_imports=self.arr is Arr.SONARR and state.import_wait_mode is not ImportWaitMode.OFF
         )
 

@@ -1,5 +1,5 @@
 # pyright: strict
-"""Characterization tests for RunReporter + RunContext.
+"""Characterization tests for RunReporter + ArrRunState.
 
 The run loop and the end-of-run summary had no coverage before this phase, so
 these pin the run-state contracts the orchestrator depends on: the stats-tally
@@ -7,7 +7,7 @@ counters each `log_*` method bumps, the active-title attribution set by
 `log_al_title`, and that the summary renders without error on both the real
 and dry-run paths. Presentation is captured as EMITTED events (via the `emit`
 seam) and, where a test pins output, re-derived to lines through the shipped
-builders. Most tests just assert on the `RunContext` mutations.
+builders. Most tests just assert on the `ArrRunState` mutations.
 
 The collaborators are real, not mocks: the reporter is built with the shared
 in-memory `FakeCacheStore` (typed by `AbstractCacheStore`) and a real
@@ -21,14 +21,14 @@ import pytest
 from seadex import Tag
 
 from pearlarr.anilist_client import AniListClient
+from pearlarr.arr_run_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
+    ArrRunFinished,
     EntryHeader,
     Event,
     GrabAction,
-    LegFinished,
     NeedsActionCause,
     RunSummaryReady,
     ScanFinished,
@@ -251,7 +251,7 @@ class TestCloseBoundaries:
 
         reporter.run_finished(Arr.SONARR)
 
-        assert events == [LegFinished(arr=Arr.SONARR)]
+        assert events == [ArrRunFinished(arr=Arr.SONARR)]
 
     def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
         # scan_finished already closed it, so run_finished's defensive close is a no-op:

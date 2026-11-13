@@ -6,11 +6,14 @@ from typing import ClassVar
 from seadex import EntryRecord
 
 from .anilist_gateway import AniListGateway
+from .arr_run_state import ArrRunState, Title, resolve_entry_title
 from .cache import AbstractCacheStore
 from .config import Arr
-from .leg_state import ArrRunState, Title, resolve_entry_title
 from .output import (
     Accent,
+    ArrRunFinished,
+    ArrRunSummary,
+    ArrRunTally,
     CapReached,
     CountsMark,
     CountsSource,
@@ -21,9 +24,6 @@ from .output import (
     GrabFailed,
     GrabStatus,
     ItemStarted,
-    LegFinished,
-    LegSummary,
-    LegTally,
     NeedsActionCause,
     NeedsActionFact,
     RecommendedGroup,
@@ -163,7 +163,7 @@ class RunReporter:
         """Close the run (the leg-close boundary). bootstrap emits it on unwind."""
 
         self._close_entry()
-        self._emit(LegFinished(arr=arr))
+        self._emit(ArrRunFinished(arr=arr))
 
     # --- self-contained ledger rows ------------------------------------------
 
@@ -388,12 +388,12 @@ class RunReporter:
         if preview:
             dry_run_note = "nothing grabbed" if has_client else "qBittorrent not configured; nothing grabbed"
 
-        tally = LegTally.from_stats(ctx.stats)
+        tally = ArrRunTally.from_stats(ctx.stats)
         elapsed_s = (time.monotonic() - ctx.started_monotonic) if ctx.started_monotonic is not None else None
 
         self._emit(
             RunSummaryReady(
-                summary=LegSummary(
+                summary=ArrRunSummary(
                     arr=ctx.arr,
                     dry_run_note=dry_run_note,
                     added_count=ctx.torrents_added,

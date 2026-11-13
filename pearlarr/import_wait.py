@@ -7,14 +7,14 @@ from dataclasses import dataclass, field, replace
 import qbittorrentapi
 
 from .arr_categories import Watch
+from .arr_run_services import ArrRunDeps
+from .arr_run_state import ArrRunState
 from .arr_strategy import ImportCompleter
 from .clock import Clock
 from .config import ImportsSettings
-from .leg_state import ArrRunState
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
 from .pending_import import PendingImport, is_awaiting_cleanup
 from .pending_import_store import PendingImportStore
-from .run_services import LegDeps
 from .wait_types import (
     LEAVE_PROBE,
     NO_HELD_BACK,
@@ -55,7 +55,7 @@ class WaitPollers:
         self._logger = logger
         self.strategy = None
 
-    def bind_leg(self, strategy: ImportCompleter | None) -> None:
+    def bind_arr_run(self, strategy: ImportCompleter | None) -> None:
         """Bind the active strategy whose import hooks the probes drive."""
 
         self.strategy = strategy
@@ -143,7 +143,7 @@ class PostImportCleanup:
     _ctx: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
-    def __init__(self, deps: LegDeps, records: PendingImportStore, probes: WaitPollers) -> None:
+    def __init__(self, deps: ArrRunDeps, records: PendingImportStore, probes: WaitPollers) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
         self._qbit = deps.qbit
@@ -154,7 +154,7 @@ class PostImportCleanup:
         self._probes = probes
         self._kept_keys: set[str] = set()
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
 
         self._ctx = state
@@ -364,7 +364,7 @@ class ImportWaitManager:
     _ctx: ArrRunState
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: LegDeps, ctx: ArrRunState, records: PendingImportStore) -> None:
+    def __init__(self, *, deps: ArrRunDeps, ctx: ArrRunState, records: PendingImportStore) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
@@ -373,9 +373,9 @@ class ImportWaitManager:
         self._records = records
         self.probes = WaitPollers(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
-        self.bind_leg(ctx, None)
+        self.bind_arr_run(ctx, None)
 
-    def bind_leg(self, state: ArrRunState, strategy: ImportCompleter | None) -> None:
+    def bind_arr_run(self, state: ArrRunState, strategy: ImportCompleter | None) -> None:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
@@ -383,8 +383,8 @@ class ImportWaitManager:
         """
 
         self._ctx = state
-        self.probes.bind_leg(strategy)
-        self._cleanup.bind_leg(state)
+        self.probes.bind_arr_run(strategy)
+        self._cleanup.bind_arr_run(state)
 
     def fresh_grab_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""

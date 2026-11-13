@@ -622,7 +622,7 @@ class TestRunFailuresAreCleanAndNonzero:
             ),
         ],
     )
-    def test_a_failed_arr_leg_reports_cleanly_and_returns_false(
+    def test_a_failed_arr_run_reports_cleanly_and_returns_false(
         self,
         error: str,
         expected: str,
@@ -630,8 +630,8 @@ class TestRunFailuresAreCleanAndNonzero:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         from pearlarr.arr_http import ArrAuthError, ArrUnreachableError
+        from pearlarr.arr_run_services import ArrRunDeps, QbitConnectionError
         from pearlarr.boundary import BoundaryContractError
-        from pearlarr.run_services import LegDeps, QbitConnectionError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
@@ -647,7 +647,7 @@ class TestRunFailuresAreCleanAndNonzero:
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
             raise exceptions[error]
 
-        monkeypatch.setattr(LegDeps, "build", fail_build)
+        monkeypatch.setattr(ArrRunDeps, "build", fail_build)
         _write_runnable_config()
 
         assert run_single(sonarr=True) is False

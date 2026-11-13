@@ -159,7 +159,7 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
 def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
     """Null the id-form names an AniList outage once stored, so the next cached read resolves them."""
 
-    # The pattern is the frozen v3-era form of `leg_state.unresolved_label`, spelled
+    # The pattern is the frozen v3-era form of `arr_run_state.unresolved_label`, spelled
     # out on purpose so the migration never tracks the live label.
     conn.execute("UPDATE entries SET name = NULL WHERE name LIKE 'AniList #%'")
 

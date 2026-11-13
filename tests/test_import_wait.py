@@ -31,14 +31,14 @@ import respx
 
 from pearlarr.arr_categories import CategorySources
 from pearlarr.arr_models import HistoryRecord
+from pearlarr.arr_run_loop import ArrRunLoop
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
-from pearlarr.leg_state import ArrRunState
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_import import OwnedAtGrab, PendingImport
-from pearlarr.run_loop import LegLoop
 from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import (
     LEAVE_PROBE,
@@ -2250,7 +2250,7 @@ class TestImportWaitModeProperty:
         assert services.import_wait_mode is ImportWaitMode.HYBRID
 
 
-def _attach_wait_manager(engine: LegLoop) -> None:
+def _attach_wait_manager(engine: ArrRunLoop) -> None:
     """Attach an `ImportWaitManager` sharing the engine's run state.
 
     The wait/poll machinery lives on the manager now, so a finalize/snapshot test
@@ -2358,7 +2358,7 @@ def _finalize_engine(
     supports_monitor: bool = True,
     check_result: WaitResult | None = None,
     monitor_result: WaitResult | None = None,
-) -> LegLoop:
+) -> ArrRunLoop:
     """A bare engine whose every run-tail step appends a marker to `calls`.
 
     The reporter, cache store, and wait manager are typed recorders (a
@@ -2373,7 +2373,7 @@ def _finalize_engine(
 
     ctx = ArrRunState(arr=Arr.SONARR, import_wait_mode=mode)
     return make_bare_instance(
-        LegLoop,
+        ArrRunLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(
@@ -4118,7 +4118,7 @@ def make_add_engine(
     qbit: object = CLIENT_SENTINEL,
     dry_run: bool = False,
     **config_overrides: object,
-) -> tuple[LegLoop, GrabPipeline]:
+) -> tuple[ArrRunLoop, GrabPipeline]:
     """A bare `RunLoop` + a `GrabPipeline` + an attached `ImportWaitManager`.
 
     The produce side lives on `GrabPipeline` (held by the services hub in
@@ -4133,7 +4133,7 @@ def make_add_engine(
     """
 
     engine = make_bare_instance(
-        LegLoop,
+        ArrRunLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(**config_overrides),

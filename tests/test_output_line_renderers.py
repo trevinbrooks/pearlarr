@@ -22,11 +22,14 @@ from typing import get_args, override
 
 import pytest
 
+from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.leg_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
+    ArrRunFinished,
+    ArrRunSummary,
+    ArrRunTally,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -52,9 +55,6 @@ from pearlarr.output import (
     GrabStatus,
     ItemStarted,
     JsonRenderer,
-    LegFinished,
-    LegSummary,
-    LegTally,
     NeedsActionCause,
     NextRunScheduled,
     PathsShown,
@@ -398,7 +398,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
         ScopeClosed(scope=_ENTRY),
         BootStepStarted(scope=_STEP, label="x"),
         ScanFinished(arr=Arr.SONARR),
-        LegFinished(arr=Arr.SONARR),
+        ArrRunFinished(arr=Arr.SONARR),
     ]
     for event in silent:
         assert _format(event) is None
@@ -430,11 +430,11 @@ def _summary_ready() -> RunSummaryReady:
         ),
     )
     return RunSummaryReady(
-        LegSummary(
+        ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=1,
-            tally=LegTally.from_stats(stats),
+            tally=ArrRunTally.from_stats(stats),
             wait_mode_on=True,
             warnings=2,
             errors=0,
@@ -448,11 +448,11 @@ def _quiet_summary_ready() -> RunSummaryReady:
     """A summary with nothing actionable and no errors (stays plain INFO)."""
 
     return RunSummaryReady(
-        LegSummary(
+        ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=LegTally.from_stats(ArrRunStats()),
+            tally=ArrRunTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -559,7 +559,7 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
-        LegFinished(arr=Arr.SONARR),
+        ArrRunFinished(arr=Arr.SONARR),
     ]
     line_sink, stream = _line_sink()
     file_sink = FileLogRenderer(str(tmp_path))
@@ -1068,7 +1068,7 @@ def test_json_includes_scope_boundaries_but_not_ephemerals() -> None:
         BootStepStarted(scope=_STEP, label="x"),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         ScopeClosed(scope=_ENTRY),
-        LegFinished(arr=Arr.SONARR),
+        ArrRunFinished(arr=Arr.SONARR),
     ]
     payloads = _json_lines(events)
     assert [p["event"] for p in payloads] == ["scope_opened", "scope_closed", "run_finished"]
@@ -1101,11 +1101,11 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
     stats = ArrRunStats(checked=3)
     stats.held_by_cap = 2
     held = RunSummaryReady(
-        LegSummary(
+        ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=1,
-            tally=LegTally.from_stats(stats),
+            tally=ArrRunTally.from_stats(stats),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -1167,7 +1167,7 @@ def _exemplars() -> list[Event]:
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         RowFinished(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR),
-        LegFinished(arr=Arr.SONARR),
+        ArrRunFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
         PathsShown(
             data_dir="/d", config="/d/config.yml", cache="/d/cache.db", mappings_db="/d/mappings.db", log_dir="/d/logs"
@@ -1285,7 +1285,7 @@ _TEXT_SILENT = {
     BootStepProgressed,
     WaitProgress,
     ScanFinished,
-    LegFinished,
+    ArrRunFinished,
     EffectiveConfigShown,
 }
 # Events the json stream drops: ephemera (json keeps the boundaries).
@@ -1318,7 +1318,7 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     union_members: set[object] = set(get_args(Event.__value__))
     assert union_members >= _TEXT_SKIP
     assert union_members >= _JSON_SKIP
-    assert {ScopeOpened, ScopeClosed, ScanFinished, LegFinished, EffectiveConfigShown} == _TEXT_SKIP
+    assert {ScopeOpened, ScopeClosed, ScanFinished, ArrRunFinished, EffectiveConfigShown} == _TEXT_SKIP
     assert {BootStepSlow} == _JSON_SKIP
 
 

@@ -1,7 +1,7 @@
 # pyright: strict
 """Direct tests for the leg state: a fresh `RunStats` starts every tally empty."""
 
-from pearlarr.leg_state import ArrRunStats
+from pearlarr.arr_run_state import ArrRunStats
 
 
 def test_run_stats_shape() -> None:

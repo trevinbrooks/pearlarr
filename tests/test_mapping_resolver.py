@@ -40,7 +40,8 @@ from pearlarr.anibridge import (
     TvdbMappings,
     _parse_ranges,
 )
-from pearlarr.leg_state import ArrRunState
+from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsMap,
@@ -55,7 +56,6 @@ from pearlarr.mappings import (
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
-from pearlarr.run_services import LegServices
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, make_services, sonarr_ep
@@ -657,7 +657,7 @@ class TestRunServicesIgnoredIds:
 
     @staticmethod
     @contextmanager
-    def _services(log: _IgnoredIdLog) -> Generator[LegServices]:
+    def _services(log: _IgnoredIdLog) -> Generator[ArrRunServices]:
         # tvdb 74796 maps 269 (both sources) and 270 (AniBridge only), and 270 is on the ignore list.
         resolver = MappingResolver(
             cache_time=1,

@@ -16,6 +16,7 @@ from .arr_models import (
     RemotePathMapping,
     SonarrEpisode,
 )
+from .arr_run_services import ArrRunDeps
 from .episode_state import (
     EpisodeFileStatus,
     EpisodeSnapshot,
@@ -49,7 +50,6 @@ from .pending_import import FileEpisodeMap, PendingImport, joined_map
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
 from .releases import EpisodeKey
-from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_state import (
@@ -218,7 +218,7 @@ class _ScanScratch:
 class CandidateScanner:
     """Per-run candidate scans: the downloadId scan with the folder fallback."""
 
-    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient) -> None:
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient) -> None:
         self.sonarr = sonarr
         self._categories = deps.categories
         self._qbit_host = _hostname(deps.config.qbittorrent.host)
@@ -379,7 +379,7 @@ class _ImportScratch:
 class ImportExecutor:
     """Builds/POSTs the manual-import payload + owns the per-run import caches."""
 
-    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient) -> None:
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient) -> None:
         """Bind the Sonarr client, config/logger, and the candidate scanner."""
 
         self.sonarr = sonarr

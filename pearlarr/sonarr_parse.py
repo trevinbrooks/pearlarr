@@ -13,11 +13,11 @@ import concurrent.futures
 from collections.abc import Sequence
 
 from .arr_models import ParsedFileInfo
+from .arr_run_services import ArrRunDeps
 from .grab_placement import ListedFile
 from .output.console_text import count_noun
 from .parse_cache import ParseFreshness
 from .releases import SeadexDict
-from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 from .video_files import indexed_video_files
@@ -29,7 +29,7 @@ class SonarrParseCache:
     Reads go through `records`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
-    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient) -> None:
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient) -> None:
         """Bind the shared collaborators and the strategy's Sonarr client, whose `/parse` the cache fills from."""
 
         self.sonarr = sonarr

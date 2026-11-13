@@ -7,6 +7,7 @@ from typing import override
 
 from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_history_date
 from .arr_models import ArrFiles, HistoryRecord, RadarrItem
+from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
@@ -18,7 +19,6 @@ from .pending_import import OwnedAtGrab, PendingImport, added_at_of
 from .progress import ProgressSink
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .releases import releases_to_grab
-from .run_services import LegDeps, LegServices, bind_arr_http
 from .stamps import parse_stamp_aware
 from .wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportProgress, ImportWaitMode
 
@@ -43,8 +43,8 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
     def __init__(
         self,
-        deps: LegDeps,
-        services: LegServices,
+        deps: ArrRunDeps,
+        services: ArrRunServices,
         radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
         """Stand up the Radarr client from the injected shared collaborators."""

@@ -15,19 +15,19 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .anibridge import TvdbMappings, season_holds
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
+from .arr_run_services import ArrRunDeps, ArrRunServices
 from .config import AppConfig
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
 from .progress import ProgressSink
 from .releases import season_episode_key
-from .run_services import LegDeps, LegServices
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
 from .tvdb_orders import AIRED_ORDER, NO_INDEX_ORDERS, IndexOrders, SonarrSeriesOrders
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
-# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (LegDeps.build).
+# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (ArrRunDeps.build).
 # Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
 # proxy) saturates around ~10-12 concurrent, so larger values don't help.
 SONARR_FETCH_WORKERS = 12
@@ -116,7 +116,7 @@ class SonarrEpisodes:
     The TVDB orders come off `deps.skyhook`, read once per series per run.
     """
 
-    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient, services: LegServices) -> None:
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, services: ArrRunServices) -> None:
         """Bind the shared collaborators the episode logic reads.
 
         Args:
