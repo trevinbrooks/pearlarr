@@ -25,7 +25,7 @@ _RESOLUTION_PATTERN: re.Pattern[str] = re.compile(r"(2160|1080|720|480)p", re.IG
 
 
 @dataclass(frozen=True, slots=True)
-class ParsedQuality:
+class QualityParts:
     """Quality as two independent axes: `source` and `resolution`.
 
     Either axis is `None` when it could not be authoritatively determined, which
@@ -39,7 +39,7 @@ class ParsedQuality:
     resolution: int | None = None
 
 
-def parse_quality_from_filename(filename: str) -> ParsedQuality:
+def parse_quality_from_filename(filename: str) -> QualityParts:
     """Best-effort `(source, resolution)` parse of a SeaDex filename (or path: only the text is matched).
 
     Detects a resolution (`2160`/`1080`/`720`/`480`) and a source
@@ -57,10 +57,10 @@ def parse_quality_from_filename(filename: str) -> ParsedQuality:
         if pattern.search(filename):
             source = candidate
             break
-    return ParsedQuality(source=source, resolution=resolution)
+    return QualityParts(source=source, resolution=resolution)
 
 
-def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
+def quality_parts_from_model(model: QualityModel | None) -> QualityParts:
     """The `(source, resolution)` axes of a Sonarr `QualityModel`.
 
     Reads the canonical schema path `model.quality.source` /
@@ -72,20 +72,20 @@ def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
     """
 
     if model is None:
-        return ParsedQuality()
+        return QualityParts()
     quality = model.quality  # an empty/null wire quality already folded to None
     if quality is None:
-        return ParsedQuality()
+        return QualityParts()
     resolution = quality.resolution
     if resolution is None or resolution <= 0:
         resolution = None
-    return ParsedQuality(source=QualitySource.parse(quality.source), resolution=resolution)
+    return QualityParts(source=QualitySource.parse(quality.source), resolution=resolution)
 
 
-def quality_axes_from_name(
+def quality_parts_from_name(
     name: str | None,
     quality_defs: Sequence[QualityDefinition],
-) -> ParsedQuality:
+) -> QualityParts:
     """The `(source, resolution)` axes of a configured default quality NAME.
 
     Resolves the configured `imports.default_quality` (a Sonarr quality name like
@@ -96,7 +96,7 @@ def quality_axes_from_name(
     """
 
     if not name:
-        return ParsedQuality()
+        return QualityParts()
     target = name.casefold()
     for definition in quality_defs:
         quality = definition.quality
@@ -104,8 +104,8 @@ def quality_axes_from_name(
             continue
         def_name = quality.name
         if def_name is not None and def_name.casefold() == target:
-            return quality_axes_from_model(QualityModel(quality=quality))
-    return ParsedQuality()
+            return quality_parts_from_model(QualityModel(quality=quality))
+    return QualityParts()
 
 
 def _find_definition(
@@ -148,9 +148,9 @@ def _candidate_revision(candidate_model: QualityModel | None) -> Revision:
 
 
 def resolve_quality(
-    sonarr: ParsedQuality,
-    ours: ParsedQuality,
-    default: ParsedQuality,
+    sonarr: QualityParts,
+    ours: QualityParts,
+    default: QualityParts,
     quality_defs: Sequence[QualityDefinition],
     candidate_model: QualityModel | None,
 ) -> QualityModel:

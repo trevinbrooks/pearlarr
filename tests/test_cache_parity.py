@@ -18,7 +18,7 @@ from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
-from pearlarr.pending_import import GuardFacts
+from pearlarr.pending_import import OwnedAtGrab
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import FakeCacheStore, entry_claim, pending_import
@@ -96,11 +96,11 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     # only through hashA's second claim, plus an orphan sonarr row and a radarr row
     # with no claim, both stored but filtered out of every read (get_guards joins
     # live claims). The parity test's later drop of hashA re-orphans 7 and 9 too.
-    store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
-    store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("New",), stale_groups=("Old",)))
-    store.put_guards(Arr.SONARR, 9, GuardFacts(entry_groups=("Second",)))
-    store.put_guards(Arr.SONARR, 4242, GuardFacts(entry_groups=("Orphan",)))
-    store.put_guards(Arr.RADARR, 99, GuardFacts(entry_groups=("MovieGrp",)))
+    store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("Old",)))
+    store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("New",), stale_groups=("Old",)))
+    store.put_guards(Arr.SONARR, 9, OwnedAtGrab(entry_groups=("Second",)))
+    store.put_guards(Arr.SONARR, 4242, OwnedAtGrab(entry_groups=("Orphan",)))
+    store.put_guards(Arr.RADARR, 99, OwnedAtGrab(entry_groups=("MovieGrp",)))
 
     # History checkpoint: an initial write then an upsert (only the last survives).
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
@@ -189,7 +189,7 @@ def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
 # The three blocks the real store round-trips through JSON on both ends. Each carries
 # a claim on `_ISO_SID` so the pending block's get_pending_for_series filter matches the record.
 # guard_facts is deliberately absent: the scribble check needs raw mutable dicts and
-# `GuardFacts` is frozen (isolation by construction), so `_apply_ops` covers it instead.
+# `OwnedAtGrab` is frozen (isolation by construction), so `_apply_ops` covers it instead.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
     _JsonbBlock(
         "pending",

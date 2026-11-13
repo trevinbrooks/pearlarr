@@ -33,13 +33,13 @@ from pearlarr.arr_categories import CategorySources
 from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
-from pearlarr.import_wait import ImportProbes, ImportWaitManager, WaitPass
+from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
 from pearlarr.leg_state import ArrRunState
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
-from pearlarr.pending_import import GuardFacts, PendingImport
+from pearlarr.pending_import import OwnedAtGrab, PendingImport
 from pearlarr.run_loop import LegLoop
-from pearlarr.torrents import AddOutcome
+from pearlarr.torrents import AddStatus
 from pearlarr.wait_types import (
     LEAVE_PROBE,
     PENDING_STATE_FOR_OUTCOME,
@@ -227,10 +227,10 @@ def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
     return cast("qbittorrentapi.Client", qbit)
 
 
-def make_probes(qbit: FakeQbit | None) -> ImportProbes:
+def make_probes(qbit: FakeQbit | None) -> WaitPollers:
     """Bare `ImportProbes` wired only with the `qbit` the polls read (the ctor takes a real client only)."""
 
-    return make_bare_instance(ImportProbes, _qbit=qbit, _logger=make_logger(), strategy=None)
+    return make_bare_instance(WaitPollers, _qbit=qbit, _logger=make_logger(), strategy=None)
 
 
 class TestPollTorrent:
@@ -503,7 +503,7 @@ class _RecordingReporter:
 
     def log_pending_snapshot(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:
         claim = pending.claim_for(series_id)
-        self.snapshot_calls.append(_SnapshotCall(state, pending.display_label, claim.coverage, claim.url))
+        self.snapshot_calls.append(_SnapshotCall(state, pending.display_label, claim.window_coverage, claim.url))
 
 
 def make_orchestration_manager(
@@ -562,14 +562,14 @@ class TestPendingRecordsGuardHydration:
                 pending_import(infohash="other", al_id=6),
             ],
         )
-        facts = GuardFacts(entry_groups=("NewPick",), stale_groups=("OldPick",))
+        facts = OwnedAtGrab(entry_groups=("NewPick",), stale_groups=("OldPick",))
         store.put_guards(Arr.SONARR, 5, facts)
 
-        records = mgr._records.active_records()
+        records = mgr._records.active_imports()
         assert [c.guards for c in records["run1"].claims] == [facts]
         assert [c.guards for c in records["run2"].claims] == [facts]
         # No row = empty facts, the designed state (Radarr, degradation).
-        assert [c.guards for c in records["other"].claims] == [GuardFacts()]
+        assert [c.guards for c in records["other"].claims] == [OwnedAtGrab()]
 
 
 class RecordingWaitView(WaitView):
@@ -620,7 +620,7 @@ class TestSnapshotPendingForSeries:
             store_records=[pending_import(infohash="h", series_id=7)],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert mgr._records.rows() == {}
         assert mgr._ctx.pending_states["h"] is PendingImportState.IMPORTED
@@ -648,7 +648,7 @@ class TestSnapshotPendingForSeries:
             store_records=[pending_import(infohash="h", series_id=7)],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert strategy.import_calls == []
         assert set(mgr._records.rows()) == {"h"}
@@ -675,7 +675,7 @@ class TestSnapshotPendingForSeries:
             pending=[this_run],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert strategy.import_calls == []
         assert reporter.snapshot_calls == []
@@ -697,7 +697,7 @@ class TestSnapshotPendingForSeries:
         )
         mgr._ctx.reacquired_keys = {"h"}
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.calls == 0
         assert reporter.snapshot_calls == []
@@ -715,7 +715,7 @@ class TestSnapshotPendingForSeries:
             store_records=[pending_import(infohash="other", series_id=99)],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert "other" not in mgr._ctx.pending_states
         assert set(mgr._records.rows()) == {"other"}
@@ -741,14 +741,14 @@ class TestSnapshotPendingForSeries:
         record = pending_import(
             infohash="h",
             claims=(
-                entry_claim(al_id=11, series_id=7, coverage="S01 E01-E12", url="https://releases.moe/11"),
-                entry_claim(al_id=22, series_id=8, coverage="S02 E01-E12", url="https://releases.moe/22"),
+                entry_claim(al_id=11, series_id=7, window_coverage="S01 E01-E12", url="https://releases.moe/11"),
+                entry_claim(al_id=22, series_id=8, window_coverage="S02 E01-E12", url="https://releases.moe/22"),
             ),
         )
         mgr = make_orchestration_manager(qbit=qbit, strategy=strategy, reporter=reporter, store_records=[record])
 
         for series_id in scan_order:
-            mgr.snapshot_pending_for_series(series_id)
+            mgr.report_imports_for_series(series_id)
 
         assert qbit.calls == 1
         assert mgr._ctx.pending_states == {"h": PendingImportState.DOWNLOADING}
@@ -770,7 +770,7 @@ class TestSnapshotPendingForSeries:
             store_records=[pending_import(infohash="h", series_id=7)],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert strategy.import_calls == []
         assert mgr._ctx.pending_states["h"] is PendingImportState.DOWNLOADED
@@ -810,7 +810,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
             qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert mgr._records.rows() == {}
         # Entry 9 never claimed the torrent.
@@ -836,7 +836,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
             store_records=[self._record()],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert mgr._records.rows() == {}
         assert self._stamps(store) == dict.fromkeys((5, 6, 9), self._CACHED_ON)
@@ -862,7 +862,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
             qbit=FakeQbit({}), strategy=_RecordingStrategy(), store=store, store_records=[self._record()]
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         radarr_row = store.get_entry(Arr.RADARR, 5)
         assert radarr_row is not None
@@ -2757,7 +2757,7 @@ class TestPendingRecordWrites:
     def test_save_writes_no_guard_row(self) -> None:
         # A claim's guard row is its grab's to write: a record saved from a hydrated copy never re-puts one.
         store = FakeCacheStore()
-        record = pending_import(infohash="h", al_id=5, guards=GuardFacts(entry_groups=("G",)))
+        record = pending_import(infohash="h", al_id=5, guards=OwnedAtGrab(entry_groups=("G",)))
         mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=store)
 
         mgr._records.save(record)
@@ -2858,7 +2858,7 @@ class TestPostImportCategory:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=set_errors)
         mgr = self._imported_manager(qbit, category)
 
-        mgr.snapshot_pending_for_series(7)  # must not raise
+        mgr.report_imports_for_series(7)  # must not raise
 
         assert qbit.set_category_calls == expected_sets
         assert qbit.created_categories == expected_created
@@ -2876,7 +2876,7 @@ class TestPostImportCategory:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
         mgr = self._imported_manager(qbit, "pearlarr-done")
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == []
         assert mgr._ctx.pending_states["h"] is PendingImportState.IMPORTED
@@ -2959,7 +2959,7 @@ class TestPostImportCategory:
             post_import_category="pearlarr-done",
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert mgr._records.rows() == {}  # MISSING still drops the record
         assert qbit.set_category_calls == []
@@ -3035,7 +3035,7 @@ class TestPostImportCategoryOtherArrGate:
         )
         store.put_pending(Arr.RADARR, "h", radarr_record.to_json())
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == []
         assert [c.infohash for c in strategy.close_calls] == ["h"]
@@ -3099,7 +3099,7 @@ class TestPostImportCategoryOtherArrGate:
             post_import_category="pearlarr-done",
         )
 
-        sonarr_mgr.snapshot_pending_for_series(7)
+        sonarr_mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
@@ -3118,7 +3118,7 @@ class TestPostImportCategoryOtherArrGate:
             post_import_category="pearlarr-done",
         )
 
-        run1.snapshot_pending_for_series(7)
+        run1.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
@@ -3130,7 +3130,7 @@ class TestPostImportCategoryOtherArrGate:
             post_import_category="pearlarr-done",
         )
 
-        run2.snapshot_pending_for_series(7)
+        run2.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")] * 2
         assert run2._records.rows() == {}
@@ -3152,7 +3152,7 @@ class TestCloseTrackedDownload:
             store_records=[pending],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert [c.infohash for c in strategy.close_calls] == [pending.infohash]
 
@@ -3189,7 +3189,7 @@ class TestCloseTrackedDownload:
             store_records=[record],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert [claim_al_ids(c) for c in strategy.close_calls] == [(11, 22)]
         assert mgr._records.rows() == {}
@@ -3203,7 +3203,7 @@ class TestCloseTrackedDownload:
             remove_from_queue=False,
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert strategy.close_calls == []
         assert mgr._records.rows() == {}  # the import itself still drops
@@ -3218,7 +3218,7 @@ class TestCloseTrackedDownload:
             store_records=[pending_import(infohash="h", series_id=7)],
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert mgr._records.rows() == {}
         assert strategy.close_calls == []
@@ -3239,7 +3239,7 @@ class TestCloseTrackedDownload:
         )
         store.put_pending(Arr.RADARR, radarr_record.infohash, radarr_record.to_json())
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert [c.infohash for c in strategy.close_calls] == [sonarr_record.infohash]
 
@@ -3271,7 +3271,7 @@ class TestRetireEffectOrder:
             post_import_category="pearlarr-done",
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert order == ["move", "close"]
         assert mgr._records.rows() == {}
@@ -3359,7 +3359,7 @@ class TestCloseSkipWhenMoveUntracks:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._manager(grab="tv-sonarr", post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("sonarr-done", "h")]
         assert strategy.close_calls == []
@@ -3374,7 +3374,7 @@ class TestCloseSkipWhenMoveUntracks:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
         mgr = self._manager(grab="tv-sonarr", post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert strategy.close_calls == []
         raw = mgr._records.rows()["h"]
@@ -3390,7 +3390,7 @@ class TestCloseSkipWhenMoveUntracks:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = self._manager(grab=None, post_import="sonarr-done", qbit=qbit, strategy=strategy)
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("sonarr-done", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
@@ -3401,7 +3401,7 @@ class TestCloseSkipWhenMoveUntracks:
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="shared")]})
         mgr = self._manager(grab="shared", post_import="shared", qbit=qbit, strategy=strategy)
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("shared", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
@@ -3417,7 +3417,7 @@ class TestCloseSkipWhenMoveUntracks:
             post_import_category="pearlarr-done",
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
@@ -3557,7 +3557,7 @@ class TestCloseRetrySchedule:
             store_records=[pending_import(infohash="h", series_id=7)],
             clock=clock,
         )
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
         return mgr
 
     def test_transient_retry_recovers_after_one_pause(self) -> None:
@@ -3624,7 +3624,7 @@ class TestCleanupHeal:
             store_records=[pending_import(infohash="h", series_id=7)],
         )
 
-        run1.snapshot_pending_for_series(7)
+        run1.report_imports_for_series(7)
 
         assert run1._records.rows()["h"].get("awaiting_cleanup") is True
         assert run1._ctx.pending_states["h"] is PendingImportState.IMPORTED
@@ -3694,7 +3694,7 @@ class TestCleanupHeal:
             strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7)],
         )
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
         assert len(strategy.close_calls) == 1
 
         mgr._cleanup.heal_flagged()
@@ -3711,7 +3711,7 @@ class TestCleanupHeal:
             reporter=reporter,
         )
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert reporter.snapshot_calls == []
         assert mgr.check_once(view=RecordingWaitView()) is None
@@ -3735,7 +3735,7 @@ class TestCleanupHeal:
         )
         store.put_pending(Arr.RADARR, radarr_flagged.infohash, radarr_flagged.to_json())
 
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == []
         assert [c.infohash for c in strategy.close_calls] == ["h"]
@@ -3778,7 +3778,7 @@ class TestCleanupHeal:
             store=store,
             store_records=[pending_import(infohash="h", series_id=7)],
         )
-        mgr.snapshot_pending_for_series(7)
+        mgr.report_imports_for_series(7)
         mgr.tally_carried_over_into_stats()
 
         assert mgr._ctx.pending_states["h"] is PendingImportState.IMPORTED
@@ -4091,7 +4091,7 @@ class TestCrossArrCategoryGate:
         )
         store.put_pending(Arr.RADARR, radarr_record.infohash, radarr_record.to_json())
 
-        sonarr_mgr.snapshot_pending_for_series(7)
+        sonarr_mgr.report_imports_for_series(7)
 
         assert qbit.set_category_calls == []  # the Radarr record still claims the hash
         assert set(store.get_pending(Arr.RADARR)) == {"h"}
@@ -4160,7 +4160,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         # Integration: an ALREADY_ADDED registered THIS run is a this-run grab, so
         # the per-series snapshot skips it (no re-poll, no drop) and the end-of-run
         # monitor owns it via the working set.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_IN_QBIT, "Show")})
+        torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")})
         strategy = _RecordingStrategy()
         engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
         seeds = {"h1": pending_seed("h1", series_id=7)}
@@ -4168,7 +4168,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
-        engine._wait_manager.snapshot_pending_for_series(7)
+        engine._wait_manager.report_imports_for_series(7)
 
         assert strategy.import_calls == []
         assert set(engine._wait_manager._records.rows()) == {"h1"}

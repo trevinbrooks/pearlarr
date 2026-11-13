@@ -20,11 +20,11 @@ import respx
 import pearlarr.torrent as torrent
 from pearlarr.torrent import (
     ANIMETOSHO_FEED_URL,
-    ParsedTorrent,
-    TorrentParseError,
-    get_animetosho_torrent,
-    get_nyaa_torrent,
-    get_rutracker_torrent,
+    TrackerLink,
+    TrackerPageError,
+    fetch_animetosho_link,
+    fetch_nyaa_link,
+    fetch_rutracker_link,
 )
 from pearlarr.web_client import get_with_retries, head_with_retries
 
@@ -73,7 +73,7 @@ def test_get_nyaa_torrent_reads_the_title_off_one_head() -> None:
 
     head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
-    result = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+    result = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
     assert result == (_NYAA_LINK, _NYAA_TITLE)
     # Any other request (the page, or a GET of the file) would fail the routeless mock.
@@ -86,7 +86,7 @@ def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
 
     respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition("[Group] クールアニメ - 01.torrent"))
 
-    _, title = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+    _, title = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
     assert title == "[Group] クールアニメ - 01"
 
@@ -98,15 +98,15 @@ def test_get_nyaa_torrent_decodes_a_non_ascii_title() -> None:
 def test_get_nyaa_torrent_finds_the_release_number_past_a_slash_fragment_or_query(url: str) -> None:
     respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
-    assert get_nyaa_torrent(url, client=httpx.Client()) == ParsedTorrent(_NYAA_LINK, _NYAA_TITLE)
+    assert fetch_nyaa_link(url, client=httpx.Client()) == TrackerLink(_NYAA_LINK, _NYAA_TITLE)
 
 
 @respx.mock
 def test_get_nyaa_torrent_refuses_a_download_url_without_a_request() -> None:
     head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
-    with pytest.raises(TorrentParseError, match="Could not read a Nyaa release number"):
-        get_nyaa_torrent(_NYAA_LINK, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match="Could not read a Nyaa release number"):
+        fetch_nyaa_link(_NYAA_LINK, client=httpx.Client())
 
     assert not head.called
 
@@ -117,7 +117,7 @@ def test_get_nyaa_torrent_reads_the_utf8_name_in_any_case() -> None:
         headers={"content-disposition": f"attachment; FILENAME*=utf-8''{_NYAA_TITLE}.torrent"}
     )
 
-    assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
+    assert fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
 
 
 @pytest.mark.parametrize(
@@ -135,7 +135,7 @@ def test_get_nyaa_torrent_falls_back_to_the_plain_filename(template: str) -> Non
     value = template.format(name=quote(_NYAA_TITLE))
     respx.head(_NYAA_LINK).respond(headers={"content-disposition": f"inline; {value}"})
 
-    assert get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
+    assert fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client()).title == _NYAA_TITLE
 
 
 @respx.mock
@@ -147,7 +147,7 @@ def test_get_nyaa_torrent_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None
     route = respx.head(_NYAA_LINK)
     route.side_effect = [httpx.Response(429), httpx.Response(200, headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))]
 
-    _, title = get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+    _, title = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
     assert title == _NYAA_TITLE
     assert route.call_count == 2
@@ -159,8 +159,8 @@ def test_get_nyaa_torrent_without_a_release_number_raises() -> None:
 
     url = "https://nyaa.si/user/x"
 
-    with pytest.raises(TorrentParseError, match=f"Could not read a Nyaa release number from {re.escape(url)}"):
-        get_nyaa_torrent(url, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match=f"Could not read a Nyaa release number from {re.escape(url)}"):
+        fetch_nyaa_link(url, client=httpx.Client())
 
 
 @respx.mock
@@ -168,8 +168,8 @@ def test_get_nyaa_torrent_without_a_filename_raises() -> None:
     """A download header with no file name raises."""
 
     respx.head(_NYAA_LINK).respond(headers={"content-disposition": "inline"})
-    with pytest.raises(TorrentParseError, match=f"Could not read the torrent name from {re.escape(_NYAA_LINK)}"):
-        get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+    with pytest.raises(TrackerPageError, match=f"Could not read the torrent name from {re.escape(_NYAA_LINK)}"):
+        fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
 
 @respx.mock
@@ -178,7 +178,7 @@ def test_get_nyaa_torrent_deleted_release_raises_http_error() -> None:
 
     respx.head(_NYAA_LINK).respond(status_code=404)
     with pytest.raises(httpx.HTTPStatusError):
-        get_nyaa_torrent("https://nyaa.si/view/1234567", client=httpx.Client())
+        fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
 
 # --- AnimeTosho (scrape the page title, then look it up in the JSON feed) ----
@@ -198,7 +198,7 @@ def test_get_animetosho_torrent_success() -> None:
             {"link": page_url, "torrent_url": feed_torrent},
         ],
     )
-    result = get_animetosho_torrent(page_url, client=httpx.Client())
+    result = fetch_animetosho_link(page_url, client=httpx.Client())
 
     assert result == (feed_torrent, _ANIMETOSHO_TITLE)
 
@@ -213,7 +213,7 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
     respx.get(ANIMETOSHO_FEED_URL).respond(
         json=[{"link": "https://animetosho.org/view/unrelated.1", "torrent_url": "https://other/x.torrent"}],
     )
-    download_url, title = get_animetosho_torrent(page_url, client=httpx.Client())
+    download_url, title = fetch_animetosho_link(page_url, client=httpx.Client())
 
     assert download_url is None
     assert title == _ANIMETOSHO_TITLE
@@ -227,7 +227,7 @@ def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
 
     respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
     respx.get(ANIMETOSHO_FEED_URL).respond(json=[{"link": page_url, "torrent_url": 123}])
-    download_url, title = get_animetosho_torrent(page_url, client=httpx.Client())
+    download_url, title = fetch_animetosho_link(page_url, client=httpx.Client())
 
     assert download_url is None
     assert title == _ANIMETOSHO_TITLE
@@ -240,8 +240,8 @@ def test_get_animetosho_torrent_missing_title_raises() -> None:
     page_url = "https://animetosho.org/view/no-title.1"
 
     respx.get(page_url).respond(html="<html><body><p>no title here</p></body></html>")
-    with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
-        get_animetosho_torrent(page_url, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
+        fetch_animetosho_link(page_url, client=httpx.Client())
 
 
 @respx.mock
@@ -251,8 +251,8 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
     page_url = "https://animetosho.org/view/two-titles.1"
 
     respx.get(page_url).respond(html='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>')
-    with pytest.raises(TorrentParseError, match="more than one torrent title"):
-        get_animetosho_torrent(page_url, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match="more than one torrent title"):
+        fetch_animetosho_link(page_url, client=httpx.Client())
 
 
 @respx.mock
@@ -264,7 +264,7 @@ def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.M
 
     respx.get(page_url).respond(status_code=500, html="<html>Server Error</html>")
     with pytest.raises(httpx.HTTPStatusError):
-        get_animetosho_torrent(page_url, client=httpx.Client())
+        fetch_animetosho_link(page_url, client=httpx.Client())
 
 
 @respx.mock
@@ -275,8 +275,8 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
 
     respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
     respx.get(ANIMETOSHO_FEED_URL).respond(html="<html>interstitial</html>")
-    with pytest.raises(TorrentParseError, match="non-JSON response"):
-        get_animetosho_torrent(page_url, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match="non-JSON response"):
+        fetch_animetosho_link(page_url, client=httpx.Client())
 
 
 @respx.mock
@@ -287,8 +287,8 @@ def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
 
     respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
     respx.get(ANIMETOSHO_FEED_URL).respond(json={"error": "rate limited"})
-    with pytest.raises(TorrentParseError, match="not a list"):
-        get_animetosho_torrent(page_url, client=httpx.Client())
+    with pytest.raises(TrackerPageError, match="not a list"):
+        fetch_animetosho_link(page_url, client=httpx.Client())
 
 
 # --- RuTracker (scrape the maintitle, build the magnet locally) --------------
@@ -302,7 +302,7 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     infohash = "abcdef0123456789abcdef0123456789abcdef01"
 
     respx.get(url).respond(html=_torrent_fixture("rutracker_page.html"))
-    magnet, title = get_rutracker_torrent(url, infohash, client=httpx.Client())
+    magnet, title = fetch_rutracker_link(url, infohash, client=httpx.Client())
 
     assert title == _RUTRACKER_TITLE
     # RuTracker always builds a magnet (never a None link). Narrow for the checks below.
@@ -319,8 +319,8 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
     url = "https://rutracker.org/forum/viewtopic.php?t=7654321"
 
     respx.get(url).respond(html="<html><body><div>no maintitle</div></body></html>")
-    with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(url)}"):
-        get_rutracker_torrent(url, "deadbeef", client=httpx.Client())
+    with pytest.raises(TrackerPageError, match=f"Could not find the torrent title on {re.escape(url)}"):
+        fetch_rutracker_link(url, "deadbeef", client=httpx.Client())
 
 
 @respx.mock
@@ -332,15 +332,15 @@ def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.Mo
 
     respx.get(url).respond(status_code=500, html="<html>Server Error</html>")
     with pytest.raises(httpx.HTTPStatusError):
-        get_rutracker_torrent(url, "deadbeef", client=httpx.Client())
+        fetch_rutracker_link(url, "deadbeef", client=httpx.Client())
 
 
 @respx.mock
 def test_get_rutracker_torrent_no_infohash_raises() -> None:
     """A None infohash can't make a magnet ("urn:btih:None"): raise the parse error before any fetch (the routeless mock proves nothing was requested)."""
 
-    with pytest.raises(TorrentParseError, match="no infohash"):
-        get_rutracker_torrent(
+    with pytest.raises(TrackerPageError, match="no infohash"):
+        fetch_rutracker_link(
             "https://rutracker.org/forum/viewtopic.php?t=1",
             None,
             client=httpx.Client(),

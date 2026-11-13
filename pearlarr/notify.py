@@ -28,7 +28,7 @@ from .output import hub_warn
 from .output.console_text import count_noun, format_elapsed, human_bytes
 from .output.wait_lines import held_back_names, held_back_sentences
 from .releases import Release, SeadexDict
-from .torrents import AddOutcome, ReleaseOutcome
+from .torrents import AddStatus, GrabResult
 from .wait_types import OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail
@@ -111,7 +111,7 @@ class GrabNotice:
     """The existing arr release groups this grab is replacing (the "Replacing" field).
     The caller passes them clean, so the notifier renders them verbatim."""
     seadex_dict: SeadexDict
-    results: Sequence[ReleaseOutcome]
+    results: Sequence[GrabResult]
     """The torrent-client add outcomes, so the embed can label a group whose releases
     were already in the client accordingly rather than claiming a fresh grab."""
     failed_groups: frozenset[str]
@@ -239,9 +239,9 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
             release_lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
 
         add_outcome = outcome_by_group.get(srg)
-        if add_outcome is AddOutcome.ADDED:
+        if add_outcome is AddStatus.ADDED:
             label = "Grabbed"
-        elif add_outcome is AddOutcome.ALREADY_IN_QBIT:
+        elif add_outcome is AddStatus.ALREADY_IN_QBIT:
             label = "Already downloading"
         elif srg in notice.failed_groups:
             label = "Failed"

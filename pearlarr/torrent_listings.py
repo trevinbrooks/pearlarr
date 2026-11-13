@@ -67,7 +67,7 @@ class SeriesListings:
                     return None
                 continue
             try:
-                ep_list = self._episodes.get_ep_list(series_id, al_id, mapping)
+                ep_list = self._episodes.mapping_episodes(series_id, al_id, mapping)
             except ValueError:
                 continue
             window = (

@@ -8,7 +8,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
-from pearlarr.file_paths import normalize_basename, normalized_leaf
+from pearlarr.file_paths import normalize_name, normalized_leaf
 from pearlarr.grab_placement import (
     EntryPlacements,
     FetchedSeadex,
@@ -330,7 +330,7 @@ class TestPlaceOntoResident:
     def test_a_seeded_parse_miss_on_a_wholly_mapped_torrent_holds_nothing(self) -> None:
         record = pending_import(
             infohash="h1",
-            file_episode_map={normalize_basename(name): [100 + n] for n, name in enumerate(_PACK, start=1)},
+            file_episode_map={normalize_name(name): [100 + n] for n, name in enumerate(_PACK, start=1)},
             seadex_files=_PACK,
             ordered_episode_ids=(101, 102, 103, 104),
         )
@@ -667,10 +667,10 @@ class TestPlaceHeld:
 
         assert placement.hold is None
         assert placement.assignment.placed == {
-            normalize_basename(self._EARLY_KEYS[0]): (102,),
-            normalize_basename(self._EARLY_KEYS[1]): (103,),
+            normalize_name(self._EARLY_KEYS[0]): (102,),
+            normalize_name(self._EARLY_KEYS[1]): (103,),
         }
-        assert placement.assignment.hand_import_files == (normalize_basename(self._EARLY_KEYS[2]),)
+        assert placement.assignment.hand_import_files == (normalize_name(self._EARLY_KEYS[2]),)
         assert len(placement.records) == 2
 
     def test_the_seed_keeps_the_file_left_for_a_hand_import(self) -> None:
@@ -679,7 +679,7 @@ class TestPlaceHeld:
 
         seed = build_pending_seed(release, scope, entry_facts())
 
-        assert seed.hand_import_files == (normalize_basename(self._EARLY_KEYS[2]),)
+        assert seed.hand_import_files == (normalize_name(self._EARLY_KEYS[2]),)
 
     def test_a_pack_the_listing_agrees_with_places_and_is_not_held(self) -> None:
         placement = place_release(self._specials(), self._specials_scope(1, 2), self._listing((501, 502, 503)))
@@ -939,7 +939,7 @@ class TestPlaceBesideAnotherListedTitle:
         placement = place_release(files, _scope(_SERIES[-2:], al_id=2), torrent)
 
         assert by_name(placement.assignment) == {
-            **{normalize_basename(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
+            **{normalize_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
             "show - ncop.mkv": ((), PlacementVerdict.EXTRA),
         }
         assert placement.hold is GrabHold.INPUT_UNREAD
@@ -1034,11 +1034,11 @@ _RG_FILES = (
     ListedFile(_rg_name(" - OP"), 305872174, ParsedFileInfo()),
     ListedFile(_rg_name(" - ED"), 541996641, ParsedFileInfo()),
 )
-_RG_EPISODE_NAMES = [normalize_basename(f.basename) for f in _RG_FILES[:12]]
+_RG_EPISODE_NAMES = [normalize_name(f.basename) for f in _RG_FILES[:12]]
 # Under either window the shorts place nowhere, and the OP and ED are extras.
 _RG_REST = {
-    **{normalize_basename(f.basename): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
-    **{normalize_basename(f.basename): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
+    **{normalize_name(f.basename): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
+    **{normalize_name(f.basename): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
 }
 
 
@@ -1182,9 +1182,7 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         placement = place_release(_MHA_FILES, _MHA_SCOPE, torrent)
 
-        assert by_name(placement.assignment) == {
-            normalize_basename(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)
-        }
+        assert by_name(placement.assignment) == {normalize_name(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)}
         assert placement.covered_ids == {9254}
         assert placement.records == (EpisodeRecord(0, 8, 1_400_000_000),)
         assert placement.hold is None
@@ -1195,7 +1193,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         record = pending_import(
             infohash="h1",
             al_id=122349,
-            file_episode_map={normalize_basename(_MHA_OVA): [9254]},
+            file_episode_map={normalize_name(_MHA_OVA): [9254]},
             seadex_files=[_MHA_OVA],
             ordered_episode_ids=(9254, 9255),
         )
@@ -1225,10 +1223,10 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         assert by_name(placement.assignment) == {
             **{
-                normalize_basename(name): ((ep.id,), PlacementVerdict.NUMBERINGS_AGREE)
+                normalize_name(name): ((ep.id,), PlacementVerdict.NUMBERINGS_AGREE)
                 for name, ep in zip(_SC_EPISODES, _SC_SEASON, strict=False)
             },
-            **dict.fromkeys((normalize_basename(name) for name in _SC_SPS), ((), PlacementVerdict.NO_EPISODE_FOUND)),
+            **dict.fromkeys((normalize_name(name) for name in _SC_SPS), ((), PlacementVerdict.NO_EPISODE_FOUND)),
         }
         assert placement.covered_ids == {ep.id for ep in _SC_SEASON[:12]}
         assert placement.hold is None
@@ -1243,7 +1241,7 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         placement = place_release(_SC_FILES, scope, torrent)
 
-        assert {by_name(placement.assignment)[normalize_basename(name)] for name in _SC_EPISODES} == {
+        assert {by_name(placement.assignment)[normalize_name(name)] for name in _SC_EPISODES} == {
             ((), PlacementVerdict.ANOTHER_TITLES)
         }
         assert placement.records == ()
@@ -1419,8 +1417,8 @@ class TestEntryPlacements:
         seeds = build_pending_seeds(seadex_dict, placed, entry)
 
         assert set(seeds) == {"h1", "h2"}
-        assert dict(seeds["h1"].file_map) == {normalize_basename(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
-        listed = {normalize_basename(name): 10 * n for n, name in enumerate(_RUN, 1)}
+        assert dict(seeds["h1"].file_map) == {normalize_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
+        listed = {normalize_name(name): 10 * n for n, name in enumerate(_RUN, 1)}
         assert seeds["h1"].facts == torrent_facts(
             seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
         )
@@ -1436,8 +1434,8 @@ class TestEntryPlacements:
 
         assert set(seeds) == {"c1", "h2"}
         records = {key: seed.record_at(_STAMP, fresh=True) for key, seed in seeds.items()}
-        assert (records["c1"].infohash, records["c1"].cross_seed) == ("c1", True)
-        assert records["h2"].cross_seed is False
+        assert (records["c1"].infohash, records["c1"].is_cross_seed) == ("c1", True)
+        assert records["h2"].is_cross_seed is False
 
     def test_a_url_with_a_stored_record_seeds_onto_it(self) -> None:
         record = _resident_record()
@@ -1479,8 +1477,8 @@ class TestOrderOnlySeed:
         seed = build_pending_seed(release, scope, entry_facts())
 
         assert seed.order_only == {
-            normalize_basename(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
-            normalize_basename(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+            normalize_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+            normalize_name(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
         }
         assert seed.record_at(_STAMP, fresh=True).order_only == seed.order_only
 
@@ -1601,7 +1599,7 @@ class TestPendingSeedRecordAt:
         assert joined.hand_import_files == ("show - 02.mkv", "show - 03.mkv")
 
     def test_accreted_joins_the_order_only_keys(self) -> None:
-        halves = [normalize_basename(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2)]
+        halves = [normalize_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2)]
         keys = {halves[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)), halves[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
         stored = pending_import(infohash="h1", hand_import_files=halves[:1], order_only={halves[0]: keys[halves[0]]})
 
@@ -1669,7 +1667,7 @@ class TestEntryClaim:
 
         # This call placed E03 alone, yet the slice also carries the record's E01 and E02.
         assert placed.assignment.placed == {"show - s01e03.mkv": (103,)}
-        assert claim.slice_coverage == "S01 E01-E03"
+        assert claim.claimed_coverage == "S01 E01-E03"
         assert claim.ordered_episode_ids == (101, 102, 103, 104)
 
     def test_preowned_reads_every_claimed_id(self) -> None:

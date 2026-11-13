@@ -38,7 +38,7 @@ from pearlarr.output import (
     SeverityCounts,
 )
 from pearlarr.reporter import RunReporter
-from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.torrents import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (
@@ -282,7 +282,7 @@ class TestCompleteBlocksSelfClose:
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
-        pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
+        pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
         reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
         assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
@@ -392,7 +392,7 @@ class TestPendingSnapshot:
     def test_renders_and_bumps_no_counter(self) -> None:
         reporter, events = _record()
         ctx = ArrRunState(arr=Arr.SONARR)
-        pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
+        pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
 
         reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
 
@@ -416,8 +416,12 @@ class TestPendingSnapshot:
         reporter, events = _record()
         pending = pending_import(
             claims=(
-                entry_claim(al_id=1, series_id=7, title="Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
-                entry_claim(al_id=2, series_id=8, title="Other", coverage="S02 E01", url="https://releases.moe/2"),
+                entry_claim(
+                    al_id=1, series_id=7, title="Show", window_coverage="S01 E01-E13", url="https://releases.moe/1"
+                ),
+                entry_claim(
+                    al_id=2, series_id=8, title="Other", window_coverage="S02 E01", url="https://releases.moe/2"
+                ),
             ),
         )
 
@@ -585,7 +589,7 @@ class TestPrivateOnlyTip:
 
 
 def _action_messages(
-    results: list[ReleaseOutcome],
+    results: list[GrabResult],
     *,
     preview: bool = False,
     waiting_to_import: bool = False,
@@ -606,7 +610,7 @@ class TestLogSeadexAction:
 
     def test_added_status_and_label(self) -> None:
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+            [GrabResult(outcome=AddStatus.ADDED, name="Show-NAN0", group="NAN0")],
         )
         joined = "\n".join(messages)
 
@@ -618,7 +622,7 @@ class TestLogSeadexAction:
         # A hashless/private torrent has name=None. The row must fall back to the
         # release group, never render the literal "None".
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="NAN0")],
+            [GrabResult(outcome=AddStatus.ADDED, name=None, group="NAN0")],
         )
         joined = "\n".join(messages)
 
@@ -626,7 +630,7 @@ class TestLogSeadexAction:
 
     def test_already_downloading_waiting_to_import(self) -> None:
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="Show-NAN0", group="NAN0")],
+            [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="Show-NAN0", group="NAN0")],
             waiting_to_import=True,
         )
         joined = "\n".join(messages)
@@ -642,7 +646,7 @@ class TestLogSeadexAction:
     def test_already_downloading_not_waiting(self, preview: bool) -> None:
         # State the fact, but don't promise an import, and in a preview don't say "would add".
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="X", group="G")],
+            [GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="X", group="G")],
             preview=preview,
             waiting_to_import=False,
         )
@@ -657,8 +661,8 @@ class TestLogSeadexAction:
         # disambiguate (one added, one still downloading).
         messages = _action_messages(
             [
-                ReleaseOutcome(outcome=AddOutcome.ADDED, name="new", group="G"),
-                ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="old", group="G"),
+                GrabResult(outcome=AddStatus.ADDED, name="new", group="G"),
+                GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="old", group="G"),
             ],
             waiting_to_import=True,
         )
@@ -672,7 +676,7 @@ class TestLogSeadexAction:
         # A dry run must never read like a real grab: the status says "would add
         # ... (dry run)" and the per-release row is labeled "would add".
         messages = _action_messages(
-            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+            [GrabResult(outcome=AddStatus.ADDED, name="Show-NAN0", group="NAN0")],
             preview=True,
         )
         joined = "\n".join(messages)
@@ -699,7 +703,7 @@ class TestLogSeadexAction:
         }
         reporter.log_seadex_action(
             seadex_dict,
-            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+            [GrabResult(outcome=AddStatus.ADDED, name="Show-NAN0", group="NAN0")],
             preview=False,
             waiting_to_import=False,
         )

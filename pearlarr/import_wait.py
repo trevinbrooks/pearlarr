@@ -44,7 +44,7 @@ _EFFECT_BACKOFF_S: tuple[float, float] = (1.0, 3.0)
 """Pauses between in-run cleanup-effect retries (3 attempts, 4s worst case per effect)."""
 
 
-class ImportProbes:
+class WaitPollers:
     """The run's fail-open pollers: qBittorrent reads plus the strategy's import hooks."""
 
     strategy: ImportCompleter | None
@@ -143,7 +143,7 @@ class PostImportCleanup:
     _ctx: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
-    def __init__(self, deps: LegDeps, records: PendingImportStore, probes: ImportProbes) -> None:
+    def __init__(self, deps: LegDeps, records: PendingImportStore, probes: WaitPollers) -> None:
         self._imports = deps.config.imports
         self._categories = deps.categories
         self._qbit = deps.qbit
@@ -359,7 +359,7 @@ class ImportWaitManager:
     """The imports config submodel: the pass timeouts and poll intervals."""
     clock: Clock
     """The wait passes' time seam."""
-    probes: ImportProbes
+    probes: WaitPollers
     """The run's fail-open pollers and the one strategy binding, shared with the cleanup (for the heal)."""
     _ctx: ArrRunState
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
@@ -371,7 +371,7 @@ class ImportWaitManager:
         self._reporter = deps.reporter
         # The hub's seam, shared with the grab pipeline and bound by the hub each run: one run list, one binding.
         self._records = records
-        self.probes = ImportProbes(qbit=deps.qbit, logger=deps.logger)
+        self.probes = WaitPollers(qbit=deps.qbit, logger=deps.logger)
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
         self.bind_leg(ctx, None)
 
@@ -452,7 +452,7 @@ class ImportWaitManager:
         self._ctx.pending_states[pending.infohash] = state
         return state
 
-    def snapshot_pending_for_series(self, series_id: int) -> None:
+    def report_imports_for_series(self, series_id: int) -> None:
         """Report this series' carried-over pending records inline, retiring any newly imported one."""
 
         if self.probes.strategy is None:
@@ -478,7 +478,7 @@ class ImportWaitManager:
 
         # A raw read on purpose: this loop needs only the keys and `pending_states`,
         # so rehydrating every record would build a full map only to discard it.
-        for key in self._records.active():
+        for key in self._records.active_rows():
             state = self._ctx.pending_states.get(key, PendingImportState.DOWNLOADING)
             if state is PendingImportState.DOWNLOADED:
                 self._ctx.stats.downloaded += 1
@@ -517,7 +517,7 @@ class ImportWaitManager:
         if self.probes.strategy is None:
             return None
 
-        records = list(self._records.active_records().values())
+        records = list(self._records.active_imports().values())
         if not records:
             return None
 
@@ -603,7 +603,7 @@ class ImportWaitManager:
         """
 
         records = [pending for pending in self._ctx.grabbed_this_run.values() if pending.infohash]
-        records.extend(self._records.active_records().values())
+        records.extend(self._records.active_imports().values())
         return records
 
 

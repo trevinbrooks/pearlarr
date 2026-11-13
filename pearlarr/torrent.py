@@ -19,11 +19,11 @@ _DISPOSITION_NAME_UTF8 = re.compile(r"filename\*\s*=\s*utf-8''([^;]*)", re.IGNOR
 _DISPOSITION_NAME_PLAIN = re.compile(r'(?<![\w*])filename\s*=\s*("[^"]*"|[^;]*)', re.IGNORECASE)
 
 
-class TorrentParseError(Exception):
+class TrackerPageError(Exception):
     """A tracker page/feed didn't yield the release's torrent link or title."""
 
 
-class ParsedTorrent(NamedTuple):
+class TrackerLink(NamedTuple):
     """A parsed tracker result: the download/magnet link and the release title."""
 
     link: str | None
@@ -32,7 +32,7 @@ class ParsedTorrent(NamedTuple):
     title: str
 
 
-def get_nyaa_torrent(url: str, client: httpx.Client) -> ParsedTorrent:
+def fetch_nyaa_link(url: str, client: httpx.Client) -> TrackerLink:
     """Get the Nyaa download link and release title from a Nyaa release URL.
 
     The link is built from the release number in the URL, the way Nyaa serves every .torrent. One HEAD request on
@@ -42,7 +42,7 @@ def get_nyaa_torrent(url: str, client: httpx.Client) -> ParsedTorrent:
 
     match = _NYAA_VIEW_PATH.fullmatch(urlsplit(url).path)
     if match is None:
-        raise TorrentParseError(f"Could not read a Nyaa release number from {url}")
+        raise TrackerPageError(f"Could not read a Nyaa release number from {url}")
     link = urljoin(url, f"/download/{match[1]}.torrent")
     r = head_with_retries(client, link)
     r.raise_for_status()
@@ -52,14 +52,14 @@ def get_nyaa_torrent(url: str, client: httpx.Client) -> ParsedTorrent:
     names = (m[1].strip().strip('"') for pattern in forms if (m := pattern.search(disposition)))
     encoded = next(filter(None, names), "")
     if not encoded:
-        raise TorrentParseError(f"Could not read the torrent name from {link}")
-    return ParsedTorrent(link, unquote(encoded).removesuffix(".torrent"))
+        raise TrackerPageError(f"Could not read the torrent name from {link}")
+    return TrackerLink(link, unquote(encoded).removesuffix(".torrent"))
 
 
-def get_animetosho_torrent(
+def fetch_animetosho_link(
     url: str,
     client: httpx.Client,
-) -> ParsedTorrent:
+) -> TrackerLink:
     """Get the AnimeTosho download link and release title from a URL.
 
     Args:
@@ -80,10 +80,10 @@ def get_animetosho_torrent(
     titles = soup.find_all("h2", attrs={"id": "title"})
 
     if len(titles) == 0:
-        raise TorrentParseError(f"Could not find the torrent title on {url}")
+        raise TrackerPageError(f"Could not find the torrent title on {url}")
 
     if len(titles) > 1:
-        raise TorrentParseError(f"Found more than one torrent title on {url}")
+        raise TrackerPageError(f"Found more than one torrent title on {url}")
 
     title = titles[0].text
 
@@ -96,12 +96,12 @@ def get_animetosho_torrent(
         j = r.json()
     except ValueError as e:
         # An HTML error body (e.g. an interstitial) isn't JSON: a parse miss.
-        raise TorrentParseError(f"AnimeTosho feed returned a non-JSON response from {query_url}") from e
+        raise TrackerPageError(f"AnimeTosho feed returned a non-JSON response from {query_url}") from e
 
     # A JSON error object (rate limit / interstitial) instead of the expected
     # feed array would otherwise iterate as its string keys and crash on .get.
     if not is_json_list(j):
-        raise TorrentParseError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
+        raise TrackerPageError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
 
     # Find the feed entry whose link matches the page URL, skipping non-object
     # entries. A non-str torrent_url folds to None (no link found).
@@ -114,14 +114,14 @@ def get_animetosho_torrent(
             parsed_url = raw_url if isinstance(raw_url, str) else None
             break
 
-    return ParsedTorrent(parsed_url, title)
+    return TrackerLink(parsed_url, title)
 
 
-def get_rutracker_torrent(
+def fetch_rutracker_link(
     url: str,
     infohash: str | None,
     client: httpx.Client,
-) -> ParsedTorrent:
+) -> TrackerLink:
     """Get the RuTracker magnet link and torrent title from a URL.
 
     Args:
@@ -134,14 +134,14 @@ def get_rutracker_torrent(
         the page.
 
     Raises:
-        TorrentParseError: If `infohash` is None (a magnet needs the hash) or
+        TrackerPageError: If `infohash` is None (a magnet needs the hash) or
             the page carries no title.
     """
 
     # No hash means no valid magnet ("urn:btih:None" is garbage). Fail as the
     # usual parse miss before fetching anything.
     if infohash is None:
-        raise TorrentParseError("RuTracker release has no infohash to build a magnet link from")
+        raise TrackerPageError("RuTracker release has no infohash to build a magnet link from")
 
     # Pull the torrent title from souping the URL. Use the stdlib html.parser
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
@@ -151,7 +151,7 @@ def get_rutracker_torrent(
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
     if main_title is None:
-        raise TorrentParseError(f"Could not find the torrent title on {url}")
+        raise TrackerPageError(f"Could not find the torrent title on {url}")
     torrent_title = main_title.text
 
     params = {
@@ -162,4 +162,4 @@ def get_rutracker_torrent(
     url_encoded = urlencode(params)
     parsed_url = f"magnet:?{url_encoded}"
 
-    return ParsedTorrent(parsed_url, torrent_title)
+    return TrackerLink(parsed_url, torrent_title)

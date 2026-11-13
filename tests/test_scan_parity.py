@@ -59,7 +59,7 @@ from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
-from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.torrents import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (
@@ -271,7 +271,7 @@ NO_ENTRY_UNRESOLVED_LINES: tuple[Line, ...] = (
 
 # --- carried-over pending snapshots ----------------------------------------------------
 
-_PENDING_KWARGS = {"title": "My Show", "coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
+_PENDING_KWARGS = {"title": "My Show", "window_coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
 
 
 def _pending_header(state: TitleState) -> EntryHeader:
@@ -1178,9 +1178,9 @@ class TestActionBlockParity:
         "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
         "GroupB": rg_group({"https://nyaa.si/view/2": url_item(download=True)}),
     }
-    _FRESH_RESULTS: ClassVar[list[ReleaseOutcome]] = [
-        ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
-        ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="GroupB"),
+    _FRESH_RESULTS: ClassVar[list[GrabResult]] = [
+        GrabResult(outcome=AddStatus.ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+        GrabResult(outcome=AddStatus.ADDED, name=None, group="GroupB"),
     ]
 
     def test_fresh_add(self) -> None:
@@ -1203,7 +1203,7 @@ class TestActionBlockParity:
             "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
         }
         results = [
-            ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+            GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
         ]
         harness.reporter.log_seadex_action(seadex_dict, results, preview=False, waiting_to_import=True)
         assert harness.lines() == ACTION_DOWNLOADING_WAITING_LINES
@@ -1217,8 +1217,8 @@ class TestActionBlockParity:
         # results order, is the pinned contract.
         harness = _Harness()
         results = [
-            ReleaseOutcome(outcome=AddOutcome.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
-            ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
+            GrabResult(outcome=AddStatus.ALREADY_IN_QBIT, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+            GrabResult(outcome=AddStatus.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
         ]
         harness.reporter.log_seadex_action(self._SEADEX_DICT, results, preview=False, waiting_to_import=False)
         assert harness.lines() == ACTION_MIXED_LINES
@@ -1383,7 +1383,7 @@ class TestScopeLifecycle:
         harness.reporter.open_title_block(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.log_seadex_action(
             {},
-            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="X", group="G")],
+            [GrabResult(outcome=AddStatus.ADDED, name="X", group="G")],
             preview=False,
             waiting_to_import=False,
         )

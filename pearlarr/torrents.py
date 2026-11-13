@@ -18,11 +18,11 @@ from .file_paths import normalized_leaf
 from .output import hub_warn
 from .releases import Release, SeadexDict, normalized_infohash
 from .torrent import (
-    ParsedTorrent,
-    TorrentParseError,
-    get_animetosho_torrent,
-    get_nyaa_torrent,
-    get_rutracker_torrent,
+    TrackerLink,
+    TrackerPageError,
+    fetch_animetosho_link,
+    fetch_nyaa_link,
+    fetch_rutracker_link,
 )
 from .wait_types import torrent_errored, torrent_finished
 
@@ -33,28 +33,28 @@ class TorrentAddError(Exception):
 
 # The expected external failures a grab can hit. Anything else is a bug and propagates.
 GRAB_FAILURES: tuple[type[Exception], ...] = (
-    TorrentParseError,
+    TrackerPageError,
     TorrentAddError,
     httpx.HTTPError,
     qbittorrentapi.APIError,
 )
 
 
-type _Parser = Callable[[str, str | None, httpx.Client], ParsedTorrent]
+type _Parser = Callable[[str, str | None, httpx.Client], TrackerLink]
 
 
-def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
+def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> TrackerLink:
     del infohash
-    return get_nyaa_torrent(url=url, client=client)
+    return fetch_nyaa_link(url=url, client=client)
 
 
-def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
+def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> TrackerLink:
     del infohash
-    return get_animetosho_torrent(url=url, client=client)
+    return fetch_animetosho_link(url=url, client=client)
 
 
-def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
-    return get_rutracker_torrent(url=url, infohash=infohash, client=client)
+def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> TrackerLink:
+    return fetch_rutracker_link(url=url, infohash=infohash, client=client)
 
 
 # The grab pipeline pre-filters on PARSEABLE_TRACKERS, so `add`'s raise is defensive.
@@ -66,7 +66,7 @@ _PARSERS: dict[Tracker, _Parser] = {
 PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(_PARSERS)
 
 
-class AddOutcome(Enum):
+class AddStatus(Enum):
     """The result of handing a release to the torrent client."""
 
     ADDED = auto()
@@ -76,7 +76,7 @@ class AddOutcome(Enum):
 class AddResult(NamedTuple):
     """One add's result."""
 
-    outcome: AddOutcome
+    outcome: AddStatus
     name: str | None
     """The qBittorrent-reported name. A new add falls back to the tracker's release title. None when neither exists."""
     added_on: datetime | None = None
@@ -96,16 +96,16 @@ def _row_added_on(row: object) -> datetime | None:
 
 
 @dataclass(frozen=True)
-class ReleaseOutcome:
+class GrabResult:
     """One release's add result."""
 
-    outcome: AddOutcome
+    outcome: AddStatus
     name: str | None
     group: str
 
     @property
     def added(self) -> bool:
-        return self.outcome is AddOutcome.ADDED
+        return self.outcome is AddStatus.ADDED
 
 
 type _FileSet = Counter[tuple[str, int | None]]
@@ -281,11 +281,11 @@ class TorrentService:
         parsed_url, source_name = parser(item.url, item.infohash, self.web)
 
         if parsed_url is None:
-            raise TorrentParseError(f"Could not extract a torrent download link from {item.url}")
+            raise TrackerPageError(f"Could not extract a torrent download link from {item.url}")
 
         name = self._add_to_qbit(item=item, torrent_url=parsed_url, preview=preview)
 
-        return AddResult(AddOutcome.ADDED, name or source_name)
+        return AddResult(AddStatus.ADDED, name or source_name)
 
     def _already_added(self, item: Release) -> AddResult | None:
         """The `ALREADY_ADDED` result when qBittorrent has the url's torrent (`SeadexUrlItem.qbit_hash`), else None."""
@@ -298,7 +298,7 @@ class TorrentService:
         if not torr_info:
             return None
         self.logger.debug(f"Torrent {item.url} already in qBittorrent")
-        return AddResult(AddOutcome.ALREADY_IN_QBIT, torr_info[0].name, _row_added_on(torr_info[0]))
+        return AddResult(AddStatus.ALREADY_IN_QBIT, torr_info[0].name, _row_added_on(torr_info[0]))
 
     def _add_to_qbit(
         self,

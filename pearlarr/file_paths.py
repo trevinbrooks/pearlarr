@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from .arr_models import RemotePathMapping
 
 
-def normalize_basename(name: str) -> str:
+def normalize_name(name: str) -> str:
     """Normalize a filename leaf for cross-source matching.
 
     Args:
@@ -86,7 +86,7 @@ def translate_download_path(
     return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
-def path_leaf(name: str) -> str:
+def file_name(name: str) -> str:
     """A path's leaf with case and unicode preserved, for parser and display use."""
 
     # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a leaf whose second
@@ -97,4 +97,4 @@ def path_leaf(name: str) -> str:
 def normalized_leaf(name: str) -> str:
     """Fold a listing path or on-disk path to its normalized leaf (`path_leaf`, then `normalize_basename`)."""
 
-    return normalize_basename(path_leaf(name))
+    return normalize_name(file_name(name))

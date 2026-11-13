@@ -210,7 +210,7 @@ class LegLoop:
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
         if monitor is not None and full_scan:
-            monitor.commit_checkpoint()
+            monitor.stage_checkpoint()
 
         # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
         # whose check raised past the cached-entry gate is checked again next run all the same.
@@ -270,7 +270,7 @@ class LegLoop:
         # A snapshot, never an import: the end pass owns that. Radarr returns None here.
         # Placed after all of the item's AniList ids so it covers the cached, grabbed and no-entry paths alike.
         if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
-            self._wait_manager.snapshot_pending_for_series(sid)
+            self._wait_manager.report_imports_for_series(sid)
 
     # --- Wait-for-completion orchestration ----------------------------------
 

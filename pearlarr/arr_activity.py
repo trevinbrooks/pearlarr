@@ -157,7 +157,7 @@ class ArrActivityMonitor:
             return _QueryWindow(floor, True)
         return _QueryWindow(query_date, False)
 
-    def commit_checkpoint(self) -> None:
+    def stage_checkpoint(self) -> None:
         """Stage the advanced checkpoint, if the scan produced one."""
 
         if self._pending_checkpoint is None:

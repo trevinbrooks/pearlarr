@@ -40,7 +40,7 @@ from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_obj
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.releases import GroupReleases, Release
-from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.torrents import AddStatus, GrabResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -89,7 +89,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
         banner_url="https://s4.anilist.co/file/anilistcdn/media/anime/banner/154587-ivXNJ23SM1xB.jpg",
         replaced_groups=("Erai-raws",),
         seadex_dict=seadex_dict,
-        results=[ReleaseOutcome(AddOutcome.ADDED, None, group) for group in groups],
+        results=[GrabResult(AddStatus.ADDED, None, group) for group in groups],
         failed_groups=frozenset(),
         coverage="S01 E01-E28",  # what a full-season Sonarr grab computes
     )

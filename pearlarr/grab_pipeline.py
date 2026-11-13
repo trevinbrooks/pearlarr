@@ -18,7 +18,7 @@ from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingImportStore
 from .releases import GrabHold, Release, SeadexDict
 from .stamps import now_stamp, stamp_of
-from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
+from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddResult, AddStatus, GrabResult
 from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:
@@ -155,14 +155,14 @@ class GrabPipeline:
         cap = self._effective_cap
         return cap is not None and self._ctx.torrents_added >= cap
 
-    def grab_releases(self, req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
+    def grab_releases(self, req: GrabRequest) -> tuple[int, list[GrabResult]]:
         """Add the request's torrent(s) to qBittorrent, holding the grabbable ones past the run's cap.
 
         Returns the added / already-downloading outcome lines rather than logging them (the caller emits the block).
         """
 
         n_torrents_added = 0
-        results: list[ReleaseOutcome] = []
+        results: list[GrabResult] = []
 
         for srg, srg_item in req.seadex_dict.items():
             for release in srg_item.releases.values():
@@ -177,7 +177,7 @@ class GrabPipeline:
                     continue
 
                 results.append(add_result)
-                if add_result.outcome is AddOutcome.ADDED:
+                if add_result.outcome is AddStatus.ADDED:
                     self._ctx.torrents_added += 1
                     n_torrents_added += 1
 
@@ -244,7 +244,7 @@ class GrabPipeline:
         srg: str,
         release: Release,
         req: GrabRequest,
-    ) -> ReleaseOutcome | None:
+    ) -> GrabResult | None:
         """Add one screened url and register its pending import: its outcome, or None on a contained failure."""
 
         url = release.url
@@ -258,7 +258,7 @@ class GrabPipeline:
             self._ctx.per_title.grab_failed_groups.append(srg)
             return None
 
-        if result.outcome is AddOutcome.ADDED:
+        if result.outcome is AddStatus.ADDED:
             # Prefer the release's own parsed file list, falling back to the entry-level coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
             coverage_str = _coverage.coverage_string(release.episodes) or self._ctx.per_title.current_coverage
@@ -276,7 +276,7 @@ class GrabPipeline:
         # whoever added it, and it's tracked like a grab. The genuine "already own it" case is the
         # any_to_grab=False branch, which never reaches grab_releases.
         self._register_pending_import(release, req, result)
-        return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
+        return GrabResult(outcome=result.outcome, name=result.name, group=srg)
 
     def _seed_for(self, release: Release, req: GrabRequest) -> PendingImportUpdate | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
@@ -297,7 +297,7 @@ class GrabPipeline:
         seed = self._seed_for(release, req)
         if seed is None:
             return
-        if result.outcome is AddOutcome.ADDED:
+        if result.outcome is AddStatus.ADDED:
             self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
             return
         record = seed.record_at(_reacquire_stamp(result.added_on), fresh=False)

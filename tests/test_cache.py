@@ -33,7 +33,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parse_from_json, parse_to_json
-from pearlarr.pending_import import GuardFacts, PendingImport, SizeMatchedEpisode, TitleNames
+from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
@@ -395,7 +395,7 @@ class TestSchemaVersionGate:
 
         with _open(tmp_path) as store:
             assert store.get_guards(Arr.SONARR) == {
-                9: GuardFacts(
+                9: OwnedAtGrab(
                     entry_groups=("New",), stale_groups=("Old",), owned_episodes=(SizeMatchedEpisode(101, 700),)
                 ),
             }
@@ -450,7 +450,7 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            assert store.get_guards(Arr.SONARR) == {9: GuardFacts(entry_groups=("Kept",))}
+            assert store.get_guards(Arr.SONARR) == {9: OwnedAtGrab(entry_groups=("Kept",))}
 
     def test_v3_id_form_names_are_nulled(self, tmp_path: Path) -> None:
         # The v3 -> v4 step: a name stored as the id-form fallback (an AniList
@@ -577,8 +577,8 @@ class TestSchemaVersionGate:
             assert claim_al_ids(PendingImport.from_json(radarr["h"], guards={})) == (0,)
             assert store.other_arr_holds(Arr.SONARR, "h") is True
             assert store.get_guards(Arr.SONARR) == {
-                11: GuardFacts(entry_groups=("A",)),
-                22: GuardFacts(entry_groups=("B",)),
+                11: OwnedAtGrab(entry_groups=("A",)),
+                22: OwnedAtGrab(entry_groups=("B",)),
             }
             _assert_round_trips(sonarr)
             _assert_round_trips(radarr)
@@ -1105,25 +1105,25 @@ class TestGuardFacts:
         with _open(tmp_path) as store:
             store.put_pending(Arr.SONARR, "hs", pending_import(infohash="hs", al_id=7).to_json())
             store.put_pending(Arr.RADARR, "hr", pending_import(infohash="hr", al_id=7, series_id=0).to_json())
-            facts = GuardFacts(
+            facts = OwnedAtGrab(
                 entry_groups=("SubsPlease", "Erai-raws"),
                 stale_groups=("HorribleSubs",),
                 owned_episodes=(SizeMatchedEpisode(101, 700_000_000), SizeMatchedEpisode(102, 650_000_000)),
             )
             store.put_guards(Arr.SONARR, 7, facts)
-            store.put_guards(Arr.RADARR, 7, GuardFacts(entry_groups=("Beatrice-Raws",)))
+            store.put_guards(Arr.RADARR, 7, OwnedAtGrab(entry_groups=("Beatrice-Raws",)))
 
             # Typed on both ends: owned_episodes come back as SizeMatchedEpisode tuples.
             assert store.get_guards(Arr.SONARR) == {7: facts}
-            assert store.get_guards(Arr.RADARR) == {7: GuardFacts(entry_groups=("Beatrice-Raws",))}
+            assert store.get_guards(Arr.RADARR) == {7: OwnedAtGrab(entry_groups=("Beatrice-Raws",))}
 
     def test_latest_put_wins(self, tmp_path: Path) -> None:
         # The fix's write semantic: a re-seed overwrites the entry's single row
         # whole, so no two reads can ever see divergent evidence for one entry.
         with _open(tmp_path) as store:
             store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
-            store.put_guards(Arr.SONARR, 7, GuardFacts(entry_groups=("Old",)))
-            newest = GuardFacts(entry_groups=("New",), stale_groups=("Old",))
+            store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("Old",)))
+            newest = OwnedAtGrab(entry_groups=("New",), stale_groups=("Old",))
             store.put_guards(Arr.SONARR, 7, newest)
             assert store.get_guards(Arr.SONARR) == {7: newest}
 
@@ -1133,7 +1133,7 @@ class TestGuardFacts:
         # bounded by in-flight work, not all-time grab history, and an orphan
         # row is invisible until the entry seeds again.
         with _open(tmp_path) as store:
-            facts = GuardFacts(entry_groups=("SubGroup",))
+            facts = OwnedAtGrab(entry_groups=("SubGroup",))
             store.put_guards(Arr.SONARR, 7, facts)
             assert store.get_guards(Arr.SONARR) == {}
 
@@ -1149,11 +1149,11 @@ class TestGuardFacts:
         # The join walks every claim on a live record: both entries sharing one
         # torrent get their evidence back, an entry claiming nothing stays unread.
         with _open(tmp_path) as store:
-            seven = GuardFacts(entry_groups=("A",))
-            eight = GuardFacts(entry_groups=("B",))
+            seven = OwnedAtGrab(entry_groups=("A",))
+            eight = OwnedAtGrab(entry_groups=("B",))
             store.put_guards(Arr.SONARR, 7, seven)
             store.put_guards(Arr.SONARR, 8, eight)
-            store.put_guards(Arr.SONARR, 9, GuardFacts(entry_groups=("C",)))
+            store.put_guards(Arr.SONARR, 9, OwnedAtGrab(entry_groups=("C",)))
             shared = pending_import(infohash="h", claims=(entry_claim(al_id=7), entry_claim(al_id=8, series_id=8)))
             store.put_pending(Arr.SONARR, "h", shared.to_json())
 

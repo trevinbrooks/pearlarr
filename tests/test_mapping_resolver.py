@@ -766,7 +766,7 @@ class TestVu1DegradedAniBridge:
 
     def test_imdb_only_degraded_entry_makes_sonarr_skip(self) -> None:
         # End-to-end: the resolver emits a degraded entry (no Kometa fallback), and
-        # feeding THAT real entry to get_ep_list returns [] - the series is skipped,
+        # feeding THAT real entry to mapping_episodes returns [] - the series is skipped,
         # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
         resolver = MappingResolver(
             cache_time=1,
@@ -792,7 +792,7 @@ class TestVu1DegradedAniBridge:
             _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
         )
         # A non-empty series, yet the degraded entry resolves to NO episodes (skip).
-        assert episodes.get_ep_list(sonarr_series_id=777, al_id=500, mapping=degraded) == []
+        assert episodes.mapping_episodes(sonarr_series_id=777, al_id=500, mapping=degraded) == []
 
 
 # --------------------------------------------------------------------------- #

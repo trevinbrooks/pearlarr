@@ -42,7 +42,7 @@ from .output import (
 from .output.events import TitleState
 from .pending_import import PendingImport
 from .releases import SeadexDict
-from .torrents import AddOutcome, ReleaseOutcome
+from .torrents import AddStatus, GrabResult
 from .wait_types import ImportWaitMode, PendingImportState
 
 # The first cause present wins. PRIVATE_ONLY can't co-occur with the fallback-mode kinds
@@ -295,7 +295,7 @@ class RunReporter:
             EntryHeader(
                 entry_state,
                 pending.display_label,
-                coverage=claim.coverage,
+                coverage=claim.window_coverage,
                 url=claim.url,
             ),
         )
@@ -311,7 +311,7 @@ class RunReporter:
     def log_seadex_action(
         self,
         seadex_dict: SeadexDict,
-        results: list[ReleaseOutcome],
+        results: list[GrabResult],
         *,
         preview: bool,
         waiting_to_import: bool,
@@ -333,7 +333,7 @@ class RunReporter:
         for r in results:
             if r.added:
                 added.append(ReleaseName(r.name or "", r.group))
-            elif r.outcome is AddOutcome.ALREADY_IN_QBIT:
+            elif r.outcome is AddStatus.ALREADY_IN_QBIT:
                 downloading.append(ReleaseName(r.name or "", r.group))
 
         # `added` first, so a preview says "would add" only for a title it would add something for.

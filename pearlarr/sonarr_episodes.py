@@ -143,20 +143,20 @@ class SonarrEpisodes:
         # multi-season series maps to several AniList ids, each of which would
         # otherwise re-fetch the same whole-series episode list. Cache it for the
         # run so the network round-trip happens once per series. Reset at run start
-        # (collect_series, driven by the strategy's get_items hook).
+        # (refresh_library, driven by the strategy's get_items hook).
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
         # Fingerprint of the current Sonarr series-id set, recomputed each run in
-        # collect_series. Pins unmatched `/parse` cache records to the library
+        # refresh_library. Pins unmatched `/parse` cache records to the library
         # state so they self-heal when a missing series is added.
         self._series_fp: str = ""
 
         # Each series row's order facts, and the orderings built from them and the order cache. Both reset in
-        # collect_series, so a run reads each series' orders once.
+        # refresh_library, so a run reads each series' orders once.
         self._order_facts: dict[int, SeriesOrderFacts] = {}
         self._orderings: dict[int, SeriesOrdering] = {}
 
-        # The AniList ids whose pick of specials by air date this run already logged. Reset in collect_series.
+        # The AniList ids whose pick of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
 
     @property
@@ -165,7 +165,7 @@ class SonarrEpisodes:
 
         return self._series_fp
 
-    def collect_series(self) -> list[SonarrItem]:
+    def refresh_library(self) -> list[SonarrItem]:
         """Enumerate the AniList-mapped Sonarr series. The run-start reset point.
 
         Drops the per-run episode cache and re-fingerprints the series-id set so a
@@ -236,7 +236,7 @@ class SonarrEpisodes:
             return 0
 
         def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
-            # quiet: a transient miss here isn't logged from a worker. get_ep_list
+            # quiet: a transient miss here isn't logged from a worker. mapping_episodes
             # retries and logs it on the main thread if it still fails. A RAISE (not
             # just a None return) degrades to None too, so one bad series can't abort
             # the whole concurrent sweep (the docstring's per-series degradation).
@@ -375,7 +375,7 @@ class SonarrEpisodes:
 
         return self._ep_list_cache.get(series_id, [])
 
-    def get_ep_list(
+    def mapping_episodes(
         self,
         sonarr_series_id: int,
         al_id: int,

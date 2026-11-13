@@ -24,7 +24,7 @@ from .episode_state import (
     ImportSnapshot,
     StillNeeded,
 )
-from .file_paths import path_leaf, translate_download_path
+from .file_paths import file_name, translate_download_path
 from .import_files import (
     CandidateFile,
     ImportAction,
@@ -35,11 +35,11 @@ from .import_files import (
     plan_import_files,
 )
 from .import_quality import (
-    ParsedQuality,
+    QualityParts,
     derive_languages,
     parse_quality_from_filename,
-    quality_axes_from_model,
-    quality_axes_from_name,
+    quality_parts_from_model,
+    quality_parts_from_name,
     resolve_language_objects,
     resolve_quality,
 )
@@ -166,10 +166,10 @@ class _ImportContext:
         series_ids = self.pending.series_ids
         return series_ids[0] if len(series_ids) == 1 else None
 
-    def leaves(self, names: tuple[str, ...]) -> tuple[str, ...]:
+    def names_in_folder(self, names: tuple[str, ...]) -> tuple[str, ...]:
         """The on-disk leaf of each normalized basename."""
 
-        return tuple(path_leaf(self.candidates_by_basename[name].path) for name in names)
+        return tuple(file_name(self.candidates_by_basename[name].path) for name in names)
 
     def window_statuses(self, file_map: FileEpisodeMap) -> EpisodeStatuses:
         """Each episode of the record's windows judged against the file `file_map` puts on it."""
@@ -181,7 +181,9 @@ class _ImportContext:
 
         names, keys = leftover.hand_import_files, self.pending.order_only
         return LeftForHandImport(
-            files=tuple(HeldFile(leaf, keys.get(name)) for name, leaf in zip(names, self.leaves(names), strict=True)),
+            files=tuple(
+                HeldFile(leaf, keys.get(name)) for name, leaf in zip(names, self.names_in_folder(names), strict=True)
+            ),
             missing=self._episode_keys(unfilled.missing),
             untrusted=self._episode_keys(unfilled.untrusted),
         )
@@ -559,12 +561,12 @@ class ImportExecutor:
         authoritative = joined_map(pending.file_episode_map, recovered)
         leftover = disk_leftover(pending, context.candidates_by_basename, authoritative)
         if leftover.names and not authoritative:
-            if (by_hand := self._imported_by_hand(context, context.window_statuses(authoritative))) is not None:
+            if (by_hand := self._all_done_result(context, context.window_statuses(authoritative))) is not None:
                 # A hand import placed what the grab couldn't.
                 probe = by_hand
             else:
                 # Nothing to verify or import, and the same files come back next poll: an outcome, not a wait.
-                probe = AttemptResult.unmatched(context.leaves(leftover.unmatched))
+                probe = AttemptResult.unmatched(context.names_in_folder(leftover.unmatched))
         else:
             if leftover.quiet:
                 # A sibling's slice or a refused duplicate the grab excluded was reported then and stays quiet.
@@ -579,7 +581,7 @@ class ImportExecutor:
                 # The fill is checked first, so a hand import in copy mode, which leaves the file on disk, retires
                 # the record.
                 window = context.window_statuses(authoritative)
-                by_hand = self._imported_by_hand(context, window)
+                by_hand = self._all_done_result(context, window)
                 hand_import = AttemptResult.hand_import(context.left_for_hand_import(leftover, window.unfilled()))
                 probe = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they verified, so a row that never verifies is re-derived next
@@ -656,7 +658,7 @@ class ImportExecutor:
             return AttemptResult.imported()
 
         import_mode = self._config.imports.mode
-        if pending.cross_seed and import_mode == "move":
+        if pending.is_cross_seed and import_mode == "move":
             # Pearlarr never added this torrent, so a forced move must not empty it: Sonarr decides, as for its
             # own grabs.
             import_mode = "auto"
@@ -681,10 +683,10 @@ class ImportExecutor:
         self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return AttemptResult.waiting(command_issued=True, deferral=PauseReason.ISSUED)
 
-    def _imported_by_hand(self, context: _ImportContext, window: EpisodeStatuses) -> AttemptResult | None:
+    def _all_done_result(self, context: _ImportContext, window: EpisodeStatuses) -> AttemptResult | None:
         """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
 
-        if not window.filled_by_hand():
+        if not window.all_done():
             return None
         self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
         return AttemptResult.imported()
@@ -775,13 +777,13 @@ class ImportExecutor:
         quality_defs = self._quality_definitions()
 
         path = decision.path or decision.basename
-        base = path_leaf(path)
-        sonarr_axes = quality_axes_from_model(decision.quality)
+        base = file_name(path)
+        sonarr_axes = quality_parts_from_model(decision.quality)
         our_axes = parse_quality_from_filename(base)
         default_name = self._config.imports.default_quality
-        default_axes = quality_axes_from_name(default_name, quality_defs)
+        default_axes = quality_parts_from_name(default_name, quality_defs)
         # The quality seam runs once per FILE, so the flag keeps a config typo to one warning per run.
-        if default_name and default_axes == ParsedQuality() and not self._scratch.warned_default_quality:
+        if default_name and default_axes == QualityParts() and not self._scratch.warned_default_quality:
             self._scratch.warned_default_quality = True
             hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition - ignoring it")
         quality = resolve_quality(
@@ -854,7 +856,7 @@ class _SonarrView:
 
 
 @dataclass(frozen=True, slots=True)
-class _Poll:
+class _Attempt:
     """One import poll's inputs and its seed set."""
 
     pending: PendingImport
@@ -865,11 +867,11 @@ class _Poll:
     """Whether this is the readiness-deadline attempt."""
     targets: list[int]
     """The seeded target ids when the seed accounts for the record, else empty."""
-    complete: bool
+    file_map_covers_all: bool
     """Whether the seed map covers every intended file."""
 
     @classmethod
-    def of(cls, pending: PendingImport, content_path: str, attempt: AttemptKind) -> "_Poll":
+    def of(cls, pending: PendingImport, content_path: str, attempt: AttemptKind) -> "_Attempt":
         """The poll record for `pending`, its seed set gated by the record's coverage."""
 
         targets = pending.file_map_episode_ids()
@@ -900,7 +902,7 @@ class ImportReconciler:
     def import_completed(self, pending: PendingImport, content_path: str, attempt: AttemptKind) -> AttemptResult:
         """One import poll. Episode files and Sonarr's queue are the truth, never the cache."""
 
-        poll = _Poll.of(pending, content_path, attempt)
+        poll = _Attempt.of(pending, content_path, attempt)
         # Bar counts over the seed set. An unaccounted record reports 0/0 (indeterminate).
         fresh = self._read_seed(poll.pending, poll.targets)
         if fresh is not None and (imported := self._already_imported(poll, fresh)):
@@ -953,7 +955,7 @@ class ImportReconciler:
         seed = self._read_seed(pending, seeded_targets)
         return NO_PROGRESS if seed is None else ImportProgress(seed.done, seed.total, determinate=True)
 
-    def _sonarr_view(self, poll: _Poll) -> _SonarrView | None:
+    def _sonarr_view(self, poll: _Attempt) -> _SonarrView | None:
         """Sonarr's view this poll, read again after the rescan a lagging view may get. None when unreadable."""
 
         view = self._read_sonarr(poll.pending)
@@ -978,7 +980,7 @@ class ImportReconciler:
         untracked = verdict is QueueState.NOT_IN_QUEUE and rescanned_since_add(commands, pending.added_at)
         return _SonarrView(verdict, commands, untracked)
 
-    def _auto_import(self, poll: _Poll, scan: _CandidateScan, seed: _SeedStatuses) -> AttemptResult:
+    def _auto_import(self, poll: _Attempt, scan: _CandidateScan, seed: _SeedStatuses) -> AttemptResult:
         """The poll past the scan: the guard baseline, the files read again, the hand-off to the import."""
 
         baseline = self._executor.list_commands()
@@ -996,10 +998,10 @@ class ImportReconciler:
         reading = PollReading(scan, fresh.snapshot, baseline, at_deadline=poll.at_deadline)
         return fresh.with_counts(self._executor.run_auto_import(poll.pending, poll.content_path, reading))
 
-    def _already_imported(self, poll: _Poll, seed: _SeedStatuses) -> AttemptResult | None:
+    def _already_imported(self, poll: _Attempt, seed: _SeedStatuses) -> AttemptResult | None:
         """The IMPORTED probe when the seed map is whole and every recommended file is present, else None."""
 
-        if not poll.complete or not seed.statuses.all_trusted():
+        if not poll.file_map_covers_all or not seed.statuses.all_trusted():
             return None
         self.logger.debug(f"{poll.label}: already imported (recommended files present)")
         return seed.with_counts(AttemptResult.imported())
@@ -1032,7 +1034,7 @@ class ImportReconciler:
         for series_id in pending.series_ids:
             index = episode_index(lists[series_id], self._episodes.orders_for(series_id))
             # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
-            siblings = self._records.for_series(series_id, guards).values()
+            siblings = self._records.imports_for_series(series_id, guards).values()
             votes[series_id] = GrabbedGroups(pending.own_group, tuple(record.own_group for record in siblings))
             by_series[series_id] = EpisodeSnapshot.guarded(index, pending.guards_for(series_id), votes[series_id])
         by_claim = {

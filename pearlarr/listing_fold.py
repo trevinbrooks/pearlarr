@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from seadex import EntryRecord
 
 from .anibridge import NO_ALIASES, SpecialAliasing
-from .file_paths import path_leaf
+from .file_paths import file_name
 from .pairs import unambiguous
 from .pending_import import TitleWindow
 from .placement_types import EpisodeBySize, FetchedListings, TorrentListing
@@ -88,7 +88,7 @@ def size_identities(record: EntryRecord, window: TitleWindow, ignore_tags: froze
     for torrent in record.torrents:
         if carries_ignored_tag(torrent, ignore_tags):
             continue
-        videos = [f.size for f in torrent.files if is_video_candidate(path_leaf(f.name))]
+        videos = [f.size for f in torrent.files if is_video_candidate(file_name(f.name))]
         # SeaDex lists an unknown size as 0, so skip it.
         if len(videos) == 1 and videos[0] > 0:
             yield videos[0], ep_id

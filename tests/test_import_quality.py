@@ -3,11 +3,11 @@
 
 from pearlarr.arr_models import Quality, QualityDefinition, QualityModel, QualitySource, Revision
 from pearlarr.import_quality import (
-    ParsedQuality,
+    QualityParts,
     derive_languages,
     parse_quality_from_filename,
-    quality_axes_from_model,
-    quality_axes_from_name,
+    quality_parts_from_model,
+    quality_parts_from_name,
     resolve_quality,
 )
 
@@ -39,31 +39,31 @@ class TestParseQualityFromFilename:
     def test_2160p_webdl(self) -> None:
         assert parse_quality_from_filename(
             "Show.S01E01.2160p.WEB-DL.x265.mkv",
-        ) == ParsedQuality(source=QualitySource.WEB, resolution=2160)
+        ) == QualityParts(source=QualitySource.WEB, resolution=2160)
 
     def test_1080p_bluray(self) -> None:
         assert parse_quality_from_filename(
             "[Group] Show - 01 [BluRay 1080p HEVC].mkv",
-        ) == ParsedQuality(source=QualitySource.BLURAY, resolution=1080)
+        ) == QualityParts(source=QualitySource.BLURAY, resolution=1080)
 
     def test_bd_remux_1080p_is_blurayraw(self) -> None:
         # The bug case: a BD remux must parse to (blurayRaw, 1080) - never the
         # bogus "Remux-1080p" name the old joiner produced.
         assert parse_quality_from_filename(
             "The.Seven.Deadly.Sins.1080p.Dual.Audio.BD.Remux.DTS-HD.MA-TTGA.mkv",
-        ) == ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
+        ) == QualityParts(source=QualitySource.BLURAY_RAW, resolution=1080)
 
     def test_no_resolution_still_keeps_source(self) -> None:
         assert parse_quality_from_filename(
             "Show.S01E01.WEB-DL.mkv",
-        ) == ParsedQuality(source=QualitySource.WEB, resolution=None)
+        ) == QualityParts(source=QualitySource.WEB, resolution=None)
 
     def test_no_source_leaves_source_none(self) -> None:
         # No recognized source token -> source stays None (NOT defaulted to WEB),
         # so the configured default fills the axis.
         assert parse_quality_from_filename(
             "Show - 01 [1080p].mkv",
-        ) == ParsedQuality(source=None, resolution=1080)
+        ) == QualityParts(source=None, resolution=1080)
 
 
 class TestQualityAxesFromModel:
@@ -76,7 +76,7 @@ class TestQualityAxesFromModel:
         model = QualityModel.model_validate(
             {"quality": {"name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         )
-        assert quality_axes_from_model(model) == ParsedQuality(
+        assert quality_parts_from_model(model) == QualityParts(
             source=QualitySource.BLURAY,
             resolution=1080,
         )
@@ -85,24 +85,24 @@ class TestQualityAxesFromModel:
         model = QualityModel.model_validate(
             {"quality": {"name": "Unknown", "source": "unknown", "resolution": 0}},
         )
-        assert quality_axes_from_model(model) == ParsedQuality(source=None, resolution=None)
+        assert quality_parts_from_model(model) == QualityParts(source=None, resolution=None)
 
     def test_none_model_is_empty(self) -> None:
-        assert quality_axes_from_model(None) == ParsedQuality()
+        assert quality_parts_from_model(None) == QualityParts()
 
 
 class TestQualityAxesFromName:
     """`quality_axes_from_name` resolves a display name to its `(source, resolution)` pair via the definitions."""
 
     def test_resolves_default_name_to_axes(self) -> None:
-        assert quality_axes_from_name("Bluray-2160p", _DEFS) == ParsedQuality(
+        assert quality_parts_from_name("Bluray-2160p", _DEFS) == QualityParts(
             source=QualitySource.BLURAY,
             resolution=2160,
         )
 
     def test_unset_or_unmatched_is_empty(self) -> None:
-        assert quality_axes_from_name(None, _DEFS) == ParsedQuality()
-        assert quality_axes_from_name("Not-A-Quality", _DEFS) == ParsedQuality()
+        assert quality_parts_from_name(None, _DEFS) == QualityParts()
+        assert quality_parts_from_name("Not-A-Quality", _DEFS) == QualityParts()
 
 
 class TestResolveQuality:
@@ -114,19 +114,19 @@ class TestResolveQuality:
 
     def test_sonarr_wins_over_ours_and_default(self) -> None:
         # Sonarr parsed (web, 1080). Our filename parse and the default disagree.
-        sonarr = ParsedQuality(source=QualitySource.WEB, resolution=1080)
-        ours = ParsedQuality(source=QualitySource.BLURAY, resolution=2160)
-        default = ParsedQuality(source=QualitySource.TELEVISION, resolution=720)
+        sonarr = QualityParts(source=QualitySource.WEB, resolution=1080)
+        ours = QualityParts(source=QualitySource.BLURAY, resolution=2160)
+        default = QualityParts(source=QualitySource.TELEVISION, resolution=720)
         model = resolve_quality(sonarr, ours, default, _DEFS, candidate_model=None)
         assert _resolved_name(model) == "WEBDL-1080p"
 
     def test_bd_remux_resolves_to_remux_definition(self) -> None:
         # The headline fix: (blurayRaw, 1080) -> "Bluray-1080p Remux" (valid id+name).
-        sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
+        sonarr = QualityParts(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
             sonarr,
-            ParsedQuality(),
-            ParsedQuality(),
+            QualityParts(),
+            QualityParts(),
             _DEFS,
             candidate_model=None,
         )
@@ -137,10 +137,10 @@ class TestResolveQuality:
     def test_per_axis_fill_from_default(self) -> None:
         # User's example: we parsed (None, 1080). Default is Bluray-2160p ->
         # import as Bluray-1080p, NOT WEBDL-1080p and NOT Unknown.
-        ours = ParsedQuality(source=None, resolution=1080)
-        default = ParsedQuality(source=QualitySource.BLURAY, resolution=2160)
+        ours = QualityParts(source=None, resolution=1080)
+        default = QualityParts(source=QualitySource.BLURAY, resolution=2160)
         model = resolve_quality(
-            ParsedQuality(),
+            QualityParts(),
             ours,
             default,
             _DEFS,
@@ -151,11 +151,11 @@ class TestResolveQuality:
     def test_blurayraw_downgrades_to_bluray_when_no_remux_def(self) -> None:
         # 720p has no remux definition. A (blurayRaw, 720) gracefully downgrades
         # to Bluray-720p rather than failing.
-        sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=720)
+        sonarr = QualityParts(source=QualitySource.BLURAY_RAW, resolution=720)
         model = resolve_quality(
             sonarr,
-            ParsedQuality(),
-            ParsedQuality(),
+            QualityParts(),
+            QualityParts(),
             _DEFS,
             candidate_model=None,
         )
@@ -171,9 +171,9 @@ class TestResolveQuality:
             },
         )
         model = resolve_quality(
-            ParsedQuality(),
-            ParsedQuality(),
-            ParsedQuality(),
+            QualityParts(),
+            QualityParts(),
+            QualityParts(),
             _DEFS,
             candidate,
         )
@@ -183,9 +183,9 @@ class TestResolveQuality:
         # No axes and no candidate quality: emit an explicit Unknown object (never
         # omit the key - the omitted key is what crashed Sonarr's FileNameBuilder).
         model = resolve_quality(
-            ParsedQuality(),
-            ParsedQuality(),
-            ParsedQuality(),
+            QualityParts(),
+            QualityParts(),
+            QualityParts(),
             _DEFS,
             candidate_model=None,
         )
@@ -194,14 +194,14 @@ class TestResolveQuality:
 
     def test_candidate_revision_is_preserved(self) -> None:
         # A repack/proper revision on the candidate carries onto the resolved model.
-        sonarr = ParsedQuality(source=QualitySource.WEB, resolution=1080)
+        sonarr = QualityParts(source=QualitySource.WEB, resolution=1080)
         candidate = QualityModel.model_validate(
             {
                 "quality": {"name": "WEBDL-1080p", "source": "web", "resolution": 1080},
                 "revision": {"version": 2, "real": 0, "isRepack": True},
             },
         )
-        model = resolve_quality(sonarr, ParsedQuality(), ParsedQuality(), _DEFS, candidate)
+        model = resolve_quality(sonarr, QualityParts(), QualityParts(), _DEFS, candidate)
         assert model.revision == Revision(version=2, real=0, isRepack=True)
 
 

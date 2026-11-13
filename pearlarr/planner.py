@@ -19,7 +19,7 @@ from .arr_models import ArrFiles, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .output import Severity
 from .pairs import unambiguous
-from .pending_import import GuardFacts, SizeMatchedEpisode
+from .pending_import import OwnedAtGrab, SizeMatchedEpisode
 from .releases import (
     EpisodeKey,
     EpisodeRecord,
@@ -74,7 +74,7 @@ class GrabPlan:
     """The same dict passed in, annotated in place with per-url `download` flags."""
     skips: PrivateOnlyNotices
     """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
-    guards: GuardFacts
+    guards: OwnedAtGrab
     """The overwrite-guard evidence the import inherits whole (see `GuardFacts`):
     the size-verified current groups, the positively-stale ones, and the owned
     untagged `(episode id, size)` claims. Only Sonarr's import reads it."""
@@ -617,7 +617,7 @@ class GrabPlanner:
         return GrabPlan(
             seadex_dict=seadex_dict,
             skips=skips,
-            guards=GuardFacts(
+            guards=OwnedAtGrab(
                 entry_groups=verdicts.owned,
                 stale_groups=verdicts.outdated,
                 # Resolved to (episode id, size) pairs here so the import seeds

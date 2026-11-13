@@ -60,7 +60,7 @@ from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.cli import run_single
 from pearlarr.config import AppConfig, Arr
-from pearlarr.file_paths import normalize_basename
+from pearlarr.file_paths import normalize_name
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
@@ -660,12 +660,12 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         al_id=_AL_ID,
         series_id=_SERIES_ID,
         title=_TITLE,
-        coverage="S01 E01-E02",
+        window_coverage="S01 E01-E02",
         url=None,
         ordered_episode_ids=tuple(ep_id for ep_id, _ in named),
         names=TitleNames(),
         preowned_episode_ids=(),
-        slice_coverage=None,
+        claimed_coverage=None,
     )
     record = PendingImport(
         infohash=_INFOHASH,
@@ -675,8 +675,8 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         if scenario.listing is _Listing.NUMBERLESS
         else (*(name for _, name in named), *siblings),
         added_at=stamp,
-        file_episode_map={normalize_basename(name): (ep_id,) for ep_id, name in named} if mapped else {},
-        excluded_files=tuple(normalize_basename(name) for name in siblings),
+        file_episode_map={normalize_name(name): (ep_id,) for ep_id, name in named} if mapped else {},
+        excluded_files=tuple(normalize_name(name) for name in siblings),
         claims=(claim,),
     )
     store = CacheStore.load(str(cache_path), config_hash=checksum)
