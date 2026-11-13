@@ -1,6 +1,7 @@
 # pyright: strict
 """The filename quality parse and the layered quality/language selection."""
 
+from pearlarr.arr_models import Quality, QualityDefinition, QualityModel, QualitySource, Revision
 from pearlarr.import_quality import (
     ParsedQuality,
     derive_languages,
@@ -9,7 +10,6 @@ from pearlarr.import_quality import (
     quality_axes_from_name,
     resolve_quality,
 )
-from pearlarr.seadex_types import Quality, QualityDefinition, QualityModel, QualitySource, Revision
 
 # A realistic subset of Sonarr's /api/v3/qualitydefinition, matched on the
 # structured (source, resolution) pair (never on the display name). Validated

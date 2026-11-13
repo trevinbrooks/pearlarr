@@ -22,6 +22,7 @@ from typing import override
 import pytest
 
 from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.arr_models import HistoryRecord
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
@@ -32,11 +33,11 @@ from pearlarr.manual_import import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.recording import RecordingHub
+from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ImportCompleter
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
 from pearlarr.run_services import RunServices
-from pearlarr.seadex_types import HistoryRecord, ProgressSink
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult

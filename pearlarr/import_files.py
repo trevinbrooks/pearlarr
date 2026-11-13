@@ -4,9 +4,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .arr_models import ManualImportCandidate, QualityModel
 from .episode_state import TargetStatuses
 from .manual_import import FileEpisodeMap, PendingImport, normalized_leaf, path_leaf
-from .seadex_types import ManualImportCandidate, QualityModel
 from .video_files import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:

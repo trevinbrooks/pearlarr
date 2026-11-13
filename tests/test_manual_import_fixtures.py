@@ -11,6 +11,15 @@ from typing import Any, NamedTuple
 import pytest
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
+from pearlarr.arr_models import (
+    CommandResource,
+    ManualImportCandidate,
+    ParsedFileInfo,
+    QualityDefinition,
+    QualitySource,
+    QueueRecord,
+    SonarrEpisode,
+)
 from pearlarr.config import AppConfig
 from pearlarr.import_quality import ParsedQuality, quality_axes_from_model, resolve_quality
 from pearlarr.manual_import import AttemptKind, ImportProgress, PendingImport, normalize_basename
@@ -23,15 +32,6 @@ from pearlarr.probe_verdicts import (
     manual_import_in_flight,
 )
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import (
-    CommandResource,
-    ManualImportCandidate,
-    ParsedFileInfo,
-    QualityDefinition,
-    QualitySource,
-    QueueRecord,
-    SonarrEpisode,
-)
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, pending_import
 from .fakes import FakeSonarrClient

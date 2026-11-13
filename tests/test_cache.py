@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import pearlarr
+from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.cache import (
     SCHEMA_VERSION,
     CacheRecord,
@@ -33,7 +34,6 @@ from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, Pending
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parsed_info, to_parse_record
-from pearlarr.seadex_types import ParsedFileInfo
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import OrderRow, StoredOrders

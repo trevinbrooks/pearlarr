@@ -32,19 +32,11 @@ import logging
 
 import pytest
 
+from pearlarr.arr_models import ArrReleases, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import DownloadPlanner, PlanResult
-from pearlarr.seadex_types import (
-    ArrReleases,
-    EpisodeRecord,
-    FlaggedUrl,
-    GrabHold,
-    SeadexReleaseGroupItem,
-    SeadexUrlItem,
-    SonarrEpisode,
-    flagged_urls,
-)
+from pearlarr.releases import EpisodeRecord, FlaggedUrl, GrabHold, SeadexReleaseGroupItem, SeadexUrlItem, flagged_urls
 
 from .builders import arr_releases, make_planner, rg_group, sonarr_ep, url_item
 

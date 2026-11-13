@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 
 from .cache import AbstractCacheStore
-from .seadex_types import ProgressSink, SkyHookReply
-from .skyhook_client import AbstractSkyHookClient, SkyHookMiss
+from .progress import ProgressSink
+from .skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
 from .tvdb_orders import NO_ORDERS, OFFICIAL_ORDER, OrderRow, SeriesOrderFacts, SeriesOrders, StoredOrders
 

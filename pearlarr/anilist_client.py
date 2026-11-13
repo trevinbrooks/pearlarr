@@ -3,15 +3,75 @@
 import contextlib
 import random
 import time
+from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import httpx
-from pydantic import ValidationError
+from pydantic import AliasPath, Field, ValidationError
 
+from .boundary import ApiModel, FuzzyDate, validation_summary
 from .json_narrow import is_json_list, is_json_obj
 from .output import Severity, hub_note, hub_warn
 from .paths import PROJECT_URL
-from .seadex_types import AniListError, AniListMediaNode, validation_summary
+
+# --- AniList GraphQL errors (the `errors` array of a response body) --------
+
+
+class AniListError(ApiModel):
+    """One entry of an AniList GraphQL `errors` array.
+
+    `status` is an HTTP-style code (`429` when soft-throttling).
+    """
+
+    message: str = ""
+    status: int | None = None
+
+
+# --- AniList Media node (cached GraphQL `Media` record) --------------------
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AniListAiring:
+    """When AniList says a title aired and how much of it there is. A part AniList doesn't give is None."""
+
+    start: date | None
+    """The day the title first aired."""
+
+    end: date | None
+    """The day its last episode aired."""
+
+    episodes: int | None
+    """How many episodes it has."""
+
+    duration: int | None
+    """The length of one episode in minutes."""
+
+
+class AniListMediaNode(ApiModel):
+    """One AniList `Media` node, validated at the cache read boundary.
+
+    An EMPTY DICT must validate to the all-None miss node (`{"data": {"Media": null}}` reduces to `{}` first).
+    """
+
+    id: int | None = None
+    title_english: str | None = Field(default=None, validation_alias=AliasPath("title", "english"))
+    title_romaji: str | None = Field(default=None, validation_alias=AliasPath("title", "romaji"))
+    episodes: int | None = None
+    cover_image: str | None = Field(default=None, validation_alias=AliasPath("coverImage", "large"))
+    banner_image: str | None = Field(default=None, validation_alias="bannerImage")
+    format: str | None = None
+    start_date: FuzzyDate = Field(default=None, validation_alias="startDate")
+    end_date: FuzzyDate = Field(default=None, validation_alias="endDate")
+    duration: int | None = None
+    """The length of one episode in minutes."""
+
+    @property
+    def airing(self) -> AniListAiring:
+        """The node's dates, episode count and episode length as one record."""
+
+        return AniListAiring(start=self.start_date, end=self.end_date, episodes=self.episodes, duration=self.duration)
+
 
 API_URL = "https://graphql.anilist.co"
 

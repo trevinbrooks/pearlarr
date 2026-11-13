@@ -2,7 +2,8 @@
 
 from collections.abc import Iterable
 
-from .seadex_types import EpisodeRecord, SonarrEpisode
+from .arr_models import SonarrEpisode
+from .releases import EpisodeRecord
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:

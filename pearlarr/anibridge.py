@@ -23,11 +23,13 @@ special another entry of the show also maps.
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import chain
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
+from .boundary import coerce_int
 from .mapping_store import (
     AniBridgeAliasHit,
     AniBridgeAliasRow,
@@ -38,7 +40,35 @@ from .mapping_store import (
     AnimeIdColumn,
     MappingStore,
 )
-from .seadex_types import SpecialAliasing, TvdbMappings, coerce_int, season_holds, unambiguous
+from .pairs import unambiguous
+
+type TvdbMappings = dict[int, list[tuple[int, int | None]]]
+"""AniBridge TVDB season -> inclusive `(start, end)` episode ranges."""
+
+
+def season_holds(ranges: Sequence[tuple[int, int | None]], number: int) -> bool:
+    """Whether `number` falls in a season's ranges: an empty list is the whole season, an end of None is open."""
+
+    return not ranges or any(start <= number and (end is None or number <= end) for start, end in ranges)
+
+
+type SpecialAliases = Mapping[int, int]
+"""TMDB specials number -> the TVDB specials number it stands for."""
+
+NO_ALIASES: SpecialAliases = MappingProxyType({})
+"""No specials pairs: AniBridge pairs none, nothing was read, or the entries listing a torrent pair against different
+TMDB shows."""
+
+
+class SpecialAliasing(NamedTuple):
+    """An entry's specials aliases and the TMDB show their TMDB numbers count in. An entry without any holds None."""
+
+    tmdb_id: int
+    """The TMDB show the aliases' TMDB numbers count in."""
+
+    aliases: SpecialAliases
+    """TMDB specials number -> the TVDB specials number it stands for."""
+
 
 type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""

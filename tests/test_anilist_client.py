@@ -9,10 +9,14 @@ These are otherwise only exercised incidentally. The classification / parsing /
 extraction helpers take plain `dict` bodies, so they are tested with no mocks
 at all. `AniListClient`'s retry loop is exercised through its public queries,
 faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
+
+The `AniListMediaNode` tests pin its all-None empty-dict validation, the
+miss-node contract the AniList gateway depends on.
 """
 
 import re
 import time
+from datetime import date
 from typing import cast
 
 import httpx
@@ -27,6 +31,8 @@ from pearlarr.anilist_client import (
     RETRYABLE_ERROR_SUBSTRINGS,
     RETRYABLE_STATUS,
     AniListClient,
+    AniListError,
+    AniListMediaNode,
     _errors_are_retryable,
     _parse_errors,
     extract_path,
@@ -37,7 +43,6 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import PROJECT_URL
-from pearlarr.seadex_types import AniListError, AniListMediaNode
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -509,3 +514,35 @@ def test_unknown_id_404_is_an_ordinary_miss() -> None:
     assert client.outage is False
     assert route.call_count == 2
     assert _warnings(recording) == []
+
+
+# --- AniListMediaNode -----------------------------------------------------------
+
+
+def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
+    """`{}` (the reduced `Media: null` miss) validates to the all-None node."""
+
+    assert AniListMediaNode.model_validate({}) == AniListMediaNode()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {"year": None, "month": None, "day": None},
+        {"year": 2020, "month": 8, "day": None},
+        {"year": 2020, "month": 8},
+        # February has no 30th.
+        {"year": 2020, "month": 2, "day": 30},
+        "2020-08-29",
+    ],
+)
+def test_an_anilist_date_without_every_part_is_no_date(raw: object) -> None:
+    assert AniListMediaNode.model_validate({"id": 1, "startDate": raw}) == AniListMediaNode(id=1)
+
+
+def test_anilist_media_node_takes_a_date_by_field_name() -> None:
+    by_alias = AniListMediaNode.model_validate({"startDate": {"year": 2020, "month": 8, "day": 29}})
+    by_name = AniListMediaNode(start_date=date(2020, 8, 29))
+
+    assert by_alias.start_date == by_name.start_date == date(2020, 8, 29)

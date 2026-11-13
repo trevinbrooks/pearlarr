@@ -39,6 +39,7 @@ from pydantic import (
 )
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
+from .boundary import Json
 from .config_migrations import (
     CONFIG_VERSION,
     MigrationOutcome,
@@ -48,7 +49,7 @@ from .config_migrations import (
 from .env_registry import ENV_CONFIG_DELIMITER, ENV_CONFIG_PREFIX
 from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
-from .seadex_types import SELECTION_RULES_VERSION, Json
+from .releases import SELECTION_RULES_VERSION
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
 # (the docs generator renders them into the sample and reference). The sets are

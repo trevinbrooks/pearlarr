@@ -39,13 +39,13 @@ from seadex import SeaDexEntry, Tracker
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_obj
 from pearlarr.notify import GrabNotice, Notifier
-from pearlarr.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
+from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pearlarr.seadex_types import Json
+    from pearlarr.boundary import Json
 
 # The Frieren entry (AniList 154587): PMR is the SeaDex best, LostYears the alternative.
 _ENTRY_ID = 154587

@@ -6,8 +6,8 @@ from datetime import timedelta
 from enum import Enum, auto
 from typing import NamedTuple
 
+from .arr_models import CommandResource, HistoryPage, QueueRecord
 from .manual_import import Deferral, ImportProbe, PendingImport, fold_path_separators, normalized_leaf
-from .seadex_types import CommandResource, HistoryPage, QueueRecord
 from .stamps import parse_stamp_aware
 
 

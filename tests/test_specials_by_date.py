@@ -5,7 +5,8 @@ from datetime import date
 
 import pytest
 
-from pearlarr.seadex_types import AniListAiring, SonarrEpisode
+from pearlarr.anilist_client import AniListAiring
+from pearlarr.arr_models import SonarrEpisode
 from pearlarr.specials_by_date import specials_by_date
 
 from .builders import sonarr_ep

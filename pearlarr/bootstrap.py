@@ -351,13 +351,14 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
     """
 
     from .arr_http import ArrAuthError, ArrConnectionError
+    from .arr_models import ArrItem
+    from .boundary import BoundaryContractError
     from .cache import CacheSchemaError
     from .protocols import ArrSync
     from .run_loop import RunLoop
     from .run_services import QbitConnectionError, RunDeps, RunServices
     from .seadex_radarr import RadarrSync
     from .seadex_sonarr import SonarrSync
-    from .seadex_types import ArrItem, BoundaryContractError
 
     arr_name = target.arr
     item_id = target.item_id

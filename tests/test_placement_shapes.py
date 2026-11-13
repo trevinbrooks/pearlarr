@@ -14,15 +14,12 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, RootModel
 
+from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
+from pearlarr.boundary import Json
 from pearlarr.grab_placement import SeedFile, place_release
 from pearlarr.manual_import import EntryNames, normalize_basename
 from pearlarr.placement_types import SeedScope, episode_index
-from pearlarr.seadex_types import (
-    EpisodeRecord,
-    Json,
-    ParsedFileInfo,
-    SonarrEpisode,
-)
+from pearlarr.releases import EpisodeRecord
 
 from .builders import new_torrent, seed_scope
 

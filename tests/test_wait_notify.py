@@ -34,7 +34,7 @@ from pearlarr.discord import (
 from pearlarr.manual_import import Outcome
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.output import Severity
-from pearlarr.seadex_types import SeadexDict
+from pearlarr.releases import SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 

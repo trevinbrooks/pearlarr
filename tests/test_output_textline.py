@@ -22,6 +22,7 @@ from typing import get_args, override
 
 import pytest
 
+from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.log import EntryState
@@ -89,8 +90,8 @@ from pearlarr.output import (
 )
 from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
+from pearlarr.releases import ElsewhereCounts
 from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from pearlarr.seadex_types import ElsewhereCounts, Json
 
 from .builders import held_files, order_only_held_back
 

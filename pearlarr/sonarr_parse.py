@@ -12,11 +12,12 @@ computes it.
 import concurrent.futures
 from collections.abc import Sequence
 
+from .arr_models import ParsedFileInfo
 from .grab_placement import SeedFile
 from .log import count_noun
 from .parse_records import ParseWindow
+from .releases import SeadexDict
 from .run_services import RunDeps
-from .seadex_types import ParsedFileInfo, SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 from .video_files import video_file_entries

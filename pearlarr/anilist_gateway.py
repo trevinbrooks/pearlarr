@@ -18,9 +18,11 @@ from itertools import batched
 
 from .anilist_client import (
     ANILIST_BATCH_SIZE,
+    AniListAiring,
     AniListBody,
     AniListCache,
     AniListClient,
+    AniListMediaNode,
     extract_path,
     lacks_air_dates,
     media_from,
@@ -28,7 +30,7 @@ from .anilist_client import (
 )
 from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
 from .log import count_noun
-from .seadex_types import AniListAiring, AniListMediaNode, ProgressSink
+from .progress import ProgressSink
 from .stamps import stamp_of
 
 # How old a persisted AniList response gets before a run refetches it.

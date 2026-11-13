@@ -19,9 +19,9 @@ from typing import NamedTuple, final
 import qbittorrentapi
 
 from .arr_http import ArrHttp
+from .arr_models import DownloadClientRecord
 from .config import Arr, ArrSettings
 from .log import LOG_NAME
-from .seadex_types import DownloadClientRecord
 
 # Debug breadcrumbs ride the stdlib channel (first-party child of the app
 # logger), matching `arr_http`'s coalesced-repeat idiom.

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from pearlarr.cache import CacheStore
-from pearlarr.seadex_types import SkyHookReply
+from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.stamps import parse_stamp
 from pearlarr.tvdb_orders import NO_ORDERS, OFFICIAL_ORDER, OrderRow, SeriesOrderFacts

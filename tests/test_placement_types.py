@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.episode_titles import EpisodeTitles
 from pearlarr.manual_import import FileEpisodeMap
 from pearlarr.placement_types import (
@@ -18,7 +19,7 @@ from pearlarr.placement_types import (
     all_specials,
     episode_index,
 )
-from pearlarr.seadex_types import SONARR_MISSING_KEY, EpisodeKey, ParsedFileInfo, SonarrEpisode
+from pearlarr.releases import SONARR_MISSING_KEY, EpisodeKey
 from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 
 from .builders import entry_window, parsed_info, series_index, sonarr_ep, torrent_listing

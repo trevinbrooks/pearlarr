@@ -22,9 +22,10 @@ Last, the mapped specials AniList's dates disagree with give way to the ones
 
 from datetime import date
 
+from pearlarr.anilist_client import AniListAiring
+from pearlarr.arr_models import SonarrEpisode
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import Severity
-from pearlarr.seadex_types import AniListAiring, SonarrEpisode
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge, check_ep_by_anime_ids
 
 from .builders import ScriptedAniListClient, anilist_body, make_anilist_gateway, make_sonarr_episodes, sonarr_ep

@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .seadex_types import Language, Quality, QualityDefinition, QualityModel, QualitySource, Revision
+from .arr_models import Language, Quality, QualityDefinition, QualityModel, QualitySource, Revision
 
 # Filename source tokens -> QualitySource, ordered most-specific first so a
 # "BluRay Remux" name resolves to BLURAY_RAW (not BLURAY), "BD" counts as BluRay,

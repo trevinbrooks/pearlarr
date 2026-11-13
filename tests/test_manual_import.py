@@ -13,6 +13,7 @@ from typing import cast
 
 import pytest
 
+from pearlarr.arr_models import RemotePathMapping
 from pearlarr.manual_import import (
     LEAVE_PROBE,
     NO_ORDER_ONLY,
@@ -41,7 +42,7 @@ from pearlarr.manual_import import (
     sizes_by_episode,
     translate_download_path,
 )
-from pearlarr.seadex_types import EpisodeKey, OrderOnlyKey, RemotePathMapping
+from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
 from .builders import (
     SEP,

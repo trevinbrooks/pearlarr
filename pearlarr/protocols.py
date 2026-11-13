@@ -2,9 +2,10 @@
 
 from abc import ABC, abstractmethod
 
+from .arr_models import ArrItem, HistoryRecord
 from .manual_import import AttemptKind, EffectStatus, ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
-from .seadex_types import ArrItem, HistoryRecord, ProgressSink
+from .progress import ProgressSink
 
 
 class ImportCompleter(ABC):

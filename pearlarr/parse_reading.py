@@ -3,9 +3,10 @@
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from .arr_models import MatchedEpisode, ParsedFileInfo
 from .placement_types import EpisodeIndex, TargetScope
 from .release_names import range_key
-from .seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo, season_episode_key
+from .releases import EpisodeKey, season_episode_key
 
 # Sonarr's matched pairs plausibly cover a double or triple episode, never more, and a range key Sonarr read short
 # is widened only that far. A range Sonarr read whole from the name is trusted at any width.

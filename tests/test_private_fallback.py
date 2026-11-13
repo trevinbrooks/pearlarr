@@ -17,12 +17,13 @@ from contextlib import contextmanager
 
 from seadex import EntryRecord, TorrentRecord, Tracker
 
+from pearlarr.arr_models import ArrReleases
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
+from pearlarr.releases import EpisodeRecord, SeadexDict
 from pearlarr.reporter import NeedsActionKind, RunContext
-from pearlarr.seadex_types import ArrReleases, EpisodeRecord, SeadexDict
 
 from .builders import (
     AddOutcome,

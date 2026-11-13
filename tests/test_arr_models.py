@@ -1,131 +1,22 @@
 # pyright: strict
-"""Direct tests for the `seadex_types` pydantic boundary machinery.
-
-Pins the contracts the client boundaries build on: `validate_each`'s
-skip-with-scrubbed-warning posture (warnings NEVER embed payload values), the
-all-None empty-dict validation of `AniListMediaNode` (the miss-node
-contract the AniList gateway depends on), and the frozen-model violation shape
-(pydantic `ValidationError`, not `FrozenInstanceError`).
-"""
+"""Direct tests for the Sonarr and Radarr API models: how each reads its wire JSON, junk fields included."""
 
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 
-from pearlarr.output import Diagnostic, Severity, install_hub
-from pearlarr.output.recording import RecordingHub
-from pearlarr.seadex_types import (
+from pearlarr.arr_models import (
     AlternateTitle,
-    AniListMediaNode,
-    BoundaryContractError,
     CommandResource,
-    EpisodeKey,
     HistoryPage,
     HistoryRecord,
     MatchedEpisode,
-    MovieFile,
-    OrderOnlyKey,
     ParsedFileInfo,
-    QueueRecord,
     SeasonTypeCount,
     SonarrEpisode,
     SonarrHistoryRecord,
     SonarrSeries,
-    normalized_infohash,
-    validate_each,
 )
-
-# --- validate_each ------------------------------------------------------------
-
-
-def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
-    """A junk record is skipped with ONE warning naming the model, index, and failing field.
-
-    It never includes the payload value itself (it may carry titles/paths).
-    """
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    records = validate_each(
-        MovieFile,
-        [{"releaseGroup": "SubsPlease", "size": 1}, {"size": "not-a-number-SECRET"}],
-    )
-
-    assert records == [MovieFile(release_group="SubsPlease", size=1)]
-    [warning] = recording.of_type(Diagnostic)
-    assert warning.severity is Severity.WARNING
-    message = warning.message
-    assert "MovieFile" in message
-    assert "[1]" in message
-    assert "size" in message
-    assert "SECRET" not in message  # the raw input value must never reach a log
-
-
-def test_validate_each_empty_list_is_empty() -> None:
-    """An empty payload validates to an empty list (an empty library is legal)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    assert validate_each(MovieFile, []) == []
-    assert recording.of_type(Diagnostic) == []
-
-
-def test_validate_each_strict_raises_when_nothing_validates() -> None:
-    """strict=True: a non-empty payload with ZERO valid records raises `BoundaryContractError`.
-
-    An all-invalid library must never read as empty.
-    """
-
-    with pytest.raises(BoundaryContractError):
-        validate_each(SonarrSeries, ["junk", 42], strict=True)
-
-
-def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
-    """strict=True still reads an EMPTY payload as [] (a legitimate empty library).
-
-    It keeps the valid records of a partially-junk payload too.
-    """
-
-    assert validate_each(SonarrSeries, [], strict=True) == []
-    records = validate_each(
-        SonarrSeries,
-        [{"id": 1, "title": "Show", "tvdbId": 7}, {"id": None, "title": "Null id"}],
-        strict=True,
-    )
-    assert records == [SonarrSeries(id=1, title="Show", tvdbId=7)]
-
-
-# --- model contracts ----------------------------------------------------------
-
-
-def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
-    """`{}` (the reduced `Media: null` miss) validates to the all-None node."""
-
-    assert AniListMediaNode.model_validate({}) == AniListMediaNode()
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        None,
-        {"year": None, "month": None, "day": None},
-        {"year": 2020, "month": 8, "day": None},
-        {"year": 2020, "month": 8},
-        # February has no 30th.
-        {"year": 2020, "month": 2, "day": 30},
-        "2020-08-29",
-    ],
-)
-def test_an_anilist_date_without_every_part_is_no_date(raw: object) -> None:
-    assert AniListMediaNode.model_validate({"id": 1, "startDate": raw}) == AniListMediaNode(id=1)
-
-
-def test_anilist_media_node_takes_a_date_by_field_name() -> None:
-    by_alias = AniListMediaNode.model_validate({"startDate": {"year": 2020, "month": 8, "day": 29}})
-    by_name = AniListMediaNode(start_date=date(2020, 8, 29))
-
-    assert by_alias.start_date == by_name.start_date == date(2020, 8, 29)
 
 
 def test_sonarr_episode_reads_its_air_date_and_runtime() -> None:
@@ -148,20 +39,6 @@ def test_sonarr_episode_folds_a_missing_or_junk_air_date_and_runtime_to_none(raw
     episode = SonarrEpisode.model_validate({"id": 7, **raw})
 
     assert episode == SonarrEpisode(id=7)
-
-
-def test_frozen_model_mutation_raises_validation_error() -> None:
-    """Ported models are frozen: assignment raises pydantic's ValidationError.
-
-    The attribute name rides a variable because the checkers (pyrefly) already
-    reject a direct assignment statically - this pins the RUNTIME contract.
-    """
-
-    record = QueueRecord(download_id="ABC", state="downloading", status="ok")
-    frozen_field = "state"
-    with pytest.raises(ValidationError):
-        setattr(record, frozen_field, "importing")
-    assert record.state == "downloading"
 
 
 def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -> None:
@@ -314,43 +191,3 @@ def test_history_page_reads_total_records() -> None:
 
     assert HistoryPage.model_validate({"records": [], "totalRecords": 250}).total_records == 250
     assert HistoryPage.model_validate({"records": []}).total_records == 0
-
-
-# --- normalized_infohash ------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("  ABCDEF0123  ", "abcdef0123"),
-        ("abcdef0123", "abcdef0123"),
-        ("   ", None),
-        ("", None),
-        (None, None),
-    ],
-)
-def test_normalized_infohash_is_stripped_lowercase_or_none(raw: str | None, expected: str | None) -> None:
-    assert normalized_infohash(raw) == expected
-
-
-# --- OrderOnlyKey -------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("order", "expected"),
-    [
-        ("dvd", "DVD S07E01"),
-        ("altdvd", "alternate DVD S07E01"),
-        ("alttwo", "second alternate S07E01"),
-        ("regional", "regional S07E01"),
-    ],
-)
-def test_an_order_only_key_is_labelled_under_its_orders_name(order: str, expected: str) -> None:
-    assert OrderOnlyKey(order, EpisodeKey(7, 1)).label == expected
-
-
-def test_an_order_only_key_survives_its_json_form() -> None:
-    key = OrderOnlyKey("dvd", EpisodeKey(7, 1))
-
-    assert key.to_json() == {"order": "dvd", "season": 7, "episode": 1}
-    assert OrderOnlyKey.from_json(key.to_json()) == key

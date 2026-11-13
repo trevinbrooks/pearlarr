@@ -18,10 +18,15 @@ from typing import cast
 
 import httpx
 
+from .arr_models import DownloadClientRecord, HistoryRecord
+from .boundary import Json, validate_each
 from .config import strip_userinfo
 from .log import LOG_NAME, compact_duration
 from .output import hub_note, hub_warn
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, DownloadClientRecord, HistoryRecord, Json, validate_each
+
+# (connect, read) seconds, shared by the arr http client and the qBittorrent adapter.
+# A hung service then surfaces as a transient miss instead of blocking the run.
+ARR_REQUEST_TIMEOUT_S = (5, 30)
 
 # Transient statuses worth another try on an idempotent GET - shared with the
 # web client's `get_with_retries` so the two stacks retry the same set.

@@ -64,6 +64,7 @@ from pearlarr.output import (
     StyledValue,
 )
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
+from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import (
     _TIP_PRECEDENCE,
     GrabRecord,
@@ -73,7 +74,6 @@ from pearlarr.reporter import (
     RunReporter,
     RunStats,
 )
-from pearlarr.seadex_types import ElsewhereCounts, SeadexDict
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import (

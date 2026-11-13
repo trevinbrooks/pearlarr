@@ -32,9 +32,9 @@ from pearlarr.config import Arr, ArrSettings
 from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
+from pearlarr.releases import SeadexReleaseGroupItem, SeadexUrlItem
 from pearlarr.reporter import RunContext
 from pearlarr.run_services import QbitConnectionError, RunDeps, RunServices
-from pearlarr.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import (
     GRAB_FAILURES,

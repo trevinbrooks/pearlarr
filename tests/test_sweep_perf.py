@@ -18,6 +18,7 @@ from typing import override
 import pytest
 from seadex import EntryRecord
 
+from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.grab_placement import SeedFile
 from pearlarr.mappings import ExternalIds, MappingEntry
@@ -29,16 +30,9 @@ from pearlarr.parse_records import (
     _parse_is_fresh,
     to_parse_record,
 )
+from pearlarr.releases import SeadexDict
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_gateway import SeaDexMiss
-from pearlarr.seadex_types import (
-    AlternateTitle,
-    MatchedEpisode,
-    ParsedFileInfo,
-    SeadexDict,
-    SeasonTypeCount,
-    SonarrEpisode,
-)
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,

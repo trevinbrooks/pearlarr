@@ -4,14 +4,96 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import override
+from typing import Any, cast, override
 
 import httpx
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, field_validator, model_validator
 
+from .arr_models import SeasonTypeCount
+from .boundary import (
+    ApiModel,
+    LenientStr,
+    LenientTime,
+    validate_all_or_none,
+    validate_skipping_junk,
+    validation_summary,
+)
 from .output import Severity, hub_note, hub_warn
-from .seadex_types import SkyHookError, SkyHookReply, validation_summary
 from .web_client import failure_detail, get_with_retries
+
+# --- SkyHook (`skyhook.sonarr.tv` TVDB shows) -------------------------------
+
+
+ENDED_STATUS = "Ended"
+"""TVDB's status for a series that has finished airing."""
+
+
+class SkyHookEpisode(ApiModel):
+    """One `episodes[]` row of a SkyHook show reply, numbered by the order the reply was asked for."""
+
+    tvdb_id: int = Field(validation_alias="tvdbId")
+    season_number: int = Field(validation_alias="seasonNumber")
+    episode_number: int = Field(validation_alias="episodeNumber")
+    air_date_utc: LenientTime = Field(default=None, validation_alias="airDateUtc")
+    absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
+    """Sent on official rows only."""
+
+
+class SkyHookReply(ApiModel):
+    """One SkyHook show reply for one TVDB order (`/v2/tvdb/shows/eng/<tvdbId>/<type>`)."""
+
+    tvdb_id: int = Field(validation_alias="tvdbId")
+    status: LenientStr = None
+    """TVDB's series status (`Ended`, `Continuing`, ...)."""
+    season_types: tuple[SeasonTypeCount, ...] = Field(default=(), validation_alias="seasonTypes")
+    """Every order TVDB lists for the series, whichever order was asked for."""
+    episodes: tuple[SkyHookEpisode, ...] = ()
+    """The asked order's rows. Empty when the reply sends none, or when any row failed validation."""
+    rows_failed: bool = False
+    """Whether a row failed validation and emptied `episodes`. Set by the validator, never read off the wire."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_bad_rows(cls, data: object) -> object:
+        """Read `episodes[]` all-or-nothing: one bad row empties it and sets `rows_failed`. A null is no rows."""
+
+        if not isinstance(data, dict):
+            return data
+        record = cast("dict[str, Any]", data)
+        raw = record.get("episodes")
+        rows: list[SkyHookEpisode] | None = [] if raw is None else validate_all_or_none(SkyHookEpisode, raw)
+        return {**record, "episodes": rows or (), "rows_failed": rows is None}
+
+    @field_validator("season_types", mode="before")
+    @classmethod
+    def _lenient_season_types(cls, value: object) -> object:
+        """Skip junk `seasonTypes[]` entries, never failing the reply over one."""
+
+        return validate_skipping_junk(SeasonTypeCount, value)
+
+    @property
+    def ended(self) -> bool:
+        """Whether TVDB lists the series as finished airing."""
+
+        return self.status == ENDED_STATUS
+
+    def lists(self, order_type: str) -> bool:
+        """Whether the reply's `seasonTypes` names `order_type`."""
+
+        return any(season_type.type == order_type for season_type in self.season_types)
+
+
+class SkyHookError(ApiModel):
+    """SkyHook's error body, as `{"message": "NotFound", "description": ...}` on a series TVDB doesn't have."""
+
+    message: LenientStr = None
+
+    @property
+    def not_found(self) -> bool:
+        """Whether SkyHook itself says it has no such series."""
+
+        return self.message == "NotFound"
+
 
 SKYHOOK_URL = "https://skyhook.sonarr.tv/v2/tvdb/shows/eng"
 

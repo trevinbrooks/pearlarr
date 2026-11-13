@@ -1,14 +1,14 @@
 # pyright: strict
 """Drift net: our boundary models vs the vendored Sonarr/Radarr OpenAPI captures.
 
-Every `seadex_types` model that mirrors an arr resource
+Every `arr_models` model that mirrors an arr resource
 is pinned to its component in `schemas/sonarr.schema` / `schemas/radarr.schema`:
 each declared field's wire name must exist in the component's `properties`, and
 the `QualitySource` vocabulary must match the schema enum. A regen of the
 captures (see `schemas/README.md`) that renames or drops a consumed property
 fails here, naming the model.field and component.
 
-Scope: declared fields only. The `_WireModel` write bodies get the same check.
+Scope: declared fields only. The `WireModel` write bodies get the same check.
 Their `extra="allow"` passthrough of undeclared keys is out of scope by design
 (passthrough carries whatever the wire had, so there is nothing to drift).
 """
@@ -22,8 +22,7 @@ import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel
 from pydantic.fields import FieldInfo
 
-from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.seadex_types import (
+from pearlarr.arr_models import (
     AlternateTitle,
     CommandResource,
     DownloadClientField,
@@ -31,7 +30,6 @@ from pearlarr.seadex_types import (
     HistoryPage,
     HistoryRecord,
     ImportRejection,
-    Json,
     Language,
     ManualImportCandidate,
     ManualImportFile,
@@ -51,6 +49,8 @@ from pearlarr.seadex_types import (
     SonarrHistoryRecord,
     SonarrSeries,
 )
+from pearlarr.boundary import Json
+from pearlarr.json_narrow import is_json_list, is_json_obj
 
 _SCHEMA_DIR: Final = Path(__file__).resolve().parent.parent / "schemas"
 
@@ -144,7 +144,7 @@ _SONARR: Final = ("sonarr",)
 _RADARR: Final = ("radarr",)
 _BOTH: Final = ("sonarr", "radarr")
 
-# Every seadex_types model that mirrors an arr resource. Deliberately absent:
+# Every arr_models model that mirrors an arr resource. Deliberately absent:
 # the AniList models and seadex_dict dataclasses (not arr wire shapes), and
 # CommandBody/CommandFile - POST /command bodies are polymorphic (the
 # ManualImportCommand payload) and the spec's Command component models only the

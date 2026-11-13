@@ -56,6 +56,7 @@ import pytest
 import yaml
 
 import pearlarr.arr_http as arr_http
+from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.cli import run_single
 from pearlarr.config import AppConfig, Arr
@@ -63,7 +64,6 @@ from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.manual_import import EntryClaim, EntryNames, PendingImport, normalize_basename
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
-from pearlarr.seadex_types import Json
 from pearlarr.stamps import stamp_of
 
 from .builders import make_config

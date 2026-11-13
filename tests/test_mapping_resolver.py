@@ -31,7 +31,15 @@ from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
 
 import pearlarr.mappings as m
-from pearlarr.anibridge import AniBridge, AniBridgeGraph, _parse_ranges
+from pearlarr.anibridge import (
+    NO_ALIASES,
+    AniBridge,
+    AniBridgeGraph,
+    SpecialAliases,
+    SpecialAliasing,
+    TvdbMappings,
+    _parse_ranges,
+)
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsMap,
@@ -48,7 +56,6 @@ from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
 from pearlarr.reporter import RunContext
 from pearlarr.run_services import RunServices
-from pearlarr.seadex_types import NO_ALIASES, SpecialAliases, SpecialAliasing, TvdbMappings
 from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, make_services, sonarr_ep

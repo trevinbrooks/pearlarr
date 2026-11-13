@@ -7,7 +7,7 @@ from typing import Self
 from ._state import NumberedRun, Placer, TorrentFile
 from ..placement_types import PlacementVerdict
 from ..release_names import sole_title_match
-from ..seadex_types import EpisodeKey, OrderOnlyKey
+from ..releases import EpisodeKey, OrderOnlyKey
 
 
 @dataclass(frozen=True, slots=True)

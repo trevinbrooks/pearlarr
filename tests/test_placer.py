@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import pytest
 
+from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo
 from pearlarr.manual_import import EntryNames
 from pearlarr.placement_types import (
     EMPTY_LISTING,
@@ -24,7 +25,7 @@ from pearlarr.placement_types import (
     TorrentListing,
 )
 from pearlarr.placer import NameFacts, assign_episode_ids
-from pearlarr.seadex_types import EpisodeKey, MatchedEpisode, ParsedFileInfo
+from pearlarr.releases import EpisodeKey
 
 from .builders import (
     batch,

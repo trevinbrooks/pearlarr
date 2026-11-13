@@ -6,8 +6,9 @@ from typing import override
 from .anibridge import AniBridge
 from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .arr_http import ArrHttp
+from .arr_models import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
+from .boundary import validate_each
 from .mappings import AnimeIdSets
-from .seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie, validate_each
 
 
 class AbstractRadarrClient(ABC):
@@ -71,7 +72,7 @@ class RadarrClient(AbstractRadarrClient):
     def movie_files(self, movie_id: int) -> list[MovieFile]:
         """Movie-file records for a movie (`/api/v3/moviefile`).
 
-        Each `MovieFileResource` is parsed into a `seadex_types.MovieFile`
+        Each `MovieFileResource` is parsed into an `arr_models.MovieFile`
         view at this client boundary.
 
         Returns an empty list (with a warning) on a non-200 or a transient request

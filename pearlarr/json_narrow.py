@@ -1,7 +1,7 @@
 """Runtime JSON narrowing: `TypeIs` guards for walking untyped parsed JSON.
 
 `response.json()` yields `Any`. These guards narrow one container level at
-a time to the `seadex_types.Json` alias, so a walk stays typed without
+a time to the `boundary.Json` alias, so a walk stays typed without
 casts. `isinstance` can't inspect element types, so the guarantee is one
 level deep - each hop re-narrows the `Json` it pulled out, which is exactly
 how a JSON walk proceeds.
@@ -9,7 +9,7 @@ how a JSON walk proceeds.
 
 from typing import TypeIs
 
-from .seadex_types import Json
+from .boundary import Json
 
 
 def is_json_obj(value: object) -> TypeIs[dict[str, Json]]:
