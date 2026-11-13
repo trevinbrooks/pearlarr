@@ -31,7 +31,6 @@ from pearlarr.cache import (
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
-from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_cache import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
@@ -39,6 +38,7 @@ from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
 from .builders import cached_as_done, claim_al_ids, make_entry_record, pending_import, title_claim
+from .fakes import RecordingHub
 
 # Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed. It never computes one, so any string works here.

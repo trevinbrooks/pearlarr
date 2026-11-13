@@ -41,8 +41,9 @@ from pearlarr.anilist_client import (
 )
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
-from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import PROJECT_URL
+
+from .fakes import RecordingHub
 
 
 def _no_sleep(_seconds: float) -> None:

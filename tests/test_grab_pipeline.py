@@ -45,7 +45,6 @@ from pearlarr.output import (
     install_hub,
     severity_of,
 )
-from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import OwnedAtGrab, PendingImport
 from pearlarr.releases import AnotherTitlesCounts, Release, SeadexDict, SkipReason
 from pearlarr.stamps import now_stamp, stamp_of
@@ -69,7 +68,7 @@ from .builders import (
     pending_import_update,
     rg_group,
 )
-from .fakes import diagnostic_messages, install_recording_hub
+from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[GrabResult]]:

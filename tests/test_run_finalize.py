@@ -35,7 +35,6 @@ from pearlarr.import_wait import ImportWaitManager
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounter, TitleHeader
 from pearlarr.output.events import TitleState
-from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressCallback
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
@@ -54,7 +53,7 @@ from .builders import (
     make_services,
     pending_import,
 )
-from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, install_recording_hub
+from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, RecordingHub, install_recording_hub
 
 
 class _FakeGateway:

@@ -17,7 +17,6 @@ from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity, install_hub
-from pearlarr.output.recording import RecordingHub
 from pearlarr.radarr_strategy import RadarrStrategy
 
 from .builders import (
@@ -30,7 +29,7 @@ from .builders import (
     make_torrent_record,
     rg_group,
 )
-from .fakes import FakeRadarrClient
+from .fakes import FakeRadarrClient, RecordingHub
 
 
 def _torrent(

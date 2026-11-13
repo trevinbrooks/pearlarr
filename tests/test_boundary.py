@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from pearlarr.arr_models import MovieFile, QueueRecord, SonarrSeries
 from pearlarr.boundary import BoundaryContractError, validate_each
 from pearlarr.output import Diagnostic, Severity, install_hub
-from pearlarr.output.recording import RecordingHub
+
+from .fakes import RecordingHub
 
 # --- validate_each ------------------------------------------------------------
 
