@@ -18,11 +18,11 @@ from typing import override
 import httpx
 import pytest
 
+from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import ArrRunState, Title
 from pearlarr.pending_import import TitleNames
-from pearlarr.run_services import LegServices
 
 from .builders import (
     AddStatus,
@@ -84,7 +84,7 @@ class TestCachedEntrySkip:
     """
 
     @staticmethod
-    def _run(cache: FakeCacheStore) -> LegServices:
+    def _run(cache: FakeCacheStore) -> ArrRunServices:
         # is_unchanged touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
         # name backfill asks. ctx defaults to a SONARR ArrRunState (make_services).
@@ -236,7 +236,7 @@ class TestCachedEntrySkip:
             _records=_CtxBind(),
         )
         run.mark_dirty([7])
-        run.bind_leg(run.ctx)
+        run.bind_arr_run(run.ctx)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
@@ -250,7 +250,7 @@ class TestACheckedTitleLosesItsStamp:
     _ENTRY = make_entry_record(updated_at=_CACHED_ON)
 
     @staticmethod
-    def _run(cache: FakeCacheStore, **wiring: object) -> LegServices:
+    def _run(cache: FakeCacheStore, **wiring: object) -> ArrRunServices:
         return make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
@@ -258,7 +258,7 @@ class TestACheckedTitleLosesItsStamp:
             **wiring,
         )
 
-    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> LegServices:
+    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> ArrRunServices:
         """A run made to check entry 7 again over its cached row, as a library change makes it."""
 
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
@@ -269,7 +269,7 @@ class TestACheckedTitleLosesItsStamp:
         run.mark_dirty([7])
         return run
 
-    def _grab(self, run: LegServices) -> None:
+    def _grab(self, run: ArrRunServices) -> None:
         """The check's tail over one flagged release, hash h1, seeded as a strategy seeds it."""
 
         run.grab_and_cache(
@@ -379,7 +379,7 @@ class TestFallbackSatisfiedResurfacing:
 class _CtxBind:
     """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         del state
 
 
@@ -472,7 +472,7 @@ class TestResolveTitle:
     """`resolve_title` shows AniList's title, else the arr's own, else the id form."""
 
     @staticmethod
-    def _run(client: ScriptedAniListClient, arr_title: str = "") -> LegServices:
+    def _run(client: ScriptedAniListClient, arr_title: str = "") -> ArrRunServices:
         run = make_services(_anilist=make_anilist_gateway(client))
         run._ctx.arr_title = arr_title
         return run

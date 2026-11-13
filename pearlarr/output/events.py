@@ -16,7 +16,7 @@ from ..releases import NO_ELSEWHERE, ElsewhereCounts
 from ..wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
-    from ..leg_state import ArrRunStats
+    from ..arr_run_state import ArrRunStats
 
 
 class TitleState(StrEnum):
@@ -384,7 +384,7 @@ class NeedsActionFact:
 
 
 @dataclass(frozen=True, slots=True)
-class LegTally:
+class ArrRunTally:
     """`RunStats` frozen at summary time."""
 
     checked: int
@@ -403,7 +403,7 @@ class LegTally:
     held_by_cap: int
 
     @classmethod
-    def from_stats(cls, stats: ArrRunStats) -> LegTally:
+    def from_stats(cls, stats: ArrRunStats) -> ArrRunTally:
         return cls(
             checked=stats.checked,
             added=tuple(
@@ -435,14 +435,14 @@ class LegTally:
 
 
 @dataclass(frozen=True, slots=True)
-class LegSummary:
+class ArrRunSummary:
     """The whole end-of-run scoreboard as one value."""
 
     arr: Arr
     dry_run_note: str | None
     """The dry-run note, None on a real run."""
     added_count: int
-    tally: LegTally
+    tally: ArrRunTally
     wait_mode_on: bool
     warnings: int
     errors: int
@@ -458,7 +458,7 @@ class LegSummary:
 class RunSummaryReady:
     """The end-of-run summary is ready."""
 
-    summary: LegSummary
+    summary: ArrRunSummary
 
 
 # --- wait pass ------------------------------------------------------------------
@@ -627,7 +627,7 @@ class WaitFinished:
 
 
 @dataclass(frozen=True, slots=True)
-class LegFinished:
+class ArrRunFinished:
     """The run-close boundary."""
 
     arr: Arr
@@ -785,7 +785,7 @@ type Event = (
     | WaitProgress
     | RowFinished
     | WaitFinished
-    | LegFinished
+    | ArrRunFinished
     | Diagnostic
     | PathsShown
     | StarterConfigWritten
@@ -849,7 +849,7 @@ def severity_of(event: Event) -> Severity:
             | WaitStarted()
             | WaitProgress()
             | WaitFinished()
-            | LegFinished()
+            | ArrRunFinished()
             | PathsShown()
             | StarterConfigWritten()
             | ConfigValidated()

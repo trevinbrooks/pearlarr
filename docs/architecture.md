@@ -10,7 +10,7 @@ A run is one sweep over every configured arr: a single `pearlarr run single`, or
 
 For one arr:
 
-1. builds the runtime dependencies (`LegDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
+1. builds the runtime dependencies (`ArrRunDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph.
 3. for each ID with a SeaDex entry that changed since it was last handled: selects the releases to grab (the planner), skips what the arr already owns, and adds the survivors to qBittorrent (the grab pipeline).
 4. notifies (Discord embed per grab), records the decisions in the cache, and prints the run summary.
@@ -42,7 +42,7 @@ flowchart LR
 
 | Subsystem | Modules | Role |
 | --- | --- | --- |
-| Composition | `cli`, `bootstrap`, `run_loop`, `run_services`, `sonarr_strategy`, `radarr_strategy` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
+| Composition | `cli`, `bootstrap`, `arr_run_loop`, `arr_run_services`, `sonarr_strategy`, `radarr_strategy` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
 | Configuration | `config`, `paths`, `env_registry` | validated settings, the data directory, env inventory |
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
@@ -53,7 +53,7 @@ flowchart LR
 | State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
-| Reporting | `reporter`, `leg_state` | each leg's state and tally, the run summary and needs-action rows |
+| Reporting | `reporter`, `arr_run_state` | each leg's state and tally, the run summary and needs-action rows |
 
 ## Design notes
 

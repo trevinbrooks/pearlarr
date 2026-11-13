@@ -11,19 +11,19 @@ from typing import Final
 
 import pytest
 
+from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.config import Arr
-from pearlarr.leg_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     Accent,
+    ArrRunFinished,
+    ArrRunSummary,
+    ArrRunTally,
     BootStepFinished,
     Diagnostic,
     EntryHeader,
     GrabFact,
     GrabFailed,
     ItemStarted,
-    LegFinished,
-    LegSummary,
-    LegTally,
     NeedsActionCause,
     NeedsActionFact,
     PlacedBy,
@@ -70,11 +70,11 @@ def test_dry_run_derives_from_the_note() -> None:
     A noteless "DRY RUN" title (the literal-None render bug class) is unrepresentable.
     """
 
-    real = LegSummary(
+    real = ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=LegTally.from_stats(ArrRunStats()),
+        tally=ArrRunTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -148,7 +148,7 @@ def test_structural_events_default_to_info() -> None:
     # The close boundaries are markers, not tallied facts: INFO tallies as nothing
     # in the warnings / errors counts.
     assert severity_of(ScanFinished(arr=Arr.SONARR)) is Severity.INFO
-    assert severity_of(LegFinished(arr=Arr.SONARR)) is Severity.INFO
+    assert severity_of(ArrRunFinished(arr=Arr.SONARR)) is Severity.INFO
 
 
 def test_diagnostic_defaults_are_ambient_and_shared() -> None:
@@ -160,7 +160,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
     assert not diag.file_only
 
 
-# --- LegTally: the single conversion site ------------------------------------------
+# --- ArrRunTally: the single conversion site ------------------------------------------
 
 
 def test_run_tally_freezes_run_stats_whole() -> None:
@@ -185,7 +185,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     stats.added.append(grab)
     stats.needs_action.append(needs)
 
-    tally = LegTally.from_stats(stats)
+    tally = ArrRunTally.from_stats(stats)
 
     grab_fact = GrabFact(title="T", coverage="S01", url="u", name="n", group="G")
     needs_fact = NeedsActionFact(
@@ -196,7 +196,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         reason="private tracker",
         cause=NeedsActionCause.PRIVATE_ONLY,
     )
-    assert tally == LegTally(
+    assert tally == ArrRunTally(
         checked=182,
         added=(grab_fact,),
         up_to_date=161,
@@ -217,13 +217,13 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     assert tally.added == (grab_fact,)
 
 
-# Fields allowed to differ between ArrRunStats and LegTally - deliberately empty.
+# Fields allowed to differ between ArrRunStats and ArrRunTally - deliberately empty.
 _PARITY_ALLOWLIST: Final[frozenset[str]] = frozenset()
 
 
 def test_run_tally_field_names_mirror_run_stats() -> None:
     stats_names = {f.name for f in dataclasses.fields(ArrRunStats)} - _PARITY_ALLOWLIST
-    tally_names = {f.name for f in dataclasses.fields(LegTally)} - _PARITY_ALLOWLIST
+    tally_names = {f.name for f in dataclasses.fields(ArrRunTally)} - _PARITY_ALLOWLIST
     assert stats_names == tally_names
 
 

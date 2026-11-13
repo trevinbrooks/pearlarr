@@ -5,13 +5,13 @@ from typing import final
 
 from .arr_activity import ArrActivityMonitor
 from .arr_models import ArrItem
+from .arr_run_services import ArrRunDeps, ArrRunServices
+from .arr_run_state import ArrRunState, unresolved_label
 from .arr_strategy import ArrStrategy, ImportCompleter
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
-from .leg_state import ArrRunState, unresolved_label
 from .output import hub_error, hub_note, hub_warn
 from .output.console_text import arr_item_noun, count_noun
-from .run_services import LegDeps, LegServices
 from .wait_types import ImportWaitMode, PendingImportState
 from .wait_view import (
     WaitResult,
@@ -19,10 +19,10 @@ from .wait_view import (
 
 
 @final
-class LegLoop:
+class ArrRunLoop:
     """The Arr-agnostic run loop driving an injected strategy."""
 
-    def __init__(self, deps: LegDeps, services: LegServices) -> None:
+    def __init__(self, deps: ArrRunDeps, services: ArrRunServices) -> None:
         """Receive the shared collaborators + services hub and set up per-run state."""
 
         self._config = deps.config
@@ -38,22 +38,22 @@ class LegLoop:
 
         self._services = services
 
-        # (Re)set at the top of run_leg. The None placeholder is replaced before any import hook runs.
+        # (Re)set at the top of run_arr. The None placeholder is replaced before any import hook runs.
         # Held under the narrow, non-generic ImportCompleter ABC (a concrete ArrStrategy subclasses it), so no ItemT cast.
         self._active_strategy: ImportCompleter | None = None
 
         # Adopt the hub's placeholder ctx, never mint a second one.
-        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_leg.
+        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_arr.
         self._ctx = services.ctx
 
         self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, records=services.records)
-        self.bind_leg(self._ctx)
+        self.bind_arr_run(self._ctx)
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the fresh run context to every per-run collaborator."""
 
-        self._services.bind_leg(state)
-        self._wait_manager.bind_leg(state, self._active_strategy)
+        self._services.bind_arr_run(state)
+        self._wait_manager.bind_arr_run(state, self._active_strategy)
 
     def start_arr_run(
         self,
@@ -70,7 +70,7 @@ class LegLoop:
             started_monotonic=time.monotonic(),
             counts_mark=self._reporter.counts_mark(),
         )
-        self.bind_leg(self._ctx)
+        self.bind_arr_run(self._ctx)
 
     @property
     def _wait_active(self) -> bool:
@@ -80,7 +80,7 @@ class LegLoop:
 
     # --- Run orchestration --------------------------------------------------
 
-    def run_leg[ItemT: ArrItem](
+    def run_arr[ItemT: ArrItem](
         self,
         strategy: ArrStrategy[ItemT],
         *,
@@ -278,7 +278,7 @@ class LegLoop:
         """Shared run tail: the one-cycle check + tally, print the summary, THEN the waiting monitor."""
 
         # Close the scan before anything below logs: these diagnostics are run-level facts.
-        # Always ScanStarted-paired: run_leg, the only caller, has no early return between log_arr_start and here.
+        # Always ScanStarted-paired: run_arr, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._ctx.arr)
 
         preview = self._services.is_dry_run()

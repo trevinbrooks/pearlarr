@@ -25,11 +25,13 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
+from pearlarr.arr_run_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     Accent,
+    ArrRunSummary,
+    ArrRunTally,
     CapReached,
     EntryHeader,
     Event,
@@ -37,8 +39,6 @@ from pearlarr.output import (
     GrabFailed,
     GrabStatus,
     ItemStarted,
-    LegSummary,
-    LegTally,
     NeedsActionCause,
     RecommendedGroup,
     ReleaseLabel,
@@ -497,11 +497,11 @@ def _rich_stats() -> ArrRunStats:
 
 
 SUMMARY_RICH = RunSummaryReady(
-    summary=LegSummary(
+    summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=2,
-        tally=LegTally.from_stats(_rich_stats()),
+        tally=ArrRunTally.from_stats(_rich_stats()),
         wait_mode_on=True,
         warnings=2,
         errors=1,
@@ -586,11 +586,11 @@ def _dry_stats() -> ArrRunStats:
 
 
 SUMMARY_DRY_HAS_CLIENT = RunSummaryReady(
-    summary=LegSummary(
+    summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note="nothing grabbed",
         added_count=1,
-        tally=LegTally.from_stats(_dry_stats()),
+        tally=ArrRunTally.from_stats(_dry_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -653,11 +653,11 @@ def _preview_stats() -> ArrRunStats:
 
 
 SUMMARY_DRY_NO_CLIENT = RunSummaryReady(
-    summary=LegSummary(
+    summary=ArrRunSummary(
         arr=Arr.RADARR,
         dry_run_note="qBittorrent not configured; nothing grabbed",
         added_count=1,
-        tally=LegTally.from_stats(_preview_stats()),
+        tally=ArrRunTally.from_stats(_preview_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -692,11 +692,11 @@ SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
 
 
 SUMMARY_MINIMAL = RunSummaryReady(
-    summary=LegSummary(
+    summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=LegTally.from_stats(ArrRunStats()),
+        tally=ArrRunTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -740,11 +740,11 @@ def _wait_off_stats() -> ArrRunStats:
 
 
 SUMMARY_WAIT_OFF = RunSummaryReady(
-    summary=LegSummary(
+    summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=LegTally.from_stats(_wait_off_stats()),
+        tally=ArrRunTally.from_stats(_wait_off_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,

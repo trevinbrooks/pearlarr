@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from seadex import EntryRecord
 
 from . import coverage as _coverage
+from .arr_run_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow, is_dry_run
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingImportUpdate
-from .leg_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow, is_dry_run
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_import_store import PendingImportStore
@@ -22,8 +22,8 @@ from .torrent_service import GRAB_FAILURES, PARSEABLE_TRACKERS, AddResult, AddSt
 from .wait_types import ImportWaitMode
 
 if TYPE_CHECKING:
-    # Annotation-only: run_services imports this module at runtime (cycle).
-    from .run_services import LegDeps
+    # Annotation-only: arr_run_services imports this module at runtime (cycle).
+    from .arr_run_services import ArrRunDeps
 
 
 NO_SEEDS: Mapping[str, PendingImportUpdate] = MappingProxyType({})
@@ -115,7 +115,7 @@ class GrabPipeline:
     def __init__(
         self,
         *,
-        deps: "LegDeps",
+        deps: "ArrRunDeps",
         ctx: ArrRunState,
         records: PendingImportStore,
     ) -> None:
@@ -130,10 +130,10 @@ class GrabPipeline:
         self.qbit = deps.qbit
         # The hub's record seam, which the hub binds each run.
         self._records = records
-        # Rebound each run by bind_leg to the same ctx the engine holds, so the grab bookkeeping stays in sync.
+        # Rebound each run by bind_arr_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
         self._ctx = state

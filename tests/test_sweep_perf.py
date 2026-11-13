@@ -19,6 +19,7 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
+from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import ExternalIds, TitleMapping
@@ -31,7 +32,6 @@ from pearlarr.parse_cache import (
     parse_to_json,
 )
 from pearlarr.releases import SeadexDict
-from pearlarr.run_services import LegServices
 from pearlarr.seadex_gateway import SeaDexMiss
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
@@ -510,7 +510,7 @@ class TestAlIdNeedsScan:
     """
 
     @staticmethod
-    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> LegServices:
+    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> ArrRunServices:
         return make_services(_seadex=_Seadex(entry), cache_store=cache, **cfg)
 
     def test_no_seadex_entry_does_not_need_scan(self) -> None:

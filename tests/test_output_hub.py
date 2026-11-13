@@ -21,10 +21,10 @@ from pearlarr.config import Arr, LogFormat
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     STRIKE_LIMIT,
+    ArrRunFinished,
     Diagnostic,
     Event,
     FileLogRenderer,
-    LegFinished,
     NullRenderer,
     OutputHub,
     Renderer,
@@ -455,7 +455,7 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
     assert flaky.calls == STRIKE_LIMIT + 1  # re-armed, not process-latched
 
 
-def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -> None:
+def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() -> None:
     """A leg close (RunFinished) is not a cycle turnover.
 
     Strikes are a per-cycle budget: they accumulate across the RunFinished leg
@@ -473,7 +473,7 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
     assert sub.strikes == STRIKE_LIMIT - 1
 
     # The leg boundary renders cleanly: it neither strikes nor resets the count.
-    hub.emit(LegFinished(arr=Arr.SONARR))
+    hub.emit(ArrRunFinished(arr=Arr.SONARR))
     assert sub.strikes == STRIKE_LIMIT - 1
     assert flaky.closes == 0
 
@@ -781,7 +781,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
     for i in range(cap):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-    structural = LegFinished(arr=Arr.SONARR)
+    structural = ArrRunFinished(arr=Arr.SONARR)
     hub.emit(structural)  # non-diagnostic at the cap: appended, never shed
 
     gated.release.set()

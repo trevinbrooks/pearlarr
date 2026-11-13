@@ -21,12 +21,12 @@ from rich.console import Console
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
+    ArrRunFinished,
     CapturedTrace,
     Diagnostic,
     Event,
     GrabFailed,
     ItemStarted,
-    LegFinished,
     NextRunScheduled,
     ReleaseSkipped,
     RichRenderer,
@@ -150,11 +150,11 @@ class TestUnwindPlacement:
             ScanStarted(arr=Arr.SONARR, total=182),
             ItemStarted(arr=Arr.SONARR, index=12, total=182, title="Frieren"),
             ScopeOpened(scope=_ENTRY, label="Frieren"),
-            LegFinished(arr=Arr.SONARR),
+            ArrRunFinished(arr=Arr.SONARR),
             _warning("Sonarr run failed"),
         )
 
-        # LegFinished renders nothing itself. It just empties the frontier.
+        # ArrRunFinished renders nothing itself. It just empties the frontier.
         assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
@@ -172,14 +172,14 @@ class TestUnwindPlacement:
         assert _lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
 
     def test_run_finished_also_clears_an_open_boot_section(self) -> None:
-        # A leg that dies inside LegDeps.build never opens a scan: the boot section
+        # A leg that dies inside ArrRunDeps.build never opens a scan: the boot section
         # is depth-1 too, so the same close evicts it and the error lands at column 0.
         renderer, stream = _renderer()
 
         _feed(
             renderer,
             ScopeOpened(scope=_BOOT, label="boot"),
-            LegFinished(arr=Arr.SONARR),
+            ArrRunFinished(arr=Arr.SONARR),
             _warning("cache.db was written by a newer Pearlarr"),
         )
 
@@ -193,8 +193,8 @@ class TestUnwindPlacement:
         _feed(
             renderer,
             ScanStarted(arr=Arr.SONARR, total=1),
-            LegFinished(arr=Arr.SONARR),
-            LegFinished(arr=Arr.SONARR),
+            ArrRunFinished(arr=Arr.SONARR),
+            ArrRunFinished(arr=Arr.SONARR),
             _warning("after the leg"),
         )
 

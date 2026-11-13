@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Final, assert_never, final
 
 from .events import (
+    ArrRunFinished,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -41,7 +42,6 @@ from .events import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LegFinished,
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
@@ -119,7 +119,7 @@ class OpenScopes:
                 self._push(ScopeKind.BOOT_STEP, label, scope)
             case BootStepFinished(scope=scope):
                 self._pop_through(scope)
-            case RunStarted() | CycleStarted() | LegFinished():
+            case RunStarted() | CycleStarted() | ArrRunFinished():
                 self._close_at(1)  # unwind to root (all levels)
             case ScanStarted(arr=arr):
                 self._push(ScopeKind.RUN, str(arr))

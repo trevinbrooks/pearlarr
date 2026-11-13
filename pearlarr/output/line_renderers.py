@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import ClassVar, Final, NamedTuple, TextIO, assert_never, final, override
 
 from .events import (
+    ArrRunFinished,
+    ArrRunSummary,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -38,8 +40,6 @@ from .events import (
     GrabStatus,
     ItemStarted,
     JsonValue,
-    LegFinished,
-    LegSummary,
     NeedsActionFact,
     NextRunScheduled,
     PathsShown,
@@ -296,7 +296,7 @@ def _pulse_fact(event: WaitProgress) -> _Fact:
     return _Fact("wait_pulse", Severity.INFO, "still waiting", fields, event.scope, "wait")
 
 
-def _fields_summary_head(summary: LegSummary) -> tuple[Field, ...]:
+def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
     tally = summary.tally
     fields: list[Field] = [Field("arr", str(summary.arr))]
     if summary.dry_run_note is not None:
@@ -470,7 +470,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
             return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")
-        case LegFinished(arr=arr):
+        case ArrRunFinished(arr=arr):
             return _Fact("run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
             return _Fact("diagnostic", severity, message, _placement_fields(event, crumbs), None, origin)
@@ -510,7 +510,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
 
 # Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker), plus the effective-config
 # document (its config object has no logfmt line).
-_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, LegFinished, EffectiveConfigShown})
+_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, ArrRunFinished, EffectiveConfigShown})
 # Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 
@@ -525,7 +525,7 @@ def _scope_bracket(scope: ScopeId | None, crumbs: OpenScopes, fallback: str) -> 
     return fallback
 
 
-def _record_lines(summary: LegSummary) -> tuple[_Line, ...]:
+def _record_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
     needs = tuple(
         _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(record))
         for record in summary.tally.needs_action

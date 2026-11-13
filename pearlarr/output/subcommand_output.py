@@ -19,6 +19,7 @@ import typer
 import yaml
 
 from .events import (
+    ArrRunFinished,
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -41,7 +42,6 @@ from .events import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LegFinished,
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
@@ -135,7 +135,7 @@ class CliTextRenderer(Renderer):
                 | WaitProgress()
                 | RowFinished()
                 | WaitFinished()
-                | LegFinished()
+                | ArrRunFinished()
             ):
                 # Run-lifecycle events never reach the cli seat.
                 pass

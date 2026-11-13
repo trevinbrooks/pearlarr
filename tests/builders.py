@@ -31,6 +31,8 @@ from pearlarr.arr_models import (
     QueueRecord,
     SonarrEpisode,
 )
+from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.cache import (
     _ENTRY_COLUMNS,
     AbstractCacheStore,
@@ -46,7 +48,6 @@ from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeSt
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
-from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounter, emit_to_hub
@@ -83,7 +84,6 @@ from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, EpisodeRecord, GroupReleases, OrderOnlyKey, Release, SeadexDict
 from pearlarr.reporter import RunReporter
-from pearlarr.run_services import LegDeps, LegServices
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
 from pearlarr.skyhook_client import AbstractSkyHookClient
@@ -699,7 +699,7 @@ def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCat
     return TorrentService(qbit=None, web=web, categories=categories, tags=[], logger=logger)
 
 
-def make_services(**overrides: Any) -> LegServices:
+def make_services(**overrides: Any) -> ArrRunServices:
     """A bare `RunServices` carrying only the attributes its methods read."""
 
     logger = make_logger()
@@ -715,11 +715,11 @@ def make_services(**overrides: Any) -> LegServices:
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
         "_clock": FakeClock(),
-        # `bind_leg` tells the torrent service who imports.
+        # `bind_arr_run` tells the torrent service who imports.
         "_torrents": _real_torrents(logger, httpx.Client(), make_categories()),
     }
     defaults.update(overrides)
-    return make_bare_instance(LegServices, **defaults)
+    return make_bare_instance(ArrRunServices, **defaults)
 
 
 def make_run_deps(
@@ -731,7 +731,7 @@ def make_run_deps(
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
     categories: ArrCategoryResolver | None = None,
-) -> LegDeps:
+) -> ArrRunDeps:
     """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview).
 
     `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
@@ -745,7 +745,7 @@ def make_run_deps(
     # No transport: the config passthrough (no download-client fetch under test). Shared with
     # torrents below, matching production's single resolver instance.
     categories = categories or make_categories(config)
-    return LegDeps(
+    return ArrRunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
         # None: the strategies' require_connection fallback binds lazily, so the keys-missing
@@ -936,9 +936,9 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     }
     defaults.update(overrides)
     if "_records" not in defaults:
-        # The record seam binds the FINAL store + ctx, exactly as the real ctor + bind_leg do.
+        # The record seam binds the FINAL store + ctx, exactly as the real ctor + bind_arr_run do.
         records = PendingImportStore(defaults["cache_store"])
-        records.bind_leg(defaults["_ctx"])
+        records.bind_arr_run(defaults["_ctx"])
         defaults["_records"] = records
     return make_bare_instance(GrabPipeline, **defaults)
 
@@ -966,7 +966,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     qbit = overrides.pop("qbit", None)
     clock = overrides.pop("clock", None) or FakeClock()
-    # `LegDeps.categories` as a run would hold it. With no qBittorrent it is fetchless and the config
+    # `ArrRunDeps.categories` as a run would hold it. With no qBittorrent it is fetchless and the config
     # category passes through. With one, it reads as if the arr's own client carried the config's categories.
     categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
@@ -978,7 +978,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         raise TypeError(msg)
 
     records = PendingImportStore(cache_store)
-    records.bind_leg(ctx)
+    records.bind_arr_run(ctx)
     probes = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
@@ -1000,7 +1000,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         probes=probes,
         _cleanup=cleanup,
     )
-    mgr.bind_leg(ctx, strategy)
+    mgr.bind_arr_run(ctx, strategy)
     return mgr
 
 
@@ -1565,7 +1565,7 @@ def make_sonarr_sync(
     deps = make_run_deps(
         config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client, categories=categories
     )
-    services = LegServices(deps, Arr.SONARR)
+    services = ArrRunServices(deps, Arr.SONARR)
     strat = SonarrStrategy(
         deps,
         services,
@@ -1585,7 +1585,7 @@ def make_radarr_sync(
     """A `RadarrSync` built through its real `__init__`, injecting a typed client."""
 
     deps = make_run_deps(config=config, cache_store=cache_store)
-    services = LegServices(deps, Arr.RADARR)
+    services = ArrRunServices(deps, Arr.RADARR)
     return RadarrStrategy(deps, services, radarr if radarr is not None else FakeRadarrClient())
 
 

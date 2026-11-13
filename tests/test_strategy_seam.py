@@ -42,6 +42,8 @@ from pearlarr.arr_models import (
     SonarrEpisode,
     SonarrItem,
 )
+from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, ImportSnapshot, trusted_groups
@@ -49,7 +51,6 @@ from pearlarr.file_paths import normalize_name
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.leg_state import ArrRunState, Title
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
@@ -67,7 +68,6 @@ from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, EpisodeRecord, GrabHold, OrderOnlyKey, SeadexDict
-from pearlarr.run_services import LegServices
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.sonarr_state import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
@@ -163,7 +163,7 @@ class GetAniListIdsCall(NamedTuple):
     log_ignored: bool = True
 
 
-class _FakeRunServices(LegServices):
+class _FakeRunServices(ArrRunServices):
     """A scripted `RunServices` - the seam a strategy holds as `self._services`.
 
     A REAL `RunServices` subclass (the seam name is literal now, so it also
@@ -193,7 +193,7 @@ class _FakeRunServices(LegServices):
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
         self._records = PendingImportStore(self.cache_store)
-        self._records.bind_leg(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
+        self._records.bind_arr_run(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._ignored = ignored or {}
         self._prologue_entry = prologue_entry
@@ -338,10 +338,10 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"bind_leg", "ctx", "is_dry_run", "mark_dirty", "pay_pause", "selection_changed"}
+    lifecycle = {"bind_arr_run", "ctx", "is_dry_run", "mark_dirty", "pay_pause", "selection_changed"}
     surface = {
         name
-        for name, member in vars(LegServices).items()
+        for name, member in vars(ArrRunServices).items()
         if not name.startswith("_") and (callable(member) or isinstance(member, property))
     }
     overridden = {name for name in vars(_FakeRunServices) if not name.startswith("_")}

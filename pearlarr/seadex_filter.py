@@ -9,17 +9,17 @@ from rich.console import Console
 from seadex import EntryRecord, TorrentRecord
 
 from .arr_models import ArrFiles, SonarrEpisode
+from .arr_run_state import ArrRunState
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
-from .leg_state import ArrRunState
 from .output import Accent, StyledValue, hub_warn
 from .output.console_text import indent_string
 from .planner import GrabPlan
 from .releases import GroupReleases, Release, SeadexDict, carries_ignored_tag, ignore_tag_set
 
 if TYPE_CHECKING:
-    # Annotation-only: run_services imports this module at runtime (cycle).
-    from .run_services import LegDeps
+    # Annotation-only: arr_run_services imports this module at runtime (cycle).
+    from .arr_run_services import ArrRunDeps
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
@@ -54,7 +54,7 @@ def file_size_cover(listings: Iterable[Iterable[int]]) -> Counter[int]:
 class SeadexReleaseFilter:
     """Turns a SeaDex `EntryRecord` into the run's filtered/ranked release dict.
 
-    Owns no per-run caches. It binds the run `RunContext` (`begin_run`)
+    Owns no per-run caches. It binds the run `ArrRunState` (`begin_run`)
     only so `filter_downloads` can stamp the private-only skip flags the grab tail
     later reads. `RunServices` keeps same-named thin
     delegators (`get_seadex_dict` / `filter_seadex_interactive` /
@@ -65,7 +65,7 @@ class SeadexReleaseFilter:
     def __init__(
         self,
         *,
-        deps: "LegDeps",
+        deps: "ArrRunDeps",
         ctx: ArrRunState,
     ) -> None:
         self._config = deps.config
@@ -73,11 +73,11 @@ class SeadexReleaseFilter:
         self.logger = deps.logger
         self._reporter = deps.reporter
         # Seeded with the services hub's placeholder ctx, rebound each run via
-        # bind_leg (the same object the hub holds, so a write here is seen by the
+        # bind_arr_run (the same object the hub holds, so a write here is seen by the
         # grab tail).
         self._ctx = ctx
 
-    def bind_leg(self, state: ArrRunState) -> None:
+    def bind_arr_run(self, state: ArrRunState) -> None:
         """Bind the run context `filter_downloads` stamps private-only flags onto."""
 
         self._ctx = state

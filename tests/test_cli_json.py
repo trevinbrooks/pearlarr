@@ -248,7 +248,7 @@ class TestHumanModeLeavesNoHub:
         assert leaked.err == ""
 
 
-class TestCliRunnerJsonLeg:
+class TestCliRunnerJsonArrRun:
     """End-to-end through typer: exit code + stream separation with `--json`."""
 
     def test_cache_stats_json_exit_and_streams(self, tmp_path: Path) -> None:

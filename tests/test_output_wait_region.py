@@ -21,9 +21,9 @@ from rich.spinner import Spinner
 
 from pearlarr.config import Arr
 from pearlarr.output import (
+    ArrRunFinished,
     Diagnostic,
     Event,
-    LegFinished,
     Phase,
     RichRenderer,
     RowFinished,
@@ -238,7 +238,7 @@ class TestFrontierTeardown:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, LegFinished(arr=Arr.SONARR))
+        _feed(renderer, ArrRunFinished(arr=Arr.SONARR))
         assert renderer._wait._live is None and not live.is_started
 
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:

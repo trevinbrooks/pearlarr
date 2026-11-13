@@ -13,12 +13,12 @@ import pytest
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr import seadex_filter
+from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.run_services import LegServices
 
 from .builders import (
     FakeCacheStore,
@@ -588,7 +588,7 @@ class TestInteractivePick:
         cache = FakeCacheStore()
         config = make_config(url="http://sonarr", api_key="key", interactive=True, sleep_time=0)
         deps = make_run_deps(config=config, cache_store=cache, seadex=FakeSeaDexSource({al_id: entry}))
-        services = LegServices(deps, Arr.RADARR)
+        services = ArrRunServices(deps, Arr.RADARR)
         strat = RadarrStrategy(deps, services, radarr_client=FakeRadarrClient())
         # Serve the title from the gateway's in-memory cache so no AniList query runs.
         deps.anilist.al_cache[al_id] = {"data": {"Media": {"title": {"english": "Movie", "romaji": None}}}}

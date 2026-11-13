@@ -22,6 +22,7 @@ import qbittorrentapi
 from seadex import Tracker
 
 from pearlarr import notify
+from pearlarr.arr_run_state import ArrRunState, NeedsActionKind, PerTitleState
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.file_paths import normalize_name
@@ -33,7 +34,6 @@ from pearlarr.grab_pipeline import (
     HoldRow,
 )
 from pearlarr.grab_placement import PendingImportUpdate
-from pearlarr.leg_state import ArrRunState, NeedsActionKind, PerTitleState
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
@@ -1427,7 +1427,7 @@ class TestGrabFailureContainment:
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Every boundary failure mode lands as ONE typed GrabFailed event (the
-        # old path fell through to run_loop's per-id traceback arm. The frozen
+        # old path fell through to arr_run_loop's per-id traceback arm. The frozen
         # fact carries no traceback by construction, and it tallies WARNING).
         torrents = FakeTorrents({}, raises={"h1": error})
         pipeline = _pipeline(torrents=torrents)

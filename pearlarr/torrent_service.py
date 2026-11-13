@@ -220,7 +220,7 @@ class TorrentService:
         # Taken at the first `mark_cross_seeds` whose categories can be read, and kept for the run like the service.
         self._look: _CategoryLook | None = None
 
-    def bind_leg(self, *, pearlarr_imports: bool) -> None:
+    def bind_arr_run(self, *, pearlarr_imports: bool) -> None:
         """Say who imports this run's downloads: Pearlarr, or the arr itself."""
 
         self._pearlarr_imports = pearlarr_imports
