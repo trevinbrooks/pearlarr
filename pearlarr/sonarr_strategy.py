@@ -398,9 +398,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
         # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
         # a CLI override agrees with the engine's persist/reconcile/blocking gates.
-        pending_seeds: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
+        pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
         if waits_on_imports:
-            pending_seeds = build_pending_import_updates(
+            pending_import_updates = build_pending_import_updates(
                 seadex_dict,
                 placed,
                 TitleFacts(
@@ -423,7 +423,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 update=update,
                 replaced_groups=sonarr_releases.groups(),
                 coverage=coverage,
-                pending_import_updates=pending_seeds,
+                pending_import_updates=pending_import_updates,
                 input_unread_groups=placed.input_unread_groups(seadex_dict),
                 # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
                 metadata_unread=(

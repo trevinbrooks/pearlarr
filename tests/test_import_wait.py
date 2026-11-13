@@ -535,7 +535,7 @@ def make_orchestration_manager(
         reporter=reporter or _RecordingReporter(),
         clock=clock if clock is not None else FakeClock(),
         strategy=strategy,
-        ctx=ArrRunState(arr=Arr.SONARR, grabbed_this_run={p.infohash: p for p in pending or []}),
+        state=ArrRunState(arr=Arr.SONARR, grabbed_this_run={p.infohash: p for p in pending or []}),
         **config_overrides,
     )
     for stored in stored_pending_imports or []:
@@ -2266,7 +2266,7 @@ def _attach_wait_manager(engine: ArrRunLoop) -> None:
         reporter=engine._reporter,
         logger=engine.logger,
         qbit=engine.qbit,
-        ctx=engine._state,
+        state=engine._state,
         strategy=engine._active_strategy,
     )
 
@@ -3008,7 +3008,7 @@ def _radarr_reconcile_manager(
         categories=make_categories(config, Arr.RADARR),
         strategy=strat,
         reporter=_RecordingReporter(),
-        ctx=ArrRunState(arr=Arr.RADARR),
+        state=ArrRunState(arr=Arr.RADARR),
     )
     for pending in radarr_pending_imports or []:
         store.put_pending_import_row(Arr.RADARR, pending.infohash, pending.to_json())
