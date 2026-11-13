@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from .anibridge import AniBridge
 from .arr_models import ArrItem
-from .mapping_store import AnimeIdColumn
+from .mapping_store import IdKind
 from .mappings import AnimeIdSets
 
 
@@ -25,7 +25,7 @@ class IdField:
     candidate set built for that id space.
     """
 
-    mapping_key: AnimeIdColumn  # e.g. "tmdb_movie_id" / "tvdb_id"
+    mapping_key: IdKind  # e.g. "tmdb_movie_id" / "tvdb_id"
     item_attr: str  # e.g. "tmdbId" / "tvdbId"
 
 

@@ -40,8 +40,8 @@ from .mapping_store import (
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
     AnidbMappingRow,
-    AnimeIdColumn,
     AnimeIdRow,
+    IdKind,
     MappingStore,
 )
 from .output import hub_warn
@@ -63,7 +63,7 @@ type AnimeIdsMap = dict[str, AnimeIdsRecord]
 """The parsed Kometa Anime-IDs JSON: `{name -> record}` (~16k entries)."""
 
 
-class MappingMode(Enum):
+class MappingKind(Enum):
     """The two closed kinds of episode mapping a SeaDex mapping can carry.
 
     A mapping either ships explicit AniBridge `tvdb_mappings` (season ->
@@ -72,8 +72,8 @@ class MappingMode(Enum):
     enum needs no defensive default arm.
     """
 
-    ANIME_IDS = "anime_ids"
-    ANIBRIDGE = "anibridge"
+    SEASON_OFFSET = "anime_ids"
+    EPISODE_RANGES = "anibridge"
 
 
 class MappingSource(Enum):
@@ -122,7 +122,7 @@ class TitleMapping:
             object.__setattr__(self, "special_aliasing", SpecialAliasing(tmdb_id, MappingProxyType(dict(aliases))))
 
     @property
-    def mode(self) -> MappingMode:
+    def mode(self) -> MappingKind:
         """Which episode-mapping mode this entry drives.
 
         ANIBRIDGE iff `tvdb_mappings` was attached. Tested with `is not
@@ -132,7 +132,7 @@ class TitleMapping:
 
         # Invariant: an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness
         # check would fall back to Anime-IDs season heuristics and over-grab.
-        return MappingMode.ANIBRIDGE if self.tvdb_mappings is not None else MappingMode.ANIME_IDS
+        return MappingKind.EPISODE_RANGES if self.tvdb_mappings is not None else MappingKind.SEASON_OFFSET
 
 
 def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
@@ -427,7 +427,7 @@ class AnimeIdSets(ABC):
     """
 
     @abstractmethod
-    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
+    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
         """DISTINCT external ids the Anime-IDs source carries for `column`."""
 
 
@@ -726,7 +726,7 @@ class MappingResolver(AnimeIdSets):
     # -- library-filter id sets ---------------------------------------------
 
     @override
-    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
+    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
         """DISTINCT external ids the Anime-IDs source carries for `column`.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
@@ -852,7 +852,7 @@ class MappingResolver(AnimeIdSets):
 
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order).
-        def merge(column: AnimeIdColumn, value: object) -> None:
+        def merge(column: IdKind, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 if row.anilist_id not in anilist_mappings:
                     anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)

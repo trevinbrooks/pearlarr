@@ -38,7 +38,7 @@ from pearlarr.protocols import ImportCompleter
 from pearlarr.run_loop import LegLoop
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_gateway import SkyHookGateway
-from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
+from pearlarr.tvdb_orders import AIRED_ORDER, SeriesOrderFacts
 from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeKind
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
@@ -61,7 +61,7 @@ class _FakeGateway:
     """Stands in for the AniList/SeaDex gateways: a cache-warm no-op (0 fetched)."""
 
     # The loop reads each gateway's outage flag. Never down unless a test sets it.
-    outage: bool = False
+    unreachable: bool = False
 
     def load_cache(self) -> None:
         pass
@@ -541,7 +541,7 @@ class TestBootNotes:
         # The prefetch "return" is how many ids NEEDED fetching. On an outage
         # none were actually fetched, so a count note would be a lie.
         seadex = _FakeGateway()
-        seadex.outage = True
+        seadex.unreachable = True
 
         step = self._step(self._run(logger, seadex=seadex), "Fetching SeaDex entries")
 
@@ -677,7 +677,7 @@ class TestSelectionRecheck:
 
     def test_outage_run_does_not_vouch(self, logger: logging.Logger) -> None:
         outage = _FakeGateway()
-        outage.outage = True
+        outage.unreachable = True
         engine, _ = self._run(logger, seadex=outage)
 
         assert self._vouched_any(engine) is False
@@ -685,7 +685,7 @@ class TestSelectionRecheck:
     def test_an_anilist_outage_run_vouches_and_commits_the_checkpoint(self, logger: logging.Logger) -> None:
         # A title AniList left unread isn't cached as done, so the outage keeps neither back.
         outage = _FakeGateway()
-        outage.outage = True
+        outage.unreachable = True
         engine, _ = self._run(logger, anilist=outage)
 
         assert self._vouched_any(engine) is True
@@ -710,7 +710,7 @@ class _OrderFetchingStrategy(FakeStrategy):
 
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
-        series = [SeriesOrderFacts(item.id, OFFICIAL_ORDER, None) for item in items]
+        series = [SeriesOrderFacts(item.id, AIRED_ORDER, None) for item in items]
         return self._skyhook.prefetch(series, preview=True, progress=progress)
 
 

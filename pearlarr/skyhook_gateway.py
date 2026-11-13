@@ -8,7 +8,7 @@ from .cache import AbstractCacheStore
 from .progress import ProgressSink
 from .skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
-from .tvdb_orders import NO_ORDERS, OFFICIAL_ORDER, OrderRow, SeriesOrderFacts, SeriesOrders, StoredOrders
+from .tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SeriesOrderFacts, SeriesOrders, StoredOrders
 
 QUIET_AFTER_DAYS = 30
 """An ended series whose newest episode aired longer ago than this is quiet."""
@@ -31,10 +31,10 @@ class SkyHookGateway:
         self._records: dict[int, StoredOrders | None] = {}
 
     @property
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         """True once SkyHook has been declared unreachable for this run."""
 
-        return self._client.outage
+        return self._client.unreachable
 
     def prefetch(
         self,
@@ -77,7 +77,7 @@ class SkyHookGateway:
         stored = self.orders(tvdb_id)
         if stored is None:
             return NO_ORDERS
-        return MappingProxyType({name: rows for name, rows in stored.orders.items() if name != OFFICIAL_ORDER and rows})
+        return MappingProxyType({name: rows for name, rows in stored.orders.items() if name != AIRED_ORDER and rows})
 
     def has_record(self, tvdb_id: int) -> bool:
         """Whether the series has a stored record, even one with no orders."""
@@ -100,13 +100,13 @@ class SkyHookGateway:
     def _fetch_series(self, facts: SeriesOrderFacts, now: datetime) -> StoredOrders | None:
         """The series' new record: official first, then each other order it lists. None on an outage."""
 
-        official = self._client.fetch(facts.tvdb_id, OFFICIAL_ORDER)
+        official = self._client.fetch(facts.tvdb_id, AIRED_ORDER)
         if official is SkyHookMiss.OUTAGE:
             return None
         orders: dict[str, tuple[OrderRow, ...]] = {}
         quiet = False
         if official is not SkyHookMiss.NOT_FOUND:
-            orders[OFFICIAL_ORDER] = _rows(official)
+            orders[AIRED_ORDER] = _rows(official)
             quiet = _is_quiet(official, now)
             for listed in official.season_types:
                 if listed.type in orders:

@@ -63,7 +63,7 @@ class SeriesListings:
         for al_id, mapping in resolved.every_entry.items():
             record = self._seadex.entry(al_id)
             if isinstance(record, SeaDexMiss):
-                if record is SeaDexMiss.OUTAGE:
+                if record is SeaDexMiss.UNREACHABLE:
                     return None
                 continue
             try:

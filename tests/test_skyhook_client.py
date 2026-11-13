@@ -159,7 +159,7 @@ def test_an_outage_latches_and_later_fetches_send_nothing(answer: httpx.Response
         assert route.call_count == sent
 
     assert first is second is SkyHookMiss.OUTAGE
-    assert client.outage is True
+    assert client.unreachable is True
     assert _warnings(recording) == [
         f"SkyHook failed ({detail} for TVDB {_SERIES} official) - re-checking cached titles until it answers"
     ]
@@ -176,7 +176,7 @@ def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:
 
     assert missed is SkyHookMiss.NOT_FOUND
     assert isinstance(served, SkyHookReply)
-    assert client.outage is False
+    assert client.unreachable is False
 
 
 def test_the_fake_answers_one_fetch_sequence_as_the_real_client_does() -> None:
@@ -193,6 +193,6 @@ def test_the_fake_answers_one_fetch_sequence_as_the_real_client_does() -> None:
         respx.get(f"{SKYHOOK_URL}/{_SERIES}/official").respond(json=official)
         respx.get(f"{SKYHOOK_URL}/1/official").respond(404, json=_NOT_FOUND)
         respx.get(f"{SKYHOOK_URL}/71776/official").respond(503)
-        from_real = [(real.fetch(*pair), real.outage) for pair in fetches]
+        from_real = [(real.fetch(*pair), real.unreachable) for pair in fetches]
 
-    assert [(fake.fetch(*pair), fake.outage) for pair in fetches] == from_real
+    assert [(fake.fetch(*pair), fake.unreachable) for pair in fetches] == from_real

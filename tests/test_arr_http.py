@@ -316,7 +316,7 @@ def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     primary, recording = _bind()
     clock = _ManualClock()
-    http = replace(primary, clock=clock.read, heartbeat_s=60.0)
+    http = replace(primary, clock=clock.read, rewarn_s=60.0)
 
     for at in (0.0, 30.0, 59.0, 60.0, 90.0, 125.0):
         clock.now = at

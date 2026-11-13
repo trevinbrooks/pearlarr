@@ -400,7 +400,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     body = client.query(2)
 
     assert body == success
-    assert client.outage is False
+    assert client.unreachable is False
     (waited,) = recording.of_type(Diagnostic)
     assert waited.severity is Severity.INFO
     assert waited.message == f"AniList rate-limited - waiting 42s (retry 1/{MAX_RETRIES})"
@@ -426,7 +426,7 @@ def test_give_up_trips_the_breaker(
     route = respx.post(API_URL).mock(side_effect=[effect] * (MAX_RETRIES + 1))
 
     assert client.query(1) == returned
-    assert client.outage is True
+    assert client.unreachable is True
     assert client.query(2) == {}
     assert client.query_batch([3, 4]) == {}
 
@@ -472,7 +472,7 @@ def test_dataless_answer_trips_the_breaker_once(
     route = respx.post(API_URL).mock(return_value=response)
 
     body = client.query(1)
-    assert client.outage is True
+    assert client.unreachable is True
     assert client.query(2) == {}
     assert client.query_batch([3]) == {}
 
@@ -511,7 +511,7 @@ def test_unknown_id_404_is_an_ordinary_miss() -> None:
     assert client.query(1) == not_found
     assert client.query(2) == not_found
 
-    assert client.outage is False
+    assert client.unreachable is False
     assert route.call_count == 2
     assert _warnings(recording) == []
 

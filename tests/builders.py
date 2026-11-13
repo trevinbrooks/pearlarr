@@ -240,7 +240,7 @@ class ScriptedAniListClient(AniListClient):
 
     @override
     def query(self, al_id: int) -> dict[str, Any]:
-        if self.outage:
+        if self.unreachable:
             return {}
         self.query_calls.append(al_id)
         if al_id in self._failing:
@@ -252,7 +252,7 @@ class ScriptedAniListClient(AniListClient):
 
     @override
     def query_batch(self, al_ids: list[int]) -> AniListCache:
-        if self.outage:
+        if self.unreachable:
             return {}
         self.batch_calls.append(list(al_ids))
         if self._failing & set(al_ids):
@@ -482,11 +482,11 @@ class FakeSeaDexSource(SeaDexSource):
         found = self._entries.get(al_id)
         if found is not None:
             return found
-        return SeaDexMiss.OUTAGE if self._outage else SeaDexMiss.NO_ENTRY
+        return SeaDexMiss.UNREACHABLE if self._outage else SeaDexMiss.NO_ENTRY
 
     @property
     @override
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         return self._outage
 
 

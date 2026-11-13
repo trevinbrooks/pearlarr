@@ -400,18 +400,18 @@ class HistoryCheckpoint:
 _ENTRY_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
 
 
-class _JsonBlock(NamedTuple):
+class _JsonTable(NamedTuple):
     """One JSONB block: its table and key column(s), interpolated into the `_json_*` helpers' SQL."""
 
     table: str
     key_cols: tuple[str, ...]
 
 
-_ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
-_SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
-_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash"))
-_GUARD_FACTS = _JsonBlock("guard_facts", ("arr", "al_id"))
-_TVDB_ORDERS = _JsonBlock("tvdb_orders", ("tvdb_id",))
+_ANILIST_META = _JsonTable("anilist_meta", ("al_id",))
+_SONARR_PARSE = _JsonTable("sonarr_parse", ("filename",))
+_PENDING_IMPORTS = _JsonTable("pending_imports", ("arr", "infohash"))
+_GUARD_FACTS = _JsonTable("guard_facts", ("arr", "al_id"))
+_TVDB_ORDERS = _JsonTable("tvdb_orders", ("tvdb_id",))
 
 
 class CacheStats(NamedTuple):
@@ -681,10 +681,10 @@ class CacheStore(AbstractCacheStore):
         )
 
     # -- JSONB record blocks (shared plumbing) --------------------------------
-    # Table/column names come only from the closed _JsonBlock constants, so the f-string SQL isn't an injection
+    # Table/column names come only from the closed _JsonTable constants, so the f-string SQL isn't an injection
     # surface (same pattern as stats()).
 
-    def _json_get(self, block: _JsonBlock, key: tuple[int | str, ...]) -> dict[str, Any] | None:
+    def _json_get(self, block: _JsonTable, key: tuple[int | str, ...]) -> dict[str, Any] | None:
         """The stored record under `key` in a JSONB block, or None."""
 
         where = " AND ".join(f"{c} = ?" for c in block.key_cols)
@@ -694,7 +694,7 @@ class CacheStore(AbstractCacheStore):
         ).fetchone()
         return json.loads(row[0]) if row else None
 
-    def _json_put(self, block: _JsonBlock, key: tuple[int | str, ...], record: dict[str, Any]) -> None:
+    def _json_put(self, block: _JsonTable, key: tuple[int | str, ...], record: dict[str, Any]) -> None:
         """Upsert a record into a JSONB block (staged, persisted at a save point)."""
 
         cols = ", ".join(block.key_cols)
@@ -710,7 +710,7 @@ class CacheStore(AbstractCacheStore):
 
         return {infohash: json.loads(rec_json) for infohash, rec_json in self._conn.execute(sql, params)}
 
-    def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
+    def _evict_stale_json(self, block: _JsonTable, cutoff: datetime) -> int:
         """Delete records older than `cutoff` (or stamp-less, which is otherwise un-evictable). Count deleted."""
 
         cursor = self._conn.execute(

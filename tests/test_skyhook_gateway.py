@@ -11,7 +11,7 @@ from pearlarr.cache import CacheStore
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.stamps import parse_stamp
-from pearlarr.tvdb_orders import NO_ORDERS, OFFICIAL_ORDER, OrderRow, SeriesOrderFacts
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SeriesOrderFacts
 
 from .builders import FakeCacheStore, stored_orders
 from .fakes import FakeSkyHookClient
@@ -42,7 +42,7 @@ def _gateway(
 
 
 def _fetches(gateway: SkyHookGateway, counts: Mapping[str, int] | None = None) -> int:
-    return gateway.prefetch([SeriesOrderFacts(_SERIES, OFFICIAL_ORDER, counts)], preview=True)
+    return gateway.prefetch([SeriesOrderFacts(_SERIES, AIRED_ORDER, counts)], preview=True)
 
 
 def _fresh_days(gateway: SkyHookGateway) -> float:
@@ -173,7 +173,7 @@ def test_a_listed_order_skyhook_does_not_have_is_stored_empty() -> None:
 
 
 def test_a_series_the_outage_cut_off_still_has_no_record() -> None:
-    gateway = _gateway({}, failing=frozenset({(_SERIES, OFFICIAL_ORDER)}))
+    gateway = _gateway({}, failing=frozenset({(_SERIES, AIRED_ORDER)}))
 
     assert _fetches(gateway) == 0
     assert gateway.has_record(_SERIES) is False
@@ -187,7 +187,7 @@ def test_an_outage_mid_series_keeps_the_stale_record_and_serves_it() -> None:
 
     assert _fetches(gateway) == 0
 
-    assert gateway.outage is True
+    assert gateway.unreachable is True
     assert gateway.orders(_SERIES) == stale
 
 
@@ -207,7 +207,7 @@ def test_each_record_is_saved_as_it_is_written_unless_previewing(tmp_path: Path,
     path = str(tmp_path / "cache.db")
     store = CacheStore.load(path, config_hash="x")
     SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).prefetch(
-        [SeriesOrderFacts(_SERIES, OFFICIAL_ORDER, None)], preview=preview
+        [SeriesOrderFacts(_SERIES, AIRED_ORDER, None)], preview=preview
     )
     # Closing without the end-of-run save is how an interrupted run ends.
     store.close()

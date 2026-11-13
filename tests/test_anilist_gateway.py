@@ -169,7 +169,7 @@ class TestPrefetch:
         fetched = gateway.prefetch(ids, preview=False, progress=sink)
 
         assert fetched == len(ids)
-        assert gateway.outage is True
+        assert gateway.unreachable is True
         # The first chunk tripped the breaker, so the second was never requested.
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE]]
         # The tripped chunk fetched nothing, so the cockpit never claimed it as progress.
@@ -187,7 +187,7 @@ class TestPrefetch:
 
         gateway.prefetch([1], preview=False)
 
-        assert gateway.outage is True
+        assert gateway.unreachable is True
         # Nothing evicted: the aged rows are what is serving this run.
         assert store.get_anilist_meta(1) is not None
         assert store.get_anilist_meta(9) is not None
@@ -295,7 +295,7 @@ class TestMediaResolution:
         gateway = make_anilist_gateway(client)
 
         assert gateway.titles(7) == ()
-        assert gateway.outage is True
+        assert gateway.unreachable is True
         # No answer is not a miss: the id stays unknown instead of remembered as absent.
         assert gateway.al_cache == {}
 
@@ -323,7 +323,7 @@ class TestUnread:
         gateway.n_eps(1)
         gateway.n_eps(al_id)
 
-        assert gateway.outage is True
+        assert gateway.unreachable is True
         assert gateway.unread(al_id) is unread
 
     def test_an_id_nothing_looked_up_is_not_unread(self) -> None:

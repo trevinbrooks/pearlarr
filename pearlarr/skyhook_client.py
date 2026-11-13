@@ -113,7 +113,7 @@ class AbstractSkyHookClient(ABC):
 
     @property
     @abstractmethod
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         """True once SkyHook has been declared unreachable for this run."""
 
     @abstractmethod
@@ -137,7 +137,7 @@ class SkyHookClient(AbstractSkyHookClient):
 
     @property
     @override
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         return self._outage
 
     def _note_outage(self, detail: str) -> SkyHookMiss:

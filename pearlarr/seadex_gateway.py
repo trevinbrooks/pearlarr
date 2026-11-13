@@ -39,7 +39,7 @@ class SeaDexMiss(Enum):
 
     NO_ENTRY = auto()
     """SeaDex's answer: the id genuinely has no entry."""
-    OUTAGE = auto()
+    UNREACHABLE = auto()
     """The lookup was skipped because SeaDex is unreachable this run."""
 
 
@@ -61,7 +61,7 @@ class SeaDexSource(ABC):
 
     @property
     @abstractmethod
-    def outage(self) -> bool: ...
+    def unreachable(self) -> bool: ...
 
 
 class SeaDexEntryApi(Protocol):
@@ -99,7 +99,7 @@ class SeaDexGateway(SeaDexSource):
 
     @property
     @override
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         """True once SeaDex has been declared unreachable for this run."""
 
         return self._outage
@@ -193,7 +193,7 @@ class SeaDexGateway(SeaDexSource):
         if al_id in self._prefetched:
             return SeaDexMiss.NO_ENTRY
         if self._outage:
-            return SeaDexMiss.OUTAGE
+            return SeaDexMiss.UNREACHABLE
         return self._entry_single(al_id)
 
     def _entry_single(self, al_id: int) -> EntryRecord | SeaDexMiss:
@@ -220,4 +220,4 @@ class SeaDexGateway(SeaDexSource):
             return SeaDexMiss.NO_ENTRY
         except httpx.HTTPError as e:
             self._note_outage(e)
-            return SeaDexMiss.OUTAGE
+            return SeaDexMiss.UNREACHABLE

@@ -307,7 +307,7 @@ class AniListClient:
         self._outage = False
 
     @property
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         """True once AniList has been declared unavailable for this run."""
 
         return self._outage
