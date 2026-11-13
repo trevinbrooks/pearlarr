@@ -8,7 +8,7 @@ from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import NO_EVIDENCE, BatchPlacements, PlacementTarget, PlacementVerdict, SeadexEvidence
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 from pearlarr.tvdb_orders import OrderRow, OrdersByName
-from pearlarr.window_placement import WindowedAssignment, place_across_windows
+from pearlarr.window_placement import WindowedPlacements, place_across_windows
 
 from .builders import (
     batch,
@@ -103,7 +103,7 @@ class TestInterleavedSpecialByOrder:
         }
         assert decided_by(result)[self._RUN[2]] == 1
         assert not own.misnumbered
-        assert own.hand_claim is None
+        assert own.hand_import_verdict is None
 
     def test_a_reading_outside_the_window_is_claimed_for_the_window_that_holds_it(self) -> None:
         result = self._place({"dvd": self._DVD})
@@ -113,9 +113,9 @@ class TestInterleavedSpecialByOrder:
 
     def test_a_refused_member_read_onto_a_held_episode_of_the_window_is_neither_placed_nor_claimed(self) -> None:
         # Another file already holds the aired third episode, which the order reads "S01E04" as.
-        scope = self._scope(self._SEASON, {"dvd": self._DVD}).using([603])
+        target = self._scope(self._SEASON, {"dvd": self._DVD}).using([603])
 
-        result = place(self._PARSED, scope)
+        result = place(self._PARSED, target)
 
         assert by_name(result)[self._RUN[2]] == ((), PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW)
         assert by_name(result)[self._RUN[3]] == ((), PlacementVerdict.MISNUMBERED)
@@ -129,9 +129,9 @@ class TestInterleavedSpecialByOrder:
 
         assert by_name(under_window(result, 1))[self._RUN[2]] == ((), PlacementVerdict.OUTSIDE_WINDOW)
         assert by_name(merged_of(result))[self._RUN[2]] == ((), PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW)
-        assert own.assignment.hand_import_files == (self._RUN[2],)
-        assert by_name(result.seen_by(1, {1}).assignment)[self._RUN[2]] == ((), PlacementVerdict.ANOTHER_TITLES)
-        assert own.hand_claim is PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW
+        assert own.placements.hand_import_files == (self._RUN[2],)
+        assert by_name(result.seen_by(1, {1}).placements)[self._RUN[2]] == ((), PlacementVerdict.ANOTHER_TITLES)
+        assert own.hand_import_verdict is PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW
         assert not own.misnumbered
 
     def test_a_foreign_file_read_outside_the_window_keeps_its_verdict(self) -> None:
@@ -212,9 +212,9 @@ class TestInterleavedSpecialByOrder:
         # No special in the absolutes, so the aired keys place three and skip "S01E04". The order numbers the
         # season as aired and has a fourth episode Sonarr doesn't list.
         longer = _order((1, 1, 601), (1, 2, 602), (1, 3, 603), (1, 4, 9001))
-        scope = self._scope(self._SEASON, {"dvd": longer}, absolutes={601: 1, 602: 2, 603: 3})
+        target = self._scope(self._SEASON, {"dvd": longer}, absolutes={601: 1, 602: 2, 603: 3})
 
-        result = place(self._PARSED, scope)
+        result = place(self._PARSED, target)
 
         assert result.order_only == {self._RUN[3]: OrderOnlyKey("dvd", EpisodeKey(1, 4))}
 
@@ -238,8 +238,8 @@ class TestInterleavedSpecialByOrder:
         assert merged_of(result).order_only[self._THIRD[0]] == OrderOnlyKey("dvd", EpisodeKey(3, 1))
         assert by_name(merged_of(result))[self._THIRD[2]] == ((601,), PlacementVerdict.OTHER_ORDER)
         # It's the hand import of the title whose order read it, and another title's for the one that skipped it.
-        assert result.seen_by(1, {1}).assignment.hand_import_files == (self._THIRD[0], self._THIRD[1])
-        assert by_name(result.seen_by(0, {0}).assignment)[self._THIRD[0]] == ((), PlacementVerdict.ANOTHER_TITLES)
+        assert result.seen_by(1, {1}).placements.hand_import_files == (self._THIRD[0], self._THIRD[1])
+        assert by_name(result.seen_by(0, {0}).placements)[self._THIRD[0]] == ((), PlacementVerdict.ANOTHER_TITLES)
 
     def test_a_window_proving_an_order_only_file_a_duplicate_outranks_the_orders_reading(self) -> None:
         # A second cut of the first half, keyed alike. Another series has a third season, and its window places
@@ -266,9 +266,9 @@ class TestInterleavedSpecialByOrder:
     def test_an_order_reading_a_stored_member_elsewhere_places_nothing(self) -> None:
         # An earlier grab stored the first two members on their aired episodes, and only the last two are placed.
         file_map = {self._RUN[0]: (601,), self._RUN[1]: (602,)}
-        scope = self._scope(self._SEASON, {"dvd": self._SHIFTED})
+        target = self._scope(self._SEASON, {"dvd": self._SHIFTED})
 
-        result = place(self._PARSED, scope, self._RUN[2:], file_map=file_map)
+        result = place(self._PARSED, target, self._RUN[2:], file_map=file_map)
 
         assert by_name(result) == dict.fromkeys(self._RUN[2:], ((), PlacementVerdict.MISNUMBERED))
 
@@ -323,8 +323,8 @@ class TestInterleavedSpecialByOrder:
     def _place_next(self, order: tuple[OrderRow, ...], to_place: list[str] | None = None) -> BatchPlacements:
         """`_NEXT` under the season's window, listed under the season alone."""
 
-        scope = self._scope(self._SEASON, {"dvd": order}, listed=tuple(self._SEASON))
-        return place(self._NEXT_PARSED, scope, to_place)
+        target = self._scope(self._SEASON, {"dvd": order}, listed=tuple(self._SEASON))
+        return place(self._NEXT_PARSED, target, to_place)
 
     def test_aired_keys_naming_episodes_no_listed_title_covers_go_where_the_order_reads_them(self) -> None:
         # The order numbers the season's last two episodes as the next season's.
@@ -412,9 +412,9 @@ class TestInterleavedSpecialByOrder:
     def test_a_refused_members_title_lets_an_order_missing_a_key_speak(self) -> None:
         # The third file carries the special's title, and the order reads it as the special.
         titled = "[grp] Show - S01E03 - Lost Lantern.mkv"
-        scope = self._scope(self._SEASON, {"dvd": self._PARTIAL}, titles={501: "Lost Lantern"})
+        target = self._scope(self._SEASON, {"dvd": self._PARTIAL}, titles={501: "Lost Lantern"})
 
-        result = place(self._renamed(2, titled), scope)
+        result = place(self._renamed(2, titled), target)
 
         assert by_name(result)[titled] == ((), PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW)
         assert by_name(result)[self._RUN[3]] == ((), PlacementVerdict.MISNUMBERED)
@@ -422,9 +422,9 @@ class TestInterleavedSpecialByOrder:
     def test_a_placed_members_title_does_not_let_an_order_missing_a_key_speak(self) -> None:
         # The first file carries its aired episode's title, and the aired key placed it there.
         titled = "[grp] Show - S01E01 - Festival Night.mkv"
-        scope = self._scope(self._SEASON, {"dvd": self._PARTIAL}, titles={601: "Festival Night"})
+        target = self._scope(self._SEASON, {"dvd": self._PARTIAL}, titles={601: "Festival Night"})
 
-        result = place(self._renamed(0, titled), scope)
+        result = place(self._renamed(0, titled), target)
 
         assert by_name(result)[titled] == ((601,), PlacementVerdict.EXACT)
         assert by_name(result)[self._RUN[2]] == ((), PlacementVerdict.MISNUMBERED)
@@ -438,11 +438,11 @@ class TestInterleavedSpecialByOrder:
         file_map = {self._RUN[0]: (601,), self._RUN[1]: (602,)}
         headless = _order((1, 2, 602), (1, 3, 501), (1, 4, 701))
         orders = {"dvd": self._DVD, "alternate": headless}
-        scope = self._scope(self._SEASON, orders)
+        target = self._scope(self._SEASON, orders)
         windows = tuple(self._scope(ids, orders) for ids in ([601, 602], [603]))
 
-        placed = place(parsed, scope)
-        stored = place(parsed, scope, [counted, self._RUN[3]], file_map=file_map)
+        placed = place(parsed, target)
+        stored = place(parsed, target, [counted, self._RUN[3]], file_map=file_map)
         windowed = place_across_windows(batch(parsed), windows)
 
         assert by_name(placed)[self._RUN[3]] == ((603,), PlacementVerdict.OTHER_ORDER)
@@ -453,12 +453,12 @@ class TestInterleavedSpecialByOrder:
     """The third file under the aired second episode's title, which refutes the first two keys."""
 
     @classmethod
-    def _refuted(cls, order: tuple[OrderRow, ...]) -> WindowedAssignment:
+    def _refuted(cls, order: tuple[OrderRow, ...]) -> WindowedPlacements:
         """The run with `_TITLED` third, under the season's window with `order` and no special in the absolutes."""
 
         plain = {601: 1, 602: 2, 603: 3}
-        scope = cls._scope(cls._SEASON, {"dvd": order}, absolutes=plain, titles={602: "Festival Night"})
-        return place_across_windows(batch(cls._renamed(2, cls._TITLED)), (scope,))
+        target = cls._scope(cls._SEASON, {"dvd": order}, absolutes=plain, titles={602: "Festival Night"})
+        return place_across_windows(batch(cls._renamed(2, cls._TITLED)), (target,))
 
     def test_a_refuted_member_read_outside_the_window_is_claimed_for_the_window_that_holds_it(self) -> None:
         # The order counts the special second, so it reads the third file as the episode its title names.
@@ -478,7 +478,7 @@ class TestInterleavedSpecialByOrder:
 
         assert by_name(merged_of(result))[self._RUN[0]] == ((), PlacementVerdict.TITLE_REFUTED)
         assert by_name(merged_of(result))[self._RUN[1]] == ((), PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW)
-        assert result.seen_by(0, {0}).hand_claim is PlacementVerdict.TITLE_REFUTED
+        assert result.seen_by(0, {0}).hand_import_verdict is PlacementVerdict.TITLE_REFUTED
 
     def test_two_orders_reading_the_members_apart_leave_them_until_the_listing_picks_one(self) -> None:
         # The second order leaves the special out and runs on into the next season: "S01E03" is the aired third
@@ -656,9 +656,9 @@ class TestInterleavedSpecialByOrder:
             **{name: self._PARSED[name] for name in self._RUN[:2]},
             double: parsed_info(season=1, episodes=(3, 4), matched=((1, 3),)),
         }
-        scope = self._scope([*self._SEASON, 501], {"dvd": self._DVD}, absolutes={601: 1, 602: 2, 603: 3})
+        target = self._scope([*self._SEASON, 501], {"dvd": self._DVD}, absolutes={601: 1, 602: 2, 603: 3})
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert by_name(result)[double] == ((501, 603), PlacementVerdict.OTHER_ORDER)
 
@@ -684,8 +684,8 @@ class TestMisnumberedSpecialsByOrder:
 
         index = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)}, orders={"dvd": order})
         listing = SeadexEvidence(torrent_listing(entry_window(1, cls._LISTED)))
-        scope = PlacementTarget(list(cls._LISTED), index, title_names=TitleNames("Show"), seadex=listing)
-        return place(specials_pack(1, 2, 3), scope)
+        target = PlacementTarget(list(cls._LISTED), index, title_names=TitleNames("Show"), seadex=listing)
+        return place(specials_pack(1, 2, 3), target)
 
     def test_an_order_reading_a_special_off_the_listing_leaves_the_pack_refused(self) -> None:
         # The order's specials run one behind the aired ones, so it reads the pack's "S00E02" as the third special.

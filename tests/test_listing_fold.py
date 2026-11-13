@@ -4,7 +4,7 @@
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from pearlarr.anibridge import SpecialAliasing
-from pearlarr.listing_fold import ListedTitle, fold_listings, size_identities
+from pearlarr.listing_fold import ListedTitle, build_listings, single_episode_sizes
 from pearlarr.pending_import import TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
 
@@ -49,7 +49,7 @@ class TestFoldListings:
     def test_each_hash_keeps_the_window_of_every_entry_listing_it(self) -> None:
         one, both, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1), _torrent(_H2)), _entry(3, _torrent(_H2))
 
-        read = fold_listings([_listed(one, 501, 502), _listed(both, 503), _listed(two, 504)], _NO_TAGS)
+        read = build_listings([_listed(one, 501, 502), _listed(both, 503), _listed(two, 504)], _NO_TAGS)
 
         assert dict(read.by_hash) == {
             _H1: torrent_listing(_window(one, 501, 502), _window(both, 503)),
@@ -63,7 +63,7 @@ class TestFoldListings:
         # SeaDex can list one hash twice under an entry: that entry still holds one window on it.
         later, twice = _entry(3, _torrent(_H1)), _entry(1, _torrent(_H1), _torrent(_H1))
 
-        read = fold_listings([_listed(later, 504), _listed(twice, 501)], _NO_TAGS)
+        read = build_listings([_listed(later, 504), _listed(twice, 501)], _NO_TAGS)
 
         listing = read.listing(_H1)
         assert listing is not None
@@ -73,19 +73,19 @@ class TestFoldListings:
         both = _entry(2, _torrent(_H1), _torrent(_H2))
         titles = [ListedTitle(_entry(1, _torrent(_H1)), None, None), _listed(both, 503)]
 
-        read = fold_listings(titles, _NO_TAGS)
+        read = build_listings(titles, _NO_TAGS)
 
         assert dict(read.by_hash) == {_H1: None, _H2: torrent_listing(_window(both, 503))}
 
     def test_hashes_match_by_their_one_spelling_and_a_hash_less_torrent_lists_nothing(self) -> None:
         entry = _entry(1, _torrent(_H1.upper()), _torrent(None))
 
-        read = fold_listings([_listed(entry, 501)], _NO_TAGS)
+        read = build_listings([_listed(entry, 501)], _NO_TAGS)
 
         assert dict(read.by_hash) == {_H1: torrent_listing(_window(entry, 501))}
 
     def test_a_hash_no_entry_lists_is_listed_nowhere(self) -> None:
-        read = fold_listings([_listed(_entry(1, _torrent(_H1)), 501)], _NO_TAGS)
+        read = build_listings([_listed(_entry(1, _torrent(_H1)), 501)], _NO_TAGS)
 
         assert read.listing(_H2) == EMPTY_LISTING
 
@@ -93,7 +93,7 @@ class TestFoldListings:
         one, both = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1), _torrent(_H2))
         titles = [_aliased(one, (501,), {7: 7, 13: 12}), _aliased(both, (502,), {15: 15, 16: 17})]
 
-        read = fold_listings(titles, _NO_TAGS)
+        read = build_listings(titles, _NO_TAGS)
 
         assert dict(read.by_hash) == {
             _H1: torrent_listing(_window(one, 501), _window(both, 502), aliases={7: 7, 13: 12, 15: 15, 16: 17}),
@@ -104,7 +104,7 @@ class TestFoldListings:
         one, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1))
         titles = [_aliased(one, (501,), {13: 12}), _aliased(two, (502,), {13: 14, 7: 7})]
 
-        read = fold_listings(titles, _NO_TAGS)
+        read = build_listings(titles, _NO_TAGS)
 
         assert read.listing(_H1) == torrent_listing(_window(one, 501), _window(two, 502), aliases={7: 7})
 
@@ -113,14 +113,14 @@ class TestFoldListings:
         one, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1))
         titles = [_aliased(one, (501,), {7: 7}, tmdb_id=900), _aliased(two, (502,), {8: 8}, tmdb_id=901)]
 
-        read = fold_listings(titles, _NO_TAGS)
+        read = build_listings(titles, _NO_TAGS)
 
         assert read.listing(_H1) == torrent_listing(_window(one, 501), _window(two, 502))
 
     def test_an_entry_without_aliases_leaves_the_other_entrys_aliases_on_the_hash(self) -> None:
         one, two = _entry(1, _torrent(_H1)), _entry(2, _torrent(_H1))
 
-        read = fold_listings([_aliased(one, (501,), {7: 7}), _listed(two, 502)], _NO_TAGS)
+        read = build_listings([_aliased(one, (501,), {7: 7}), _listed(two, 502)], _NO_TAGS)
 
         assert read.listing(_H1) == torrent_listing(_window(one, 501), _window(two, 502), aliases={7: 7})
 
@@ -132,10 +132,10 @@ class TestFoldListings:
         special_b = _entry(2, pack, _torrent(None, ("Show - Special B.mkv", 800)))
         special_a = _entry(3, pack, _torrent(None, ("Show - Special A.mkv", 700)))
 
-        read = fold_listings([_listed(season, 101, 102), _listed(special_b, 502), _listed(special_a, 501)], _NO_TAGS)
+        read = build_listings([_listed(season, 101, 102), _listed(special_b, 502), _listed(special_a, 501)], _NO_TAGS)
 
-        assert read.identities is not None
-        assert dict(read.identities) == {800: 502, 700: 501}
+        assert read.episode_by_size is not None
+        assert dict(read.episode_by_size) == {800: 502, 700: 501}
         assert read.listing(_H1) == torrent_listing(
             _window(season, 101, 102), _window(special_b, 502), _window(special_a, 501)
         )
@@ -143,9 +143,9 @@ class TestFoldListings:
     def test_a_size_two_entries_give_different_episodes_is_dropped(self) -> None:
         single = _torrent(None, ("Show - Special.mkv", 700))
 
-        read = fold_listings([_listed(_entry(1, single), 7897), _listed(_entry(2, single), 7898)], _NO_TAGS)
+        read = build_listings([_listed(_entry(1, single), 7897), _listed(_entry(2, single), 7898)], _NO_TAGS)
 
-        assert read.identities == {}
+        assert read.episode_by_size == {}
 
     def test_an_unread_window_leaves_the_identities_unread(self) -> None:
         # The unread entry's sizes are unknown, and one of them might clash with another entry's size.
@@ -154,7 +154,7 @@ class TestFoldListings:
             ListedTitle(_entry(2, _torrent(None, ("Show - Special.mkv", 700))), None, None),
         ]
 
-        assert fold_listings(titles, _NO_TAGS).identities is None
+        assert build_listings(titles, _NO_TAGS).episode_by_size is None
 
 
 class TestSizeIdentities:
@@ -163,28 +163,28 @@ class TestSizeIdentities:
     def test_a_lone_video_under_a_one_episode_window_identifies_its_episode(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - Special.mkv", 700)))
 
-        assert list(size_identities(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898)]
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898)]
 
     def test_one_video_beside_subtitles_is_a_single_file_listing(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - Special.mkv", 700), ("Show - Special.ass", 5), ("Fonts/a.ttf", 9)))
 
-        assert list(size_identities(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898)]
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898)]
 
     def test_two_videos_identify_nothing(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - 01.mkv", 700), ("Show - 02.mkv", 800)))
 
-        assert list(size_identities(entry, _ONE_SPECIAL, _NO_TAGS)) == []
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, _NO_TAGS)) == []
 
     def test_a_wider_window_identifies_nothing(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - Special.mkv", 700)))
 
-        assert list(size_identities(entry, entry_window(1, (7897, 7898)), _NO_TAGS)) == []
+        assert list(single_episode_sizes(entry, entry_window(1, (7897, 7898)), _NO_TAGS)) == []
 
     def test_a_torrent_with_an_ignored_tag_identifies_nothing(self) -> None:
         tagged = _torrent(_H1, ("Show - Special.mkv", 700), tags=frozenset({Tag.DOLBY_VISION}))
         entry = _entry(1, tagged, _torrent(_H2, ("Show - Special v2.mkv", 800)))
 
-        assert list(size_identities(entry, _ONE_SPECIAL, frozenset({"dolby vision"}))) == [(800, 7898)]
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, frozenset({"dolby vision"}))) == [(800, 7898)]
 
     def test_every_tracker_counts_and_a_hash_less_torrent_too(self) -> None:
         private = make_torrent_record(
@@ -192,9 +192,9 @@ class TestSizeIdentities:
         )
         entry = _entry(1, _torrent(None, ("Show - Special.mkv", 700)), private)
 
-        assert list(size_identities(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898), (800, 7898)]
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, _NO_TAGS)) == [(700, 7898), (800, 7898)]
 
     def test_a_zero_size_identifies_nothing(self) -> None:
         entry = _entry(1, _torrent(_H1, ("Show - Special.mkv", 0)))
 
-        assert list(size_identities(entry, _ONE_SPECIAL, _NO_TAGS)) == []
+        assert list(single_episode_sizes(entry, _ONE_SPECIAL, _NO_TAGS)) == []

@@ -71,16 +71,16 @@ def _lone(number: int, title: str, *numbers: int, matched: tuple[tuple[int, int]
 
 
 def _read(
-    scope: GrabbingTitle, windows: Sequence[TitleWindow], parsed: Mapping[str, ParsedFileInfo | None]
+    grabbing_title: GrabbingTitle, windows: Sequence[TitleWindow], parsed: Mapping[str, ParsedFileInfo | None]
 ) -> dict[str, tuple[int, ...]]:
     """What the reader proposes for `parsed` under `windows`, the facts read under the own window as `place_release` does."""
 
     torrent = batch(parsed)
-    own = next(window for window in windows if window.al_id == scope.al_id)
+    own = next(window for window in windows if window.al_id == grabbing_title.al_id)
     facts = place_batch(
-        torrent, PlacementTarget(own.ordered_episode_ids, scope.series_index, title_names=own.names)
+        torrent, PlacementTarget(own.ordered_episode_ids, grabbing_title.series_index, title_names=own.names)
     ).facts
-    return dict(NumberingStep.of(scope, windows).read(torrent, facts).ids)
+    return dict(NumberingStep.of(grabbing_title, windows).propose(torrent, facts).ids)
 
 
 # Stray Cats Overrun! (Sonarr 664): seven specials without absolutes, a season of 13. Tsundere's BD batch (AnimeBytes
@@ -385,9 +385,9 @@ class TestTheGatesRefuse:
             "Re:Zero kara Hajimeru Isekai Seikatsu",
         )
         name = "[OZR] ReZero kara Hajimeru Isekai Seikatsu - Shin Henshuu-ban 01 [BDRip 1920x1080 HEVC FLAC].mkv"
-        scope = _scope(series, window, alternate_titles=("ReZero kara Hajimeru Isekai Seikatsu",))
+        grabbing_title = _scope(series, window, alternate_titles=("ReZero kara Hajimeru Isekai Seikatsu",))
 
-        assert _read(scope, (window,), {name: _lone(1, title)}) == {}
+        assert _read(grabbing_title, (window,), {name: _lone(1, title)}) == {}
 
     def test_two_files_proposed_one_id_are_both_dropped(self) -> None:
         # Constructed: two titles of one torrent read under two windows that share their first regular season's
@@ -414,9 +414,9 @@ class TestTheReaderStandsDown:
 
     def test_off_the_aired_numbering_the_reader_proposes_nothing(self) -> None:
         # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
-        scope = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
+        grabbing_title = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
 
-        assert _read(scope, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
+        assert _read(grabbing_title, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
 
     def test_a_window_on_another_series_is_left_out(self) -> None:
         # Constructed: a claim's window on Sonarr series 8 lists ids the grabbing series lacks and a count no window

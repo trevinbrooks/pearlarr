@@ -28,7 +28,7 @@ from pearlarr.discord import DiscordEmbed
 from pearlarr.file_paths import normalize_name
 from pearlarr.grab_pipeline import (
     _SKIP_REPORTS,
-    NO_SEEDS,
+    NO_PENDING_IMPORT_UPDATES,
     GrabPipeline,
     GrabRequest,
     SkipReport,
@@ -271,10 +271,10 @@ class TestAddOneUrlRegistersPending:
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
         facts = OwnedAtGrab(entry_groups=("NAN0",))
-        seeds = {"h1": pending_seed("h1", guards=facts)}
+        updates = {"h1": pending_seed("h1", guards=facts)}
 
         n_added, results = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
         assert claim_al_ids(_stored(pipeline, "h1")) == (PENDING_AL_ID,)
@@ -292,10 +292,10 @@ class TestAddOneUrlRegistersPending:
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents)
         facts = OwnedAtGrab(entry_groups=("NAN0",), stale_groups=("OldPick",))
-        seeds = {"h1": pending_seed("h1", guards=facts)}
+        updates = {"h1": pending_seed("h1", guards=facts)}
 
         n_added, _ = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
         assert set(_pending(pipeline)) == {"h1"}
@@ -318,9 +318,9 @@ class TestAddOneUrlRegistersPending:
             **one_release_dict(srg="OLD", infohash="already", url="https://nyaa.si/view/1"),
             **one_release_dict(srg="NEW", infohash="fresh", url="https://nyaa.si/view/2"),
         }
-        seeds = {"already": pending_seed("already"), "fresh": pending_seed("fresh")}
+        updates = {"already": pending_seed("already"), "fresh": pending_seed("fresh")}
 
-        n_added, _ = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
+        n_added, _ = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
         assert n_added == 1
         assert pipeline._state.torrents_added == 1
@@ -334,10 +334,10 @@ class TestAddOneUrlRegistersPending:
         second = pending_seed("h1", al_id=22, title="Cour 2")
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": first})
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": first})
         )
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": second})
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": second})
         )
 
         assert set(_pending(pipeline)) == {"h1"}
@@ -356,16 +356,16 @@ class TestAddOneUrlRegistersPending:
         first.grab_releases(
             grab_request(
                 seadex_dict=one_release_dict(srg="NAN0", infohash="h1"),
-                pending_seeds={"h1": pending_seed("h1", al_id=11, title="Cour 1")},
+                pending_import_updates={"h1": pending_seed("h1", al_id=11, title="Cour 1")},
             )
         )
         second = make_grab_pipeline(
             _torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}), cache_store=store, _state=state
         )
-        seed = pending_seed("h1", al_id=22, title="Cour 2", stored=_stored(first, "h1"))
+        update = pending_seed("h1", al_id=22, title="Cour 2", stored=_stored(first, "h1"))
 
         second.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": seed})
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": update})
         )
 
         assert claim_al_ids(_stored(second, "h1")) == (11, 22)
@@ -378,7 +378,7 @@ class TestAddOneUrlRegistersPending:
         pipeline = _pipeline(torrents=torrents)
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={}),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={}),
         )
 
         assert _pending(pipeline) == {}
@@ -391,7 +391,10 @@ class TestAddOneUrlRegistersPending:
         pipeline = _pipeline(torrents=torrents, mode=ImportWaitMode.OFF)
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=NO_SEEDS),
+            grab_request(
+                seadex_dict=one_release_dict(srg="NAN0", infohash="h1"),
+                pending_import_updates=NO_PENDING_IMPORT_UPDATES,
+            ),
         )
 
         assert _pending(pipeline) == {}
@@ -402,10 +405,10 @@ class TestAddOneUrlRegistersPending:
         # No client -> preview: nothing persisted, but the outcome still surfaces.
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "x")})
         pipeline = _pipeline(torrents=torrents, qbit=None)
-        seeds = {"h1": pending_seed("h1")}
+        updates = {"h1": pending_seed("h1")}
 
         _, results = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
 
         assert _pending(pipeline) == {}
@@ -421,10 +424,10 @@ class TestAddOneUrlRegistersPending:
             _torrents=torrents,
             _state=ArrRunState(arr=Arr.RADARR, import_wait_mode=ImportWaitMode.BLOCKING),
         )
-        seeds = {"h1": pending_seed("h1", series_id=0)}
+        updates = {"h1": pending_seed("h1", series_id=0)}
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds)
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates)
         )
 
         assert set(pipeline.cache_store.get_pending_import_rows(Arr.RADARR)) == {"h1"}
@@ -451,9 +454,11 @@ class TestReacquireRegistration:
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, resident.infohash, resident.to_json())
         return resident
 
-    def _add(self, pipeline: GrabPipeline, seed: PendingImportUpdate) -> list[GrabResult]:
+    def _add(self, pipeline: GrabPipeline, update: PendingImportUpdate) -> list[GrabResult]:
         _, results = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": seed}),
+            grab_request(
+                seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": update}
+            ),
         )
         return results
 
@@ -511,11 +516,11 @@ class TestReacquireRegistration:
         # the fresh placements fold into the map.
         pipeline = _pipeline(torrents=self._reacquire(None))
         resident = self._resident(pipeline)
-        seed = pending_seed(
+        update = pending_seed(
             "h1", ordered_episode_ids=(101, 102), placements={"Show - 02 [1080p].mkv": (102,)}, stored=resident
         )
 
-        self._add(pipeline, seed)
+        self._add(pipeline, update)
 
         pending = _stored(pipeline, "h1")
         (claim,) = pending.claims
@@ -561,7 +566,7 @@ class TestReacquireRegistration:
         seadex_dict = one_release_dict(srg="NAN0", infohash="h1")
         seadex_dict["NAN0"].releases["https://nyaa.si/view/1"].cross_seed_hash = "c1"
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_seeds={"c1": pending_seed("c1")}))
+        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates={"c1": pending_seed("c1")}))
 
         assert _pending(pipeline).keys() == {"c1"}
 
@@ -680,9 +685,9 @@ class TestAddTorrentCap:
         pipeline._state.torrents_added = 1
         resident = pending_import(infohash="h1", al_id=11)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        seeds = {"h1": pending_seed("h1", al_id=22, stored=resident)}
+        updates = {"h1": pending_seed("h1", al_id=22, stored=resident)}
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
+        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
         assert torrents.calls == []
         assert claim_al_ids(_stored(pipeline, "h1")) == (11, 22)
@@ -695,7 +700,7 @@ class TestAddTorrentCap:
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "one")}), max_torrents_to_add=1)
         pipeline._state.torrents_added = 1
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_seeds={"h1": pending_seed("h1")}))
+        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates={"h1": pending_seed("h1")}))
 
         assert pipeline.cache_store.get_pending_import_row(Arr.SONARR, "h1") is None
         assert pipeline._state.per_title.held_by_cap is True
@@ -860,9 +865,9 @@ class TestUnsupportedTrackerSkip:
 
         torrents = FakeTorrents({"hn": (AddStatus.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn")
-        seeds = {"hn": pending_seed("hn")}
+        updates = {"hn": pending_seed("hn")}
 
-        n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_seeds=seeds))
+        n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
 
         # AniDex never reached the service. Only Nyaa was handed over and added.
         assert torrents.calls == ["hn"]
@@ -1238,7 +1243,9 @@ class TestPlacementHolds:
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, resident.infohash, resident.to_json())
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=seadex_dict, pending_seeds={"h1": pending_seed("h1", al_id=22, stored=resident)})
+            grab_request(
+                seadex_dict=seadex_dict, pending_import_updates={"h1": pending_seed("h1", al_id=22, stored=resident)}
+            )
         )
 
         assert torrents.calls == []
@@ -1382,10 +1389,10 @@ class TestPlacementHolds:
 
     def test_the_misnumbered_row_outranks_the_titles_refute_row(self) -> None:
         # The table's order decides between two hand-import holds.
-        refuted = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED)
+        contradicted = self._held(url="https://nyaa.si/view/1", infohash="h1", skip_reason=PlacementSkip.TITLE_REFUTED)
         misnumbered = self._held(url="https://nyaa.si/view/2", infohash="h2", skip_reason=PlacementSkip.MISNUMBERED)
         seadex_dict: SeadexDict = {
-            "RG": rg_group({refuted.url: refuted}),
+            "RG": rg_group({contradicted.url: contradicted}),
             "Other": rg_group({misnumbered.url: misnumbered}),
         }
         pipeline = _on_entry(_pipeline(torrents=FakeTorrents({}), sleep_time=0))

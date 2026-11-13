@@ -200,23 +200,23 @@ class TestTargetScope:
 
     def test_using_takes_the_admitted_ids_and_detaches_the_resolved_list(self) -> None:
         resolved = [11, 12, 0]
-        scope = PlacementTarget(resolved, self._SERIES, used=frozenset({11}))
+        target = PlacementTarget(resolved, self._SERIES, used=frozenset({11}))
 
         resolved.append(21)
-        narrowed = scope.using([12, 21, 0])
+        narrowed = target.using([12, 21, 0])
 
-        assert scope.episode_ids == (11, 12, 0)
+        assert target.episode_ids == (11, 12, 0)
         assert narrowed.used == {11, 12}
-        assert (narrowed.episode_ids, narrowed.real_ids) == (scope.episode_ids, scope.real_ids)
+        assert (narrowed.episode_ids, narrowed.real_ids) == (target.episode_ids, target.real_ids)
 
     def test_an_unscoped_scope_uses_every_id(self) -> None:
         assert PlacementTarget([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
         listing = SeadexEvidence(torrent_listing(entry_window(1, (11, 12))), {"a.mkv": 11})
-        scope = PlacementTarget([11], self._SERIES, seadex=listing)
+        target = PlacementTarget([11], self._SERIES, seadex=listing)
 
-        assert scope.using([12]).seadex == listing
+        assert target.using([12]).seadex == listing
 
     def test_after_keeps_every_earlier_placement_and_uses_the_ids_it_admits(self) -> None:
         earlier = {"a.mkv": (11,), "b.mkv": (21,)}
@@ -275,11 +275,11 @@ class TestPlacementVerdict:
 
         assert not verdict.placed
         assert not verdict.excluded
-        assert verdict.refused
+        assert verdict.final_unplaced
 
     def test_refused_is_held_or_misnumbered(self) -> None:
         # Both decide a name without ids: no later window may place it by its numbers.
-        assert {v for v in PlacementVerdict if v.refused} == {
+        assert {v for v in PlacementVerdict if v.final_unplaced} == {
             PlacementVerdict.WAITING_ON_PARSE,
             PlacementVerdict.MISNUMBERED,
         }
@@ -293,7 +293,7 @@ class TestPlacementVerdict:
         }
 
         assert {v for v in PlacementVerdict if v.left_for_hand_import} == hand_import
-        assert not any(v.refused or v.excluded or v.placed for v in hand_import - {PlacementVerdict.MISNUMBERED})
+        assert not any(v.final_unplaced or v.excluded or v.placed for v in hand_import - {PlacementVerdict.MISNUMBERED})
 
     def test_another_orders_placement_carries_ids(self) -> None:
         verdict = PlacementVerdict.OTHER_ORDER
@@ -315,7 +315,7 @@ class TestPlacementVerdict:
         for verdict in (PlacementVerdict.SIZE_MATCH, PlacementVerdict.SIZE_OVER_NAME, PlacementVerdict.SPECIAL_ALIAS):
             assert verdict.placed
             assert not verdict.excluded
-            assert not verdict.refused
+            assert not verdict.final_unplaced
 
     def test_agreeing_numberings_place(self) -> None:
         # The fill after the windows merge carries ids like a pass's placement, so the record imports it.
@@ -350,16 +350,16 @@ class TestPlacementVerdict:
         assert len({v.rank for v in self._CLAIMS}) == len(self._CLAIMS)
 
     def test_the_numbering_fill_may_place_only_a_skipped_or_foreign_file(self) -> None:
-        # `WindowedAssignment.with_proposals` fills a merged verdict left open that is no hand import.
+        # `WindowedPlacements.with_proposals` fills a merged verdict left open that is no hand import.
         gaps = {v for v in PlacementVerdict if v.other_order_may_place and not v.left_for_hand_import}
 
         assert gaps == {PlacementVerdict.NO_EPISODE_FOUND, PlacementVerdict.OUTSIDE_WINDOW}
 
     def test_only_a_misnumbered_or_refuted_file_is_left_open_for_a_hand_import(self) -> None:
         # Pass 16 claims only such a file for another window: a count or a title in the names refused it.
-        refused_by_name = {v for v in PlacementVerdict if v.other_order_may_place and v.left_for_hand_import}
+        final_unplaced_by_name = {v for v in PlacementVerdict if v.other_order_may_place and v.left_for_hand_import}
 
-        assert refused_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
+        assert final_unplaced_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
 
 
 class TestAllSpecials:

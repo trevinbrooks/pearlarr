@@ -110,7 +110,7 @@ class UnplacedInFolder:
 
 
 def disk_leftover(
-    pending: PendingImport, candidates_by_basename: Mapping[str, CandidateFile], mapped: FileEpisodeMap
+    pending: PendingImport, candidates_by_basename: Mapping[str, CandidateFile], file_map: FileEpisodeMap
 ) -> UnplacedInFolder:
     """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
 
@@ -120,7 +120,7 @@ def disk_leftover(
     # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
     listed = dict.fromkeys(name for name in (normalized_leaf(f) for f in pending.seadex_files) if name in video)
     ordered = [*listed, *(name for name in candidates_by_basename if name in video and name not in listed)]
-    names = tuple(name for name in ordered if name not in mapped)
+    names = tuple(name for name in ordered if name not in file_map)
     excluded = set(pending.excluded_files)
     reported = tuple(name for name in names if name not in excluded)
     hand_import = set(pending.hand_import_files)

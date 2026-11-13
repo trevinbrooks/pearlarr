@@ -34,16 +34,16 @@ NO_SIZES_BY_NAME: Mapping[str, int] = MappingProxyType({})
 """No listed sizes: a record written before they were kept, or a torrent whose files are never listed."""
 
 
-def sizes_by_episode(mapped: FileEpisodeMap, listed: Mapping[str, int]) -> dict[int, int]:
+def sizes_by_episode(file_map: FileEpisodeMap, listed: Mapping[str, int]) -> dict[int, int]:
     """Each mapped episode id to its file's listed size.
 
     An unlisted name sizes nothing, and an ambiguous id is dropped.
     """
 
-    return unambiguous((ep_id, listed[name]) for name, ids in mapped.items() if name in listed for ep_id in ids)
+    return unambiguous((ep_id, listed[name]) for name, ids in file_map.items() if name in listed for ep_id in ids)
 
 
-def _normalized_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
+def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     """The map with every key normalized and zero ids dropped, minus the entries that leaves empty.
 
     Of two keys that normalize alike, the first one left with ids wins.
@@ -67,7 +67,7 @@ def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
     return unambiguous((normalized_leaf(name), value) for name, value in by_name.items())
 
 
-def joined_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
+def joined_file_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     """`base`, then the entries of `added` whose names it lacks."""
 
     return {**base, **{name: ids for name, ids in added.items() if name not in base}}
@@ -77,7 +77,7 @@ def joined_map(base: FileEpisodeMap, added: FileEpisodeMap) -> dict[str, tuple[i
 class SeedCoverage:
     """How far a record's map and exclusions account for its listed files. Both False when it lists none."""
 
-    mapped: bool
+    file_map: bool
     """Whether the map alone names every listed file."""
 
     accounted: bool
@@ -367,15 +367,15 @@ class PendingImport:
         # for a hand import. The map wins, then the hand import: a title's own window can leave a file for a hand
         # import that a sibling's earlier grab excluded as another title's, and the record must still say so. Detach
         # the maps and wrap them read-only.
-        mapped = _normalized_map(self.file_episode_map)
-        hand_import = tuple(name for name in _normalized_names_in_order(self.hand_import_files) if name not in mapped)
+        file_map = _normalized_file_map(self.file_episode_map)
+        hand_import = tuple(name for name in _normalized_names_in_order(self.hand_import_files) if name not in file_map)
         excluded = (
             name
             for name in _normalized_names_in_order(self.excluded_files)
-            if name not in mapped and name not in hand_import
+            if name not in file_map and name not in hand_import
         )
         order_only = {name: key for name, key in _normalized_keys(self.order_only).items() if name in hand_import}
-        object.__setattr__(self, "file_episode_map", MappingProxyType(mapped))
+        object.__setattr__(self, "file_episode_map", MappingProxyType(file_map))
         object.__setattr__(self, "excluded_files", tuple(excluded))
         object.__setattr__(self, "hand_import_files", hand_import)
         object.__setattr__(self, "order_only", MappingProxyType(order_only))
@@ -446,12 +446,12 @@ class PendingImport:
 
         needed = _normalized_names(self.seadex_files)
         if not needed:
-            return SeedCoverage(mapped=False, accounted=False)
+            return SeedCoverage(file_map=False, accounted=False)
         mapped_names = self.file_episode_map.keys()
         if mapped_names >= needed:
-            return SeedCoverage(mapped=True, accounted=True)
+            return SeedCoverage(file_map=True, accounted=True)
         covered = mapped_names | set(self.excluded_files)
-        return SeedCoverage(mapped=False, accounted=covered >= needed)
+        return SeedCoverage(file_map=False, accounted=covered >= needed)
 
     def unplaced_names(self) -> set[str]:
         """Normalized listing names the map does not cover and no exclusion claims: what a rebuild may still place."""
@@ -469,7 +469,7 @@ class PendingImport:
         Their names are lifted out of the exclusions and the hand-import files.
         """
 
-        return self._or_self(replace(self, file_episode_map=joined_map(self.file_episode_map, placements)))
+        return self._or_self(replace(self, file_episode_map=joined_file_map(self.file_episode_map, placements)))
 
     def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
         """The record with `names` appended to its exclusions, less any the map or the hand-import files hold."""
@@ -537,7 +537,7 @@ class PendingImport:
         """Rebuild a record from its persisted cache-store dict, each claim fed its entry's guard row."""
 
         seadex_files = tuple(raw.get("seadex_files", []))
-        mapped = {name: tuple(ids) for name, ids in raw.get("file_episode_map", {}).items()}
+        file_map = {name: tuple(ids) for name, ids in raw.get("file_episode_map", {}).items()}
         excluded = tuple(raw.get("excluded_files", []))
         return cls(
             infohash=raw.get("infohash", ""),
@@ -545,7 +545,7 @@ class PendingImport:
             is_dual_audio=raw.get("is_dual_audio", False),
             seadex_files=seadex_files,
             added_at=added_at_of(raw),
-            file_episode_map=mapped,
+            file_episode_map=file_map,
             claims=tuple(TitleClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
             excluded_files=excluded,
             release_sizes=tuple(raw.get("release_sizes", [])),
@@ -554,7 +554,7 @@ class PendingImport:
             hand_import_files=(
                 tuple(raw["hand_import_files"])
                 if "hand_import_files" in raw
-                else _unplaced_listed_files(seadex_files, mapped, excluded)
+                else _unplaced_listed_files(seadex_files, file_map, excluded)
             ),
             order_only={
                 name: key
@@ -566,7 +566,7 @@ class PendingImport:
 
 
 def _unplaced_listed_files(
-    listed: Iterable[str], mapped: Mapping[str, tuple[int, ...]], excluded: Iterable[str]
+    listed: Iterable[str], file_map: Mapping[str, tuple[int, ...]], excluded: Iterable[str]
 ) -> tuple[str, ...]:
     """The listed files a stored row with no `hand_import_files` key left for a hand import.
 
@@ -574,7 +574,7 @@ def _unplaced_listed_files(
     plain skip.
     """
 
-    taken = {*_normalized_names_in_order(mapped), *_normalized_names_in_order(excluded)}
+    taken = {*_normalized_names_in_order(file_map), *_normalized_names_in_order(excluded)}
     return tuple(name for name in _normalized_names_in_order(listed) if name not in taken)
 
 

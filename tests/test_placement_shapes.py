@@ -143,18 +143,20 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
     The records the planner judges coverage by are the placed episodes' numbers, sized per file.
     """
 
-    scope = _scope(case)
+    grabbing_title = _scope(case)
     parsed = _parsed(case)
     files = [ListedFile(name, size, parsed[name]) for size, name in enumerate(case.parses, start=1)]
 
-    placement = place_release(files, scope, new_torrent(scope))
+    placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
 
-    assignment = placement.assignment
-    assert assignment.placed == {normalize_name(name): ids for name, ids in case.expected.items()}
-    assert {p.name for p in assignment.excluded} == {normalize_name(name) for name in case.expected_excluded}
+    placements = placement.placements
+    assert placements.placed == {normalize_name(name): ids for name, ids in case.expected.items()}
+    assert {p.name for p in placements.excluded} == {normalize_name(name) for name in case.expected_excluded}
     assert list(placement.episodes) == [
         ReleaseEpisode(
-            scope.series_index.by_id[ep_id].season_number, scope.series_index.by_id[ep_id].episode_number, size
+            grabbing_title.series_index.by_id[ep_id].season_number,
+            grabbing_title.series_index.by_id[ep_id].episode_number,
+            size,
         )
         for size, name in enumerate(case.parses, start=1)
         for ep_id in case.expected.get(name, ())

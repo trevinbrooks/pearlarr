@@ -37,7 +37,7 @@ def _title_lead(episodes: EpisodeTitles, read: NameParts, resolved: Collection[i
     """
 
     words = read.title_words
-    keyed = episodes.keyed_by(read, resolved)
+    keyed = episodes.episodes_numbered_by(read, resolved)
     if read.member is None and read.episode_title_number is None:
         return TitleLead(episodes.exact_match(words, keyed), frozenset(), words)
     lead = episodes.leading_title(words)
@@ -61,17 +61,17 @@ class TorrentNames:
     """The episode titles the names were read against."""
 
     @classmethod
-    def of(cls, batch: PlacementBatch, scope: PlacementTarget, readings: Mapping[str, ParsedEpisodes]) -> Self:
+    def of(cls, batch: PlacementBatch, target: PlacementTarget, parsed_by_name: Mapping[str, ParsedEpisodes]) -> Self:
         """Read every name, seeded and gone ones included.
 
         Two versions of one file carrying the same title still count as titled as it. A file whose own key Sonarr
         matched (`Reading.keyed`) is an episode, whatever extras word its name carries.
         """
 
-        ground = TitleNameWords.of(scope.title_names)
-        episode_titles = scope.index.titles(ground.series_words)
+        ground = TitleNameWords.of(target.title_names)
+        episode_titles = target.index.titles(ground.series_words)
         reads = split_names(batch.all_names, ground)
-        leads = {name: _title_lead(episode_titles, read, readings[name].ids) for name, read in reads.items()}
+        leads = {name: _title_lead(episode_titles, read, parsed_by_name[name].ids) for name, read in reads.items()}
         carriers = Counter(
             words for _file, words in {(reads[name].identity, lead.words) for name, lead in leads.items()}
         )
@@ -81,6 +81,6 @@ class TorrentNames:
             episode_by_title = titled.ep_id if titled is not None and carriers[lead.words] == 1 else None
             # An extras word that belongs to the entry's titles or the name's episode title marks no extra.
             shield = ground.all_name_words | frozenset(titled.words if titled is not None else ())
-            extra = not readings[name].key_confirmed and is_extras_name(name, shield)
+            extra = not parsed_by_name[name].key_confirmed and is_extras_name(name, shield)
             by_name[name] = NameTitle(reads[name], episode_by_title, lead.leading_title_ids, extra)
         return cls(by_name, episode_titles)

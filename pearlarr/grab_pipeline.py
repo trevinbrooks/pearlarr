@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .arr_run_services import ArrRunDeps
 
 
-NO_SEEDS: Mapping[str, PendingImportUpdate] = MappingProxyType({})
+NO_PENDING_IMPORT_UPDATES: Mapping[str, PendingImportUpdate] = MappingProxyType({})
 """No seeds: the strategies build them only when a record can be persisted (the wait mode is on)."""
 
 
@@ -88,7 +88,7 @@ class GrabRequest:
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
-    pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
+    pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
     """One seed per flagged torrent with a video file, keyed by its hash in qBittorrent (`NO_SEEDS` when the wait
     mode is off)."""
     input_unread_groups: tuple[str, ...] = ()
@@ -239,9 +239,9 @@ class GrabPipeline:
         if not self._state.per_title.held_by_cap:
             self._state.per_title.held_by_cap = True
             self._state.stats.held_by_cap += 1
-        seed = self._seed_for(release, req)
-        if seed is not None and (joined := seed.joined()) is not None:
-            self._pending_imports.save_with_claim(joined, seed.claim)
+        update = self._update_for(release, req)
+        if update is not None and (joined := update.joined()) is not None:
+            self._pending_imports.save_with_claim(joined, update.claim)
 
     def _grab_release(
         self,
@@ -282,13 +282,13 @@ class GrabPipeline:
         self._register_pending_import(release, req, result)
         return GrabResult(outcome=result.outcome, name=result.name, group=srg)
 
-    def _seed_for(self, release: Release, req: GrabRequest) -> PendingImportUpdate | None:
+    def _update_for(self, release: Release, req: GrabRequest) -> PendingImportUpdate | None:
         """The url's seed (the strategy seeds nothing when the wait mode is off), or None on a preview or no hash."""
 
         qbit_hash = release.qbit_hash
         if self._is_dry_run() or not qbit_hash:
             return None
-        return req.pending_seeds.get(qbit_hash)
+        return req.pending_import_updates.get(qbit_hash)
 
     def _register_pending_import(self, release: Release, req: GrabRequest, result: AddResult) -> None:
         """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
@@ -298,14 +298,14 @@ class GrabPipeline:
         entries list in one run).
         """
 
-        seed = self._seed_for(release, req)
-        if seed is None:
+        update = self._update_for(release, req)
+        if update is None:
             return
         if result.outcome is AddStatus.ADDED:
-            self._pending_imports.insert_fresh(seed.pending_import_at(now_stamp(), fresh=True), seed.claim)
+            self._pending_imports.insert_fresh(update.pending_import_at(now_stamp(), fresh=True), update.claim)
             return
-        pending = seed.pending_import_at(_reacquire_stamp(result.added_on), fresh=False)
-        self._pending_imports.save_with_claim(pending, seed.claim)
+        pending = update.pending_import_at(_reacquire_stamp(result.added_on), fresh=False)
+        self._pending_imports.save_with_claim(pending, update.claim)
         if pending.infohash not in self._state.grabbed_this_run:
             self._state.reacquired_keys.add(pending.infohash)
 

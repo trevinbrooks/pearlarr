@@ -89,7 +89,7 @@ class ParsedEpisodes:
         return (not self.sonarr_agrees, self.from_matched)
 
 
-_NO_READING = ParsedEpisodes(
+_NO_PARSED_EPISODES = ParsedEpisodes(
     ids=(), in_window=(), complete=False, from_matched=False, rejected=False, sonarr_agrees=False
 )
 
@@ -98,11 +98,11 @@ _NO_READING = ParsedEpisodes(
 class _ParsedKeys:
     """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
 
-    claims: tuple[_ParsedKey, ...]
+    keys: tuple[_ParsedKey, ...]
     from_matched: bool
 
 
-def _matched_claims(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
+def _matched_keys(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
     """Sonarr's series-matched pairs as claims, junk repeats collapsed."""
 
     return tuple(
@@ -112,31 +112,31 @@ def _matched_claims(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
     )
 
 
-def _resolve(claim: _ParsedKey, scope: PlacementTarget) -> int | None:
+def _resolve(key: _ParsedKey, target: PlacementTarget) -> int | None:
     """Our map's id for the claim's numbers, when Sonarr's own id (if any) agrees."""
 
-    ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
-    return ep_id if ep_id and claim.matched_id in (None, ep_id) else None
+    ep_id = target.id_by_key.get(season_episode_key(key.season, key.episode))
+    return ep_id if ep_id and key.matched_id in (None, ep_id) else None
 
 
-def _all_inside(claims: Iterable[_ParsedKey], scope: PlacementTarget) -> bool:
+def _all_inside(keys: Iterable[_ParsedKey], target: PlacementTarget) -> bool:
     """Whether every claim resolves to an episode of the scope."""
 
-    return all(_resolve(claim, scope) in scope.real_ids for claim in claims)
+    return all(_resolve(key, target) in target.real_ids for key in keys)
 
 
 def _is_season_shift(own: Sequence[_ParsedKey], matched: Sequence[_ParsedKey]) -> bool:
     """Whether Sonarr moved the name's episode numbers, unchanged, into one regular season (an alias match)."""
 
-    seasons = {claim.season for claim in matched}
+    seasons = {key.season for key in matched}
     return (
         len(seasons) == 1
         and seasons.isdisjoint({None, 0})
-        and [claim.episode for claim in own] == [claim.episode for claim in matched]
+        and [key.episode for key in own] == [key.episode for key in matched]
     )
 
 
-def _claims_of(info: ParsedFileInfo, scope: PlacementTarget) -> _ParsedKeys:
+def _parsed_keys_of(info: ParsedFileInfo, target: PlacementTarget) -> _ParsedKeys:
     """The name's own keys, else Sonarr's matched pairs when there is a scope and the parse is not a full season.
 
     Own keys give way to Sonarr's alias match (the same numbers moved into one regular season) when not every
@@ -145,15 +145,15 @@ def _claims_of(info: ParsedFileInfo, scope: PlacementTarget) -> _ParsedKeys:
 
     own = tuple(dict.fromkeys(_ParsedKey(info.season_number, episode, None) for episode in info.episode_numbers))
     if not own:
-        borrows = not scope.no_window and not info.full_season
-        return _ParsedKeys(_matched_claims(info) if borrows else (), from_matched=borrows)
-    matched = _matched_claims(info)
-    if _is_season_shift(own, matched) and not _all_inside(own, scope) and _all_inside(matched, scope):
+        uses_matched = not target.no_window and not info.full_season
+        return _ParsedKeys(_matched_keys(info) if uses_matched else (), from_matched=uses_matched)
+    matched = _matched_keys(info)
+    if _is_season_shift(own, matched) and not _all_inside(own, target) and _all_inside(matched, target):
         return _ParsedKeys(matched, from_matched=True)
     return _ParsedKeys(own, from_matched=False)
 
 
-def read_parse(info: ParsedFileInfo | None, scope: PlacementTarget) -> ParsedEpisodes:
+def resolve_parse(info: ParsedFileInfo | None, target: PlacementTarget) -> ParsedEpisodes:
     """Read one parse against the scope: the name's own keys are the claims (`_claims_of` has the alias shift).
 
     A name with none borrows Sonarr's matched pairs when there is a scope and the parse is not a full season. A pair
@@ -162,39 +162,39 @@ def read_parse(info: ParsedFileInfo | None, scope: PlacementTarget) -> ParsedEpi
     """
 
     if info is None:
-        return _NO_READING
-    basis = _claims_of(info, scope)
-    if not basis.claims:
-        return _NO_READING
+        return _NO_PARSED_EPISODES
+    basis = _parsed_keys_of(info, target)
+    if not basis.keys:
+        return _NO_PARSED_EPISODES
     # Only a borrowed span is capped (DISTINCT pairs): Sonarr matches a bare
     # "S01" name to the WHOLE season, so a wide match is a season pack without
     # the flag, while the name's own "E11-E16" is an explicit claim. A borrowed
     # span must also COVER the name's own absolutes, or a "12-13" file whose
     # match resolved only E12 would import half.
-    pairs = {(claim.season, claim.episode) for claim in basis.claims}
+    pairs = {(key.season, key.episode) for key in basis.keys}
     absolutes = set(info.absolute_episode_numbers)
-    vetoed = info.full_season or (
+    rejected = info.full_season or (
         basis.from_matched and (len(pairs) > _MATCHED_SPAN_CAP or (bool(absolutes) and len(pairs) != len(absolutes)))
     )
     matched = {(matched.season_number, matched.episode_number) for matched in info.matched_episodes}
     sonarr_agrees = basis.from_matched or pairs <= matched
     resolved: list[int] = []
     complete = True
-    for claim in basis.claims:
-        if (ep_id := _resolve(claim, scope)) is not None:
+    for key in basis.keys:
+        if (ep_id := _resolve(key, target)) is not None:
             resolved.append(ep_id)
         else:
             complete = False
     # The claim dedup keeps (s,e,None) and (s,e,id) apart. Dedupe the resolved
     # ids too, so Sonarr never receives one episode twice.
     ids = tuple(dict.fromkeys(resolved))
-    inside = tuple(i for i in ids if scope.admits(i))
+    inside = tuple(i for i in ids if target.admits(i))
     return ParsedEpisodes(
         ids=ids,
         in_window=inside,
         complete=complete,
         from_matched=basis.from_matched,
-        rejected=vetoed,
+        rejected=rejected,
         sonarr_agrees=sonarr_agrees,
     )
 
@@ -272,7 +272,7 @@ def parse_has_no_number(info: ParsedFileInfo | None) -> bool:
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
 
 
-def glued_counts(info: ParsedFileInfo) -> frozenset[int]:
+def glued_numbers(info: ParsedFileInfo) -> frozenset[int]:
     """The counts Sonarr glues the parse's key from: season, then two-digit episode ("Show.101": S01E01).
 
     Season 0 glues too ("Show.0013": S00E13). Empty without a season.
@@ -295,7 +295,7 @@ def numbers_miss_the_series(info: ParsedFileInfo, ep_id_map: Mapping[EpisodeKey,
     return all(not ep_id_map.get(season_episode_key(info.season_number, episode)) for episode in info.episode_numbers)
 
 
-def claims_several_episodes(info: ParsedFileInfo) -> bool:
+def names_several_episodes(info: ParsedFileInfo) -> bool:
     """Whether the name's own numbers claim more than one episode.
 
     A multi-pair series match doesn't count (`spans_multiple` weighs it), nor does a full-season read.
@@ -304,18 +304,20 @@ def claims_several_episodes(info: ParsedFileInfo) -> bool:
     return len(set(info.episode_numbers)) > 1 or len(set(info.absolute_episode_numbers)) > 1
 
 
-def spans_multiple(info: ParsedFileInfo, scope: PlacementTarget) -> bool:
+def spans_multiple(info: ParsedFileInfo, target: PlacementTarget) -> bool:
     """Whether the file likely holds more than one episode: its name claims several, or Sonarr matched several.
 
     It asks how many episodes, not which. A full-season match (a name with no episode number) counts only when one
     of its episodes is in the scope.
     """
 
-    if claims_several_episodes(info):
+    if names_several_episodes(info):
         return True
     pairs = {(matched.season_number, matched.episode_number) for matched in info.matched_episodes}
     if len(pairs) <= 1:
         return False
     if not info.full_season:
         return True
-    return any(scope.id_by_key.get(season_episode_key(season, episode)) in scope.real_ids for season, episode in pairs)
+    return any(
+        target.id_by_key.get(season_episode_key(season, episode)) in target.real_ids for season, episode in pairs
+    )

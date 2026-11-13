@@ -46,7 +46,7 @@ from .import_quality import (
 )
 from .output import hub_note, hub_warn
 from .output.console_text import count_noun, pluralize
-from .pending_import import FileEpisodeMap, PendingImport, joined_map
+from .pending_import import FileEpisodeMap, PendingImport, joined_file_map
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
 from .releases import EpisodeKey
@@ -126,7 +126,7 @@ class _CandidateScan:
 
 
 @dataclass(frozen=True, slots=True)
-class PollReading:
+class AttemptInputs:
     """What a step-in poll read after its guard reads cleared, handed to the import."""
 
     scan: _CandidateScan
@@ -530,7 +530,7 @@ class ImportExecutor:
             self.logger.debug(f"{pending.display_label}: {block.value}; waiting")
         return block
 
-    def run_auto_import(self, pending: PendingImport, content_path: str, reading: PollReading) -> AttemptResult:
+    def run_auto_import(self, pending: PendingImport, content_path: str, inputs: AttemptInputs) -> AttemptResult:
         """Import EXACTLY the files our map intends, never over a recommended file that isn't a copy of our own.
 
         The map is the grab's, joined with the files Sonarr's history placed for a download no scan saw. A video file
@@ -538,18 +538,18 @@ class ImportExecutor:
         verified, for the record seam to persist.
         """
 
-        scan = reading.scan
+        scan = inputs.scan
         context = _ImportContext(
             pending=pending,
             content_path=content_path,
             scan=scan,
-            snapshot=reading.snapshot,
-            baseline=reading.baseline,
+            snapshot=inputs.snapshot,
+            baseline=inputs.baseline,
             candidates_by_basename=candidate_files(scan.candidates),
-            at_deadline=reading.at_deadline,
+            at_deadline=inputs.at_deadline,
         )
         recovered: FileEpisodeMap = {}
-        if scan.import_rows and not pending.seed_coverage().mapped:
+        if scan.import_rows and not pending.seed_coverage().file_map:
             # Only an empty folder scan carries the rows, so they stand in for the files no scan saw.
             recovered = placements_from_history(scan.import_rows, pending)
             self.logger.debug(
@@ -558,7 +558,7 @@ class ImportExecutor:
             )
             for name, ids in recovered.items():
                 self.logger.debug(f"{pending.display_label}: placed {name} -> {ids} from Sonarr's history")
-        authoritative = joined_map(pending.file_episode_map, recovered)
+        authoritative = joined_file_map(pending.file_episode_map, recovered)
         leftover = disk_leftover(pending, context.candidates_by_basename, authoritative)
         if leftover.names and not authoritative:
             if (by_hand := self._all_done_result(context, context.window_statuses(authoritative))) is not None:
@@ -878,7 +878,7 @@ class _Attempt:
         coverage = pending.seed_coverage()
         accounted = bool(targets) and coverage.accounted
         return cls(
-            pending, content_path, attempt.at_deadline, targets if accounted else [], accounted and coverage.mapped
+            pending, content_path, attempt.at_deadline, targets if accounted else [], accounted and coverage.file_map
         )
 
     @property
@@ -950,7 +950,7 @@ class ImportReconciler:
         """Read-only "files inserted" count: this path can promote, so it never trusts exclusions."""
 
         seeded_targets = pending.file_map_episode_ids()
-        if not seeded_targets or not pending.seed_coverage().mapped:
+        if not seeded_targets or not pending.seed_coverage().file_map:
             return NO_PROGRESS
         seed = self._read_seed(pending, seeded_targets)
         return NO_PROGRESS if seed is None else ImportProgress(seed.done, seed.total, determinate=True)
@@ -995,8 +995,8 @@ class ImportReconciler:
             return imported
         if block := self._executor.command_block(baseline, poll.pending, poll.content_path):
             return fresh.with_counts(block.waiting())
-        reading = PollReading(scan, fresh.snapshot, baseline, at_deadline=poll.at_deadline)
-        return fresh.with_counts(self._executor.run_auto_import(poll.pending, poll.content_path, reading))
+        inputs = AttemptInputs(scan, fresh.snapshot, baseline, at_deadline=poll.at_deadline)
+        return fresh.with_counts(self._executor.run_auto_import(poll.pending, poll.content_path, inputs))
 
     def _already_imported(self, poll: _Attempt, seed: _SeedStatuses) -> AttemptResult | None:
         """The IMPORTED probe when the seed map is whole and every recommended file is present, else None."""

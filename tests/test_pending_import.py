@@ -18,7 +18,7 @@ from pearlarr.pending_import import (
     TitleNames,
     TitleWindow,
     added_at_of,
-    joined_map,
+    joined_file_map,
     sizes_by_episode,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
@@ -220,12 +220,12 @@ class TestJoinedMap:
     """`joined_map`: a base map, then the added map's new names."""
 
     def test_adds_the_new_names_after_the_base_entries(self) -> None:
-        joined = joined_map({"b.mkv": (2,), "a.mkv": (1,)}, {"c.mkv": (3,)})
+        joined = joined_file_map({"b.mkv": (2,), "a.mkv": (1,)}, {"c.mkv": (3,)})
 
         assert list(joined.items()) == [("b.mkv", (2,)), ("a.mkv", (1,)), ("c.mkv", (3,))]
 
     def test_a_shared_name_keeps_the_base_ids(self) -> None:
-        assert joined_map({"a.mkv": (1,)}, {"a.mkv": (9,), "b.mkv": (2,)}) == {"a.mkv": (1,), "b.mkv": (2,)}
+        assert joined_file_map({"a.mkv": (1,)}, {"a.mkv": (9,), "b.mkv": (2,)}) == {"a.mkv": (1,), "b.mkv": (2,)}
 
 
 class TestListedSizes:
@@ -514,7 +514,7 @@ class TestPendingImportRoundTrip:
         healed = pending.with_placements({"show - 01 [1080p].mkv": (101,)})
 
         assert PendingImport.from_json(healed.to_json(), guards={}) == healed
-        assert (pending.seed_coverage().mapped, healed.seed_coverage().mapped) == (False, True)
+        assert (pending.seed_coverage().file_map, healed.seed_coverage().file_map) == (False, True)
 
     def test_from_json_ignores_a_blob_guards_key(self) -> None:
         # A frozen grab-time copy in the blob (the divergence the guard_facts row exists to kill)

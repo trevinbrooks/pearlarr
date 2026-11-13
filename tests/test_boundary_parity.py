@@ -22,7 +22,7 @@ from pearlarr.episode_state import ImportSnapshot
 from pearlarr.pending_import import PendingImport
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.sonarr_client import SonarrClient
-from pearlarr.sonarr_import import ImportExecutor, PollReading
+from pearlarr.sonarr_import import AttemptInputs, ImportExecutor
 from pearlarr.sonarr_state import QueueState, classify_queue
 
 from .builders import episode_snapshot, make_run_deps, pending_import
@@ -98,7 +98,9 @@ def _drive_manual_import(
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=False)
     assert scan is not None
-    result = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    result = executor.run_auto_import(
+        pending, "/d", AttemptInputs(scan, _bare_snapshot(pending), [], at_deadline=False)
+    )
 
     assert result.all_done is False
     assert result.command_issued is True
@@ -170,7 +172,9 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=True)
     assert scan is not None
-    result = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    result = executor.run_auto_import(
+        pending, "/d", AttemptInputs(scan, _bare_snapshot(pending), [], at_deadline=False)
+    )
 
     assert result.all_done is False
     assert result.command_issued is True

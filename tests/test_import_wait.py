@@ -2644,7 +2644,7 @@ class TestMonitorAbsorbsPlacements:
         first, second = strategy.import_calls
         assert dict(first.pending.file_episode_map) == {}
         assert dict(second.pending.file_episode_map) == _PLACED
-        assert second.pending.seed_coverage().mapped is True
+        assert second.pending.seed_coverage().file_map is True
         row = mgr._pending_imports.rows()["h"]
         assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _PLACED_ROW)
 
@@ -4164,10 +4164,10 @@ class TestRegisteredGrabSurvivesSnapshot:
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")})
         strategy = _RecordingStrategy()
         engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
-        seeds = {"h1": pending_seed("h1", series_id=7)}
+        updates = {"h1": pending_seed("h1", series_id=7)}
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
+            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
         )
         engine._wait_manager.report_imports_for_series(7)
 
