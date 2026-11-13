@@ -18,9 +18,9 @@ import respx
 
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import HistoryRecord, ImportRejection, QueueRecord
-from pearlarr.episode_state import RecordSnapshot
+from pearlarr.episode_state import ImportSnapshot
 from pearlarr.pending_import import PendingImport
-from pearlarr.probe_verdicts import QueueVerdict, classify_queue
+from pearlarr.probe_verdicts import QueueState, classify_queue
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor, PollReading
@@ -63,7 +63,7 @@ def _make_radarr() -> RadarrClient:
 
 # --- golden ManualImport POST bodies (resolve_quality branches) ---------------
 #
-# Each test drives `ImportExecutor.run_manual_import` end-to-end - raw
+# Each test drives `ImportExecutor.run_auto_import` end-to-end - raw
 # candidate JSON in, exact `/api/v3/command` body out - so the golden pins the
 # full read -> resolve -> re-emit round-trip at the wire, not the in-memory
 # shapes the port replaces.
@@ -73,10 +73,10 @@ _CANDIDATE_PATH = "/d/Show - 01 [1080p].mkv"
 _NEUTRAL_RESCAN: dict[str, object] = {"id": 1, "name": "RefreshMonitoredDownloads", "status": "completed"}
 
 
-def _bare_snapshot(pending: PendingImport) -> RecordSnapshot:
+def _bare_snapshot(pending: PendingImport) -> ImportSnapshot:
     """An empty same-poll index for every series the record claims (nothing on disk yet)."""
 
-    return RecordSnapshot(pending, {sid: episode_snapshot() for sid in pending.series_ids}, {})
+    return ImportSnapshot(pending, {sid: episode_snapshot() for sid in pending.series_ids}, {})
 
 
 def _drive_manual_import(
@@ -98,9 +98,9 @@ def _drive_manual_import(
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=False)
     assert scan is not None
-    probe = executor.run_manual_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    probe = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
-    assert probe.files_present is False
+    assert probe.all_done is False
     assert probe.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     return body
@@ -170,9 +170,9 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     pending = pending_import()
     scan = executor.scanner.scan(pending, "/d", untracked=True)
     assert scan is not None
-    probe = executor.run_manual_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
+    probe = executor.run_auto_import(pending, "/d", PollReading(scan, _bare_snapshot(pending), [], at_deadline=False))
 
-    assert probe.files_present is False
+    assert probe.all_done is False
     assert probe.command_issued is True
     body: object = json.loads(post_route.calls.last.request.content)
     assert body == {
@@ -372,8 +372,8 @@ def test_import_pending_classifies_by_tracked_status() -> None:
     queue = _make_sonarr_client().queue()
     assert queue is not None
     records = {record.download_id: record for record in queue}
-    assert classify_queue([records["ABC123"]]) is QueueVerdict.PENDING_CLEAN
-    assert classify_queue([records["DEF456"]]) is QueueVerdict.STEP_IN
+    assert classify_queue([records["ABC123"]]) is QueueState.PENDING_CLEAN
+    assert classify_queue([records["DEF456"]]) is QueueState.STEP_IN
 
 
 # --- HistoryRecord: per-field folds, record never drops ----------------------

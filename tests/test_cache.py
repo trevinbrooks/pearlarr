@@ -33,7 +33,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parse_from_json, parse_to_json
-from pearlarr.pending_import import GuardFacts, OwnedEpisode, PendingImport, TitleNames
+from pearlarr.pending_import import GuardFacts, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
@@ -395,7 +395,9 @@ class TestSchemaVersionGate:
 
         with _open(tmp_path) as store:
             assert store.get_guards(Arr.SONARR) == {
-                9: GuardFacts(entry_groups=("New",), stale_groups=("Old",), owned_episodes=(OwnedEpisode(101, 700),)),
+                9: GuardFacts(
+                    entry_groups=("New",), stale_groups=("Old",), owned_episodes=(SizeMatchedEpisode(101, 700),)
+                ),
             }
             # The divergent per-record copies are gone for good.
             assert all("guards" not in rec for rec in store.get_pending(Arr.SONARR).values())
@@ -1106,12 +1108,12 @@ class TestGuardFacts:
             facts = GuardFacts(
                 entry_groups=("SubsPlease", "Erai-raws"),
                 stale_groups=("HorribleSubs",),
-                owned_episodes=(OwnedEpisode(101, 700_000_000), OwnedEpisode(102, 650_000_000)),
+                owned_episodes=(SizeMatchedEpisode(101, 700_000_000), SizeMatchedEpisode(102, 650_000_000)),
             )
             store.put_guards(Arr.SONARR, 7, facts)
             store.put_guards(Arr.RADARR, 7, GuardFacts(entry_groups=("Beatrice-Raws",)))
 
-            # Typed on both ends: owned_episodes come back as OwnedEpisode tuples.
+            # Typed on both ends: owned_episodes come back as SizeMatchedEpisode tuples.
             assert store.get_guards(Arr.SONARR) == {7: facts}
             assert store.get_guards(Arr.RADARR) == {7: GuardFacts(entry_groups=("Beatrice-Raws",))}
 

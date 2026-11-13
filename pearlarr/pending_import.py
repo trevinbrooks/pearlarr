@@ -84,7 +84,7 @@ class SeedCoverage:
     """Whether the map and the exclusions together name every listed file."""
 
 
-class OwnedEpisode(NamedTuple):
+class SizeMatchedEpisode(NamedTuple):
     """One grab-time ownership claim over an untagged on-disk file.
 
     A tuple on purpose: `GuardFacts.owned_sizes` and the JSON form read it as an (id, size) pair.
@@ -95,7 +95,7 @@ class OwnedEpisode(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True)
-class OwnGroup:
+class TorrentGroup:
     """A torrent's own release group and the sizes its current listing carries (the trust policy's last vote)."""
 
     release_group: str
@@ -184,7 +184,7 @@ class GuardFacts:
     stale_groups: tuple[str, ...] = ()
     """Pick groups the plan judged stale on disk."""
 
-    owned_episodes: tuple[OwnedEpisode, ...] = ()
+    owned_episodes: tuple[SizeMatchedEpisode, ...] = ()
     """Episodes where the on-disk file has no release group, but matched a pick's listed size exactly."""
 
     @property
@@ -200,7 +200,7 @@ class GuardFacts:
         return cls(
             entry_groups=tuple(raw.get("entry_groups", [])),
             stale_groups=tuple(raw.get("stale_groups", [])),
-            owned_episodes=tuple(OwnedEpisode(pair[0], pair[1]) for pair in raw.get("owned_episodes", [])),
+            owned_episodes=tuple(SizeMatchedEpisode(pair[0], pair[1]) for pair in raw.get("owned_episodes", [])),
         )
 
 
@@ -382,10 +382,10 @@ class PendingImport:
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
 
     @property
-    def own_group(self) -> OwnGroup:
+    def own_group(self) -> TorrentGroup:
         """The torrent's own group at its listing's sizes, the trust policy's last vote."""
 
-        return OwnGroup(self.release_group, self.release_sizes)
+        return TorrentGroup(self.release_group, self.release_sizes)
 
     @property
     def series_ids(self) -> tuple[int, ...]:
@@ -412,16 +412,16 @@ class PendingImport:
             base = f"{base} · {slices}"
         return base
 
-    def target_ids(self) -> list[int]:
+    def file_map_episode_ids(self) -> list[int]:
         """Our intended episode ids: the map's values in first-claim order."""
 
         return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
-    def resolved_ids(self) -> list[int]:
+    def window_episode_ids(self) -> list[int]:
         """The episodes a hand import must fill (`filled_by_hand`): the claims' windows in order, else the seeds' ids."""
 
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
-        return windows or sorted(self.target_ids())
+        return windows or sorted(self.file_map_episode_ids())
 
     def guards_for(self, series_id: int) -> GuardFacts:
         """The guard evidence of every claim on `series_id` as one.
@@ -431,7 +431,7 @@ class PendingImport:
 
         entry_groups: dict[str, None] = {}
         stale_groups: dict[str, None] = {}
-        owned: list[OwnedEpisode] = []
+        owned: list[SizeMatchedEpisode] = []
         for claim in self.claims:
             if claim.series_id == series_id:
                 entry_groups.update(dict.fromkeys(claim.guards.entry_groups))

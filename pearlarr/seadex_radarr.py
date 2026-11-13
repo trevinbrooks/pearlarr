@@ -20,7 +20,7 @@ from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_mov
 from .releases import releases_to_grab
 from .run_services import LegDeps, LegServices, bind_arr_http
 from .stamps import parse_stamp_aware
-from .wait_types import NO_PROGRESS, AttemptKind, ImportProbe, ImportProgress, ImportWaitMode
+from .wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportProgress, ImportWaitMode
 
 # Clock-skew cushion subtracted from the oldest pending record's `added_at` before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone
@@ -225,7 +225,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         pending: PendingImport,
         content_path: str,
         attempt: AttemptKind,
-    ) -> ImportProbe:
+    ) -> AttemptResult:
         """Reconcile one completed Radarr download against Radarr's import history.
 
         Radarr imports its own completed downloads, so this only reads evidence and never drives an import.
@@ -235,7 +235,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         evidence = self._import_evidence()
         # An outage is no evidence, so wait. Never move a torrent on a missing read.
         imported = evidence.readable and pending.infohash.casefold() in evidence.imported_hashes
-        return ImportProbe.imported() if imported else ImportProbe.waiting()
+        return AttemptResult.imported() if imported else AttemptResult.waiting()
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:

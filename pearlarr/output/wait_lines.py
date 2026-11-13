@@ -25,7 +25,7 @@ from .console_text import (
 )
 from .events import (
     Phase,
-    TorrentGraduated,
+    RowFinished,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -39,12 +39,12 @@ from .scan_lines import kv_line
 from ..coverage import coverage_string
 from ..releases import EpisodeKey, EpisodeRecord
 from ..tvdb_orders import order_display_name
-from ..wait_types import HeldBack, Outcome, OutcomeCategory
+from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
     from ..console_caps import Capabilities
 
-type WaitEvent = WaitStarted | WaitProgress | TorrentGraduated | WaitFinished
+type WaitEvent = WaitStarted | WaitProgress | RowFinished | WaitFinished
 
 # The live cockpit never grows past this many in-flight rows, the rest collapse into a one-line
 # "+ N more ..." overflow so a large carried-over backlog can't blow the region past the screen.
@@ -68,7 +68,7 @@ def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
     return coverage_string([EpisodeRecord(season=key.season, episode=key.episode) for key in keys])
 
 
-def _order_only_reason(held: HeldBack) -> str:
+def _order_only_reason(held: LeftForHandImport) -> str:
     """Why the order-only files are held, as a sentence with no capital and no closing mark."""
 
     keys = [file.order_only for file in held.files if file.order_only is not None]
@@ -86,7 +86,7 @@ def _order_only_reason(held: HeldBack) -> str:
     )
 
 
-def held_back_names(held: HeldBack, *, sep: str = ": ", quote: str = "") -> list[str]:
+def held_back_names(held: LeftForHandImport, *, sep: str = ": ", quote: str = "") -> list[str]:
     """Each held-back file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
 
     names: list[str] = []
@@ -96,7 +96,7 @@ def held_back_names(held: HeldBack, *, sep: str = ": ", quote: str = "") -> list
     return names
 
 
-def held_back_sentences(held: HeldBack) -> tuple[str, str]:
+def held_back_sentences(held: LeftForHandImport) -> tuple[str, str]:
     """A record explained by its order, in words: a sentence per kind of unfilled episode, then why its files are held.
 
     The reason has no closing mark.
@@ -106,30 +106,28 @@ def held_back_sentences(held: HeldBack) -> tuple[str, str]:
     if held.missing:
         verb = "is" if len(held.missing) == 1 else "are"
         lead.append(f"{_episodes(held.missing)} {verb} still missing in Sonarr.")
-    if len(held.not_recommended) == 1:
-        lead.append(f"{_episodes(held.not_recommended)} has a file in Sonarr, but it isn't from a recommended release.")
-    elif held.not_recommended:
-        lead.append(
-            f"{_episodes(held.not_recommended)} have files in Sonarr, but they aren't from a recommended release."
-        )
+    if len(held.untrusted) == 1:
+        lead.append(f"{_episodes(held.untrusted)} has a file in Sonarr, but it isn't from a recommended release.")
+    elif held.untrusted:
+        lead.append(f"{_episodes(held.untrusted)} have files in Sonarr, but they aren't from a recommended release.")
     reason = _order_only_reason(held)
     return " ".join(lead), reason[0].upper() + reason[1:]
 
 
-def _unfilled_coda(held: HeldBack) -> str:
+def _unfilled_coda(held: LeftForHandImport) -> str:
     """The unfilled episodes of a record explained by its order, as its ledger row's coda."""
 
     parts: list[str] = []
     if held.missing:
         parts.append(f"{_episodes(held.missing)} still missing in Sonarr")
-    if len(held.not_recommended) == 1:
-        parts.append(f"{_episodes(held.not_recommended)} has a file that isn't from a recommended release")
-    elif held.not_recommended:
-        parts.append(f"{_episodes(held.not_recommended)} have files that aren't from a recommended release")
+    if len(held.untrusted) == 1:
+        parts.append(f"{_episodes(held.untrusted)} has a file that isn't from a recommended release")
+    elif held.untrusted:
+        parts.append(f"{_episodes(held.untrusted)} have files that aren't from a recommended release")
     return " · ".join(parts)
 
 
-def graduation_tail(event: TorrentGraduated) -> str:
+def graduation_tail(event: RowFinished) -> str:
     """The ledger line's parenthesized coda. "" when there is nothing to say."""
 
     outcome = event.outcome
@@ -147,7 +145,7 @@ def graduation_tail(event: TorrentGraduated) -> str:
         if event.waited_s >= 1.0:
             parts.append(format_elapsed(event.waited_s))
         return " · ".join(parts)
-    if outcome.category is OutcomeCategory.PENDING:
+    if outcome.category is OutcomeKind.IN_PROGRESS:
         return "checked again next run"
     if not outcome.dropped:
         return "retries next run"
@@ -171,7 +169,7 @@ def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
     counts = snapshot.counts()
     message = indent_string(
         f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
-        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.QUEUED]} queued · "
+        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.AWAITING_FIRST_POLL]} queued · "
         f"{format_elapsed(snapshot.elapsed_s)}",
     )
     return LegacyLine(logging.INFO, message)
@@ -183,7 +181,7 @@ def _detail(key: str, value: str, style: str | None = None) -> KvLine:
     return KvLine(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
 
 
-def _held_back_details(held: HeldBack, caps: Capabilities, style: str) -> list[KvLine]:
+def _held_back_details(held: LeftForHandImport, caps: Capabilities, style: str) -> list[KvLine]:
     """The rows under a held-back ledger row: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
 
     rows: list[KvLine] = []
@@ -197,7 +195,7 @@ def _held_back_details(held: HeldBack, caps: Capabilities, style: str) -> list[K
     return rows
 
 
-def wait_graduation_lines(event: TorrentGraduated, caps: Capabilities) -> list[LegacyLine]:
+def wait_graduation_lines(event: RowFinished, caps: Capabilities) -> list[LegacyLine]:
     """A finished torrent's durable ledger line (glyph + word + label + coda), then its held-back files' rows.
 
     Every line is at `severity_of`'s level.
@@ -306,7 +304,7 @@ class LiveModel:
 def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind) -> LiveModel:
     """Reduce a snapshot to a bounded, ordered cockpit frame."""
 
-    in_flight = [t for t in snapshot.torrents if t.phase is not Phase.TERMINAL]
+    in_flight = [t for t in snapshot.torrents if t.phase is not Phase.FINISHED]
     in_flight.sort(key=_row_sort_key)
 
     budget = max(MIN_LIVE_ROWS, min(MAX_LIVE_ROWS, caps.height - _RESERVED_ROWS))
@@ -341,7 +339,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind) -> Li
 
 # Every non-terminal Phase, drift-pinned (test_output_wait_render ties it to set(Phase)).
 # _overflow_text and wait_pulse_line hand-list the same trio.
-_PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.QUEUED: 2}
+_PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.AWAITING_FIRST_POLL: 2}
 
 
 def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
@@ -390,7 +388,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             status="copying" if torrent.command_issued else "importing",
             time=elapsed,
         )
-    return RowModel(label=torrent.label, phase=Phase.QUEUED, fraction=0.0, status="queued")
+    return RowModel(label=torrent.label, phase=Phase.AWAITING_FIRST_POLL, fraction=0.0, status="queued")
 
 
 def _overflow_text(hidden: list[TorrentView]) -> str:
@@ -404,8 +402,8 @@ def _overflow_text(hidden: list[TorrentView]) -> str:
         parts.append(f"{counts[Phase.IMPORTING]} more importing")
     if counts[Phase.DOWNLOADING]:
         parts.append(f"{counts[Phase.DOWNLOADING]} more downloading")
-    if counts[Phase.QUEUED]:
-        parts.append(f"{counts[Phase.QUEUED]} queued")
+    if counts[Phase.AWAITING_FIRST_POLL]:
+        parts.append(f"{counts[Phase.AWAITING_FIRST_POLL]} queued")
     return "+ " + " · ".join(parts)
 
 

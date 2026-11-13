@@ -60,7 +60,7 @@ from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
-from pearlarr.wait_types import ImportWaitMode, PendingState
+from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (
     FakeCacheStore,
@@ -895,9 +895,9 @@ class TestEntryHeaderParity:
         harness = _Harness()
         pending = pending_import(**_PENDING_KWARGS)
         for state, expected in (
-            (PendingState.QUEUED, PENDING_QUEUED_LINES),
-            (PendingState.DOWNLOADED, PENDING_DOWNLOADED_LINES),
-            (PendingState.IMPORTED, PENDING_IMPORTED_LINES),
+            (PendingImportState.DOWNLOADING, PENDING_QUEUED_LINES),
+            (PendingImportState.DOWNLOADED, PENDING_DOWNLOADED_LINES),
+            (PendingImportState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
             harness.events.clear()
             harness.reporter.log_pending_snapshot(state, pending, pending.claims[0].series_id)

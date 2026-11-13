@@ -42,7 +42,7 @@ from pearlarr.cache import (
 )
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
-from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
+from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeStatuses, TrustedGroups
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
@@ -56,11 +56,11 @@ from pearlarr.pending_import import (
     NO_SIZES_BY_NAME,
     FileEpisodeMap,
     GuardFacts,
-    OwnGroup,
     PendingImport,
     TitleClaim,
     TitleNames,
     TitleWindow,
+    TorrentGroup,
 )
 from pearlarr.pending_records import PendingImportStore
 from pearlarr.placement_types import (
@@ -95,7 +95,7 @@ from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
-from pearlarr.wait_types import NO_HELD_BACK, Deferral, HeldBack, HeldFile, ImportProbe, ImportWaitMode
+from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
 from pearlarr.window_placement import WindowedAssignment
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
@@ -1113,23 +1113,23 @@ def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
     )
 
 
-_NO_OWN_RELEASE = OwnGroup("", ())
+_NO_OWN_RELEASE = TorrentGroup("", ())
 """An own release listing no sizes: no file is judged misplaced against it."""
 
 
 def target_statuses(
     by_id: Mapping[int, EpisodeFileStatus], holding_own_copy: frozenset[int] = frozenset()
-) -> TargetStatuses:
+) -> EpisodeStatuses:
     """`TargetStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
 
-    return TargetStatuses(by_id, holding_own_copy)
+    return EpisodeStatuses(by_id, holding_own_copy)
 
 
 def episode_snapshot(
     *,
     episodes: EpisodeIndex | None = None,
-    trusted: TrustPolicy | None = None,
-    own: OwnGroup = _NO_OWN_RELEASE,
+    trusted: TrustedGroups | None = None,
+    own: TorrentGroup = _NO_OWN_RELEASE,
     owned_episode_sizes: Mapping[int, int] | None = None,
 ) -> EpisodeSnapshot:
     """An empty series index trusting no group, with no owned sizes unless given.
@@ -1449,37 +1449,37 @@ def pending_import(**overrides: Any) -> PendingImport:
 
 
 def order_only_held_back(
-    *, missing: tuple[EpisodeKey, ...] = (EpisodeKey(4, 1),), not_recommended: tuple[EpisodeKey, ...] = ()
-) -> HeldBack:
+    *, missing: tuple[EpisodeKey, ...] = (EpisodeKey(4, 1),), untrusted: tuple[EpisodeKey, ...] = ()
+) -> LeftForHandImport:
     """A split opener's two halves held back under their DVD keys, the aired opener missing by default."""
 
     halves = ("[grp] Show Ending S1 - 01 [ABCD1234].mkv", "[grp] Show Ending S1 - 02 [ABCD1234].mkv")
     keys = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
     files = tuple(HeldFile(half, key) for half, key in zip(halves, keys, strict=True))
-    return HeldBack(files=files, missing=missing, not_recommended=not_recommended)
+    return LeftForHandImport(files=files, missing=missing, untrusted=untrusted)
 
 
-def held_files(*names: str) -> HeldBack:
+def held_files(*names: str) -> LeftForHandImport:
     """Files held back with no order-only key."""
 
-    return HeldBack(files=tuple(HeldFile(name) for name in names))
+    return LeftForHandImport(files=tuple(HeldFile(name) for name in names))
 
 
 def import_probe(
     *,
-    files_present: bool = True,
+    all_done: bool = True,
     command_issued: bool = False,
     imported_count: int = 0,
     target_count: int = 0,
-    deferral: Deferral = Deferral.NONE,
+    deferral: PauseReason = PauseReason.NONE,
     placements: FileEpisodeMap | None = None,
     unmatched_files: tuple[str, ...] = (),
-    left_for_hand_import: HeldBack = NO_HELD_BACK,
-) -> ImportProbe:
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
+) -> AttemptResult:
     """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
 
-    return ImportProbe(
-        files_present=files_present,
+    return AttemptResult(
+        all_done=all_done,
         command_issued=command_issued,
         imported_count=imported_count,
         target_count=target_count,

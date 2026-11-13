@@ -9,13 +9,13 @@ import pytest
 from pearlarr.releases import EpisodeKey
 from pearlarr.wait_types import (
     LEAVE_PROBE,
-    Deferral,
-    HeldBack,
+    AttemptResult,
     HeldFile,
-    ImportProbe,
-    PendingState,
+    LeftForHandImport,
+    PauseReason,
+    PendingImportState,
+    TorrentStatus,
     TorrentTelemetry,
-    WaitOutcome,
     classify_pending,
     sanitize_torrent_telemetry,
 )
@@ -28,44 +28,44 @@ class TestPendingStateAndProbe:
     """The shared carried-over status vocabulary + the import probe value object."""
 
     def test_pending_state_members(self) -> None:
-        assert {s.name for s in PendingState} == {
-            "QUEUED",
+        assert {s.name for s in PendingImportState} == {
+            "DOWNLOADING",
             "DOWNLOADED",
             "IMPORTED",
             "ERRORED",
-            "MISSING",
+            "GONE",
         }
 
     def test_pending_state_is_its_string(self) -> None:
-        assert PendingState.DOWNLOADED == "downloaded"
-        assert PendingState.QUEUED == "queued"
+        assert PendingImportState.DOWNLOADED == "downloaded"
+        assert PendingImportState.DOWNLOADING == "queued"
 
     def test_imported_probe_claims_the_files_without_a_command(self) -> None:
-        probe = ImportProbe.imported()
-        assert probe.files_present is True
+        probe = AttemptResult.imported()
+        assert probe.all_done is True
         assert probe.command_issued is False
 
     def test_waiting_probe_carries_the_attempt_flags(self) -> None:
-        probe = ImportProbe.waiting(command_issued=True, deferral=Deferral.IMPORT)
-        assert probe.files_present is False
+        probe = AttemptResult.waiting(command_issued=True, deferral=PauseReason.IMPORT)
+        assert probe.all_done is False
         assert probe.command_issued is True
-        assert probe.deferral is Deferral.IMPORT
+        assert probe.deferral is PauseReason.IMPORT
         assert probe.deferred is True
         assert probe.attempted is True
 
     def test_waiting_probe_defaults_to_no_deferral(self) -> None:
-        probe = ImportProbe.waiting()
-        assert probe.deferral is Deferral.NONE
+        probe = AttemptResult.waiting()
+        assert probe.deferral is PauseReason.NONE
         assert probe.deferred is False
 
     def test_leave_probe_records_no_attempt(self) -> None:
         assert LEAVE_PROBE.attempted is False
-        assert LEAVE_PROBE.files_present is False
+        assert LEAVE_PROBE.all_done is False
         assert LEAVE_PROBE.command_issued is False
 
     def test_a_probes_placements_are_detached_and_read_only(self) -> None:
         placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
-        probe = ImportProbe(files_present=False, command_issued=True, placements=placed)
+        probe = AttemptResult(all_done=False, command_issued=True, placements=placed)
         placed["show - 02.mkv"] = (102,)
         mutable = cast("dict[str, tuple[int, ...]]", probe.placements)
 
@@ -78,21 +78,23 @@ class TestPendingStateAndProbe:
         [
             pytest.param(order_only_held_back(), True, id="both keyed, an episode missing"),
             pytest.param(
-                order_only_held_back(missing=(), not_recommended=(EpisodeKey(4, 1),)),
+                order_only_held_back(missing=(), untrusted=(EpisodeKey(4, 1),)),
                 True,
                 id="both keyed, an episode holding another file",
             ),
             pytest.param(
-                HeldBack(files=(order_only_held_back().files[0], HeldFile(HALVES[1])), missing=(EpisodeKey(4, 1),)),
+                LeftForHandImport(
+                    files=(order_only_held_back().files[0], HeldFile(HALVES[1])), missing=(EpisodeKey(4, 1),)
+                ),
                 False,
                 id="one of two keyed",
             ),
             pytest.param(order_only_held_back(missing=()), False, id="no unfilled episode to name"),
-            pytest.param(HeldBack(missing=(EpisodeKey(4, 1),)), False, id="no file"),
+            pytest.param(LeftForHandImport(missing=(EpisodeKey(4, 1),)), False, id="no file"),
         ],
     )
     def test_the_order_explains_only_keyed_files_with_an_unfilled_episode(
-        self, held: HeldBack, explained: bool
+        self, held: LeftForHandImport, explained: bool
     ) -> None:
         assert held.explained_by_order is explained
 
@@ -101,21 +103,21 @@ class TestClassifyPending:
     """`classify_pending` folds a poll's outcome + the files-present flag into a state."""
 
     def test_missing(self) -> None:
-        assert classify_pending(WaitOutcome.MISSING, False) is PendingState.MISSING
+        assert classify_pending(TorrentStatus.GONE, False) is PendingImportState.GONE
 
     def test_errored(self) -> None:
-        assert classify_pending(WaitOutcome.ERRORED, False) is PendingState.ERRORED
+        assert classify_pending(TorrentStatus.ERRORED, False) is PendingImportState.ERRORED
 
     def test_still_downloading_is_queued(self) -> None:
-        assert classify_pending(None, False) is PendingState.QUEUED
+        assert classify_pending(None, False) is PendingImportState.DOWNLOADING
 
     def test_complete_and_files_present_is_imported(self) -> None:
-        assert classify_pending(WaitOutcome.COMPLETE, True) is PendingState.IMPORTED
+        assert classify_pending(TorrentStatus.COMPLETE, True) is PendingImportState.IMPORTED
 
     def test_complete_without_files_is_importing(self) -> None:
         # The copy is still in flight -> downloaded, never imported, until the
         # files are verified present.
-        assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.DOWNLOADED
+        assert classify_pending(TorrentStatus.COMPLETE, False) is PendingImportState.DOWNLOADED
 
 
 class TestSanitizeTorrentTelemetry:
@@ -176,4 +178,4 @@ class TestSanitizeTorrentTelemetry:
 
 
 def test_wait_outcome_members_exist() -> None:
-    assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "MISSING"}
+    assert {o.name for o in TorrentStatus} == {"COMPLETE", "ERRORED", "GONE"}

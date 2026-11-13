@@ -14,7 +14,7 @@ from rich.text import Text
 
 from .console_lines import LegacyLine, render_legacy_lines
 from .console_text import INDENT, indent_string
-from .events import Phase, TorrentGraduated, WaitFinished, WaitKind, WaitProgress, WaitSnapshot, WaitStarted
+from .events import Phase, RowFinished, WaitFinished, WaitKind, WaitProgress, WaitSnapshot, WaitStarted
 from .live_region import LiveRegion
 from .wait_lines import (
     LiveModel,
@@ -138,7 +138,7 @@ class WaitRegion(LiveRegion):
                     self._advance_frame(console, caps, snapshot)
                 elif self._throttle.fire(snapshot.elapsed_s):
                     self._durable(console, [wait_pulse_line(snapshot)])
-            case TorrentGraduated():
+            case RowFinished():
                 self._durable(console, wait_graduation_lines(event, caps))
             case WaitFinished():
                 # Teardown before summary: stop the Live first so the tally prints to clean scrollback.
@@ -219,7 +219,7 @@ class WaitRegion(LiveRegion):
             return snapshot
         torrents = tuple(
             torrent
-            if torrent.phase is Phase.TERMINAL
+            if torrent.phase is Phase.FINISHED
             else replace(torrent, phase_elapsed_s=torrent.phase_elapsed_s + offset)
             for torrent in snapshot.torrents
         )

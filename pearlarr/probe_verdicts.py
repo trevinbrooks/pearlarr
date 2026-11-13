@@ -10,10 +10,10 @@ from .arr_models import CommandResource, HistoryPage, QueueRecord
 from .file_paths import fold_path_separators, normalized_leaf
 from .pending_import import PendingImport
 from .stamps import parse_stamp_aware
-from .wait_types import Deferral, ImportProbe
+from .wait_types import AttemptResult, PauseReason
 
 
-class QueueVerdict(Enum):
+class QueueState(Enum):
     """What Sonarr's queue says to do with a download THIS poll."""
 
     WAIT = auto()
@@ -43,7 +43,7 @@ _QUEUE_STEP_IN_STATES = frozenset(
 _QUEUE_FLAGGED_STATUSES = frozenset({"warning", "error"})
 
 
-def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
+def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
     """Reduce a download's queue records to one verdict.
 
     1. no records -> `NOT_IN_QUEUE`
@@ -55,7 +55,7 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
     """
 
     if not records:
-        return QueueVerdict.NOT_IN_QUEUE
+        return QueueState.NOT_IN_QUEUE
     importing = False
     in_motion = False
     troubled = False
@@ -78,14 +78,14 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueVerdict:
                 clean_pending = True
 
     if importing:
-        return QueueVerdict.IMPORTING
+        return QueueState.IMPORTING
     if in_motion:
-        return QueueVerdict.WAIT
+        return QueueState.WAIT
     if troubled:
-        return QueueVerdict.STEP_IN
+        return QueueState.STEP_IN
     if clean_pending:
-        return QueueVerdict.PENDING_CLEAN
-    return QueueVerdict.STEP_IN
+        return QueueState.PENDING_CLEAN
+    return QueueState.STEP_IN
 
 
 # A command counts as a ManualImport only under this name (Sonarr's command
@@ -259,17 +259,17 @@ class CommandBlock(Enum):
         return self is CommandBlock.AUTO_IMPORT
 
     @property
-    def deferral(self) -> Deferral:
+    def deferral(self) -> PauseReason:
         """The wait's reason for the probe: an import in flight, a busy Sonarr, or none after a restart."""
 
         if self in _IMPORT_BLOCKS:
-            return Deferral.IMPORT
-        return Deferral.NONE if self is CommandBlock.SONARR_RESTARTED else Deferral.BUSY
+            return PauseReason.IMPORT
+        return PauseReason.NONE if self is CommandBlock.SONARR_RESTARTED else PauseReason.BUSY
 
-    def waiting(self) -> ImportProbe:
+    def waiting(self) -> AttemptResult:
         """The wait this block calls for."""
 
-        return ImportProbe.waiting(command_issued=self.claims_import, deferral=self.deferral)
+        return AttemptResult.waiting(command_issued=self.claims_import, deferral=self.deferral)
 
 
 _IMPORT_BLOCKS = frozenset({CommandBlock.AUTO_IMPORT, CommandBlock.IN_FLIGHT_IMPORT})

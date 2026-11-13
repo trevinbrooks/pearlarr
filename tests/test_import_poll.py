@@ -7,7 +7,7 @@ import pytest
 
 from pearlarr.arr_models import CommandResource, QueueRecord, SonarrEpisode
 from pearlarr.seadex_sonarr import SonarrStrategy
-from pearlarr.wait_types import NO_PROGRESS, AttemptKind, Deferral
+from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
 from .fakes import FakeClock, HookedSonarrClient
@@ -76,7 +76,7 @@ class TestRescanOnce:
         clock.tick(30)
         second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert (first.deferral, second.deferral) == (Deferral.BUSY, Deferral.BUSY)
+        assert (first.deferral, second.deferral) == (PauseReason.BUSY, PauseReason.BUSY)
         assert sonarr.execute_calls == []
         assert sonarr.refresh_calls == 1
 
@@ -179,7 +179,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.BUSY
+        assert probe.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_started_during_an_empty_scan_reads_busy(self) -> None:
@@ -192,7 +192,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.BUSY
+        assert probe.deferral is PauseReason.BUSY
 
     def test_pass_completed_during_the_scan_does_not_block_the_post(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
@@ -220,7 +220,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.BUSY
+        assert probe.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_started_before_the_post_defers_the_step_in(self) -> None:
@@ -233,7 +233,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.BUSY
+        assert probe.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
     def test_pass_completed_before_the_post_defers_the_step_in(self) -> None:
@@ -251,7 +251,7 @@ class TestStepInGuard:
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert blocked.deferral is Deferral.BUSY
+        assert blocked.deferral is PauseReason.BUSY
         assert (posted_while_blocked, len(sonarr.execute_calls)) == (0, 1)
 
     def test_import_of_the_download_started_before_the_post_reads_as_ours(self) -> None:
@@ -264,7 +264,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.IMPORT
+        assert probe.deferral is PauseReason.IMPORT
         assert probe.command_issued is True
         assert sonarr.execute_calls == []
 
@@ -278,7 +278,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.NONE
+        assert probe.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_folder_import_in_flight_matches_its_translated_path_on_the_first_poll(self) -> None:
@@ -302,7 +302,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.IMPORT
+        assert probe.deferral is PauseReason.IMPORT
         assert probe.command_issued is False
         assert sonarr.execute_calls == []
 
@@ -312,7 +312,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.NONE
+        assert probe.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
         assert sonarr.refresh_calls == 0
 
@@ -330,7 +330,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.NONE
+        assert probe.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_unreadable_command_list_before_the_post_waits(self) -> None:
@@ -343,7 +343,7 @@ class TestStepInGuard:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.deferral is Deferral.NONE
+        assert probe.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
 
@@ -361,7 +361,7 @@ class TestEpisodeReads:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.files_present is True
+        assert probe.all_done is True
         assert probe.imported_count == 1
         assert sonarr.execute_calls == []
 
@@ -375,8 +375,8 @@ class TestEpisodeReads:
 
         probe = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert probe.files_present is False
-        assert probe.deferral is Deferral.NONE
+        assert probe.all_done is False
+        assert probe.deferral is PauseReason.NONE
         assert sonarr.execute_calls == []
 
     def test_stale_cache_never_reads_as_imported(self) -> None:
@@ -388,8 +388,8 @@ class TestEpisodeReads:
         sonarr.episodes_return = None
         probe = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert imported.files_present is True
-        assert probe.files_present is False
+        assert imported.all_done is True
+        assert probe.all_done is False
         assert sonarr.execute_calls == []
 
     def test_failed_read_keeps_the_last_read_counts(self) -> None:
@@ -423,7 +423,7 @@ class TestKeptScan:
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert blocked.deferral is Deferral.BUSY
+        assert blocked.deferral is PauseReason.BUSY
         assert len(sonarr.execute_calls) == 1
 
     def test_empty_by_id_answer_is_never_kept(self) -> None:
@@ -522,5 +522,5 @@ class TestKeptScan:
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert taken.deferral is Deferral.BUSY
+        assert taken.deferral is PauseReason.BUSY
         assert sonarr.execute_calls == []

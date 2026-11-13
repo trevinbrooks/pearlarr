@@ -25,6 +25,7 @@ from pearlarr.output import (
     LedgerRow,
     PlacedBy,
     ReleaseSkipped,
+    RowFinished,
     ScopeClosed,
     ScopeFactory,
     ScopeIds,
@@ -33,7 +34,6 @@ from pearlarr.output import (
     Severity,
     SkipReason,
     StyledValue,
-    TorrentGraduated,
     WaitFinished,
     WaitKind,
     WaitProgress,
@@ -41,7 +41,7 @@ from pearlarr.output import (
     WaitStarted,
 )
 from pearlarr.output.events import EntryState
-from pearlarr.wait_types import Outcome, OutcomeCategory
+from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .fakes import FakeClock
 
@@ -103,7 +103,7 @@ def test_step_times_and_graduates_success_with_detail() -> None:
         BootStepFinished(
             scope=started[0].scope,
             label="Fetching Sonarr library",
-            outcome=OutcomeCategory.SUCCESS,
+            outcome=OutcomeKind.IMPORTED,
             detail="42 series",
             elapsed_s=1.2,
         ),
@@ -117,7 +117,7 @@ def test_step_warn_graduates_deferred() -> None:
         step.warn("SeaDex unreachable")
 
     (finished,) = recorder.of_type(BootStepFinished)
-    assert finished.outcome is OutcomeCategory.DEFERRED
+    assert finished.outcome is OutcomeKind.LEFT
     assert finished.detail == "SeaDex unreachable"
 
 
@@ -128,7 +128,7 @@ def test_step_failure_graduates_failed_and_reraises() -> None:
         raise ValueError("boom")
 
     (finished,) = recorder.of_type(BootStepFinished)
-    assert finished.outcome is OutcomeCategory.FAILED
+    assert finished.outcome is OutcomeKind.FAILED
 
 
 def test_step_progress_emits_the_slow_heads_up_exactly_once() -> None:
@@ -267,10 +267,10 @@ def test_wait_progress_and_graduations_are_stamped() -> None:
     wait = factory.wait(total=1, pulse_s=300.0, kind=WaitKind.MONITOR)
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=30.0))
-    wait.graduated(TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
+    wait.graduated(RowFinished(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
 
     (progress,) = recorder.of_type(WaitProgress)
-    (graduated,) = recorder.of_type(TorrentGraduated)
+    (graduated,) = recorder.of_type(RowFinished)
     assert progress.scope == wait.scope_id
     assert graduated.scope == wait.scope_id
 
@@ -294,11 +294,11 @@ def test_late_wait_emissions_demote() -> None:
     wait.close()
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=1.0))
-    wait.graduated(TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
+    wait.graduated(RowFinished(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
     wait.finish(WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR))
 
     assert len(recorder.of_type(WaitProgress)) == 0
-    assert len(recorder.of_type(TorrentGraduated)) == 0
+    assert len(recorder.of_type(RowFinished)) == 0
     assert len(recorder.of_type(WaitFinished)) == 0
     late = recorder.of_type(Diagnostic)
     assert [d.origin for d in late] == ["output.late.wait"] * 3

@@ -28,7 +28,7 @@ class ImportWaitMode(StrEnum):
     any download still pending from an earlier run."""
 
 
-class WaitOutcome(Enum):
+class TorrentStatus(Enum):
     """The result of waiting on a torrent's completion in qBittorrent."""
 
     COMPLETE = auto()
@@ -37,7 +37,7 @@ class WaitOutcome(Enum):
     ERRORED = auto()
     """Leave the record pending, retried each run until the torrent recovers or leaves qBittorrent."""
 
-    MISSING = auto()
+    GONE = auto()
     """The torrent is gone from qBittorrent, so the record should be dropped."""
 
 
@@ -81,7 +81,7 @@ class CleanupEffect(StrEnum):
     QUEUE_REMOVAL = "queue removal"
 
 
-class PendingState(StrEnum):
+class PendingImportState(StrEnum):
     """The current status of one carried-over pending import, for reporting.
 
     A `StrEnum` (so each member IS its rendered word) shared by the inline
@@ -89,7 +89,7 @@ class PendingState(StrEnum):
     counters, so one vocabulary describes a carried-over record everywhere.
     """
 
-    QUEUED = "queued"
+    DOWNLOADING = "queued"
     """Still downloading."""
 
     DOWNLOADED = "downloaded"
@@ -102,35 +102,35 @@ class PendingState(StrEnum):
     ERRORED = "errored"
     """The download errored in qBittorrent. Left for a later run."""
 
-    MISSING = "missing"
+    GONE = "missing"
     """The torrent is gone from qBittorrent. The record is dropped."""
 
 
 def classify_pending(
-    wait_outcome: "WaitOutcome | None",
-    files_present: bool,
-) -> PendingState:
+    wait_outcome: "TorrentStatus | None",
+    all_done: bool,
+) -> PendingImportState:
     """Map a poll's outcome to a single carried-over `PendingState`.
 
     Args:
         wait_outcome: The torrent's terminal outcome this
             poll, or `None` while it is still downloading.
-        files_present: Whether every intended episode file is verified
+        all_done: Whether every intended episode file is verified
             present in Sonarr (the only signal that promotes to `IMPORTED`).
     """
 
-    if wait_outcome is WaitOutcome.MISSING:
-        return PendingState.MISSING
-    if wait_outcome is WaitOutcome.ERRORED:
-        return PendingState.ERRORED
+    if wait_outcome is TorrentStatus.GONE:
+        return PendingImportState.GONE
+    if wait_outcome is TorrentStatus.ERRORED:
+        return PendingImportState.ERRORED
     if wait_outcome is None:
-        return PendingState.QUEUED
-    if files_present:
-        return PendingState.IMPORTED
-    return PendingState.DOWNLOADED
+        return PendingImportState.DOWNLOADING
+    if all_done:
+        return PendingImportState.IMPORTED
+    return PendingImportState.DOWNLOADED
 
 
-class Deferral(Enum):
+class PauseReason(Enum):
     """Why a poll waited on Sonarr's work rather than this record's (the monitor credits every reason but NONE)."""
 
     NONE = auto()
@@ -158,7 +158,7 @@ class HeldFile:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class HeldBack:
+class LeftForHandImport:
     """A download's on-disk files left for a hand import, and the record's window episodes still unfilled."""
 
     files: tuple[HeldFile, ...] = ()
@@ -166,7 +166,7 @@ class HeldBack:
     missing: tuple[EpisodeKey, ...] = ()
     """The record's unfilled window episodes that hold no file (`UnfilledTargets.missing`)."""
 
-    not_recommended: tuple[EpisodeKey, ...] = ()
+    untrusted: tuple[EpisodeKey, ...] = ()
     """The record's unfilled window episodes that hold a file (`UnfilledTargets.not_recommended`)."""
 
     @property
@@ -180,15 +180,15 @@ class HeldBack:
         """Whether the order explains the record: it has files, each with an order-only key, and an unfilled episode."""
 
         keyed = bool(self.files) and all(file.order_only is not None for file in self.files)
-        return keyed and bool(self.missing or self.not_recommended)
+        return keyed and bool(self.missing or self.untrusted)
 
 
-NO_HELD_BACK = HeldBack()
+NO_HELD_BACK = LeftForHandImport()
 """No file left for a hand import."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ImportProbe:
+class AttemptResult:
     """The outcome of one `import_completed` poll.
 
     Lets the engine tell `imported` (every intended episode file is verified
@@ -196,7 +196,7 @@ class ImportProbe:
     still running).
     """
 
-    files_present: bool
+    all_done: bool
     """Whether every intended episode file is verified present in Sonarr."""
 
     command_issued: bool
@@ -211,7 +211,7 @@ class ImportProbe:
     target_count: int = 0
     """The intended episodes we mapped, 0 means the seed map is incomplete (indeterminate)."""
 
-    deferral: Deferral = Deferral.NONE
+    deferral: PauseReason = PauseReason.NONE
     """Why this poll waited on Sonarr's work instead of this record's."""
 
     placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
@@ -222,7 +222,7 @@ class ImportProbe:
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
     found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
 
-    left_for_hand_import: HeldBack = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
     """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
     placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `files_present`
     and `command_issued` False."""
@@ -234,34 +234,34 @@ class ImportProbe:
     def deferred(self) -> bool:
         """Whether this poll waited on Sonarr's work (the monitor credits the interval back)."""
 
-        return self.deferral is not Deferral.NONE
+        return self.deferral is not PauseReason.NONE
 
     @classmethod
-    def imported(cls) -> "ImportProbe":
+    def imported(cls) -> "AttemptResult":
         """The intended files are verified present, with no import command of ours in flight."""
 
-        return cls(files_present=True, command_issued=False)
+        return cls(all_done=True, command_issued=False)
 
     @classmethod
-    def waiting(cls, *, command_issued: bool = False, deferral: Deferral = Deferral.NONE) -> "ImportProbe":
+    def waiting(cls, *, command_issued: bool = False, deferral: PauseReason = PauseReason.NONE) -> "AttemptResult":
         """Not imported yet: poll again until the readiness deadline."""
 
-        return cls(files_present=False, command_issued=command_issued, deferral=deferral)
+        return cls(all_done=False, command_issued=command_issued, deferral=deferral)
 
     @classmethod
-    def unmatched(cls, names: tuple[str, ...]) -> "ImportProbe":
+    def unmatched(cls, names: tuple[str, ...]) -> "AttemptResult":
         """Nothing to import or verify: every file on disk matched no episode."""
 
-        return cls(files_present=False, command_issued=False, unmatched_files=names)
+        return cls(all_done=False, command_issued=False, unmatched_files=names)
 
     @classmethod
-    def hand_import(cls, held: HeldBack) -> "ImportProbe":
+    def hand_import(cls, held: LeftForHandImport) -> "AttemptResult":
         """Every placed file is in, but files the grab left for a hand import keep the record pending."""
 
-        return cls(files_present=False, command_issued=False, left_for_hand_import=held)
+        return cls(all_done=False, command_issued=False, left_for_hand_import=held)
 
 
-LEAVE_PROBE = ImportProbe(attempted=False, files_present=False, command_issued=False)
+LEAVE_PROBE = AttemptResult(attempted=False, all_done=False, command_issued=False)
 """The fail-open probe: no attempt ran, so leave the record pending for a later run."""
 
 
@@ -276,7 +276,7 @@ class ImportProgress:
     set. When False the importing row stays indeterminate (spinner only) and must NOT promote."""
 
     @property
-    def files_present(self) -> bool:
+    def all_done(self) -> bool:
         """Every intended file verified present."""
 
         return self.determinate and 0 < self.total <= self.done
@@ -286,20 +286,20 @@ NO_PROGRESS = ImportProgress(0, 0, determinate=False)
 """The indeterminate zero reading a failed or strategy-less poll reports."""
 
 
-class OutcomeCategory(Enum):
+class OutcomeKind(Enum):
     """The wait view's ledger glyph + color."""
 
-    SUCCESS = ("✔", "ok", "green")
+    IMPORTED = ("✔", "ok", "green")
     """The torrent imported."""
 
-    DEFERRED = ("⚠", "~", "yellow")
+    LEFT = ("⚠", "~", "yellow")
     """Left pending for a later run (a download timeout, an import that hasn't landed yet, or files only a
     human can place). Not a failure, just unfinished."""
 
     FAILED = ("✖", "x", "bold red")
     """The download errored or vanished from qBittorrent."""
 
-    PENDING = ("·", "-", "grey50")
+    IN_PROGRESS = ("·", "-", "grey50")
     """Left for the next run on purpose - the one-cycle check saw it and nothing is wrong."""
 
     glyph: str
@@ -325,31 +325,31 @@ class OutcomeCategory(Enum):
 class Outcome(Enum):
     """A torrent's terminal result in the wait pass, with its rendering vocab."""
 
-    IMPORTED = ("imported", "imported", OutcomeCategory.SUCCESS, True)
-    MISSING = ("gone", "gone from qBittorrent; title checked again next run", OutcomeCategory.FAILED, True)
-    DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeCategory.FAILED, False)
-    DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeCategory.DEFERRED, False)
+    IMPORTED = ("imported", "imported", OutcomeKind.IMPORTED, True)
+    MISSING = ("gone", "gone from qBittorrent; title checked again next run", OutcomeKind.FAILED, True)
+    DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeKind.FAILED, False)
+    DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeKind.LEFT, False)
     NO_CONTENT_PATH = (
         "no path",
         "complete but no content path reported; left pending",
-        OutcomeCategory.DEFERRED,
+        OutcomeKind.LEFT,
         False,
     )
-    STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
-    SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeCategory.DEFERRED, False)
-    NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
-    UNMATCHED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeCategory.DEFERRED, False)
+    STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeKind.LEFT, False)
+    SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeKind.LEFT, False)
+    NOT_READY = ("not ready", "import not ready; left pending", OutcomeKind.LEFT, False)
+    UNMATCHED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeKind.LEFT, False)
     PARTIAL = (
         "partial",
         "imported in part; import the held-back files by hand in Sonarr",
-        OutcomeCategory.DEFERRED,
+        OutcomeKind.LEFT,
         False,
     )
-    ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeCategory.DEFERRED, False)
-    NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeCategory.DEFERRED, False)
-    IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeCategory.PENDING, False)
-    AWAITING_IMPORT = ("awaiting", "awaiting import; checked again next run", OutcomeCategory.PENDING, False)
-    STILL_DOWNLOADING = ("downloading", "still downloading; checked again next run", OutcomeCategory.PENDING, False)
+    ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeKind.LEFT, False)
+    NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeKind.LEFT, False)
+    IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeKind.IN_PROGRESS, False)
+    AWAITING_IMPORT = ("awaiting", "awaiting import; checked again next run", OutcomeKind.IN_PROGRESS, False)
+    STILL_DOWNLOADING = ("downloading", "still downloading; checked again next run", OutcomeKind.IN_PROGRESS, False)
 
     word: str
     """The short ledger token (every one fits `STATE_WIDTH` = 11)."""
@@ -357,7 +357,7 @@ class Outcome(Enum):
     detail: str
     """The longer human phrase the run report / notification use."""
 
-    category: OutcomeCategory
+    category: OutcomeKind
     """The `OutcomeCategory` driving glyph + color + tally."""
 
     dropped: bool
@@ -368,7 +368,7 @@ class Outcome(Enum):
         self,
         word: str,
         detail: str,
-        category: OutcomeCategory,
+        category: OutcomeKind,
         dropped: bool,
     ) -> None:
         self.word = word
@@ -390,20 +390,20 @@ class Outcome(Enum):
 
 # Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, MISSING) leave the store,
 # so a wait pass folds every record it leaves resident through exactly this table.
-PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingState] = {
-    Outcome.STILL_DOWNLOADING: PendingState.QUEUED,
-    Outcome.DOWNLOAD_TIMED_OUT: PendingState.QUEUED,
-    Outcome.NOT_CHECKED: PendingState.QUEUED,
-    Outcome.AWAITING_IMPORT: PendingState.DOWNLOADED,
-    Outcome.IMPORT_IN_PROGRESS: PendingState.DOWNLOADED,
-    Outcome.STILL_IMPORTING: PendingState.DOWNLOADED,
-    Outcome.SONARR_BUSY: PendingState.DOWNLOADED,
-    Outcome.NOT_READY: PendingState.DOWNLOADED,
-    Outcome.UNMATCHED: PendingState.DOWNLOADED,
-    Outcome.PARTIAL: PendingState.DOWNLOADED,
-    Outcome.ATTEMPT_FAILED: PendingState.DOWNLOADED,
-    Outcome.NO_CONTENT_PATH: PendingState.DOWNLOADED,
-    Outcome.DOWNLOAD_ERRORED: PendingState.ERRORED,
+PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingImportState] = {
+    Outcome.STILL_DOWNLOADING: PendingImportState.DOWNLOADING,
+    Outcome.DOWNLOAD_TIMED_OUT: PendingImportState.DOWNLOADING,
+    Outcome.NOT_CHECKED: PendingImportState.DOWNLOADING,
+    Outcome.AWAITING_IMPORT: PendingImportState.DOWNLOADED,
+    Outcome.IMPORT_IN_PROGRESS: PendingImportState.DOWNLOADED,
+    Outcome.STILL_IMPORTING: PendingImportState.DOWNLOADED,
+    Outcome.SONARR_BUSY: PendingImportState.DOWNLOADED,
+    Outcome.NOT_READY: PendingImportState.DOWNLOADED,
+    Outcome.UNMATCHED: PendingImportState.DOWNLOADED,
+    Outcome.PARTIAL: PendingImportState.DOWNLOADED,
+    Outcome.ATTEMPT_FAILED: PendingImportState.DOWNLOADED,
+    Outcome.NO_CONTENT_PATH: PendingImportState.DOWNLOADED,
+    Outcome.DOWNLOAD_ERRORED: PendingImportState.ERRORED,
 }
 
 
@@ -429,10 +429,10 @@ _ZERO_TELEMETRY = TorrentTelemetry(0.0, None, None, None, None)
 
 
 @dataclass(frozen=True, slots=True)
-class TorrentProbe:
+class TorrentPoll:
     """One qBittorrent completion poll, with live download telemetry."""
 
-    outcome: WaitOutcome | None
+    outcome: TorrentStatus | None
     """The terminal outcome this poll, or None while still downloading (or on a transient qB error)."""
 
     content_path: str | None
@@ -448,7 +448,7 @@ class TorrentProbe:
     def ready_path(self) -> str | None:
         """The completed download's importable path: COMPLETE with a reported content path, else None."""
 
-        if self.outcome is WaitOutcome.COMPLETE and self.content_path:
+        if self.outcome is TorrentStatus.COMPLETE and self.content_path:
             return self.content_path
         return None
 

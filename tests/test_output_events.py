@@ -30,6 +30,7 @@ from pearlarr.output import (
     NeedsActionFact,
     PlacedBy,
     ReleaseSkipped,
+    RowFinished,
     ScanFinished,
     ScanStarted,
     ScopeId,
@@ -37,11 +38,10 @@ from pearlarr.output import (
     Severity,
     SkipReason,
     StyledValue,
-    TorrentGraduated,
     severity_of,
 )
 from pearlarr.output.events import EntryState
-from pearlarr.wait_types import Outcome, OutcomeCategory
+from pearlarr.wait_types import Outcome, OutcomeKind
 
 # --- value model -----------------------------------------------------------------
 
@@ -123,17 +123,17 @@ def test_boot_step_finished_tallies_info_regardless_of_outcome() -> None:
 
     scope = ScopeId(ScopeKind.BOOT_STEP, 1)
 
-    def finished(outcome: OutcomeCategory) -> BootStepFinished:
+    def finished(outcome: OutcomeKind) -> BootStepFinished:
         return BootStepFinished(scope=scope, label="Reading config", outcome=outcome, detail=None, elapsed_s=0.1)
 
-    assert severity_of(finished(OutcomeCategory.SUCCESS)) is Severity.INFO
-    assert severity_of(finished(OutcomeCategory.DEFERRED)) is Severity.INFO
-    assert severity_of(finished(OutcomeCategory.FAILED)) is Severity.INFO
+    assert severity_of(finished(OutcomeKind.IMPORTED)) is Severity.INFO
+    assert severity_of(finished(OutcomeKind.LEFT)) is Severity.INFO
+    assert severity_of(finished(OutcomeKind.FAILED)) is Severity.INFO
 
 
 def test_torrent_graduated_severity_follows_its_outcome_category() -> None:
-    def graduated(outcome: Outcome) -> TorrentGraduated:
-        return TorrentGraduated(label="T", outcome=outcome, files=None, waited_s=1.0)
+    def graduated(outcome: Outcome) -> RowFinished:
+        return RowFinished(label="T", outcome=outcome, files=None, waited_s=1.0)
 
     assert severity_of(graduated(Outcome.IMPORTED)) is Severity.INFO
     assert severity_of(graduated(Outcome.DOWNLOAD_TIMED_OUT)) is Severity.WARNING

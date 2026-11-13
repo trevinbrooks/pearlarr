@@ -7,7 +7,7 @@ from .cache import AbstractCacheStore
 from .config import Arr
 from .leg_state import RunContext
 from .pending_import import GuardFacts, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
-from .wait_types import ImportProbe
+from .wait_types import AttemptResult
 
 
 class PendingImportStore:
@@ -125,7 +125,7 @@ class PendingImportStore:
         if self._ctx.arr is Arr.SONARR:
             self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
 
-    def absorb_probe(self, record: PendingImport, probe: ImportProbe) -> PendingImport:
+    def save_history_placements(self, record: PendingImport, probe: AttemptResult) -> PendingImport:
         """Persist the files a poll's Sonarr history placed onto the record and return the healed copy.
 
         Writes only when the poll added something: the record hands itself back on a no-op.

@@ -8,11 +8,11 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .arr_models import SonarrEpisodeFile
-from .pending_import import FileEpisodeMap, GuardFacts, OwnGroup, PendingImport, TitleClaim, sizes_by_episode
+from .pending_import import FileEpisodeMap, GuardFacts, PendingImport, TitleClaim, TorrentGroup, sizes_by_episode
 from .placement_types import EpisodeIndex
 from .releases import normalize_group, normalize_rg
 
-type TrustPolicy = Mapping[str, frozenset[int] | None]
+type TrustedGroups = Mapping[str, frozenset[int] | None]
 """Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""
 
 
@@ -26,7 +26,7 @@ class EpisodeFileStatus(Enum):
     ABSENT = auto()
     """No file yet. Import ours."""
 
-    RECOMMENDED = auto()
+    TRUSTED = auto()
     """Holds a file from a recommended group (ours, another torrent we grabbed for this series, or a group the entry's
     SeaDex picks carried at grab time), or an untagged file still at the size the grab recorded for it. It's done:
     never imported over, except a copy of our own beside an episode that needs the file (`import_ids`)."""
@@ -55,23 +55,23 @@ class TargetJudgment(NamedTuple):
     is intended here: what a hand import of the torrent's own file leaves."""
 
 
-# How a target with no file reads. `RecordSnapshot.judge` also gives it for an id no snapshot covers.
+# How a target with no file reads. `ImportSnapshot.status_of` also gives it for an id no snapshot covers.
 _NO_FILE = TargetJudgment(EpisodeFileStatus.ABSENT, own_copy=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class UnfilledTargets:
+class StillNeeded:
     """The targets holding neither a recommended file nor an untagged copy of this torrent's, in target order."""
 
     missing: tuple[int, ...]
     """The ones holding no file (`EpisodeFileStatus.ABSENT`)."""
 
-    not_recommended: tuple[int, ...]
+    untrusted: tuple[int, ...]
     """The ones holding a file."""
 
 
 @dataclass(frozen=True, slots=True)
-class TargetStatuses:
+class EpisodeStatuses:
     """Each intended target's file status, plus the targets holding a copy of one of this torrent's files."""
 
     by_id: Mapping[int, EpisodeFileStatus]
@@ -99,25 +99,25 @@ class TargetStatuses:
             frozenset(ep_id for ep_id, judgment in by_target.items() if judgment.untagged_copy),
         )
 
-    def all_done(self) -> bool:
+    def all_trusted(self) -> bool:
         """True only when every intended target holds a recommended file (the drop-the-record signal).
 
         An UNKNOWN_GROUP, OTHER_GROUP, or MISPLACED file is not done: only a recommended file drops a record.
         """
 
-        return bool(self.by_id) and all(s is EpisodeFileStatus.RECOMMENDED for s in self.by_id.values())
+        return bool(self.by_id) and all(s is EpisodeFileStatus.TRUSTED for s in self.by_id.values())
 
-    def unfilled(self) -> UnfilledTargets:
+    def unfilled(self) -> StillNeeded:
         """The targets a hand import has yet to fill, split by whether they hold a file."""
 
         unfilled = [
             (ep_id, status)
             for ep_id, status in self.by_id.items()
-            if status is not EpisodeFileStatus.RECOMMENDED and ep_id not in self.holding_untagged_copy
+            if status is not EpisodeFileStatus.TRUSTED and ep_id not in self.holding_untagged_copy
         ]
-        return UnfilledTargets(
+        return StillNeeded(
             missing=tuple(ep_id for ep_id, status in unfilled if status is EpisodeFileStatus.ABSENT),
-            not_recommended=tuple(ep_id for ep_id, status in unfilled if status is not EpisodeFileStatus.ABSENT),
+            untrusted=tuple(ep_id for ep_id, status in unfilled if status is not EpisodeFileStatus.ABSENT),
         )
 
     def filled_by_hand(self) -> bool:
@@ -127,12 +127,12 @@ class TargetStatuses:
         """
 
         unfilled = self.unfilled()
-        return bool(self.by_id) and not unfilled.missing and not unfilled.not_recommended
+        return bool(self.by_id) and not unfilled.missing and not unfilled.untrusted
 
     def needing_import(self) -> set[int]:
         """The never-skip set: every intended id NOT already holding a recommended file."""
 
-        return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.RECOMMENDED}
+        return {ep_id for ep_id, status in self.by_id.items() if status is not EpisodeFileStatus.TRUSTED}
 
     def import_ids(self, ep_ids: Sequence[int]) -> tuple[int, ...]:
         """Which of a file's episodes `ep_ids` to post it onto, in order, or none when no episode needs it.
@@ -147,11 +147,11 @@ class TargetStatuses:
         return tuple(ep_id for ep_id in ep_ids if ep_id in needing or ep_id in self.holding_own_copy)
 
 
-class GroupVotes(NamedTuple):
+class GrabbedGroups(NamedTuple):
     """The groups a trust policy trusts beyond its guards: the torrent's own, then the series' other grabs."""
 
-    own: OwnGroup
-    siblings: Sequence[OwnGroup] = ()
+    own: TorrentGroup
+    siblings: Sequence[TorrentGroup] = ()
 
 
 class EpisodeSnapshot(NamedTuple):
@@ -163,11 +163,11 @@ class EpisodeSnapshot(NamedTuple):
     episodes: EpisodeIndex
     """The fresh episode index."""
 
-    trusted: TrustPolicy
+    trusted: TrustedGroups
     """The per-group trust policy (see `trusted_groups`). A group absent here is not recommended: its
     files are replaced."""
 
-    own: OwnGroup
+    own: TorrentGroup
     """The torrent's own release: a trusted file at one of its listed sizes is judged against the intended size."""
 
     owned_episode_sizes: Mapping[int, int] = MappingProxyType({})
@@ -175,7 +175,7 @@ class EpisodeSnapshot(NamedTuple):
     only while the file still sits at that size. Anything else untagged classifies as unidentifiable."""
 
     @classmethod
-    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GroupVotes) -> Self:
+    def guarded(cls, episodes: EpisodeIndex, guards: GuardFacts, votes: GrabbedGroups) -> Self:
         """The snapshot under one claim's guard evidence: its trust policy and its recorded untagged sizes."""
 
         return cls(
@@ -195,7 +195,7 @@ class EpisodeSnapshot(NamedTuple):
 
         return self._own_size(size) and intended_size is not None and size != intended_size
 
-    def judge(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
+    def status_of(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
         """Judge one intended target by its current on-disk file: its status, and whether it's a copy of our own.
 
         Read from the episode files, never the queue: Sonarr drops an imported item from its queue almost at once.
@@ -221,7 +221,7 @@ class EpisodeSnapshot(NamedTuple):
             # it is another of our files. Anything else untagged (a different file, no file record) is unidentifiable.
             if size is not None and size == self.owned_episode_sizes.get(ep_id):
                 misplaced = self._misplaced(size, intended_size)
-                return EpisodeFileStatus.MISPLACED if misplaced else EpisodeFileStatus.RECOMMENDED
+                return EpisodeFileStatus.MISPLACED if misplaced else EpisodeFileStatus.TRUSTED
             return EpisodeFileStatus.UNKNOWN_GROUP
         norm = normalize_group(group)
         if norm not in self.trusted:
@@ -233,12 +233,12 @@ class EpisodeSnapshot(NamedTuple):
         if self._misplaced(size, intended_size):
             # Byte-identical to another of our files (a same-files sibling's too): the episode still lacks its own.
             return EpisodeFileStatus.MISPLACED
-        return EpisodeFileStatus.RECOMMENDED
+        return EpisodeFileStatus.TRUSTED
 
-    def statuses(self, target_ep_ids: Sequence[int], intended_sizes: Mapping[int, int]) -> TargetStatuses:
+    def statuses(self, target_ep_ids: Sequence[int], intended_sizes: Mapping[int, int]) -> EpisodeStatuses:
         """Classify each de-duplicated target by its current file, judged against its intended size."""
 
-        return TargetStatuses.judged(target_ep_ids, intended_sizes, self.judge)
+        return EpisodeStatuses.judged(target_ep_ids, intended_sizes, self.status_of)
 
 
 class Route(NamedTuple):
@@ -260,7 +260,7 @@ def lone_unscoped_claims(claims: Sequence[TitleClaim]) -> dict[int, TitleClaim]:
 
 
 @dataclass(frozen=True, slots=True)
-class RecordSnapshot:
+class ImportSnapshot:
     """One poll's coherent view of a record: each claimed series' snapshot, and each claim's own over it."""
 
     pending: PendingImport
@@ -318,19 +318,21 @@ class RecordSnapshot:
         claims = (route.claim,) if route.claim is not None else self.pending.claims
         return any(ep_id in claim.preowned_episode_ids for claim in claims)
 
-    def judge(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
+    def status_of(self, ep_id: int, intended_size: int | None) -> TargetJudgment:
         """Judge `ep_id` under the snapshot its route picks, or as ABSENT when no snapshot holds it."""
 
         snapshot = self.snapshot_for(ep_id)
-        return _NO_FILE if snapshot is None else snapshot.judge(ep_id, intended_size)
+        return _NO_FILE if snapshot is None else snapshot.status_of(ep_id, intended_size)
 
-    def map_statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> TargetStatuses:
+    def map_statuses(self, target_ep_ids: Sequence[int], file_map: FileEpisodeMap) -> EpisodeStatuses:
         """Judge each de-duplicated target as `judge` does, against the listed size of the file `file_map` puts on it."""
 
-        return TargetStatuses.judged(target_ep_ids, sizes_by_episode(file_map, self.pending.sizes_by_name), self.judge)
+        return EpisodeStatuses.judged(
+            target_ep_ids, sizes_by_episode(file_map, self.pending.sizes_by_name), self.status_of
+        )
 
 
-def trusted_groups(guards: GuardFacts, votes: GroupVotes) -> TrustPolicy:
+def trusted_groups(guards: GuardFacts, votes: GrabbedGroups) -> TrustedGroups:
     """One claim's trust policy: entry picks and non-stale siblings by name, the own group last at its listed sizes.
 
     Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.

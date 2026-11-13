@@ -27,7 +27,7 @@ from pearlarr.pending_import import PendingImport
 from pearlarr.probe_verdicts import (
     ContentPaths,
     DownloadMatch,
-    QueueVerdict,
+    QueueState,
     classify_queue,
     in_flight_disk_commands,
     manual_import_in_flight,
@@ -157,7 +157,7 @@ class TestResolvedIds:
     def test_the_claims_window_wins(self) -> None:
         pending = pending_import(file_episode_map={"a.mkv": [7]}, ordered_episode_ids=[3, 1, 2])
 
-        assert pending.resolved_ids() == [3, 1, 2]
+        assert pending.window_episode_ids() == [3, 1, 2]
 
     def test_an_unscoped_claim_falls_back_to_its_seeds_sorted(self) -> None:
         pending = pending_import(
@@ -165,12 +165,12 @@ class TestResolvedIds:
             ordered_episode_ids=[],
         )
 
-        assert pending.resolved_ids() == [5, 7]
+        assert pending.window_episode_ids() == [5, 7]
 
     def test_a_record_with_no_targets_reads_empty(self) -> None:
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[])
 
-        assert pending.resolved_ids() == []
+        assert pending.window_episode_ids() == []
 
 
 class TestClassifyRealQueue:
@@ -186,12 +186,12 @@ class TestClassifyRealQueue:
     def test_import_blocked_steps_in(self) -> None:
         records = self._records_by_download()
         unmatched = records["1111111111111111111111111111111111111111"]
-        assert classify_queue(unmatched) is QueueVerdict.STEP_IN
+        assert classify_queue(unmatched) is QueueState.STEP_IN
 
     def test_paused_download_waits(self) -> None:
         records = self._records_by_download()
         paused = records["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
-        assert classify_queue(paused) is QueueVerdict.WAIT
+        assert classify_queue(paused) is QueueState.WAIT
 
 
 class TestPendingImportOrderedIds:
@@ -342,7 +342,7 @@ class TestCapturedSpecialsEndToEnd:
         probe = specials.strat.import_completed(pending, "/downloads/yamada", AttemptKind.ORDINARY)
 
         # The copy is async, so nothing is present yet.
-        assert probe.files_present is False
+        assert probe.all_done is False
         assert probe.command_issued is True
         assert len(specials.sonarr.execute_calls) == 1
         files = specials.sonarr.execute_calls[0][0]

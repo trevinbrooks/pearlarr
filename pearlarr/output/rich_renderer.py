@@ -66,6 +66,7 @@ from .events import (
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
+    RowFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -75,7 +76,6 @@ from .events import (
     ScopeOpened,
     Severity,
     StarterConfigWritten,
-    TorrentGraduated,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -195,7 +195,7 @@ class RichRenderer(Renderer):
                 | RunSummaryReady()
             ):
                 self._scan(event)
-            case WaitStarted() | WaitProgress() | TorrentGraduated() | WaitFinished():
+            case WaitStarted() | WaitProgress() | RowFinished() | WaitFinished():
                 self._wait.handle(event)
             case NextRunScheduled(at=at):
                 self._next_run(at)

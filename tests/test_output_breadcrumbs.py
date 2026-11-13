@@ -34,7 +34,7 @@ from pearlarr.output import (
     WaitStarted,
 )
 from pearlarr.output.events import EntryState
-from pearlarr.wait_types import OutcomeCategory
+from pearlarr.wait_types import OutcomeKind
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)
@@ -94,7 +94,7 @@ def test_boot_step_events_open_and_close_the_step_node() -> None:
         BootStepFinished(
             scope=_STEP,
             label="Reading config",
-            outcome=OutcomeCategory.SUCCESS,
+            outcome=OutcomeKind.IMPORTED,
             detail=None,
             elapsed_s=0.1,
         ),

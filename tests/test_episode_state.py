@@ -7,13 +7,13 @@ from pearlarr.arr_models import SonarrEpisode
 from pearlarr.episode_state import (
     EpisodeFileStatus,
     EpisodeSnapshot,
-    GroupVotes,
-    RecordSnapshot,
+    EpisodeStatuses,
+    GrabbedGroups,
+    ImportSnapshot,
     Route,
-    TargetStatuses,
-    UnfilledTargets,
+    StillNeeded,
 )
-from pearlarr.pending_import import GuardFacts, OwnGroup
+from pearlarr.pending_import import GuardFacts, TorrentGroup
 from pearlarr.placement_types import episode_index
 from pearlarr.releases import normalize_group
 
@@ -39,7 +39,7 @@ class TestEpisodeFileStatuses:
         )
         assert statuses.by_id == {
             1: EpisodeFileStatus.ABSENT,
-            2: EpisodeFileStatus.RECOMMENDED,
+            2: EpisodeFileStatus.TRUSTED,
             3: EpisodeFileStatus.OTHER_GROUP,
             4: EpisodeFileStatus.UNKNOWN_GROUP,
         }
@@ -55,7 +55,7 @@ class TestEpisodeFileStatuses:
         statuses = episode_snapshot(
             episodes=episode_index(episodes), trusted={normalize_group("Aergia"): None}
         ).statuses([5], {})
-        assert statuses.by_id == {5: EpisodeFileStatus.RECOMMENDED}
+        assert statuses.by_id == {5: EpisodeFileStatus.TRUSTED}
 
     def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
         # The planner declined to re-download this file because a pick's listed
@@ -69,7 +69,7 @@ class TestEpisodeFileStatuses:
             episodes=episode_index(episodes), trusted={"subgroup": None}, owned_episode_sizes={6: 600}
         )
         assert snapshot.statuses([6, 7], {}).by_id == {
-            6: EpisodeFileStatus.RECOMMENDED,
+            6: EpisodeFileStatus.TRUSTED,
             7: EpisodeFileStatus.UNKNOWN_GROUP,
         }
 
@@ -98,7 +98,7 @@ class TestEpisodeFileStatuses:
         # (just imported, or an already-current episode of the pack).
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=1000)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": frozenset({1000})})
-        assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.RECOMMENDED}
+        assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.TRUSTED}
 
     def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
         # A same-group file at a size NO current listing carries is the stale
@@ -113,7 +113,7 @@ class TestEpisodeFileStatuses:
         # sizes) keeps the group-name-only behavior rather than replacing blindly.
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": None})
-        assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.RECOMMENDED}
+        assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.TRUSTED}
 
     @staticmethod
     def _holding(size: int, group: str | None = "SubGroup") -> EpisodeSnapshot:
@@ -124,40 +124,40 @@ class TestEpisodeFileStatuses:
         return episode_snapshot(
             episodes=episode_index(episodes),
             trusted=trusted,
-            own=OwnGroup("SubGroup", (1000, 2000)),
+            own=TorrentGroup("SubGroup", (1000, 2000)),
             owned_episode_sizes={5: 2000},
         )
 
     def test_own_file_not_the_intended_one_is_misplaced(self) -> None:
         # Another listed file of our release sits where file 1000 belongs: the episode still lacks its own.
-        assert self._holding(2000).judge(5, 1000).status is EpisodeFileStatus.MISPLACED
+        assert self._holding(2000).status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
     def test_own_file_that_is_the_intended_one_is_recommended(self) -> None:
-        assert self._holding(2000).judge(5, 2000).status is EpisodeFileStatus.RECOMMENDED
+        assert self._holding(2000).status_of(5, 2000).status is EpisodeFileStatus.TRUSTED
 
     def test_own_file_with_no_intended_size_is_recommended(self) -> None:
-        assert self._holding(2000).judge(5, None).status is EpisodeFileStatus.RECOMMENDED
+        assert self._holding(2000).status_of(5, None).status is EpisodeFileStatus.TRUSTED
 
     def test_statuses_read_each_targets_intended_size(self) -> None:
         assert self._holding(2000).statuses([5], {5: 1000}).by_id == {5: EpisodeFileStatus.MISPLACED}
 
     def test_own_file_at_an_unlisted_size_is_other_group(self) -> None:
         # The stale-size check runs first: a size no listing carries is the copy this grab replaces.
-        assert self._holding(4000).judge(5, 1000).status is EpisodeFileStatus.OTHER_GROUP
+        assert self._holding(4000).status_of(5, 1000).status is EpisodeFileStatus.OTHER_GROUP
 
     def test_own_file_at_a_size_only_a_sibling_lists_is_recommended(self) -> None:
         # 3000 is trusted through a sibling's listing: not one of our torrent's files, so not a misplaced one.
-        assert self._holding(3000).judge(5, 1000).status is EpisodeFileStatus.RECOMMENDED
+        assert self._holding(3000).status_of(5, 1000).status is EpisodeFileStatus.TRUSTED
 
     def test_a_trusted_groups_file_at_one_of_our_sizes_not_intended_here_is_misplaced(self) -> None:
         # A same-files sibling lists byte-identical files, so its misfile is ours to repair too.
-        assert self._holding(2000, "Other").judge(5, 1000).status is EpisodeFileStatus.MISPLACED
+        assert self._holding(2000, "Other").status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
     def test_untagged_file_at_the_recorded_size_not_the_intended_one_is_misplaced(self) -> None:
-        assert self._holding(2000, None).judge(5, 1000).status is EpisodeFileStatus.MISPLACED
+        assert self._holding(2000, None).status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
     def test_untagged_file_at_the_recorded_size_that_is_the_intended_one_is_recommended(self) -> None:
-        assert self._holding(2000, None).judge(5, 2000).status is EpisodeFileStatus.RECOMMENDED
+        assert self._holding(2000, None).status_of(5, 2000).status is EpisodeFileStatus.TRUSTED
 
     @pytest.mark.parametrize(
         ("size", "group", "intended", "copy"),
@@ -172,7 +172,7 @@ class TestEpisodeFileStatuses:
     def test_an_untagged_copy_is_a_groupless_file_at_a_listed_size_intended_here(
         self, size: int, group: str | None, intended: int | None, copy: bool
     ) -> None:
-        judgment = self._holding(size, group).judge(5, intended)
+        judgment = self._holding(size, group).status_of(5, intended)
 
         assert judgment.untagged_copy is copy
         if group is None and size == 1000:
@@ -182,30 +182,32 @@ class TestEpisodeFileStatuses:
     def _guarded() -> EpisodeSnapshot:
         """An empty index guarded by no facts, voting SubGroup's release at size 1000."""
 
-        return EpisodeSnapshot.guarded(episode_index([]), GuardFacts(), GroupVotes(OwnGroup("-SubGroup-", (1000,))))
+        return EpisodeSnapshot.guarded(
+            episode_index([]), GuardFacts(), GrabbedGroups(TorrentGroup("-SubGroup-", (1000,)))
+        )
 
     def test_guarded_carries_the_own_release(self) -> None:
-        assert self._guarded().own == OwnGroup("-SubGroup-", (1000,))
+        assert self._guarded().own == TorrentGroup("-SubGroup-", (1000,))
 
     def test_a_misplaced_file_is_not_done(self) -> None:
-        assert target_statuses({1: EpisodeFileStatus.MISPLACED}).all_done() is False
+        assert target_statuses({1: EpisodeFileStatus.MISPLACED}).all_trusted() is False
 
     def test_all_done_only_when_all_recommended(self) -> None:
-        rec = target_statuses({1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED})
-        mixed = target_statuses({1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.OTHER_GROUP})
-        assert rec.all_done() is True
-        assert mixed.all_done() is False
-        assert target_statuses({}).all_done() is False
+        rec = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED})
+        mixed = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.OTHER_GROUP})
+        assert rec.all_trusted() is True
+        assert mixed.all_trusted() is False
+        assert target_statuses({}).all_trusted() is False
 
     def test_filled_by_hand_needs_a_target(self) -> None:
-        assert target_statuses({1: EpisodeFileStatus.RECOMMENDED}).filled_by_hand() is True
+        assert target_statuses({1: EpisodeFileStatus.TRUSTED}).filled_by_hand() is True
         assert target_statuses({}).filled_by_hand() is False
 
     def test_unfilled_splits_the_targets_left_by_whether_they_hold_a_file(self) -> None:
-        statuses = TargetStatuses(
+        statuses = EpisodeStatuses(
             {
                 401: EpisodeFileStatus.ABSENT,
-                402: EpisodeFileStatus.RECOMMENDED,
+                402: EpisodeFileStatus.TRUSTED,
                 403: EpisodeFileStatus.OTHER_GROUP,
                 404: EpisodeFileStatus.UNKNOWN_GROUP,
                 405: EpisodeFileStatus.UNKNOWN_GROUP,
@@ -214,13 +216,13 @@ class TestEpisodeFileStatuses:
             holding_untagged_copy=frozenset({405}),
         )
 
-        assert statuses.unfilled() == UnfilledTargets(missing=(401,), not_recommended=(403, 404))
+        assert statuses.unfilled() == StillNeeded(missing=(401,), untrusted=(403, 404))
 
     def test_needing_import_excludes_only_recommended(self) -> None:
         statuses = target_statuses(
             {
                 1: EpisodeFileStatus.ABSENT,
-                2: EpisodeFileStatus.RECOMMENDED,
+                2: EpisodeFileStatus.TRUSTED,
                 3: EpisodeFileStatus.OTHER_GROUP,
                 4: EpisodeFileStatus.UNKNOWN_GROUP,
                 5: EpisodeFileStatus.MISPLACED,
@@ -230,15 +232,13 @@ class TestEpisodeFileStatuses:
 
     def test_import_ids_takes_our_copy_along_with_a_needing_id_in_order(self) -> None:
         statuses = target_statuses(
-            {1: EpisodeFileStatus.ABSENT, 2: EpisodeFileStatus.RECOMMENDED, 3: EpisodeFileStatus.RECOMMENDED},
+            {1: EpisodeFileStatus.ABSENT, 2: EpisodeFileStatus.TRUSTED, 3: EpisodeFileStatus.TRUSTED},
             frozenset({2}),
         )
         assert statuses.import_ids([2, 1, 3]) == (2, 1)
 
     def test_import_ids_is_empty_when_no_id_needs_the_file(self) -> None:
-        statuses = target_statuses(
-            {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED}, frozenset({1, 2})
-        )
+        statuses = target_statuses({1: EpisodeFileStatus.TRUSTED, 2: EpisodeFileStatus.TRUSTED}, frozenset({1, 2}))
         assert statuses.import_ids([1, 2]) == ()
 
     def test_holding_own_copy_is_the_targets_with_a_file_at_one_of_our_sizes(self) -> None:
@@ -251,15 +251,15 @@ class TestEpisodeFileStatuses:
         snapshot = episode_snapshot(
             episodes=episode_index(episodes),
             trusted={"subgroup": frozenset({300}), "otherpick": None},
-            own=OwnGroup("SubGroup", (300,)),
+            own=TorrentGroup("SubGroup", (300,)),
         )
 
         statuses = snapshot.statuses([1, 2, 3], {1: 300, 2: 300, 3: 400})
 
         assert statuses.by_id == {
-            1: EpisodeFileStatus.RECOMMENDED,
+            1: EpisodeFileStatus.TRUSTED,
             2: EpisodeFileStatus.ABSENT,
-            3: EpisodeFileStatus.RECOMMENDED,
+            3: EpisodeFileStatus.TRUSTED,
         }
         assert statuses.holding_own_copy == {1}
 
@@ -280,7 +280,7 @@ class TestRecordSnapshot:
     """`RecordSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
 
     @staticmethod
-    def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> RecordSnapshot:
+    def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> ImportSnapshot:
         pending = pending_import(
             claims=(entry_claim(al_id=1, series_id=7, ordered_episode_ids=[1]), entry_claim(al_id=2, series_id=8)),
         )
@@ -291,7 +291,7 @@ class TestRecordSnapshot:
         second = episode_snapshot(
             episodes=episode_index([sonarr_ep(1, 1, ep_id=2, episode_file_id=20, release_group="SubGroup")])
         )
-        return RecordSnapshot(pending, {7: first, 8: second}, by_claim or {})
+        return ImportSnapshot(pending, {7: first, 8: second}, by_claim or {})
 
     def test_statuses_judge_each_target_against_its_intended_size(self) -> None:
         # Both episodes hold our file at 200, which is intended on episode 2 only.
@@ -302,16 +302,16 @@ class TestRecordSnapshot:
         series = episode_snapshot(
             episodes=episode_index(episodes),
             trusted={"subgroup": frozenset({100, 200})},
-            own=OwnGroup("SubGroup", (100, 200)),
+            own=TorrentGroup("SubGroup", (100, 200)),
         )
         pending = pending_import(
             file_episode_map={"a.mkv": [1], "b.mkv": [2]}, sizes_by_name={"a.mkv": 100, "b.mkv": 200}
         )
-        snapshot = RecordSnapshot(pending, {7: series}, {})
+        snapshot = ImportSnapshot(pending, {7: series}, {})
 
         assert snapshot.map_statuses([1, 2], pending.file_episode_map).by_id == {
             1: EpisodeFileStatus.MISPLACED,
-            2: EpisodeFileStatus.RECOMMENDED,
+            2: EpisodeFileStatus.TRUSTED,
         }
 
     def test_statuses_note_the_targets_holding_a_copy_of_our_own(self) -> None:
@@ -320,8 +320,8 @@ class TestRecordSnapshot:
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=200),
             sonarr_ep(1, 2, ep_id=2, episode_file_id=20, release_group="SubGroup", size=900),
         ]
-        series = episode_snapshot(episodes=episode_index(episodes), own=OwnGroup("SubGroup", (100, 200)))
-        snapshot = RecordSnapshot(pending_import(), {7: series}, {})
+        series = episode_snapshot(episodes=episode_index(episodes), own=TorrentGroup("SubGroup", (100, 200)))
+        snapshot = ImportSnapshot(pending_import(), {7: series}, {})
 
         assert snapshot.map_statuses([1, 2, 3], {}).holding_own_copy == {1}
 
@@ -333,7 +333,7 @@ class TestRecordSnapshot:
         assert list(statuses.by_id.items()) == [
             (2, EpisodeFileStatus.OTHER_GROUP),
             (3, EpisodeFileStatus.ABSENT),
-            (1, EpisodeFileStatus.RECOMMENDED),
+            (1, EpisodeFileStatus.TRUSTED),
         ]
 
     def test_a_claimed_id_is_judged_under_its_holding_claims_snapshot(self) -> None:
@@ -353,14 +353,14 @@ class TestRecordSnapshot:
             2: EpisodeFileStatus.OTHER_GROUP,
         }
         # Without a per-claim snapshot the holding claim's id falls back to the series' view.
-        assert self._snapshot().map_statuses([1], {}).by_id == {1: EpisodeFileStatus.RECOMMENDED}
+        assert self._snapshot().map_statuses([1], {}).by_id == {1: EpisodeFileStatus.TRUSTED}
 
     def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
         # Two windows hold id 2: the earlier claim judges it, as the placer's first window decides, so the
         # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
         first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
         second = entry_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
-        snapshot = RecordSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3)}, {})
+        snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3)}, {})
 
         assert snapshot.route(2) == Route(first, 7)
         assert snapshot.route(3) == Route(second, 7)
@@ -372,7 +372,7 @@ class TestRecordSnapshot:
         # merge: their ids route to the series alone, and preowned reads off either of them.
         lone = entry_claim(al_id=1)
         pair = (entry_claim(al_id=2, series_id=8), entry_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
-        snapshot = RecordSnapshot(pending_import(claims=(lone, *pair)), {7: _series(1), 8: _series(5)}, {})
+        snapshot = ImportSnapshot(pending_import(claims=(lone, *pair)), {7: _series(1), 8: _series(5)}, {})
 
         assert snapshot.route(1) == Route(lone, 7)
         assert snapshot.route(5) == Route(None, 8)
@@ -384,10 +384,10 @@ class TestRecordSnapshot:
         first = entry_claim(al_id=1, ordered_episode_ids=[1, 2])
         second = entry_claim(al_id=2, ordered_episode_ids=[2, 3])
         by_claim = {1: _series(1, 2, 3, group="G"), 2: _series(1, 2, 3, group="G", trusted={"g": None})}
-        snapshot = RecordSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
+        snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
 
         assert snapshot.snapshot_for(2) is by_claim[1]
         assert snapshot.map_statuses([2, 3], {}).by_id == {
             2: EpisodeFileStatus.OTHER_GROUP,
-            3: EpisodeFileStatus.RECOMMENDED,
+            3: EpisodeFileStatus.TRUSTED,
         }

@@ -29,7 +29,7 @@ from .output.console_text import count_noun, format_elapsed, human_bytes
 from .output.wait_lines import held_back_names, held_back_sentences
 from .releases import Release, SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
-from .wait_types import OutcomeCategory
+from .wait_types import OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail
 
@@ -84,7 +84,7 @@ def _wait_color(result: WaitResult) -> int:
 def _wait_row_text(row: WaitOutcomeRow) -> str:
     """One summary row: the title alone for an import, else with its detail and any file left for a hand import."""
 
-    if row.outcome.category is OutcomeCategory.SUCCESS:
+    if row.outcome.category is OutcomeKind.IMPORTED:
         return row.label
     held = row.left_for_hand_import
     # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name rides in backticks.
@@ -374,9 +374,9 @@ class Notifier:
         """
 
         sections = (
-            (OutcomeCategory.SUCCESS, "Imported"),
-            (OutcomeCategory.DEFERRED, "Left pending"),
-            (OutcomeCategory.FAILED, "Failed"),
+            (OutcomeKind.IMPORTED, "Imported"),
+            (OutcomeKind.LEFT, "Left pending"),
+            (OutcomeKind.FAILED, "Failed"),
         )
         fields: list[EmbedField] = []
         for category, name in sections:

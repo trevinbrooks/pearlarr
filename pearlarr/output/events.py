@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, assert_never
 from .trace import CapturedTrace
 from ..config import Arr
 from ..releases import NO_ELSEWHERE, ElsewhereCounts
-from ..wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
+from ..wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
     from ..leg_state import RunStats
@@ -171,7 +171,7 @@ class BootStepFinished:
 
     scope: ScopeId
     label: str
-    outcome: OutcomeCategory
+    outcome: OutcomeKind
     detail: str | None
     elapsed_s: float
 
@@ -473,13 +473,13 @@ def clamp01(value: float) -> float:
 class Phase(Enum):
     """The lifecycle phase of one torrent in the wait pass."""
 
-    QUEUED = auto()
+    AWAITING_FIRST_POLL = auto()
     """Still downloading (or not yet polled)."""
     DOWNLOADING = auto()
     """Downloading with live telemetry."""
     IMPORTING = auto()
     """The download finished and an import is in flight."""
-    TERMINAL = auto()
+    FINISHED = auto()
     """A terminal `Outcome` was reached. These GRADUATE to scrollback and leave the live region."""
 
 
@@ -494,7 +494,7 @@ class TorrentView:
 
     key: str
     label: str
-    phase: Phase = Phase.QUEUED
+    phase: Phase = Phase.AWAITING_FIRST_POLL
     fraction: float = 0.0
     speed_bps: int | None = None
     eta_s: int | None = None
@@ -506,7 +506,7 @@ class TorrentView:
     """"Files inserted" bar: both set = determinate, both None = indeterminate."""
     import_total: int | None = None
     """On a TERMINAL imported row, the ledger's final files count (`phase_elapsed_s` freezes as its wait clock)."""
-    left_for_hand_import: HeldBack = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
     """On a TERMINAL unmatched or partial row, the on-disk files left for a hand import."""
     speed_history: tuple[int, ...] = ()
     """Speed samples (bytes/s, stalled = 0), newest last, bounded to `SPARK_SAMPLES`."""
@@ -531,7 +531,7 @@ class WaitSnapshot:
     def done(self) -> int:
         """How many torrents have reached a terminal outcome."""
 
-        return sum(1 for t in self.torrents if t.phase is Phase.TERMINAL)
+        return sum(1 for t in self.torrents if t.phase is Phase.FINISHED)
 
     def total(self) -> int:
         """How many torrents the pass is (or was) waiting on."""
@@ -545,7 +545,7 @@ class WaitSnapshot:
             return 0.0
         total = 0.0
         for torrent in self.torrents:
-            if torrent.phase in (Phase.TERMINAL, Phase.IMPORTING):
+            if torrent.phase in (Phase.FINISHED, Phase.IMPORTING):
                 total += 1.0
             else:
                 total += clamp01(torrent.fraction)
@@ -600,14 +600,14 @@ class WaitProgress:
 
 
 @dataclass(frozen=True, slots=True)
-class TorrentGraduated:
+class RowFinished:
     """One torrent reached a terminal outcome."""
 
     label: str
     outcome: Outcome
     files: int | None
     waited_s: float
-    left_for_hand_import: HeldBack = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 
@@ -783,7 +783,7 @@ type Event = (
     | RunSummaryReady
     | WaitStarted
     | WaitProgress
-    | TorrentGraduated
+    | RowFinished
     | WaitFinished
     | LegFinished
     | Diagnostic
@@ -801,10 +801,10 @@ type Event = (
 )
 
 
-def _category_severity(category: OutcomeCategory) -> Severity:
-    if category is OutcomeCategory.FAILED:
+def _category_severity(category: OutcomeKind) -> Severity:
+    if category is OutcomeKind.FAILED:
         return Severity.ERROR
-    if category is OutcomeCategory.DEFERRED:
+    if category is OutcomeKind.LEFT:
         return Severity.WARNING
     return Severity.INFO
 
@@ -825,7 +825,7 @@ def severity_of(event: Event) -> Severity:
             # INFO regardless of outcome: a failed/deferred step's caller logs the problem
             # itself, so an outcome-based tally would double-count it.
             return Severity.INFO
-        case TorrentGraduated(outcome=outcome):
+        case RowFinished(outcome=outcome):
             # Category-based. wait_graduation_lines carries the same level.
             return _category_severity(outcome.category)
         case (

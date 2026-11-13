@@ -60,7 +60,7 @@ from pearlarr.run_services import LegServices
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.tvdb_orders import NO_ORDERING, SeriesOrdering
-from pearlarr.wait_types import AttemptKind, ImportProbe, ImportProgress
+from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -301,7 +301,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         pending: PendingImport,
         content_path: str,
         attempt: AttemptKind,
-    ) -> ImportProbe:
+    ) -> AttemptResult:
         raise NotImplementedError  # override in a test that drives the import hook
 
     @override

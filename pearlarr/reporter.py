@@ -43,7 +43,7 @@ from .output.events import EntryState
 from .pending_import import PendingImport
 from .releases import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
-from .wait_types import ImportWaitMode, PendingState
+from .wait_types import ImportWaitMode, PendingImportState
 
 # The first cause present wins. PRIVATE_ONLY can't co-occur with the fallback-mode kinds
 # (private_releases is run-wide), so this only breaks ties between no-fallback and stale.
@@ -273,13 +273,13 @@ class RunReporter:
         )
 
     # MISSING and ERRORED have no ledger vocabulary, so they render nothing inline.
-    _PENDING_ENTRY_STATES: ClassVar[dict[PendingState, EntryState]] = {
-        PendingState.QUEUED: EntryState.QUEUED,
-        PendingState.DOWNLOADED: EntryState.DOWNLOADED,
-        PendingState.IMPORTED: EntryState.IMPORTED,
+    _PENDING_ENTRY_STATES: ClassVar[dict[PendingImportState, EntryState]] = {
+        PendingImportState.DOWNLOADING: EntryState.QUEUED,
+        PendingImportState.DOWNLOADED: EntryState.DOWNLOADED,
+        PendingImportState.IMPORTED: EntryState.IMPORTED,
     }
 
-    def log_pending_snapshot(self, state: PendingState, pending: PendingImport, series_id: int) -> None:
+    def log_pending_snapshot(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:
         """Emit a carried-over pending record's self-contained block inline in the series block.
 
         The header reads the record's claim on `series_id`. Bumps no counter: the engine owns the

@@ -33,7 +33,7 @@ from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_parse import SonarrParseCache
 from .torrent_listings import SeriesListings
-from .wait_types import AttemptKind, EffectStatus, ImportProbe, ImportProgress, ImportWaitMode
+from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress, ImportWaitMode
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
@@ -492,7 +492,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         pending: PendingImport,
         content_path: str,
         attempt: AttemptKind,
-    ) -> ImportProbe:
+    ) -> AttemptResult:
         """One reconcile/import poll for a completed download (delegated).
 
         The @abstractmethod hook stays here so the ABC instantiates. The reconcile
