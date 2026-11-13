@@ -294,8 +294,8 @@ class _Unplaced(Enum):
     """The file isn't this record's to import under its current claims."""
     HAND_IMPORT = auto()
     """The file is left for a hand import."""
-    NEITHER = auto()
-    """Neither: the file stays with the record as one nothing placed, and the caller warns of it."""
+    STAYS = auto()
+    """The file stays with the record as one nothing placed, and the caller warns of it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,7 +352,7 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         PlacementVerdict.ALTERNATE: _Places(by_alias=True),
         PlacementVerdict.OTHER_ORDER: _Places(),
         PlacementVerdict.NUMBERINGS_AGREE: _Places(),
-        PlacementVerdict.HELD: _Refuses(_Unplaced.NEITHER),
+        PlacementVerdict.HELD: _Refuses(_Unplaced.STAYS),
         PlacementVerdict.MISNUMBERED: _Refuses(_Unplaced.HAND_IMPORT, left_open=True),
         # The claims, weakest first. EXTRA is lowest because it rests on one window's titles. SKIPPED beats FOREIGN
         # and EXTRA, so a file some window couldn't place is never written off, and ALIASED_ELSEWHERE beats FOREIGN
@@ -362,8 +362,8 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         # so a file whose numbers a window refused or refuted stays a hand import.
         PlacementVerdict.EXTRA: _Claims(leaves=_Unplaced.EXCLUDED, rank=0),
         PlacementVerdict.FOREIGN: _Claims(leaves=_Unplaced.EXCLUDED, rank=1, left_open=True),
-        PlacementVerdict.ALIASED_ELSEWHERE: _Claims(leaves=_Unplaced.NEITHER, rank=2, by_alias=True),
-        PlacementVerdict.SKIPPED: _Claims(leaves=_Unplaced.NEITHER, rank=3, left_open=True),
+        PlacementVerdict.ALIASED_ELSEWHERE: _Claims(leaves=_Unplaced.STAYS, rank=2, by_alias=True),
+        PlacementVerdict.SKIPPED: _Claims(leaves=_Unplaced.STAYS, rank=3, left_open=True),
         PlacementVerdict.ORDER_ONLY: _Claims(leaves=_Unplaced.HAND_IMPORT, rank=4),
         PlacementVerdict.DUPLICATE: _Claims(leaves=_Unplaced.EXCLUDED, rank=5),
         PlacementVerdict.OTHER_ORDER_ELSEWHERE: _Claims(leaves=_Unplaced.HAND_IMPORT, rank=6),
