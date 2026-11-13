@@ -101,13 +101,12 @@ from pearlarr.output import (
     current_hub,
     install_hub,
 )
-from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import make_logger
-from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub
+from .fakes import RecordingHub, TtyStringIO, diagnostic_messages, install_recording_hub
 from .test_scan_parity import SUMMARY_MINIMAL
 
 

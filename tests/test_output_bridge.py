@@ -44,9 +44,8 @@ from pearlarr.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from pearlarr.output.recording import RecordingRenderer
 
-from .fakes import TtyStringIO, strip_ansi
+from .fakes import RecordingRenderer, TtyStringIO, strip_ansi
 
 
 @pytest.fixture

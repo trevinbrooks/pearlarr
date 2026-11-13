@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast, override
+from typing import cast, final, override
 
 import httpx
 import qbittorrentapi
@@ -43,7 +43,9 @@ from pearlarr.output import (
     GrabAction,
     GrabFailed,
     ItemStarted,
+    OutputHub,
     ReleaseSkipped,
+    Renderer,
     ScanStarted,
     Severity,
     TitleDetail,
@@ -52,7 +54,6 @@ from pearlarr.output import (
     install_hub,
 )
 from pearlarr.output.console_lines import ConsoleLine
-from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressCallback
@@ -104,6 +105,69 @@ def debug_logger(name: str) -> logging.Logger:
     logger.propagate = True
     logger.setLevel(logging.DEBUG)
     return logger
+
+
+@final
+class RecordingRenderer(Renderer):
+    """A renderer that records everything it is handed (events + lifecycle calls)."""
+
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+        self.whens: list[float] = []
+        self.runs_begun = 0
+        self.levels: list[int] = []
+        self.closed = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        self.events.append(event)
+        self.whens.append(when)
+
+    @override
+    def begin_run(self) -> None:
+        self.runs_begun += 1
+
+    @override
+    def set_level(self, level: int) -> None:
+        self.levels.append(level)
+
+    @override
+    def close(self) -> None:
+        self.closed = True
+
+    def of_type[E](self, cls: type[E]) -> list[E]:
+        """The recorded events of one type, in emit order."""
+
+        return [event for event in self.events if isinstance(event, cls)]
+
+
+@final
+class RecordingHub:
+    """A real OutputHub over one RecordingRenderer.
+
+    Handles mint real ScopeIds and dedup/containment behave exactly as in
+    production.
+    """
+
+    def __init__(self) -> None:
+        self.renderer = RecordingRenderer()
+        self.hub = OutputHub([self.renderer])
+
+    @property
+    def events(self) -> list[Event]:
+        """The recorded events, in emit order."""
+
+        return self.renderer.events
+
+    def emit(self, event: Event) -> None:
+        """Emit through the real hub."""
+
+        self.hub.emit(event)
+
+    def of_type[E](self, cls: type[E]) -> list[E]:
+        """The recorded events of one type, in emit order."""
+
+        return self.renderer.of_type(cls)
 
 
 def install_recording_hub() -> RecordingHub:

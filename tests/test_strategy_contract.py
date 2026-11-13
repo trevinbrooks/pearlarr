@@ -53,7 +53,6 @@ from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Severity
-from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import (
     FileEpisodeMap,
     OwnedAtGrab,
@@ -123,6 +122,7 @@ from .fakes import (
     FakeSonarrClient,
     HookedSonarrClient,
     QbitCategoryReads,
+    RecordingHub,
     ScriptedEpisodes,
     debug_logger,
     diagnostic_messages,

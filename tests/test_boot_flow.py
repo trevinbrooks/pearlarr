@@ -35,11 +35,10 @@ from pearlarr.output import (
     install_bridge,
     install_hub,
 )
-from pearlarr.output.recording import RecordingHub
 from pearlarr.wait_types import OutcomeKind
 
 from .builders import make_bare_instance, make_config
-from .fakes import FakeClock
+from .fakes import FakeClock, RecordingHub
 
 
 def _flow(data_dir: str = "/data/dir") -> tuple[BootFlow, RecordingHub, FakeClock]:

@@ -43,9 +43,8 @@ from pearlarr.output import (
     uninstall_bridge,
 )
 from pearlarr.output.bridge import HubBridgeHandler
-from pearlarr.output.recording import RecordingRenderer
 
-from .fakes import AsciiStringIO, CaptureHandler, TtyStringIO, strip_ansi
+from .fakes import AsciiStringIO, CaptureHandler, RecordingRenderer, TtyStringIO, strip_ansi
 
 
 @pytest.fixture

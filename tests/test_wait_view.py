@@ -34,12 +34,11 @@ from pearlarr.output import (
     install_hub,
 )
 from pearlarr.output.console_text import STATE_WIDTH
-from pearlarr.output.recording import RecordingHub
 from pearlarr.wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, make_wait_view, newly_finished
 
 from .builders import files_left_for_hand_import
-from .fakes import CaptureHandler
+from .fakes import CaptureHandler, RecordingHub
 
 
 def _logger_with_console(*, force_terminal: bool, width: int = 100) -> logging.Logger:

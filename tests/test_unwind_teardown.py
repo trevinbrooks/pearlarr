@@ -37,11 +37,11 @@ from pearlarr.cache import CacheSchemaError
 from pearlarr.config import AppConfig, Arr, ArrTarget
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.output import ArrRunFinished, Diagnostic, FileLogRenderer, Severity, install_bridge, install_hub
-from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import resolve_paths
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config
+from .fakes import RecordingHub
 
 # The message each scripted failure carries, so the adopted ERROR is identifiable
 # in the recorded stream (the clean arm logs `str(e)`, the traceback arm doesn't).

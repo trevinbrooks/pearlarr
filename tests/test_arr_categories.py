@@ -27,10 +27,9 @@ import respx
 from pearlarr.arr_categories import ArrCategoryResolver, CategorySources, Watch
 from pearlarr.config import Arr, ArrSettings
 from pearlarr.output import Diagnostic, Severity
-from pearlarr.output.recording import RecordingHub
 
 from .builders import download_client_json, sonarr_client_fields
-from .fakes import QbitCategoryReads, bind_arr_http, diagnostic_messages
+from .fakes import QbitCategoryReads, RecordingHub, bind_arr_http, diagnostic_messages
 
 _URL = "http://arr.test"
 

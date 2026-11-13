@@ -22,7 +22,6 @@ from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail, install_hub, uninstall_hub
-from pearlarr.output.recording import RecordingHub
 from pearlarr.releases import ReleaseEpisode, SeadexDict, SkipReason
 
 from .builders import (
@@ -39,6 +38,7 @@ from .builders import (
     make_torrent_record,
     sonarr_ep,
 )
+from .fakes import RecordingHub
 
 PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
 PUB_URL = "https://nyaa.si/view/1"

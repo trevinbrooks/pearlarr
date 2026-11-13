@@ -37,9 +37,8 @@ from pearlarr.arr_http import (
 )
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity
-from pearlarr.output.recording import RecordingHub
 
-from .fakes import bind_arr_http
+from .fakes import RecordingHub, bind_arr_http
 
 _URL = "http://arr.test"
 

@@ -39,8 +39,9 @@ from pearlarr.output import (
     uninstall_hub,
 )
 from pearlarr.output.hub import QUEUE_CAP
-from pearlarr.output.recording import RecordingHub, RecordingRenderer
 from pearlarr.paths import resolve_paths
+
+from .fakes import RecordingHub, RecordingRenderer
 
 _EVENT = PearlarrStarted(version="v1.0.0", data_dir="/data")
 

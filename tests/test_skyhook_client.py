@@ -6,10 +6,9 @@ import pytest
 import respx
 
 from pearlarr.output import Diagnostic, Severity
-from pearlarr.output.recording import RecordingHub
 from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookNoReply, SkyHookReply
 
-from .fakes import FakeSkyHookClient, install_recording_hub
+from .fakes import FakeSkyHookClient, RecordingHub, install_recording_hub
 from .http_mock import skyhook_fixture
 
 _SERIES = 112961
