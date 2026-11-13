@@ -25,10 +25,10 @@ from pearlarr.mappings import ExternalIds, TitleMapping
 from pearlarr.parse_records import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_UNMATCHED_TTL_DAYS,
+    ParseCacheRows,
     ParseFreshness,
-    ParseRecords,
     _parse_is_fresh,
-    to_parse_record,
+    parse_to_json,
 )
 from pearlarr.releases import SeadexDict
 from pearlarr.run_services import LegServices
@@ -90,7 +90,7 @@ def _window(series_hash: str = "fp") -> ParseFreshness:
 def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_hash: str | None = None) -> dict[str, object]:
     """One persisted parse row, stamped `days_ago` and optionally pinned to a fingerprint."""
 
-    row: dict[str, object] = {"fetched_at": _stamp(days_ago), "parse": to_parse_record(info)}
+    row: dict[str, object] = {"fetched_at": _stamp(days_ago), "parse": parse_to_json(info)}
     if series_hash is not None:
         row["series_fp"] = series_hash
     return row
@@ -99,7 +99,7 @@ def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_hash: str | Non
 def _untitled(info: ParsedFileInfo) -> dict[str, object]:
     """A row stamped a day ago whose parse has no `series_title` key, as older builds wrote it."""
 
-    parse = to_parse_record(info)
+    parse = parse_to_json(info)
     del parse["series_title"]
     return {"fetched_at": _stamp(1), "parse": parse}
 
@@ -159,9 +159,9 @@ class TestParseRecords:
     """The parse-cache leaf: fresh-only reads and shape-owning writes."""
 
     @staticmethod
-    def _records() -> tuple[ParseRecords, FakeCacheStore]:
+    def _records() -> tuple[ParseCacheRows, FakeCacheStore]:
         store = FakeCacheStore()
-        return ParseRecords(store), store
+        return ParseCacheRows(store), store
 
     def test_round_trip_keeps_the_matched_ids(self) -> None:
         records, _ = self._records()
@@ -199,16 +199,16 @@ class TestParseRecords:
         # it and validation is what misses.
         row: dict[str, object] = {
             "fetched_at": _stamp(1),
-            "parse": {**to_parse_record(_matched(1, 1)), "episode_numbers": "one"},
+            "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
         }
         store = FakeCacheStore(sonarr_parse={"show - 01.mkv": row})
 
-        assert ParseRecords(store).read("show - 01.mkv", window=_window()) is None
+        assert ParseCacheRows(store).read("show - 01.mkv", window=_window()) is None
 
     def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
         # The model would read the missing title as "", so the key decides, inside the TTL.
         store = FakeCacheStore(sonarr_parse={"show - 01.mkv": _untitled(_matched(1, 1))})
-        records = ParseRecords(store)
+        records = ParseCacheRows(store)
 
         assert not records.is_fresh("show - 01.mkv", window=_window())
         assert records.read("show - 01.mkv", window=_window()) is None
@@ -661,7 +661,7 @@ class TestParsedFilesUnmatchedCache:
             sonarr=sonarr,
             _config=make_config(sleep_time=sleep_time),
             cache_store=store,
-            records=ParseRecords(store),
+            records=ParseCacheRows(store),
             logger=make_logger(),
         )
         return parse, sonarr
@@ -674,7 +674,7 @@ class TestParsedFilesUnmatchedCache:
     def _assert_pinned(parse: SonarrParseCache, name: str) -> None:
         rec = parse.cache_store.get_sonarr_parse(name)
         assert rec is not None
-        assert rec["parse"] == to_parse_record(_UNMATCHED)
+        assert rec["parse"] == parse_to_json(_UNMATCHED)
         assert rec["series_fp"] == "fp"
 
     def test_genuine_unmatched_is_cached_with_fp(self) -> None:
@@ -691,7 +691,7 @@ class TestParsedFilesUnmatchedCache:
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
-                "parse": to_parse_record(_UNMATCHED),
+                "parse": parse_to_json(_UNMATCHED),
                 "series_fp": "fp",
             },
         }
@@ -706,7 +706,7 @@ class TestParsedFilesUnmatchedCache:
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
-                "parse": {**to_parse_record(_matched(1, 1)), "episode_numbers": "one"},
+                "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
             },
         }
         parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=file_map)
@@ -717,7 +717,7 @@ class TestParsedFilesUnmatchedCache:
         assert sonarr.calls == ["[X] Show - 01.mkv"]
         rec = parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv")
         assert rec is not None
-        assert rec["parse"] == to_parse_record(_matched(1, 1))
+        assert rec["parse"] == parse_to_json(_matched(1, 1))
 
     def test_a_row_without_a_series_title_is_re_parsed_by_the_warm_pass(self) -> None:
         # The warm pass sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
@@ -729,7 +729,7 @@ class TestParsedFilesUnmatchedCache:
         assert sorted(sonarr.calls) == names
         rec = parse.cache_store.get_sonarr_parse(names[0])
         assert rec is not None
-        assert rec["parse"] == to_parse_record(_matched(1, 1))
+        assert rec["parse"] == parse_to_json(_matched(1, 1))
 
     def test_audio_file_never_parsed(self) -> None:
         parse, sonarr = self._parse(parse_result=_UNMATCHED)

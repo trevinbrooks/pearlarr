@@ -2494,8 +2494,8 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
-        assert seed.stored == resident
-        assert seed.placements == {normalize_basename(_SEED_FILES[1]): (102,)}
+        assert seed.pending_import == resident
+        assert seed.file_map == {normalize_basename(_SEED_FILES[1]): (102,)}
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
         record = seed.record_at(_STAMP, fresh=False)
@@ -2541,7 +2541,7 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.MISNUMBERED
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == []
-        assert req.pending_seeds["h1"].placements == {}
+        assert req.pending_seeds["h1"].file_map == {}
         assert req.input_missing_groups == ()
 
     def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
@@ -2557,7 +2557,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
-        assert seed.placements == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
+        assert seed.file_map == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
                 f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
@@ -2587,7 +2587,7 @@ class TestSonarrProcessAlIdSeeds:
         run = _entry_run(files, specials, _ScriptedListings(), episode_count=episode_count)
 
         (req,) = run.grab_requests
-        assert req.pending_seeds["h1"].placements == placed
+        assert req.pending_seeds["h1"].file_map == placed
 
     def test_an_unread_listing_places_nothing_and_holds_the_url(self) -> None:
         # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing
@@ -2600,7 +2600,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.INPUT_UNREAD
-        assert req.pending_seeds["h1"].placements == {}
+        assert req.pending_seeds["h1"].file_map == {}
         assert req.input_missing_groups == ("NAN0",)
 
     def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
@@ -2672,7 +2672,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         seed = req.pending_seeds["h1"]
-        assert seed.placements == {}
+        assert seed.file_map == {}
         assert seed.excluded == tuple(normalize_basename(name) for name in _SEED_FILES)
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is GrabHold.PLACED_ELSEWHERE
 
@@ -2839,10 +2839,10 @@ class TestRadarrProcessAlIdSeeds:
         assert seed.claim.title == "A Movie"
         assert seed.claim.url == "https://releases.moe/9"
         # A torrent the store does not hold starts a new record.
-        assert seed.stored is None
+        assert seed.pending_import is None
         # Sonarr-domain fields deliberately stay empty for a Radarr record.
         assert seed.claim.series_id == 0
-        assert seed.placements == {}
+        assert seed.file_map == {}
         assert seed.facts.seadex_files == ()
         assert seed.claim.ordered_episode_ids == ()
         assert seed.claim.coverage is None
@@ -2862,7 +2862,7 @@ class TestRadarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
-        assert seed.stored == resident
+        assert seed.pending_import == resident
         assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_a_marked_url_seeds_onto_its_cross_seeds_record(self) -> None:
@@ -2874,7 +2874,7 @@ class TestRadarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         seed = req.pending_seeds["c1"]
-        assert seed.stored == resident
+        assert seed.pending_import == resident
         assert (seed.facts.infohash, seed.facts.cross_seed) == ("c1", True)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:

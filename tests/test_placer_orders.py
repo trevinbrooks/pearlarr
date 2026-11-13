@@ -76,7 +76,7 @@ class TestInterleavedSpecialByOrder:
             cls._MAP, absolutes=cls._ABSOLUTES if absolutes is None else absolutes, titles=titles, orders=orders
         )
         listing = NO_EVIDENCE if listed is None else SeadexEvidence(torrent_listing(entry_window(1, listed)))
-        return PlacementTarget(resolved, index, names=TitleNames("Show"), listing=listing)
+        return PlacementTarget(resolved, index, title_names=TitleNames("Show"), seadex=listing)
 
     def _place(self, orders: SeriesOrders, listed: tuple[int, ...] | None = None) -> BatchPlacements:
         """The run under the season's window alone."""
@@ -246,7 +246,7 @@ class TestInterleavedSpecialByOrder:
         # the first cut on that season's first episode, so the second cut is its duplicate there.
         uncut = "[grp] Show - S03E01 (Uncut).mkv"
         parsed = {**self._THIRD_PARSED, uncut: self._THIRD_PARSED[self._THIRD[0]]}
-        other = PlacementTarget([801], series_index({EpisodeKey(3, 1): 801}), names=TitleNames("Show"))
+        other = PlacementTarget([801], series_index({EpisodeKey(3, 1): 801}), title_names=TitleNames("Show"))
 
         result = place_across_windows(batch(parsed), (self._scope(self._SEASON, {"dvd": self._SPLIT}), other))
 
@@ -295,7 +295,7 @@ class TestInterleavedSpecialByOrder:
 
         result = place_across_windows(batch(self._PARSED), windows)
 
-        assert merged_of(result).assigned == {self._RUN[0]: (601,), self._RUN[1]: (602,), self._RUN[2]: (603,)}
+        assert merged_of(result).placed == {self._RUN[0]: (601,), self._RUN[1]: (602,), self._RUN[2]: (603,)}
         assert by_name(merged_of(result))[self._RUN[3]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
 
     def test_a_pack_the_aired_order_reads_whole_is_never_read_another_way(self) -> None:
@@ -346,7 +346,7 @@ class TestInterleavedSpecialByOrder:
         specials = {EpisodeKey(0, n): 500 + n for n in (2, 3, 4, 5)}
         index = series_index(self._MAP | specials, absolutes=self._ABSOLUTES, orders={"dvd": self._DVD})
         windows = tuple(
-            PlacementTarget(ids, index, names=TitleNames("Show")) for ids in (self._SEASON, [502, 503, 504, 505])
+            PlacementTarget(ids, index, title_names=TitleNames("Show")) for ids in (self._SEASON, [502, 503, 504, 505])
         )
 
         result = place_across_windows(batch(self._PARSED), windows)
@@ -359,7 +359,7 @@ class TestInterleavedSpecialByOrder:
         # is that file's duplicate there.
         stored = "[grp] Other Show - 03.mkv"
         parsed = {**self._PARSED, stored: parsed_info(absolutes=(3,), matched=((1, 3),))}
-        other = PlacementTarget([803], series_index({EpisodeKey(1, 3): 803}), names=TitleNames("Other Show"))
+        other = PlacementTarget([803], series_index({EpisodeKey(1, 3): 803}), title_names=TitleNames("Other Show"))
         windows = (self._scope(self._SEASON, {"dvd": self._DVD}), other)
 
         result = place_across_windows(batch(parsed, self._RUN, file_map={stored: (803,)}), windows)
@@ -377,7 +377,7 @@ class TestInterleavedSpecialByOrder:
         index = series_index(
             self._MAP, absolutes=self._ABSOLUTES, titles={501: "Lost Lantern"}, orders={"dvd": self._DVD}
         )
-        windows = tuple(PlacementTarget(ids, index, names=TitleNames("Show")) for ids in (self._SEASON, [501]))
+        windows = tuple(PlacementTarget(ids, index, title_names=TitleNames("Show")) for ids in (self._SEASON, [501]))
 
         result = place_across_windows(batch(parsed), windows)
 
@@ -503,18 +503,18 @@ class TestInterleavedSpecialByOrder:
 
         assert by_name(merged_of(result))[self._RUN[2]] == ((), PlacementVerdict.MISNUMBERED)
         assert by_name(merged_of(result))[self._RUN[3]] == ((), PlacementVerdict.MISNUMBERED)
-        assert under_window(result, 1).assigned == {}
+        assert under_window(result, 1).placed == {}
 
     def test_a_file_sized_as_another_episode_is_left_alone_when_the_order_reads_it_as_aired(self) -> None:
         # "S01E01" has the size of the single-file release SeaDex lists for another episode, and the order reads
         # it as its own key does. Away: that episode is the next season's first, which the season's window doesn't
         # hold, so the file is foreign there. Held: an earlier grab stored "S01E02" on that episode, so the file is
         # skipped. Either way the order still speaks, and places "S01E04".
-        index = self._scope(self._SEASON, {"dvd": self._DVD}).series
+        index = self._scope(self._SEASON, {"dvd": self._DVD}).index
 
         def season(listed: tuple[int, ...], sized_as: int) -> PlacementTarget:
             listing = SeadexEvidence(torrent_listing(entry_window(1, listed)), {self._RUN[0]: sized_as})
-            return PlacementTarget(self._SEASON, index, names=TitleNames("Show"), listing=listing)
+            return PlacementTarget(self._SEASON, index, title_names=TitleNames("Show"), seadex=listing)
 
         away = by_name(place(self._PARSED, season((*self._SEASON, 701), 701)))
         rest = [self._RUN[0], *self._RUN[2:]]
@@ -684,7 +684,7 @@ class TestMisnumberedSpecialsByOrder:
 
         index = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)}, orders={"dvd": order})
         listing = SeadexEvidence(torrent_listing(entry_window(1, cls._LISTED)))
-        scope = PlacementTarget(list(cls._LISTED), index, names=TitleNames("Show"), listing=listing)
+        scope = PlacementTarget(list(cls._LISTED), index, title_names=TitleNames("Show"), seadex=listing)
         return place(specials_pack(1, 2, 3), scope)
 
     def test_an_order_reading_a_special_off_the_listing_leaves_the_pack_refused(self) -> None:
@@ -732,7 +732,7 @@ class TestCountedKeyByOrder:
         """The second season's window."""
 
         index = series_index(cls._MAP, absolutes=cls._ABSOLUTES, titles=cls._TITLES, orders=orders)
-        return PlacementTarget([701, 702], index, names=TitleNames("Show"))
+        return PlacementTarget([701, 702], index, title_names=TitleNames("Show"))
 
     @classmethod
     def _place(cls, orders: SeriesOrders, name: str = _NAME) -> BatchPlacements:
@@ -795,7 +795,7 @@ class TestBareRunByOrder:
     def _scope(
         cls, orders: SeriesOrders, names: TitleNames = _NAMES, *, titles: dict[int, str] | None = None
     ) -> PlacementTarget:
-        return PlacementTarget(cls._SEASON, series_index(cls._MAP, titles=titles, orders=orders), names=names)
+        return PlacementTarget(cls._SEASON, series_index(cls._MAP, titles=titles, orders=orders), title_names=names)
 
     def _by_order(self) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
         return {

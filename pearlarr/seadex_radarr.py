@@ -9,7 +9,7 @@ from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_histo
 from .arr_models import ArrFiles, HistoryRecord, RadarrItem
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
-from .grab_placement import EntryFacts, PendingImportUpdate, build_unscoped_seed
+from .grab_placement import PendingImportUpdate, TitleFacts, build_unscoped_seed
 from .mappings import ExternalIds, TitleMapping
 from .output import hub_warn
 from .output.console_text import pluralize
@@ -193,7 +193,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         if run.import_wait_mode is not ImportWaitMode.OFF:
             flagged = releases_to_grab(seadex_dict)
             stored = run.records.stored_records(f.qbit_hash for f in flagged)
-            facts = EntryFacts(
+            facts = TitleFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=GuardFacts()
             )
             pending_seeds = {f.qbit_hash: build_unscoped_seed(f, facts, stored.get(f.qbit_hash)) for f in flagged}

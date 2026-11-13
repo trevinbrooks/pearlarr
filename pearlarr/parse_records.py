@@ -75,7 +75,7 @@ class SonarrParseRecord(TypedDict):
     freshness reader dispatches on exactly that presence."""
 
 
-def to_parse_record(info: ParsedFileInfo) -> dict[str, Json]:
+def parse_to_json(info: ParsedFileInfo) -> dict[str, Json]:
     """The JSON the cache persists for one parse.
 
     The matched pairs' ids ride along so a seed cross-checks them against the series map, which refuses a
@@ -85,7 +85,7 @@ def to_parse_record(info: ParsedFileInfo) -> dict[str, Json]:
     return info.model_dump(mode="json")
 
 
-def parsed_info(record: Mapping[str, object]) -> ParsedFileInfo | None:
+def parse_from_json(record: Mapping[str, object]) -> ParsedFileInfo | None:
     """Rebuild a record's parse (the inverse of `to_parse_record`), or None when the row has no readable parse.
 
     A parse whose values don't validate is a miss and re-fetches. A missing key validates to its default, so the
@@ -124,7 +124,7 @@ def _parse_is_fresh(record: Mapping[str, object], *, window: ParseFreshness) -> 
     return record["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.unmatched_cutoff)
 
 
-class ParseRecords:
+class ParseCacheRows:
     """The parse-cache leaf: fresh-only reads and shape-owning writes over `cache_store`.
 
     Bound once on `RunDeps` and shared by the planner's sweep and the seed
@@ -146,12 +146,12 @@ class ParseRecords:
         record = self._store.get_sonarr_parse(filename)
         if record is None or not _parse_is_fresh(record, window=window):
             return None
-        return parsed_info(record)
+        return parse_from_json(record)
 
     def write(self, filename: str, info: ParsedFileInfo, *, window: ParseFreshness) -> None:
         """Upsert one parse. An UNMATCHED parse (no matched pairs) is pinned to the series fingerprint."""
 
-        record: SonarrParseRecord = {"fetched_at": window.now_str, "parse": to_parse_record(info)}
+        record: SonarrParseRecord = {"fetched_at": window.now_str, "parse": parse_to_json(info)}
         if not info.matched_episodes:
             record["series_fp"] = window.series_hash
         self._store.put_sonarr_parse(filename, cast("dict[str, Any]", record))

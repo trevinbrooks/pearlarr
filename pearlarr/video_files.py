@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 
 from .file_paths import path_leaf
 
-TORRENT_FILENAMES_TO_SKIP = [
+CREDITLESS_MARKERS = [
     "NCED",
     "NCOP",
     "Creditless Ending",
@@ -92,12 +92,12 @@ def is_video_candidate(basename: str) -> bool:
     The skip rules live only here, so the seed, the import, and the parse agree on what could be an episode.
     """
 
-    if any(skip in basename for skip in TORRENT_FILENAMES_TO_SKIP):
+    if any(skip in basename for skip in CREDITLESS_MARKERS):
         return False
     return os.path.splitext(basename)[1].lower() not in NON_VIDEO_EXTENSIONS
 
 
-def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
+def indexed_video_files(files: Sequence[str]) -> Iterator[tuple[int, str]]:
     """Yield `(index, basename)` for each importable video file in `files`, the index keying a size list."""
 
     for idx, name in enumerate(files):

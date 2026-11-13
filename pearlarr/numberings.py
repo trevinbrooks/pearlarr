@@ -34,32 +34,34 @@ from .releases import season_episode_key
 class Numbering(Enum):
     """One way a release group could have counted a series' episodes: what the number k in a file name means."""
 
-    SERIES_ROW = "series row"
+    FROM_SERIES_START = "series row"
     """The series' k-th regular row, in season and episode order: the group counted every regular episode from the
     first season on. Fits a torrent only together with `ABSOLUTE`."""
-    ABSOLUTE = "absolute"
+    TVDB_ABSOLUTE = "absolute"
     """The row TVDB numbers k. A veto only: it never places alone, since a group counting its own way may land
     where TVDB's number happens to agree."""
-    WINDOW_ROW = "window row"
+    FROM_WINDOW_START = "window row"
     """The window's k-th row: the group counted the entry's episodes from one. A window of nothing but specials
     counts its specials."""
-    WINDOW_SEASON = "window season"
+    SEASON_NUMBERS = "window season"
     """Episode k of the window's first regular season: the group used Sonarr's own episode numbers."""
-    UNION_ROW = "union row"
+    ACROSS_WINDOWS = "union row"
     """The k-th regular row across every window of the torrent, two or more windows only: the group counted a batch
     listed under several entries straight through."""
 
 
-_PLACING = frozenset({Numbering.SERIES_ROW, Numbering.WINDOW_ROW, Numbering.WINDOW_SEASON, Numbering.UNION_ROW})
+_PLACING = frozenset(
+    {Numbering.FROM_SERIES_START, Numbering.FROM_WINDOW_START, Numbering.SEASON_NUMBERS, Numbering.ACROSS_WINDOWS}
+)
 """The numberings whose agreement places a file. `ABSOLUTE` only vetoes."""
-_SERIES_WIDE = frozenset({Numbering.SERIES_ROW, Numbering.ABSOLUTE})
+_SERIES_WIDE = frozenset({Numbering.FROM_SERIES_START, Numbering.TVDB_ABSOLUTE})
 """The numberings that count TVDB's whole series: its regular rows from the first season on, and its absolutes."""
-_PER_WINDOW = (Numbering.WINDOW_ROW, Numbering.WINDOW_SEASON)
+_PER_WINDOW = (Numbering.FROM_WINDOW_START, Numbering.SEASON_NUMBERS)
 """The numberings read through one window of the torrent."""
 
 
 @dataclass(frozen=True, slots=True)
-class NumberingReading:
+class NumberingProposals:
     """What the reader proposes for a torrent: each lone-number file's ids where every fitting numbering agrees.
 
     A file not named keeps its verdict.
@@ -73,7 +75,7 @@ class NumberingReading:
         object.__setattr__(self, "ids", MappingProxyType(dict(self.ids)))
 
 
-NO_PROPOSALS = NumberingReading({})
+NO_PROPOSALS = NumberingProposals({})
 """The reader proposing nothing."""
 
 
@@ -160,7 +162,7 @@ class _Window:
 
     ids: frozenset[int]
     """The window's ids the series index knows."""
-    regs: tuple[int, ...]
+    regular_ids: tuple[int, ...]
     """The window's regular rows (season above 0), in season and episode order."""
     specials: tuple[int, ...]
     """The window's specials (season 0), in episode order."""
@@ -183,19 +185,19 @@ class _Window:
 
         by_id = index.by_id
         rows = _ordered(by_id[ep_id] for ep_id in window.ordered_episode_ids if ep_id in by_id)
-        regs = [ep for ep in rows if _is_regular(ep)]
-        first_season = regs[0].season_number if regs else None
+        regular_ids = [ep for ep in rows if _is_regular(ep)]
+        first_season = regular_ids[0].season_number if regular_ids else None
         count = window.episode_count
         titles = window.names.anilist
         return cls(
             ids=frozenset(ep.id for ep in rows),
-            regs=tuple(ep.id for ep in regs),
+            regular_ids=tuple(ep.id for ep in regular_ids),
             specials=tuple(ep.id for ep in rows if ep.season_number == 0),
-            whole=count is None or count in (len(regs), len(rows)),
-            monotone=_absolutes_increase(regs),
+            whole=count is None or count in (len(regular_ids), len(rows)),
+            monotone=_absolutes_increase(regular_ids),
             season_rows={
                 ep.episode_number: ep.id
-                for ep in regs
+                for ep in regular_ids
                 if ep.season_number == first_season and ep.episode_number is not None
             },
             titles=frozenset(_norm_title(title) for title in titles) - {""},
@@ -205,7 +207,7 @@ class _Window:
     def row(self, k: int) -> int | None:
         """`WINDOW_ROW`: the k-th regular row, or the k-th special when the window has no regular rows."""
 
-        rows = self.regs or self.specials
+        rows = self.regular_ids or self.specials
         return rows[k - 1] if 1 <= k <= len(rows) else None
 
     def season_row(self, k: int) -> int | None:
@@ -237,7 +239,7 @@ type _Fit = _WideFit | _WindowFit
 
 
 @dataclass(frozen=True, slots=True)
-class _LoneNumberFile:
+class _AbsoluteOnlyFile:
     """A file of the pool: its numbers and the series title Sonarr lifted from its name."""
 
     name: str
@@ -277,7 +279,7 @@ class _Pool:
     part.
     """
 
-    files: tuple[_LoneNumberFile, ...]
+    files: tuple[_AbsoluteOnlyFile, ...]
     repeated: frozenset[int]
     """The numbers more than one file carries."""
     fits: tuple[_Fit, ...]
@@ -293,7 +295,7 @@ class _Pool:
     def __post_init__(self) -> None:
         object.__setattr__(self, "parts", MappingProxyType(dict(self.parts)))
 
-    def carries_repeat(self, file: _LoneNumberFile) -> bool:
+    def carries_repeat(self, file: _AbsoluteOnlyFile) -> bool:
         """Whether one of the file's numbers is one another file carries too."""
 
         return any(k in self.repeated for k in file.numbers)
@@ -326,7 +328,7 @@ class NumberingStep:
 
     series: EpisodeIndex
     """The grabbing entry's whole series."""
-    regs: tuple[int, ...]
+    regular_ids: tuple[int, ...]
     """The series' regular rows, in season and episode order: what `SERIES_ROW` counts."""
     windows: tuple[_Window, ...]
     """The torrent's windows on the series, in window order. A window on another series is left out."""
@@ -344,16 +346,16 @@ class NumberingStep:
     def of(cls, scope: GrabbingTitle, windows: Iterable[TitleWindow]) -> Self:
         """The reader for one torrent: `windows` are the torrent's (`WindowOrder.windows`), any series."""
 
-        index = scope.series
+        index = scope.series_index
         own = tuple(_Window.of(window, index) for window in windows if window.series_id == scope.series_id)
-        regs = _regular(index.by_id.values())
+        regular_ids = _regular(index.by_id.values())
         union = frozenset(ep_id for window in own for ep_id in window.ids)
-        union_regs = [ep for ep in regs if ep.id in union]
+        union_regs = [ep for ep in regular_ids if ep.id in union]
         known = {_norm_title(title) for title in (scope.names.series, *scope.alternate_titles)}
         known.update(title for window in own for title in window.titles)
         return cls(
             series=index,
-            regs=tuple(ep.id for ep in regs),
+            regular_ids=tuple(ep.id for ep in regular_ids),
             windows=own,
             union_regs=tuple(ep.id for ep in union_regs),
             union_monotone=_absolutes_increase(union_regs),
@@ -361,7 +363,7 @@ class NumberingStep:
             aired_order=scope.aired_order,
         )
 
-    def read(self, batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> NumberingReading:
+    def read(self, batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> NumberingProposals:
         """The ids proposed for each lone-number file of `batch` where every fitting numbering agrees.
 
         `facts` are the grabbing entry's own window's (`PlacerResult.facts`): they say which names are extras or
@@ -379,9 +381,9 @@ class NumberingStep:
         pool = self._pool(_lone_number_files(batch, facts))
         proposals = {file.name: ids for file in pool.files if (ids := self._propose(file, pool)) is not None}
         held = Counter(ep_id for ids in proposals.values() for ep_id in ids)
-        return NumberingReading({name: ids for name, ids in proposals.items() if all(held[i] == 1 for i in ids)})
+        return NumberingProposals({name: ids for name, ids in proposals.items() if all(held[i] == 1 for i in ids)})
 
-    def _pool(self, files: Sequence[_LoneNumberFile]) -> _Pool:
+    def _pool(self, files: Sequence[_AbsoluteOnlyFile]) -> _Pool:
         """The pool over `files`, fitted against the torrent's windows, each title's part against its one window."""
 
         counts = Counter(k for file in files for k in file.numbers)
@@ -406,7 +408,7 @@ class NumberingStep:
             parts=parts,
         )
 
-    def _propose(self, file: _LoneNumberFile, pool: _Pool) -> tuple[int, ...] | None:
+    def _propose(self, file: _AbsoluteOnlyFile, pool: _Pool) -> tuple[int, ...] | None:
         """The file's ids where every fitting numbering agrees, else None: the gates, in order."""
 
         readings = self._readings(file, pool.fits)
@@ -439,7 +441,7 @@ class NumberingStep:
             return None
         return distinct.pop()
 
-    def _readings(self, file: _LoneNumberFile, fits: Iterable[_Fit]) -> dict[_Fit, tuple[int | None, ...]]:
+    def _readings(self, file: _AbsoluteOnlyFile, fits: Iterable[_Fit]) -> dict[_Fit, tuple[int | None, ...]]:
         """The file's numbers read under each of `fits`, in the name's order."""
 
         return {fit: tuple(self._read(fit, k) for k in file.numbers) for fit in fits}
@@ -456,28 +458,28 @@ class NumberingStep:
         union = frozenset(ep_id for window in windows for ep_id in window.ids)
         fits: list[_Fit] = []
         if all((ep_id := self.series.id_by_absolute.get(k)) is not None and ep_id in union for k in numbers):
-            fits.append(_WideFit(Numbering.SERIES_ROW))
-            fits.append(_WideFit(Numbering.ABSOLUTE))
+            fits.append(_WideFit(Numbering.FROM_SERIES_START))
+            fits.append(_WideFit(Numbering.TVDB_ABSOLUTE))
         for window in windows:
             for numbering in _PER_WINDOW:
                 fit = _WindowFit(numbering, window)
                 if all((ep_id := self._read(fit, k)) is not None and ep_id in window.ids for k in numbers):
                     fits.append(fit)
         if len(windows) > 1 and all(self._union_row(k) is not None for k in numbers):
-            fits.append(_WideFit(Numbering.UNION_ROW))
+            fits.append(_WideFit(Numbering.ACROSS_WINDOWS))
         return tuple(fits)
 
     def _read(self, fit: _Fit, k: int) -> int | None:
         """The row number k names under `fit`, else None."""
 
         match fit:
-            case _WindowFit(numbering=Numbering.WINDOW_ROW, window=window):
+            case _WindowFit(numbering=Numbering.FROM_WINDOW_START, window=window):
                 return window.row(k)
             case _WindowFit(window=window):
                 return window.season_row(k)
-            case _WideFit(numbering=Numbering.SERIES_ROW):
+            case _WideFit(numbering=Numbering.FROM_SERIES_START):
                 return self._series_row(k)
-            case _WideFit(numbering=Numbering.ABSOLUTE):
+            case _WideFit(numbering=Numbering.TVDB_ABSOLUTE):
                 return self.series.id_by_absolute.get(k)
             case _WideFit():
                 return self._union_row(k)
@@ -489,9 +491,9 @@ class NumberingStep:
         shuffled order), so the k-th row isn't what a group counting from one meant: the file is refused.
         """
 
-        if not 1 <= k <= len(self.regs):
+        if not 1 <= k <= len(self.regular_ids):
             return None
-        ep_id = self.regs[k - 1]
+        ep_id = self.regular_ids[k - 1]
         return ep_id if self.series.absolute_of.get(ep_id) == k else None
 
     def _union_row(self, k: int) -> int | None:
@@ -508,19 +510,19 @@ class NumberingStep:
 
         if isinstance(fit, _WindowFit):
             return fit.window.monotone
-        return fit.numbering is not Numbering.UNION_ROW or self.union_monotone
+        return fit.numbering is not Numbering.ACROSS_WINDOWS or self.union_monotone
 
 
-def _lone_number_files(batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> list[_LoneNumberFile]:
+def _lone_number_files(batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> list[_AbsoluteOnlyFile]:
     """The pool's files: every file of the torrent named by number alone, seeded and gone names included.
 
     `facts` must cover every name of the torrent (`PlacerResult.facts` does).
     """
 
-    pool: list[_LoneNumberFile] = []
-    for name in batch.torrent_names:
+    pool: list[_AbsoluteOnlyFile] = []
+    for name in batch.all_names:
         info = batch.parsed.get(name)
         fact = facts[name]
         if info is not None and _lone_number(info) and not fact.extra and not fact.title_counted:
-            pool.append(_LoneNumberFile(name, info.absolute_episode_numbers, info.series_title))
+            pool.append(_AbsoluteOnlyFile(name, info.absolute_episode_numbers, info.series_title))
     return pool

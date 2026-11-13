@@ -77,7 +77,9 @@ def _read(
 
     torrent = batch(parsed)
     own = next(window for window in windows if window.al_id == scope.al_id)
-    facts = place_batch(torrent, PlacementTarget(own.ordered_episode_ids, scope.series, names=own.names)).facts
+    facts = place_batch(
+        torrent, PlacementTarget(own.ordered_episode_ids, scope.series_index, title_names=own.names)
+    ).facts
     return dict(NumberingStep.of(scope, windows).read(torrent, facts).ids)
 
 

@@ -208,13 +208,13 @@ class NameParts:
     title_words: tuple[str, ...]
     """The words an episode title is read from: a member's tail, the tail behind a `titled_count`, else the whole
     stem."""
-    explicit_key: bool
+    spells_season_episode: bool
     """Whether the name spells an episode token out (`_EXPLICIT_KEY`). Without one, a parsed key is derived."""
-    bare_numbers: tuple[int, ...]
+    standalone_numbers: tuple[int, ...]
     """The three- and four-digit counts standing alone in the stem, in order."""
-    tagged_numbers: tuple[int, ...]
+    bracketed_numbers: tuple[int, ...]
     """The three- and four-digit counts standing alone inside a bracket of the name, in order."""
-    titled_count: int | None = None
+    episode_title_number: int | None = None
     """The count behind the entry's title that a word behind it made an episode title's number ("13" of
     "Show - 13 Rainy Days"), when no form counted the name. The placer judges it (`Placer.counted_by_title`)."""
 
@@ -225,14 +225,14 @@ class NameParts:
         return self.member.version if self.member is not None else self.stem.version
 
     @property
-    def file(self) -> FileIdentity:
+    def identity(self) -> FileIdentity:
         """The file the name is a version of."""
 
         member = self.member
         return FileIdentity(member.prefix, member.number) if member is not None else FileIdentity(self.stem.text, None)
 
 
-def read_name(name: str) -> NameParts:
+def split_name(name: str) -> NameParts:
     """Read a name once: its stem and version, its run membership, and its title words."""
 
     stem = _stem_version(name)
@@ -241,9 +241,9 @@ def read_name(name: str) -> NameParts:
         stem,
         member,
         member.words_after_number if member is not None else folded_words(stem.text),
-        explicit_key=_EXPLICIT_KEY.search(stem.text) is not None,
-        bare_numbers=tuple(count.number for count in _bare_counts(stem.text)),
-        tagged_numbers=tuple(int(found) for found in _TAGGED_NUMBER.findall(name)),
+        spells_season_episode=_EXPLICIT_KEY.search(stem.text) is not None,
+        standalone_numbers=tuple(count.number for count in _bare_counts(stem.text)),
+        bracketed_numbers=tuple(int(found) for found in _TAGGED_NUMBER.findall(name)),
     )
 
 
@@ -351,7 +351,7 @@ _NUMBER_FORMS: tuple[Callable[[str], re.Match[str] | None], ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class _Count:
+class _NameNumber:
     """A release number found in a stem: the text before it, the number, where it ends, and the "vN" behind it."""
 
     prefix: str
@@ -387,7 +387,7 @@ def _member_of(stem: Stem) -> NumberedName | None:
     """
 
     match = next((found for form in _NUMBER_FORMS if (found := form(stem.text)) is not None), None)
-    return None if match is None else _Count.of(match, match.group(1)).member(stem)
+    return None if match is None else _NameNumber.of(match, match.group(1)).member(stem)
 
 
 def natural_key(name: str) -> str:
@@ -594,7 +594,7 @@ def _word_set(text: str) -> frozenset[str]:
 
 
 @dataclass(frozen=True, slots=True)
-class TitleGround:
+class TitleNameWords:
     """The title words an entry's names are read against."""
 
     series_words: frozenset[str]
@@ -715,7 +715,7 @@ def _span_member(stem: Stem, found: re.Match[str]) -> NumberedName | None:
         or _EXTRA_BEHIND.match(text, found.end()) is not None
     ):
         return None
-    return _Count.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(stem)
+    return _NameNumber.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(stem)
 
 
 def _tails_a_title(text: str, member: NumberedName, end: int) -> bool:
@@ -731,7 +731,7 @@ def _tails_a_title(text: str, member: NumberedName, end: int) -> bool:
     )
 
 
-def _titled(read: NameParts, ground: TitleGround) -> NameParts:
+def _titled(read: NameParts, ground: TitleNameWords) -> NameParts:
     """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
 
     The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
@@ -748,7 +748,7 @@ def _titled(read: NameParts, ground: TitleGround) -> NameParts:
     start, end = span
     counts = _bare_counts(text)
     before = any(count.start < start for count in counts)
-    bare_numbers = tuple(count.number for count in counts if not start <= count.start < end)
+    standalone_numbers = tuple(count.number for count in counts if not start <= count.start < end)
     found = _SPAN_COUNT.match(blanked, end)
     counted = None if found is None else _span_member(read.stem, found)
     member = read.member
@@ -765,19 +765,23 @@ def _titled(read: NameParts, ground: TitleGround) -> NameParts:
         if found is not None and not _count_ends(text, found.end()):
             tail = folded_words(text[found.end() :])
             return replace(
-                read, bare_numbers=bare_numbers, member=None, title_words=tail, titled_count=int(found["number"])
+                read,
+                standalone_numbers=standalone_numbers,
+                member=None,
+                title_words=tail,
+                episode_title_number=int(found["number"]),
             )
-        return replace(read, bare_numbers=bare_numbers, member=None, title_words=folded_words(text))
+        return replace(read, standalone_numbers=standalone_numbers, member=None, title_words=folded_words(text))
     numbers = tuple(int(word) for word in _raw_words(_ascii_digits(blanked[start:end])) if word.isdigit())
     return replace(
         read,
-        bare_numbers=bare_numbers,
+        standalone_numbers=standalone_numbers,
         member=replace(member, title_numbers=numbers),
         title_words=member.words_after_number,
     )
 
 
-def split_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameParts]:
+def split_names(names: Iterable[str], ground: TitleNameWords) -> dict[str, NameParts]:
     """Read a pack's names: each alone, then against the entry's titles (`_titled`), then its lone-S set.
 
     Names ending in "S1", "S2", ... behind one prefix whose numbers count up from 1 are a set of specials
@@ -785,7 +789,7 @@ def split_names(names: Iterable[str], ground: TitleGround) -> dict[str, NamePart
     "Show S1" alone, or an "S2" repeated over extras, says which season and stays unnumbered.
     """
 
-    reads = {name: _titled(read_name(name), ground) for name in names}
+    reads = {name: _titled(split_name(name), ground) for name in names}
     sets: dict[str, dict[int, list[str]]] = {}
     for name, read in reads.items():
         if read.member is None and (found := _LONE_S.match(read.stem.text)) is not None:

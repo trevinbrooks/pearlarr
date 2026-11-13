@@ -44,13 +44,13 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, FetchedSeadex, KnownTorrent, PendingImportUpdate, TorrentFacts
+from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
-from pearlarr.parse_records import ParseRecords
+from pearlarr.parse_records import ParseCacheRows
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
@@ -754,7 +754,7 @@ def make_run_deps(
         categories=categories,
         clock=clock or FakeClock(),
         web=http,
-        parse_cache_rows=ParseRecords(cache_store),
+        parse_cache_rows=ParseCacheRows(cache_store),
         http=http,
         qbit=None,
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
@@ -874,16 +874,16 @@ def pending_seed(
 
     return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
-        placements=placements or {},
+        file_map=placements or {},
         excluded=(),
         hand_import_files=hand_import_files,
         order_only=order_only,
         claim=entry_claim(**claim),
-        stored=stored,
+        pending_import=stored,
     )
 
 
-def entry_facts(**overrides: Any) -> EntryFacts:
+def entry_facts(**overrides: Any) -> TitleFacts:
     """Entry 1 on series 7 titled Show, with no coverage, url, or guard facts unless given."""
 
     defaults: dict[str, Any] = {
@@ -895,7 +895,7 @@ def entry_facts(**overrides: Any) -> EntryFacts:
         "guards": GuardFacts(),
     }
     defaults.update(overrides)
-    return EntryFacts(**defaults)
+    return TitleFacts(**defaults)
 
 
 def grab_request(**overrides: Any) -> GrabRequest:
@@ -1229,8 +1229,8 @@ def seed_scope(
     return GrabbingTitle(
         al_id=al_id,
         series_id=series_id,
-        entry=entry,
-        series=series,
+        title_index=entry,
+        series_index=series,
         names=names,
         episode_count=episode_count,
         alternate_titles=alternate_titles,
@@ -1241,7 +1241,7 @@ def seed_scope(
 def new_torrent(scope: GrabbingTitle) -> KnownTorrent:
     """A new torrent that nothing lists, with only the scope's own series read."""
 
-    return known_torrent(indexes={scope.series_id: scope.series})
+    return known_torrent(indexes={scope.series_id: scope.series_index})
 
 
 def series_index(

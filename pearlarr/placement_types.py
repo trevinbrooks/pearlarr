@@ -146,7 +146,7 @@ class PlacementVerdict(StrEnum):
     """A batch of numberless files no earlier pass touched, paired with the open ids in natural name order."""
     SEQUENCE = "numbered run"
     """A `1..N` run among the files Sonarr found no episode for, paired with the run window."""
-    TITLED = "titled"
+    TITLE_NAME = "titled"
     """The numberless file an entry's AniList title names, onto the only open id."""
     EPISODE_TITLE = "episode title"
     """Onto the one episode whose title its name carries, whatever its number said."""
@@ -214,7 +214,7 @@ class PlacementVerdict(StrEnum):
         """
 
         row = _KIND[self]
-        return not isinstance(row, _Placed) and row.leaves is _Unplaced.EXCLUDED
+        return not isinstance(row, _Placed) and row.leaves is _Leaves.EXCLUDED
 
     @property
     def refused(self) -> bool:
@@ -231,7 +231,7 @@ class PlacementVerdict(StrEnum):
         """
 
         row = _KIND[self]
-        return not isinstance(row, _Placed) and row.leaves is _Unplaced.HAND_IMPORT
+        return not isinstance(row, _Placed) and row.leaves is _Leaves.HAND_IMPORT
 
     @property
     def final(self) -> bool:
@@ -240,14 +240,14 @@ class PlacementVerdict(StrEnum):
         return self.placed or self.refused
 
     @property
-    def by_alias(self) -> bool:
+    def from_alias(self) -> bool:
         """Whether the special aliases gave the verdict.
 
         Placed on the aliased special, or claimed for the window that holds it.
         """
 
         row = _KIND[self]
-        return isinstance(row, _Placed | _Provisional) and row.by_alias
+        return isinstance(row, _Placed | _Provisional) and row.from_alias
 
     @property
     def involves(self) -> bool:
@@ -257,7 +257,7 @@ class PlacementVerdict(StrEnum):
         off (another slice's, a duplicate, an extra, a skip) isn't.
         """
 
-        return self.final or self.by_alias or self.left_for_hand_import
+        return self.final or self.from_alias or self.left_for_hand_import
 
     @property
     def rank(self) -> int:
@@ -281,7 +281,7 @@ class PlacementVerdict(StrEnum):
         return isinstance(row, _FinalUnplaced | _Provisional) and row.other_order_may_place
 
 
-class _Unplaced(Enum):
+class _Leaves(Enum):
     """What a verdict that carries no ids means for the record."""
 
     EXCLUDED = auto()
@@ -296,7 +296,7 @@ class _Unplaced(Enum):
 class _Placed:
     """The verdict carries ids. A window that gives it decides the file."""
 
-    by_alias: bool = False
+    from_alias: bool = False
     """Whether the special aliases placed it."""
 
 
@@ -304,7 +304,7 @@ class _Placed:
 class _FinalUnplaced:
     """The verdict settles the file with no ids. A window that gives it decides the file."""
 
-    leaves: _Unplaced
+    leaves: _Leaves
     other_order_may_place: bool = False
     """Whether another TVDB order may still place the file (pass 16)."""
 
@@ -313,10 +313,10 @@ class _FinalUnplaced:
 class _Provisional:
     """One window's view of a file it neither placed nor refused. A later window may still decide the file."""
 
-    leaves: _Unplaced
+    leaves: _Leaves
     rank: int
     """A file no window decides ends with its highest-ranked claim."""
-    by_alias: bool = False
+    from_alias: bool = False
     """Whether the special aliases claimed it for another window."""
     other_order_may_place: bool = False
     """Whether another TVDB order may still place the file (pass 16)."""
@@ -326,7 +326,7 @@ class _Provisional:
 class _AfterMerge:
     """No window gives the verdict: it is set once the windows have merged."""
 
-    leaves: _Unplaced
+    leaves: _Leaves
 
 
 type _Kind = _Placed | _FinalUnplaced | _Provisional | _AfterMerge
@@ -339,30 +339,30 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         PlacementVerdict.SINGLE: _Placed(),
         PlacementVerdict.NAME_ORDER: _Placed(),
         PlacementVerdict.SEQUENCE: _Placed(),
-        PlacementVerdict.TITLED: _Placed(),
+        PlacementVerdict.TITLE_NAME: _Placed(),
         PlacementVerdict.EPISODE_TITLE: _Placed(),
         PlacementVerdict.SIZE_MATCH: _Placed(),
         PlacementVerdict.SIZE_OVER_NAME: _Placed(),
-        PlacementVerdict.SPECIAL_ALIAS: _Placed(by_alias=True),
+        PlacementVerdict.SPECIAL_ALIAS: _Placed(from_alias=True),
         PlacementVerdict.OTHER_ORDER: _Placed(),
         PlacementVerdict.NUMBERINGS_AGREE: _Placed(),
-        PlacementVerdict.WAITING_ON_PARSE: _FinalUnplaced(_Unplaced.STAYS),
-        PlacementVerdict.MISNUMBERED: _FinalUnplaced(_Unplaced.HAND_IMPORT, other_order_may_place=True),
+        PlacementVerdict.WAITING_ON_PARSE: _FinalUnplaced(_Leaves.STAYS),
+        PlacementVerdict.MISNUMBERED: _FinalUnplaced(_Leaves.HAND_IMPORT, other_order_may_place=True),
         # The claims, weakest first. EXTRA is lowest because it rests on one window's titles. SKIPPED beats FOREIGN
         # and EXTRA, so a file some window couldn't place is never written off, and ALIASED_ELSEWHERE beats FOREIGN
         # because the aliases name the file as this series' special. ORDER_ONLY beats SKIPPED, so a file one
         # window's order reads as no episode of Sonarr's stays a hand import where another window only skipped it,
         # and a window that proves it a duplicate still wins. OTHER_ORDER_ELSEWHERE and TITLE_REFUTED are highest,
         # so a file whose numbers a window refused or refuted stays a hand import.
-        PlacementVerdict.EXTRA: _Provisional(leaves=_Unplaced.EXCLUDED, rank=0),
-        PlacementVerdict.OUTSIDE_WINDOW: _Provisional(leaves=_Unplaced.EXCLUDED, rank=1, other_order_may_place=True),
-        PlacementVerdict.ALIAS_OUTSIDE_WINDOW: _Provisional(leaves=_Unplaced.STAYS, rank=2, by_alias=True),
-        PlacementVerdict.NO_EPISODE_FOUND: _Provisional(leaves=_Unplaced.STAYS, rank=3, other_order_may_place=True),
-        PlacementVerdict.ORDER_ONLY: _Provisional(leaves=_Unplaced.HAND_IMPORT, rank=4),
-        PlacementVerdict.DUPLICATE: _Provisional(leaves=_Unplaced.EXCLUDED, rank=5),
-        PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW: _Provisional(leaves=_Unplaced.HAND_IMPORT, rank=6),
-        PlacementVerdict.TITLE_REFUTED: _Provisional(leaves=_Unplaced.HAND_IMPORT, rank=7, other_order_may_place=True),
-        PlacementVerdict.ANOTHER_TITLES: _AfterMerge(_Unplaced.EXCLUDED),
+        PlacementVerdict.EXTRA: _Provisional(leaves=_Leaves.EXCLUDED, rank=0),
+        PlacementVerdict.OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.EXCLUDED, rank=1, other_order_may_place=True),
+        PlacementVerdict.ALIAS_OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.STAYS, rank=2, from_alias=True),
+        PlacementVerdict.NO_EPISODE_FOUND: _Provisional(leaves=_Leaves.STAYS, rank=3, other_order_may_place=True),
+        PlacementVerdict.ORDER_ONLY: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=4),
+        PlacementVerdict.DUPLICATE: _Provisional(leaves=_Leaves.EXCLUDED, rank=5),
+        PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=6),
+        PlacementVerdict.TITLE_REFUTED: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=7, other_order_may_place=True),
+        PlacementVerdict.ANOTHER_TITLES: _AfterMerge(_Leaves.EXCLUDED),
     }
 )
 """What each verdict is: one row per verdict, of one of four kinds."""
@@ -392,7 +392,7 @@ class BatchPlacements:
     """One per name in `PlacementBatch.names`, batch order."""
 
     @property
-    def assigned(self) -> dict[str, tuple[int, ...]]:
+    def placed(self) -> dict[str, tuple[int, ...]]:
         """Normalized basename -> episode ids for every placed file (each id in the scope, used once)."""
 
         return {p.name: p.ids for p in self.placements if p.verdict.placed}
@@ -444,10 +444,10 @@ class PlacementBatch:
     """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
     the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
 
-    names: tuple[str, ...] = field(init=False, repr=False, compare=False)
+    new_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
     """The distinct names to place, batch order: `to_place` less the names the map holds."""
 
-    torrent_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
+    all_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
     """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone). A mapped
     name with no parse entry is left out."""
 
@@ -466,8 +466,8 @@ class PlacementBatch:
         )
         names = tuple(name for name in dict.fromkeys(self.to_place) if name not in self.file_map)
         torrent_names = tuple(dict.fromkeys([*names, *self.parsed]))
-        object.__setattr__(self, "names", names)
-        object.__setattr__(self, "torrent_names", torrent_names)
+        object.__setattr__(self, "new_names", names)
+        object.__setattr__(self, "all_names", torrent_names)
         object.__setattr__(self, "all_parses_known", all(self.parsed.get(name) is not None for name in torrent_names))
 
 
@@ -505,10 +505,10 @@ class TorrentListing:
 EMPTY_LISTING = TorrentListing()
 """A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
 
-type IdentifiedNames = Mapping[str, int]
+type SizeMatches = Mapping[str, int]
 """Normalized file name -> the episode id its size matched."""
 
-NO_IDENTIFIED: IdentifiedNames = MappingProxyType({})
+NO_IDENTIFIED: SizeMatches = MappingProxyType({})
 """No files placed by size: no size matched, or the size identities weren't read."""
 
 
@@ -520,12 +520,12 @@ class SeadexEvidence:
     """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
     can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
 
-    identified: IdentifiedNames = NO_IDENTIFIED
+    size_matches: SizeMatches = NO_IDENTIFIED
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
-        object.__setattr__(self, "identified", MappingProxyType(dict(self.identified)))
+        object.__setattr__(self, "size_matches", MappingProxyType(dict(self.size_matches)))
 
     @property
     def ids(self) -> frozenset[int]:
@@ -555,11 +555,11 @@ class PlacementTarget:
     whole series map instead of placing nothing forever.
     """
 
-    resolved: Sequence[int]
+    episode_ids: Sequence[int]
     """The entry's resolved episode ids, season order, seeded included, held as a tuple. A stray
     zero id still makes the scope real. It is never placed."""
 
-    series: EpisodeIndex
+    index: EpisodeIndex
     """ALL the series' episodes: the `(season, episode)` map every key resolves
     through (membership in `resolved` does the scoping, so an exact parse
     outside our entry is rejected), plus the titles and absolute numbers the
@@ -568,11 +568,11 @@ class PlacementTarget:
     used: frozenset[int] = frozenset()
     """Ids already held, by an earlier window or the stored map. Never placed again."""
 
-    names: TitleNames = field(default_factory=TitleNames)
+    title_names: TitleNames = field(default_factory=TitleNames)
     """The series and AniList titles. Episode titles and extras words are read against them, and they break
     ties when several runs or numberless files could fill the open ids."""
 
-    listing: SeadexEvidence = NO_EVIDENCE
+    seadex: SeadexEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent this run."""
 
     earlier: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
@@ -587,26 +587,26 @@ class PlacementTarget:
 
     def __post_init__(self) -> None:
         # Detached from the caller's list: `real_ids` is derived from the list once.
-        object.__setattr__(self, "resolved", tuple(self.resolved))
-        object.__setattr__(self, "real_ids", frozenset(i for i in self.resolved if i))
+        object.__setattr__(self, "episode_ids", tuple(self.episode_ids))
+        object.__setattr__(self, "real_ids", frozenset(i for i in self.episode_ids if i))
         object.__setattr__(self, "earlier", MappingProxyType(dict(self.earlier)))
 
     @property
     def id_by_key(self) -> Mapping[EpisodeKey, int]:
         """`(season, episode)` -> id over the whole series."""
 
-        return self.series.id_by_key
+        return self.index.id_by_key
 
     @property
-    def unscoped(self) -> bool:
+    def no_window(self) -> bool:
         """No resolved set to scope against at all (never just fully seeded)."""
 
-        return not self.resolved
+        return not self.episode_ids
 
     def admits(self, ep_id: int) -> bool:
         """Whether a file may be placed on the episode: one of the resolved set, or any when unscoped."""
 
-        return self.unscoped or ep_id in self.real_ids
+        return self.no_window or ep_id in self.real_ids
 
     def using(self, ids: Iterable[int]) -> Self:
         """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
@@ -622,15 +622,15 @@ class PlacementTarget:
     def specials_window(self) -> bool:
         """A scoped window of specials only, the one shape a listing judges."""
 
-        return not self.unscoped and all_specials(self.series, self.real_ids)
+        return not self.no_window and all_specials(self.index, self.real_ids)
 
     def specials_listing(self) -> frozenset[int] | None:
         """The listing a numbered pack is judged by: read, all specials, covering the window. None stands it down."""
 
-        listed = self.listing.ids
+        listed = self.seadex.ids
         if not (self.specials_window and listed and self.real_ids <= listed):
             return None
-        return listed if all_specials(self.series, listed) else None
+        return listed if all_specials(self.index, listed) else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -643,10 +643,10 @@ class GrabbingTitle:
     series_id: int
     """The Sonarr series the entry's episodes belong to."""
 
-    entry: EpisodeIndex
+    title_index: EpisodeIndex
     """The entry's episodes: the resolved set, and what the slice and preowned reads cover."""
 
-    series: EpisodeIndex
+    series_index: EpisodeIndex
     """The WHOLE series (empty when the series list could not be read, which places nothing)."""
 
     names: TitleNames
@@ -668,7 +668,7 @@ class GrabbingTitle:
         window = TitleWindow.of(
             al_id=self.al_id,
             series_id=self.series_id,
-            ep_list=self.entry.by_id.values(),
+            ep_list=self.title_index.by_id.values(),
             names=self.names,
             episode_count=self.episode_count,
         )
@@ -682,7 +682,7 @@ class GrabbingTitle:
         unread map places nothing: a grab-time verdict is final.
         """
 
-        return bool(self.entry.by_id and self.series.id_by_key)
+        return bool(self.title_index.by_id and self.series_index.id_by_key)
 
 
 @dataclass(frozen=True, slots=True)

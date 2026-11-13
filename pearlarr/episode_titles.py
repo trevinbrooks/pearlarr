@@ -137,10 +137,10 @@ def _grouped[K](pairs: Iterable[tuple[K, TitledEpisode]]) -> Mapping[K, tuple[Ti
 class TitleLead:
     """What the episode titles say about a name's words: a run member's tail, else the whole name."""
 
-    titled: TitledEpisode | None
+    title: TitledEpisode | None
     """The one episode the words are titled as (`EpisodeTitles.leading` or `exactly`), whether or not other files
     carry it."""
-    leaders: frozenset[int]
+    leading_title_ids: frozenset[int]
     """Every episode whose title, specific or not, starts the words: the evidence a run is judged by."""
     words: tuple[str, ...]
     """The words read. Two files carrying the same words are titled as nothing."""
@@ -195,7 +195,7 @@ class EpisodeTitles:
             id_by_key=id_by_key,
         )
 
-    def leading(self, words: tuple[str, ...]) -> TitleLead:
+    def leading_title(self, words: tuple[str, ...]) -> TitleLead:
         """Match a run member's tail: the one specific title that starts it, and every title that starts it.
 
         Quality tags may follow the specific title.
@@ -205,7 +205,7 @@ class EpisodeTitles:
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
         return TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exactly(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
+    def exact_match(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
         """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
 
         `keyed` are the episodes the name's numbers are a key for (`keyed_by`). A title that is just the season and
@@ -229,7 +229,7 @@ class EpisodeTitles:
         written = (self.id_by_key.get(key) for key in written_keys(read))
         return frozenset((*resolved, *(ep_id for ep_id in written if ep_id is not None)))
 
-    def nearly(self, ep_id: int, words: tuple[str, ...]) -> bool:
+    def near_matches(self, ep_id: int, words: tuple[str, ...]) -> bool:
         """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.
 
         The words the two share must still spell a title (`spells_title`): a short title confirms no near miss.

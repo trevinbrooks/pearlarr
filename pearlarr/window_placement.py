@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
-from .numberings import NumberingReading
+from .numberings import NumberingProposals
 from .pending_import import TitleClaim, TitleWindow
 from .placement_types import (
     BatchPlacements,
@@ -220,7 +220,7 @@ class WindowedAssignment:
     """Each window's scope, as `place_across_windows` was handed it, and what the passes read off every name under it,
     in window order."""
 
-    def filled(self, batch: PlacementBatch, reading: NumberingReading) -> Self:
+    def with_proposals(self, batch: PlacementBatch, reading: NumberingProposals) -> Self:
         """The assignment with each gap the reader proposed ids for filled, in batch order.
 
         A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`PlacementVerdict.party`) and no
@@ -242,8 +242,8 @@ class WindowedAssignment:
             position = next((at for at, window in enumerate(self.facts) if window.scope.real_ids.issuperset(ids)), None)
             if position is None:
                 continue
-            titled_as = self.facts[position].names[file.name].titled_as
-            if titled_as is not None and titled_as not in ids:
+            episode_by_title = self.facts[position].names[file.name].episode_by_title
+            if episode_by_title is not None and episode_by_title not in ids:
                 continue
             agreed = Placement(file.name, ids, PlacementVerdict.NUMBERINGS_AGREE)
             files[index] = replace(file, merged=agreed, decided_at=position)
@@ -358,11 +358,11 @@ def _disputed(judged: Collection[Placement]) -> bool:
     A placement by numbers agrees only with an `ALTERNATE` on the same ids, since an `ALIASED_ELSEWHERE` has none.
     """
 
-    by_alias = {placement.ids for placement in judged if placement.verdict.by_alias}
-    if not by_alias:
+    from_alias = {placement.ids for placement in judged if placement.verdict.from_alias}
+    if not from_alias:
         return False
-    unaliased = {placement.ids for placement in judged if placement.verdict.placed and not placement.verdict.by_alias}
-    return bool(unaliased - by_alias)
+    unaliased = {placement.ids for placement in judged if placement.verdict.placed and not placement.verdict.from_alias}
+    return bool(unaliased - from_alias)
 
 
 def targets_of(
@@ -377,8 +377,8 @@ def targets_of(
         PlacementTarget(
             window.ordered_episode_ids,
             indexes[window.series_id],
-            names=window.names,
-            listing=listing,
+            title_names=window.names,
+            seadex=listing,
             episode_count=window.episode_count,
         )
         for window in windows
@@ -395,7 +395,7 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[PlacementTarge
     by a later window only on that episode. A placement of it anywhere else is dropped.
     """
 
-    files = [_FileMerge(name) for name in batch.names]
+    files = [_FileMerge(name) for name in batch.new_names]
     facts: list[WindowFacts] = []
     for window in windows:
         earlier = {file.name: ids for file in files if (ids := file.placed_on)}

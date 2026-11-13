@@ -20,7 +20,7 @@ from .releases import SeadexDict
 from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
-from .video_files import video_file_entries
+from .video_files import indexed_video_files
 
 
 class SonarrParseCache:
@@ -114,7 +114,7 @@ class SonarrParseCache:
 
         # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
         listed = {
-            url: [(f, release.size[idx]) for idx, f in video_file_entries(release.files)]
+            url: [(f, release.size[idx]) for idx, f in indexed_video_files(release.files)]
             for release_group_item in seadex_dict.values()
             for url, release in release_group_item.releases.items()
         }
