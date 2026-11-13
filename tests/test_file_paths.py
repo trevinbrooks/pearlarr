@@ -3,7 +3,7 @@
 
 from pearlarr.arr_models import RemotePathMapping
 from pearlarr.file_paths import file_name, normalize_name, normalized_leaf, translate_download_path
-from pearlarr.releases import normalize_group, normalize_rg
+from pearlarr.releases import normalize_group
 
 
 class TestNormalize:
@@ -67,12 +67,10 @@ class TestNormalize:
         assert normalize_group("X-Raws") == "x-raws"
 
     def test_group_dash_wrapped_agrees_with_planner(self) -> None:
-        # normalize_group is the single source of truth normalize_rg delegates to.
         # A dash-wrapped group must compare equal on both ends or a release the
         # planner grabbed gets re-imported over by the overwrite guard.
         assert normalize_group("-Aergia-") == "aergia"
-        assert normalize_group("-Aergia-") == normalize_rg("-Aergia-")
-        assert normalize_group("Aergia") == normalize_rg("-Aergia-")
+        assert normalize_group("Aergia") == normalize_group("-Aergia-")
 
 
 def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathMapping:

@@ -10,7 +10,7 @@ from typing import NamedTuple, Self
 from .arr_models import SonarrEpisodeFile
 from .pending_import import FileEpisodeMap, OwnedAtGrab, PendingImport, TitleClaim, TorrentGroup, sizes_by_episode
 from .placement_types import EpisodeIndex
-from .releases import normalize_group, normalize_rg
+from .releases import normalize_group
 
 type TrustedGroups = Mapping[str, frozenset[int] | None]
 """Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""
@@ -216,16 +216,15 @@ class EpisodeSnapshot(NamedTuple):
     def _status(self, ep_id: int, file: SonarrEpisodeFile | None, intended_size: int | None) -> EpisodeFileStatus:
         """Classify a target's current file. `file` is None when Sonarr gives the episode a file id but no record."""
 
-        group = file.release_group if file else None
+        norm = normalize_group(file.release_group if file else None)
         size = file.size if file else None
-        if not group:
+        if norm is None:
             # An untagged file still at the size the grab-time identification recorded is ours, recommended unless
             # it is another of our files. Anything else untagged (a different file, no file record) is unidentifiable.
             if size is not None and size == self.owned_episode_sizes.get(ep_id):
                 misplaced = self._misplaced(size, intended_size)
                 return EpisodeFileStatus.MISPLACED if misplaced else EpisodeFileStatus.TRUSTED
             return EpisodeFileStatus.UNKNOWN_GROUP
-        norm = normalize_group(group)
         if norm not in self.trusted_groups:
             return EpisodeFileStatus.OTHER_GROUP
         verify_sizes = self.trusted_groups[norm]
@@ -342,12 +341,14 @@ def trusted_groups(guards: OwnedAtGrab, grabbed_groups: GrabbedGroups) -> Truste
     Same-group siblings union their sizes into the own group's (None = no size gate), so a stale copy is replaced.
     """
 
-    outdated = {norm for g in guards.stale_groups if (norm := normalize_rg(g))}
-    trusted: dict[str, frozenset[int] | None] = {norm: None for g in guards.entry_groups if (norm := normalize_rg(g))}
-    own_norm = normalize_rg(grabbed_groups.torrent_group.release_group)
+    outdated = {norm for g in guards.stale_groups if (norm := normalize_group(g))}
+    trusted: dict[str, frozenset[int] | None] = {
+        norm: None for g in guards.entry_groups if (norm := normalize_group(g))
+    }
+    own_norm = normalize_group(grabbed_groups.torrent_group.release_group)
     own_sizes = set(grabbed_groups.torrent_group.sizes)
     for sibling in grabbed_groups.siblings:
-        norm = normalize_rg(sibling.release_group)
+        norm = normalize_group(sibling.release_group)
         if norm is None:
             continue
         if norm == own_norm:
