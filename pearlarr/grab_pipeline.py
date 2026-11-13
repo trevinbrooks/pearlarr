@@ -14,9 +14,9 @@ from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingImportUpdate
 from .notify import GrabNotice
-from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
+from .output import Accent, GrabFailed, ReleaseSkipped, StyledValue
 from .pending_import_store import PendingImportStore
-from .releases import PlacementSkip, Release, SeadexDict
+from .releases import Release, SeadexDict, SkipReason
 from .stamps import now_stamp, stamp_of
 from .torrent_service import GRAB_FAILURES, PARSEABLE_TRACKERS, AddResult, AddStatus, GrabResult
 from .wait_types import ImportWaitMode
@@ -32,9 +32,8 @@ NO_PENDING_IMPORT_UPDATES: Mapping[str, PendingImportUpdate] = MappingProxyType(
 
 @dataclass(frozen=True, slots=True)
 class SkipReport:
-    """What the run reports for a url the placement held: its skip line and its title's needs-action row."""
+    """What the run reports for a url the placement held: its title's needs-action row."""
 
-    skip_reason: SkipReason
     kind: NeedsActionKind
     reason: str
     """The needs-action row's reason text."""
@@ -42,27 +41,23 @@ class SkipReport:
 
 # The order is the precedence `_classify_needs_action` reports holds in: the first hand-import hold found here
 # wins, and any other hold is reported only when no hand-import hold and no failed grab is.
-_SKIP_REPORTS: Mapping[PlacementSkip, SkipReport] = MappingProxyType(
+_SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
     {
-        PlacementSkip.MISNUMBERED: SkipReport(
-            SkipReason.MISNUMBERED,
+        SkipReason.MISNUMBERED: SkipReport(
             NeedsActionKind.MISNUMBERED,
             "numbering does not match its SeaDex listing; import it by hand",
         ),
-        PlacementSkip.TITLE_REFUTED: SkipReport(
-            SkipReason.TITLE_REFUTED,
+        SkipReason.TITLE_REFUTED: SkipReport(
             NeedsActionKind.TITLE_REFUTED,
             "file titles contradict its numbering; import it by hand",
         ),
         # No retry clears it: the row stays until the entry holds the group's files, so it outranks a failed read.
-        PlacementSkip.PLACED_ELSEWHERE: SkipReport(
-            SkipReason.PLACED_ELSEWHERE,
+        SkipReason.PLACED_ELSEWHERE: SkipReport(
             NeedsActionKind.PLACED_ELSEWHERE,
             "its files place under another title SeaDex lists it with; any it could not place need a hand import",
         ),
         # The placement may have held a run on the missing read, so the grab was judged coarsely: re-check.
-        PlacementSkip.INPUT_UNREAD: SkipReport(
-            SkipReason.INPUT_UNREAD,
+        SkipReason.INPUT_UNREAD: SkipReport(
             NeedsActionKind.PLACEMENT_INPUT_MISSING,
             "a read the placement needs failed; will retry next run",
         ),
@@ -226,7 +221,7 @@ class GrabPipeline:
             ReleaseSkipped(
                 group=srg,
                 tracker=tracker,
-                reason=_SKIP_REPORTS[skip_reason].skip_reason,
+                reason=skip_reason,
                 url=url,
                 counts=release.another_titles_counts,
             )
@@ -387,7 +382,7 @@ class GrabPipeline:
             skip_reason for skip_reason in _SKIP_REPORTS if not skip_reason.left_for_hand_import
         )
 
-    def _needs_action_row_for(self, holds: Iterable[PlacementSkip]) -> NeedsActionRow | None:
+    def _needs_action_row_for(self, holds: Iterable[SkipReason]) -> NeedsActionRow | None:
         """The row of the first of `holds` that held a group of this title, or None."""
 
         skipped_groups = self._state.per_title.skipped_groups
@@ -429,7 +424,7 @@ class GrabPipeline:
 
         any_to_grab = self._planner.any_to_grab(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
-        self._state.per_title.add_skipped(PlacementSkip.INPUT_UNREAD, req.input_unread_groups)
+        self._state.per_title.add_skipped(SkipReason.INPUT_UNREAD, req.input_unread_groups)
         self._state.per_title.metadata_unread |= req.metadata_unread
 
         added_this_title = 0

@@ -67,7 +67,7 @@ from pearlarr.placement_types import FetchedListings, TorrentListing, episode_in
 from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacementSkip, ReleaseEpisode, SeadexDict
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, ReleaseEpisode, SeadexDict, SkipReason
 from pearlarr.sonarr_episodes import sonarr_series_hash
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
@@ -2554,7 +2554,7 @@ class TestSonarrProcessAlIdSeeds:
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is PlacementSkip.MISNUMBERED
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.MISNUMBERED
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == []
         assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ()
@@ -2614,7 +2614,7 @@ class TestSonarrProcessAlIdSeeds:
         run = _run_title_check(files, [_EP1, _EP2], _ScriptedListings(unreachable=True))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is PlacementSkip.INPUT_UNREAD
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.INPUT_UNREAD
         assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ("NAN0",)
 
@@ -2689,7 +2689,7 @@ class TestSonarrProcessAlIdSeeds:
         update = req.pending_import_updates["h1"]
         assert update.file_map == {}
         assert update.excluded == tuple(normalize_name(name) for name in _GRAB_FILES)
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
         store = _CountingStore()
@@ -2718,7 +2718,7 @@ class TestPlacementDebugLine:
         with caplog.at_level("DEBUG"):
             strat._log_placements(EntryPlacements(grabbing_title, {_GRAB_URL: placement}))
 
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
 
     def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:

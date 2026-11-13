@@ -1,8 +1,8 @@
-"""What SeaDex lists and what Pearlarr plans to grab: release groups, urls, grab holds, and episode keys."""
+"""What SeaDex lists and what Pearlarr plans to grab: release groups, urls, skip reasons, and episode keys."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, auto
 from typing import Any, NamedTuple
 
 from seadex import Tag, TorrentRecord, Tracker
@@ -43,20 +43,18 @@ def carries_ignored_tag(torrent: TorrentRecord, ignore_tags: frozenset[str]) -> 
     return not ignore_tags.isdisjoint(tag.casefold() for tag in torrent.tags)
 
 
-class PlacementSkip(StrEnum):
-    """Why the placement refuses to grab a flagged url this run."""
+class SkipReason(StrEnum):
+    """Why a release is skipped this run: at add time for its tracker, or by the placement."""
 
+    PRIVATE_ONLY = auto()
+    UNSUPPORTED_TRACKER = auto()
+    TRACKER_NOT_SELECTED = auto()
     MISNUMBERED = "misnumbered"
     """A pack with a `PlacementVerdict.MISNUMBERED` file of the entry's own window: a file whose own numbers
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
     episodes, so it's left for a hand import. Also a pack with a file another TVDB order reads outside the entry's
     window, where no listed title placed it (`PlacementVerdict.OTHER_ORDER_ELSEWHERE`), and nothing of it placed on
     the entry."""
-    INPUT_UNREAD = "a read failed"
-    """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
-    or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
-    placed, since another title it names may own some of the files. Grabbing now could seed a file onto the wrong
-    episode for good, or leave one unplaced that the import never places, so the url waits for the next run."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
     (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
@@ -65,6 +63,11 @@ class PlacementSkip(StrEnum):
     placed or left for a hand import by that title's window, or stored on an episode its window holds. That title's
     grab imports the placed ones, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a
     hand-import hold: the url as a whole isn't the entry's, and only its files nothing placed are a hand import."""
+    INPUT_UNREAD = "a read failed"
+    """A SeaDex listing for the series, Sonarr's parse of any of the url's video files while one is left to place,
+    or the episode list of a series the record claims couldn't be read this run. Without the listing nothing is
+    placed, since another title it names may own some of the files. Grabbing now could seed a file onto the wrong
+    episode for good, or leave one unplaced that the import never places, so the url waits for the next run."""
 
     @property
     def left_for_hand_import(self) -> bool:
@@ -73,12 +76,12 @@ class PlacementSkip(StrEnum):
         return self in _HAND_IMPORT_SKIPS
 
 
-_HAND_IMPORT_SKIPS = frozenset({PlacementSkip.MISNUMBERED, PlacementSkip.TITLE_REFUTED})
+_HAND_IMPORT_SKIPS = frozenset({SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnotherTitlesCounts:
-    """How the files of a url held as another title's (`GrabHold.PLACED_ELSEWHERE`) split, for its skip line.
+    """How the files of a url held as another title's (`SkipReason.PLACED_ELSEWHERE`) split, for its skip line.
 
     Built by keyword, so the two counts can't silently transpose.
     """
@@ -117,7 +120,7 @@ class Release:
     is_upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[ReleaseEpisode] = field(default_factory=list[ReleaseEpisode])
-    skip_reason: PlacementSkip | None = None
+    skip_reason: SkipReason | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
     another_titles_counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
     """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
@@ -135,7 +138,7 @@ class Release:
 
     @property
     def left_for_hand_import(self) -> bool:
-        """Whether the placement left the url's pack for a hand import (`GrabHold.hand_import`)."""
+        """Whether the placement left the url's pack for a hand import (`SkipReason.left_for_hand_import`)."""
 
         return self.skip_reason is not None and self.skip_reason.left_for_hand_import
 

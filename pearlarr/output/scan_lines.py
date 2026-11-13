@@ -39,13 +39,13 @@ from .events import (
     NeedsActionFact,
     ReleaseSkipped,
     ScanStarted,
-    SkipReason,
     TitleDetail,
     TitleHeader,
     TitleRow,
     TitleState,
     severity_of,
 )
+from ..releases import SkipReason
 
 type ScanEvent = (
     ScanStarted
@@ -238,7 +238,7 @@ def release_skipped_lines(event: ReleaseSkipped) -> tuple[ConsoleLine, ...]:
             "skipped",
             _skip_text(event),
             value_style=accent_style(Accent.CAUTION),
-            level=int(event.reason.severity),
+            level=int(event.severity),
         ),
     )
 

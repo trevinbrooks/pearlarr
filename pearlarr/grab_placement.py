@@ -42,11 +42,11 @@ from .releases import (
     AnotherTitlesCounts,
     EpisodeKey,
     OrderOnlyKey,
-    PlacementSkip,
     PlannedGrab,
     Release,
     ReleaseEpisode,
     SeadexDict,
+    SkipReason,
     releases_to_grab,
     season_episode_key,
 )
@@ -65,7 +65,7 @@ class ListedFile:
 
     parse: ParsedFileInfo | None
     """Sonarr's parse of the name, or None when no fresh parse record exists. An unknown parse keeps the count-based
-    passes from placing, and holds the url while it has a file left to place (`GrabHold.INPUT_UNREAD`)."""
+    passes from placing, and holds the url while it has a file left to place (`SkipReason.INPUT_UNREAD`)."""
 
     name: str = field(init=False, repr=False, compare=False)
     """The normalized basename (`normalized_leaf`): what the batch, the sizes and the stored map key a file by."""
@@ -195,8 +195,8 @@ class PlacedRelease:
 
     episodes: tuple[ReleaseEpisode, ...]
     """One `(season, episode, size)` per file and episode of the whole map inside the entry, in file order.
-    A file nothing placed adds none, and a url held for a hand import (`GrabHold.hand_import`) has none. A url with
-    no records makes the planner count its release group as covering every episode."""
+    A file nothing placed adds none, and a url held for a hand import (`SkipReason.left_for_hand_import`) has none.
+    A url with no records makes the planner count its release group as covering every episode."""
 
     covered_ids: frozenset[int]
     """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
@@ -206,11 +206,11 @@ class PlacedRelease:
     read, and, while a file is left to place, every parse came from Sonarr (`PlacementBatch.all_parses_known`). When
     False, a file may have been held or placed without its size, so the title gets re-checked next run."""
 
-    skip_reason: PlacementSkip | None
+    skip_reason: SkipReason | None
     """Why the url is not grabbed this run, None when it may be."""
 
     another_titles_counts: AnotherTitlesCounts
-    """For `GrabHold.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
+    """For `SkipReason.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
     `NO_ELSEWHERE` for any other url."""
 
     pending_import: PendingImport | None
@@ -254,7 +254,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     Nothing is placed when the listing or a window's series wasn't read. After the windows merge, a file named by
     number alone that they left is placed where every numbering agrees (`NumberingReader`, `WindowedAssignment.filled`),
     the window holding its ids deciding it. A file another title's window placed, or left for a hand import with no
-    window the record imports party to it, is set aside as that title's. The url is held (`GrabHold`) when a file of
+    window the record imports party to it, is set aside as that title's. The url is held (`SkipReason`) when a file of
     the entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
     entry and either the entry's window claimed a file for a hand import or some of it is another title's.
     """
@@ -322,7 +322,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         skip_reason=skip_reason,
         another_titles_counts=(
             _another_titles_counts(another_titles, view.placements)
-            if skip_reason is PlacementSkip.PLACED_ELSEWHERE
+            if skip_reason is SkipReason.PLACED_ELSEWHERE
             else NO_ANOTHER_TITLES_COUNTS
         ),
         pending_import=torrent.pending_import,
@@ -377,7 +377,7 @@ class _OnWindow:
 
 def _skip_reason_of(
     *, misnumbered: bool, unread: bool, hand_import_verdict: PlacementVerdict | None, another_titles: bool
-) -> PlacementSkip | None:
+) -> SkipReason | None:
     """Why the url isn't grabbed: the first of these that holds, in this order.
 
     Four inputs, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
@@ -390,14 +390,14 @@ def _skip_reason_of(
     """
 
     if misnumbered:
-        return PlacementSkip.MISNUMBERED
+        return SkipReason.MISNUMBERED
     if unread:
-        return PlacementSkip.INPUT_UNREAD
+        return SkipReason.INPUT_UNREAD
     if hand_import_verdict is PlacementVerdict.TITLE_REFUTED:
-        return PlacementSkip.TITLE_REFUTED
+        return SkipReason.TITLE_REFUTED
     if hand_import_verdict is not None:
-        return PlacementSkip.MISNUMBERED
-    return PlacementSkip.PLACED_ELSEWHERE if another_titles else None
+        return SkipReason.MISNUMBERED
+    return SkipReason.PLACED_ELSEWHERE if another_titles else None
 
 
 def _another_titles_counts(another_titles: frozenset[str], placements: BatchPlacements) -> AnotherTitlesCounts:

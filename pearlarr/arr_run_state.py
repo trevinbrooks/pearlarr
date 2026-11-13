@@ -10,7 +10,7 @@ import qbittorrentapi
 from .config import Arr
 from .output import CountsMark, SeverityCounter
 from .pending_import import PendingImport, TitleNames
-from .releases import PlacementSkip
+from .releases import SkipReason
 from .wait_types import ImportWaitMode, PendingImportState
 
 if TYPE_CHECKING:
@@ -150,9 +150,9 @@ class PerTitleState:
     """Group names of the unsupported-tracker skip, riding along for the summary."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
     """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
-    skipped_groups: dict[PlacementSkip, list[str]] = field(default_factory=dict[PlacementSkip, list[str]])
+    skipped_groups: dict[SkipReason, list[str]] = field(default_factory=dict[SkipReason, list[str]])
     """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
-    run, and a hand-import hold re-warns until the import covers it. `GrabHold.INPUT_UNREAD` also carries the
+    run, and a hand-import hold re-warns until the import covers it. `SkipReason.INPUT_UNREAD` also carries the
     groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
     `add_held`."""
     metadata_unread: bool = False
@@ -165,7 +165,7 @@ class PerTitleState:
     entry_coverage: str | None = None
     """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
 
-    def add_skipped(self, skip_reason: PlacementSkip, groups: Sequence[str]) -> None:
+    def add_skipped(self, skip_reason: SkipReason, groups: Sequence[str]) -> None:
         """List `groups` under `hold` in `held_groups`.
 
         No groups adds no key, so an empty `held_groups` means nothing held the title.

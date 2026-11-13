@@ -55,7 +55,6 @@ from .events import (
     ScopeId,
     ScopeOpened,
     Severity,
-    SkipReason,
     StarterConfigWritten,
     TitleDetail,
     TitleHeader,
@@ -69,6 +68,7 @@ from .hub import Renderer
 from .scope_path import OpenScopes
 from .wait_lines import ProgressLineThrottle, hand_import_names, hand_import_sentences
 from ..log import LOG_NAME
+from ..releases import SkipReason
 from ..wait_types import OutcomeKind
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"

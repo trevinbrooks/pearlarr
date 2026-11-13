@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from .trace import CapturedTrace
 from ..config import Arr
-from ..releases import NO_ANOTHER_TITLES_COUNTS, AnotherTitlesCounts
+from ..releases import NO_ANOTHER_TITLES_COUNTS, AnotherTitlesCounts, SkipReason
 from ..wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
@@ -238,24 +238,6 @@ class TitleRow:
     scope: ScopeId | None = None
 
 
-class SkipReason(Enum):
-    """Why a release was skipped at add time."""
-
-    PRIVATE_ONLY = auto()
-    UNSUPPORTED_TRACKER = auto()
-    TRACKER_NOT_SELECTED = auto()
-    MISNUMBERED = auto()
-    TITLE_REFUTED = auto()
-    PLACED_ELSEWHERE = auto()
-    INPUT_UNREAD = auto()
-
-    @property
-    def severity(self) -> Severity:
-        """The line's severity: a tracker the user did not select is INFO, not a warning."""
-
-        return Severity.INFO if self is SkipReason.TRACKER_NOT_SELECTED else Severity.WARNING
-
-
 @dataclass(frozen=True, slots=True)
 class ReleaseSkipped:
     """One release skipped at add time."""
@@ -268,6 +250,12 @@ class ReleaseSkipped:
     """For `SkipReason.PLACED_ELSEWHERE`, how many of the release's files are another title's and how many nothing
     placed."""
     scope: ScopeId | None = None
+
+    @property
+    def severity(self) -> Severity:
+        """The line's severity: a tracker the user did not select is INFO, not a warning."""
+
+        return Severity.INFO if self.reason is SkipReason.TRACKER_NOT_SELECTED else Severity.WARNING
 
 
 @dataclass(frozen=True, slots=True)
@@ -817,8 +805,8 @@ def severity_of(event: Event) -> Severity:
             return severity
         case TitleDetail(severity=severity):
             return severity
-        case ReleaseSkipped(reason=reason):
-            return reason.severity
+        case ReleaseSkipped(severity=severity):
+            return severity
         case GrabFailed():
             return Severity.WARNING
         case BootStepFinished():

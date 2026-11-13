@@ -44,10 +44,10 @@ from pearlarr.releases import (
     AnotherTitlesCounts,
     EpisodeKey,
     OrderOnlyKey,
-    PlacementSkip,
     PlannedGrab,
     ReleaseEpisode,
     SeadexDict,
+    SkipReason,
 )
 from pearlarr.tvdb_orders import IndexOrders, OrderRow
 
@@ -198,7 +198,7 @@ class TestPlaceRelease:
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == ()
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
         assert verdicts_of(placement.placements) == {PlacementVerdict.WAITING_ON_PARSE}
 
@@ -210,7 +210,7 @@ class TestPlaceRelease:
         placement = place_release(files, _grabbing_title([_SPECIAL, *_SEASON]), _NEW)
 
         assert placement.episodes == (ReleaseEpisode(0, 1, 5),)
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
     def test_two_files_sharing_a_leaf_keep_their_own_sizes(self) -> None:
@@ -246,7 +246,7 @@ class TestPlaceRelease:
         assert not grabbing_title.can_place
         assert placement.placements.placements == ()
         assert placement.episodes == ()
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
     def test_no_files_is_an_empty_placement_with_its_inputs_known(self) -> None:
@@ -298,7 +298,7 @@ class TestPlaceIdentified:
         placement = place_release([self._LOST, *_season_files(2)], _grabbing_title(_SEASON), torrent)
 
         assert placement.placements.placed == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
     def test_the_overrides_are_the_files_placed_over_their_names(self) -> None:
@@ -355,7 +355,7 @@ class TestPlaceOntoResident:
 
         placement = place_release(files, _grabbing_title(_SEASON), _torrent(_stored_pending_import()))
 
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
     def test_a_seeded_id_outside_the_entry_records_nothing(self) -> None:
@@ -427,7 +427,7 @@ class TestPlaceOntoResident:
 
         assert torrent.order(_grabbing_title(_SEASON).window) is None
         assert placement.placements.placements == ()
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
         assert placement.covered_ids == frozenset()
         assert placement.pending_import is pending
@@ -442,7 +442,7 @@ class TestPlaceOntoResident:
 
         assert placement.placements.placements == ()
         assert not placement.inputs_read
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert placement.episodes == (ReleaseEpisode(1, 1, 10), ReleaseEpisode(1, 2, 20))
         assert placement.covered_ids == {101, 102}
 
@@ -510,7 +510,7 @@ class TestPlaceUnderAnotherEntrysRefutal:
 
         placement = self._place(files, {"show - 02 - charlie rise.mkv": (103,)}, [501])
 
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=3, unplaced=0)
 
 
@@ -542,7 +542,7 @@ class TestPlaceHeld:
         placement = place_release(self._specials(), self._specials_grabbing_title(2, 4), self._listing((502, 504, 506)))
 
         assert verdicts_of(placement.placements) == {PlacementVerdict.MISNUMBERED}
-        assert placement.skip_reason is PlacementSkip.MISNUMBERED
+        assert placement.skip_reason is SkipReason.MISNUMBERED
         assert placement.episodes == ()
         assert placement.covered_ids == frozenset()
         assert placement.inputs_read
@@ -563,7 +563,7 @@ class TestPlaceHeld:
 
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}))
 
-        assert placement.skip_reason is PlacementSkip.MISNUMBERED
+        assert placement.skip_reason is SkipReason.MISNUMBERED
         assert placement.placements.placed == {"show - s01e01.mkv": (101,), "show - s01e02.mkv": (102,)}
         assert placement.episodes == ()
 
@@ -625,7 +625,7 @@ class TestPlaceHeld:
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}))
 
         assert verdicts_of(placement.placements) == {PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW}
-        assert placement.skip_reason is PlacementSkip.MISNUMBERED
+        assert placement.skip_reason is SkipReason.MISNUMBERED
         assert placement.episodes == ()
 
     @staticmethod
@@ -647,7 +647,7 @@ class TestPlaceHeld:
 
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
 
-        assert placement.skip_reason is PlacementSkip.TITLE_REFUTED
+        assert placement.skip_reason is SkipReason.TITLE_REFUTED
         assert placement.episodes == ()
 
     def test_a_refuted_pack_a_sibling_places_part_of_is_held_as_refuted(self) -> None:
@@ -665,7 +665,7 @@ class TestPlaceHeld:
         placement = place_release(files, make_grabbing_title(episode_index(season[:3]), series), torrent)
 
         assert by_name(placement.placements)["show - ova [grp].mkv"] == ((), PlacementVerdict.ANOTHER_TITLES)
-        assert placement.skip_reason is PlacementSkip.TITLE_REFUTED
+        assert placement.skip_reason is SkipReason.TITLE_REFUTED
         assert placement.covered_ids == frozenset()
 
     _EARLY_KEYS: ClassVar[tuple[str, ...]] = (
@@ -752,7 +752,7 @@ class TestPlaceHeld:
         placement = place_release(self._specials(), grabbing_title, self._aliased_against((901, 902, 903)))
 
         assert verdicts_of(placement.placements) == {PlacementVerdict.MISNUMBERED}
-        assert placement.skip_reason is PlacementSkip.MISNUMBERED
+        assert placement.skip_reason is SkipReason.MISNUMBERED
         assert placement.covered_ids == frozenset()
 
     def test_a_file_the_aliases_claim_that_another_series_places_holds_the_url(self) -> None:
@@ -760,7 +760,7 @@ class TestPlaceHeld:
         # its number. The first two still place.
         placement = place_release(self._specials(), self._specials_grabbing_title(2, 4), self._aliased_against((903,)))
 
-        assert placement.skip_reason is PlacementSkip.MISNUMBERED
+        assert placement.skip_reason is SkipReason.MISNUMBERED
         assert placement.placements.placed == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (504,)}
 
     def test_a_file_misnumbered_under_another_entrys_window_holds_nothing(self) -> None:
@@ -788,7 +788,7 @@ class TestPlaceHeld:
     def test_an_unread_listing_holds_the_url_and_places_nothing(self) -> None:
         placement = place_release(self._specials(), self._specials_grabbing_title(1, 2), self._listing(None))
 
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert placement.placements.placements == ()
         assert placement.episodes == ()
         assert not placement.inputs_read
@@ -798,7 +798,7 @@ class TestPlaceHeld:
 
         placement = place_release(files, self._specials_grabbing_title(1, 2), self._listing((501, 502, 503)))
 
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
     def test_an_unread_listing_over_a_seasoned_window_places_nothing_and_holds(self) -> None:
@@ -806,7 +806,7 @@ class TestPlaceHeld:
         # size identities weren't read either, so the url is held until they are.
         placement = place_release(_season_files(), _grabbing_title(_SEASON), _torrent(listed=None))
 
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
         assert placement.placements.placements == ()
 
@@ -835,7 +835,7 @@ class TestPlaceHeld:
         placed.attach_placements(seadex_dict)
 
         holds = [seadex_dict["RG"].releases[u].skip_reason for u in urls]
-        assert holds == [PlacementSkip.MISNUMBERED, PlacementSkip.INPUT_UNREAD, None]
+        assert holds == [SkipReason.MISNUMBERED, SkipReason.INPUT_UNREAD, None]
         assert placed.input_unread_groups(seadex_dict) == ("RG",)
 
 
@@ -870,7 +870,7 @@ class TestPlaceBesideAnotherListedTitle:
         placement = place_release(files, grabbing_title, torrent)
 
         assert by_name(placement.placements)["show - s01e02 (0003).mkv"] == ((), PlacementVerdict.ANOTHER_TITLES)
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=2, unplaced=0)
 
     def test_attach_writes_each_urls_hold_counts(self) -> None:
@@ -883,7 +883,7 @@ class TestPlaceBesideAnotherListedTitle:
 
         item = seadex_dict["RG"].releases["u1"]
         assert (item.skip_reason, item.another_titles_counts) == (
-            PlacementSkip.PLACED_ELSEWHERE,
+            SkipReason.PLACED_ELSEWHERE,
             AnotherTitlesCounts(another_titles=4, unplaced=0),
         )
 
@@ -906,7 +906,7 @@ class TestPlaceBesideAnotherListedTitle:
 
         placement = place_release(_season_files()[2:], _grabbing_title(_SEASON[:2]), _torrent(pending, listed=listed))
 
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=2, unplaced=0)
 
     def test_a_kept_title_runs_before_an_ignored_one_of_its_kind(self) -> None:
@@ -966,7 +966,7 @@ class TestPlaceBesideAnotherListedTitle:
             **{normalize_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
             "show - ncop.mkv": ((), PlacementVerdict.EXTRA),
         }
-        assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert not placement.inputs_read
 
 
@@ -1108,7 +1108,7 @@ class TestRollingGirlsBatch:
         }
         assert placement.episodes == ()
         assert placement.covered_ids == frozenset()
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=12, unplaced=6)
 
     def test_under_the_chibi_entry_with_the_season_entry_ignored_the_url_is_still_held(self) -> None:
@@ -1144,7 +1144,7 @@ class TestRollingGirlsBatch:
         assert by_name(placement.placements) == _RG_REST
         assert placement.episodes == ()
         assert placement.covered_ids == frozenset()
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=12, unplaced=6)
 
 
@@ -1284,7 +1284,7 @@ class TestPlaceWhereEveryNumberingAgrees:
             ((), PlacementVerdict.ANOTHER_TITLES)
         }
         assert placement.episodes == ()
-        assert placement.skip_reason is PlacementSkip.PLACED_ELSEWHERE
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
         assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=12, unplaced=6)
 
 

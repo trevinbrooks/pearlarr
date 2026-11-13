@@ -29,7 +29,6 @@ from pearlarr.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
-    SkipReason,
     StyledValue,
     TitleDetail,
     TitleHeader,
@@ -41,6 +40,7 @@ from pearlarr.output import (
     WaitStarted,
 )
 from pearlarr.output.events import TitleState
+from pearlarr.releases import SkipReason
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .fakes import FakeClock

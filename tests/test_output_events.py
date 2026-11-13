@@ -33,7 +33,6 @@ from pearlarr.output import (
     ScopeId,
     ScopeKind,
     Severity,
-    SkipReason,
     StyledValue,
     TitleDetail,
     TitleHeader,
@@ -41,6 +40,7 @@ from pearlarr.output import (
     severity_of,
 )
 from pearlarr.output.events import TitleState
+from pearlarr.releases import SkipReason
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 # --- value model -----------------------------------------------------------------
@@ -101,11 +101,14 @@ def test_diagnostic_and_entry_detail_carry_their_own_severity() -> None:
 
 
 def test_skip_reason_severity_marks_the_users_own_choice_info() -> None:
-    assert SkipReason.PRIVATE_ONLY.severity is Severity.WARNING
-    assert SkipReason.UNSUPPORTED_TRACKER.severity is Severity.WARNING
-    assert SkipReason.MISNUMBERED.severity is Severity.WARNING
-    assert SkipReason.INPUT_UNREAD.severity is Severity.WARNING
-    assert SkipReason.TRACKER_NOT_SELECTED.severity is Severity.INFO
+    def severity(reason: SkipReason) -> Severity:
+        return ReleaseSkipped(group="G", tracker="Nyaa", reason=reason).severity
+
+    assert severity(SkipReason.PRIVATE_ONLY) is Severity.WARNING
+    assert severity(SkipReason.UNSUPPORTED_TRACKER) is Severity.WARNING
+    assert severity(SkipReason.MISNUMBERED) is Severity.WARNING
+    assert severity(SkipReason.INPUT_UNREAD) is Severity.WARNING
+    assert severity(SkipReason.TRACKER_NOT_SELECTED) is Severity.INFO
     skipped = ReleaseSkipped(group="G", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED)
     assert severity_of(skipped) is Severity.INFO
 

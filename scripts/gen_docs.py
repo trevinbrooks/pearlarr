@@ -52,6 +52,7 @@ from pearlarr.output import JsonRenderer
 from pearlarr.output import events as ev
 from pearlarr.output.events import TitleState
 from pearlarr.paths import PROJECT_URL
+from pearlarr.releases import SkipReason
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -830,7 +831,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ReleaseSkipped(
             group="Vodes",
             tracker="AnimeBytes",
-            reason=ev.SkipReason.PRIVATE_ONLY,
+            reason=SkipReason.PRIVATE_ONLY,
             url="https://seadex.moe/108/",
             scope=_TITLE_SCOPE,
         ),
