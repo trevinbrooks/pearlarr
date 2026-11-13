@@ -133,8 +133,8 @@ class Release:
     def qbit_hash(self) -> str | None:
         """The hash the release's torrent goes by in qBittorrent: the cross-seed's when one has its files, else SeaDex's."""
 
-        # Invariant: a url's record is keyed by the torrent that holds its files in qBittorrent, which is SeaDex's
-        # torrent unless a cross-seed was already there. The wait and the import read the record by that key.
+        # Invariant: a release's pending import is keyed by the torrent that has its files in qBittorrent, which is
+        # SeaDex's torrent unless a cross-seed was already there. The wait and the import read it by that key.
         return self.cross_seed_hash or self.infohash
 
     @property

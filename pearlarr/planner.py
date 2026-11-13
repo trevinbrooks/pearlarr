@@ -984,8 +984,8 @@ class GrabPlanner:
             # title. An upgrade with a fallback in the set means the arr's copy
             # of a preferred release (an outdated size, or misplaced files) the
             # fallback must not replace: mark the outdated skip for the summary row.
-            # Invariant: a fallback substitute never replaces an owned copy of the
-            # preferred private release - those sets hold and warn every run.
+            # Invariant: a fallback never replaces an owned copy of the preferred private release. Those same-files
+            # groups grab nothing and warn every run.
             if any_upgrade and any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names):
                 reason = (
                     "private-only; your copy is outdated (its file size no longer matches the release) "

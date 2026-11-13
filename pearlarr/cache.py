@@ -556,8 +556,8 @@ class CacheStore(AbstractCacheStore):
     def save(self, *, dry_run: bool) -> None:
         """Persist staged writes, unless this is a dry run."""
 
-        # Invariant: a preview run never commits, so every staged write is discarded on close and preview mode can
-        # never mark a title as handled.
+        # Invariant: a dry run never commits, so every staged write is discarded on close and a dry run can never
+        # cache a title.
         if dry_run:
             return
         if self._on_memory:
