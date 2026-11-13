@@ -25,7 +25,7 @@ from pearlarr import notify
 from pearlarr.arr_run_state import ArrRunState, PerTitleState
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import (
     _SKIP_REPORTS,
     NO_PENDING_IMPORT_UPDATES,
@@ -525,8 +525,8 @@ class TestReacquireRegistration:
         (claim,) = pending.claims
         assert claim.ordered_episode_ids == (101, 102)
         assert dict(pending.file_episode_map) == {
-            normalize_name("Show - 01 [1080p].mkv"): (101,),
-            normalize_name("Show - 02 [1080p].mkv"): (102,),
+            normalize_file_name("Show - 01 [1080p].mkv"): (101,),
+            normalize_file_name("Show - 02 [1080p].mkv"): (102,),
         }
 
     def test_a_new_pending_import_with_no_add_time_starts_now(self) -> None:

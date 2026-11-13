@@ -7,18 +7,18 @@ from collections.abc import Sequence
 from .arr_models import RemotePathMapping
 
 
-def normalize_name(name: str) -> str:
-    """Normalize a file name for cross-source matching.
+def normalize_file_name(path: str) -> str:
+    """Normalize a path's file name for cross-source matching.
 
     Args:
-        name: A file name (or full path - only the text is folded).
+        path: A file name, or a path to the file with either kind of slash.
 
     Returns:
-        The name stripped and case-folded, composed (NFC) before and after the casefold, so two spellings of
+        The file name stripped and case-folded, composed (NFC) before and after the casefold, so two spellings of
         one name fold alike and a folded key folds to itself.
     """
 
-    folded = unicodedata.normalize("NFC", name).strip().casefold()
+    folded = unicodedata.normalize("NFC", file_name(path)).strip().casefold()
     # NFC before the casefold keeps two spellings of one name alike: casefold turns U+0345 (the Greek iota below)
     # into a letter where it sits, so a mark after it moves onto that letter. NFC after it because casefold can
     # expand one letter into several (ß to ss, İ to i plus a dot) and leave the marks after that letter uncomposed

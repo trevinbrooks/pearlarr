@@ -8,7 +8,7 @@ from typing import Self
 from .arr_models import ParsedFileInfo
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
-from .file_paths import file_name, normalize_name
+from .file_paths import normalize_file_name
 from .numberings import NumberingStep
 from .pairs import unambiguous
 from .pending_import import (
@@ -68,11 +68,11 @@ class ListedFile:
     number passes from placing, and skips the release while it has a file left to place (`SkipReason.INPUT_UNREAD`)."""
 
     name: str = field(init=False, repr=False, compare=False)
-    """The normalized file name (`normalize_name` of its `file_name`): what the batch, the sizes and the stored file
+    """The normalized file name (`normalize_file_name` of its `file_name`): what the batch, the sizes and the stored file
     map key a file by."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", normalize_name(file_name(self.file_name)))
+        object.__setattr__(self, "name", normalize_file_name(self.file_name))
 
 
 @dataclass(frozen=True, slots=True)

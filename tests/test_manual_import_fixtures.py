@@ -21,7 +21,7 @@ from pearlarr.arr_models import (
     SonarrEpisode,
 )
 from pearlarr.config import AppConfig
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.import_quality import QualityParts, quality_parts_from_model, resolve_quality
 from pearlarr.pending_import import PendingImport
 from pearlarr.sonarr_state import (
@@ -452,7 +452,7 @@ class TestCapturedSpecialsEndToEnd:
             infohash="5555555555555555555555555555555555555555",
             file_episode_map={specials.files[0]: [8030]},
             ordered_episode_ids=[8030],
-            excluded_files=[normalize_name(name) for name in specials.files[1:]],
+            excluded_files=[normalize_file_name(name) for name in specials.files[1:]],
         )
 
         progress = specials.strat.import_progress(pending)

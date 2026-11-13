@@ -47,7 +47,7 @@ from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, ImportSnapshot, trusted_groups
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
@@ -1015,7 +1015,7 @@ class TestImportCompletedQueueState:
             file_episode_map={done_file: [101]},
             ordered_episode_ids=[101, 102],
             seadex_files=[done_file, excluded_file],
-            excluded_files=[normalize_name(excluded_file)],
+            excluded_files=[normalize_file_name(excluded_file)],
         )
         sonarr = FakeSonarrClient(
             episodes=[
@@ -2144,7 +2144,7 @@ class TestMultiSeriesImport:
         assert sonarr.execute_calls == []
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "resolve to no series" in warning
-        assert normalize_name(stray) in warning
+        assert normalize_file_name(stray) in warning
 
     def test_an_empty_index_still_posts_under_the_claims_series(self) -> None:
         # Series 8's index is empty: the claim's window still routes 201 there.
@@ -2221,9 +2221,9 @@ class TestMultiSeriesImport:
         ]
 
         assert placements_from_history(rows, pending) == {
-            normalize_name(_SHOW_FILE): (101,),
-            normalize_name(_OTHER_FILE): (201,),
-            normalize_name(second): (202,),
+            normalize_file_name(_SHOW_FILE): (101,),
+            normalize_file_name(_OTHER_FILE): (201,),
+            normalize_file_name(second): (202,),
         }
 
     def test_file_map_statuses_read_the_guards_once_for_every_series(self) -> None:
@@ -2265,7 +2265,7 @@ class TestMultiSeriesImport:
         pending = pending_import(
             file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
             release_sizes=[100, 200],
-            sizes_by_name={normalize_name(_SHOW_FILE): 100, normalize_name(_OTHER_FILE): 200},
+            sizes_by_name={normalize_file_name(_SHOW_FILE): 100, normalize_file_name(_OTHER_FILE): 200},
         )
         sonarr = _PerSeriesSonarr(
             {
@@ -2569,13 +2569,13 @@ class TestSonarrCheckTitlePendingImportUpdates:
         (req,) = run.grab_requests
         (update,) = req.pending_import_updates.values()
         assert update.pending_import == resident
-        assert update.file_map == {normalize_name(_GRAB_FILES[1]): (102,)}
+        assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
         assert update.claim.al_id == 5
         assert update.claim.ordered_episode_ids == (102,)
         pending = update.pending_import_at(_STAMP, fresh=False)
         assert claim_al_ids(pending) == (22, 5)
         assert dict(pending.file_episode_map) == {
-            normalize_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
+            normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
         }
         # The planner reads the release by the whole file map's episodes inside this title's window.
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
@@ -2748,7 +2748,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         (req,) = run.grab_requests
         update = req.pending_import_updates["h1"]
         assert update.file_map == {}
-        assert update.excluded == tuple(normalize_name(name) for name in _GRAB_FILES)
+        assert update.excluded == tuple(normalize_file_name(name) for name in _GRAB_FILES)
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_pending_import_and_builds_no_pending_import_update(self) -> None:
@@ -2800,7 +2800,8 @@ class TestPlacementDebugLine:
             strat._log_placements(EntryPlacements(grabbing_title, {_GRAB_URL: placement}))
 
         halves = ", ".join(
-            f"{normalize_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})" for n in (1, 2)
+            f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
+            for n in (1, 2)
         )
         assert [r.message for r in caplog.records] == [
             f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
@@ -3037,7 +3038,7 @@ class TestAutoImportWarningGating:
         # file is a debug note, not a "could not be matched" warning.
         sibling = "Show - S00E01 [1080p].mkv"
         pending = pending_import(
-            seadex_files=["Show - 01 [1080p].mkv", sibling], excluded_files=[normalize_name(sibling)]
+            seadex_files=["Show - 01 [1080p].mkv", sibling], excluded_files=[normalize_file_name(sibling)]
         )
         strat, sonarr = self._strat_with_unplaceable(sibling)
         recording = install_recording_hub()
@@ -3056,7 +3057,7 @@ class TestAutoImportWarningGating:
         sibling = "Show - S00E01 [1080p].mkv"
         pending = pending_import(
             seadex_files=["Show - 01 [1080p].mkv", sibling, "Extras.mkv"],
-            excluded_files=[normalize_name(sibling)],
+            excluded_files=[normalize_file_name(sibling)],
         )
         strat, _ = self._strat_with_unplaceable(sibling, "Extras.mkv")
         recording = install_recording_hub()
@@ -3107,7 +3108,7 @@ class TestUnmatchedAttemptResult:
             file_episode_map={},
             ordered_episode_ids=[101],
             seadex_files=list(cls._NAMES),
-            excluded_files=[normalize_name(name) for name in excluded],
+            excluded_files=[normalize_file_name(name) for name in excluded],
         )
 
     @classmethod
@@ -3230,8 +3231,8 @@ class TestLeftForHandImportFiles:
     @classmethod
     def _record(cls) -> PendingImport:
         return pending_import(
-            file_episode_map={normalize_name(cls._NAMES[0]): [602], normalize_name(cls._NAMES[1]): [603]},
-            hand_import_files=(normalize_name(cls._NAMES[2]),),
+            file_episode_map={normalize_file_name(cls._NAMES[0]): [602], normalize_file_name(cls._NAMES[1]): [603]},
+            hand_import_files=(normalize_file_name(cls._NAMES[2]),),
             seadex_files=list(cls._NAMES),
             release_sizes=tuple(sorted(cls._SIZE_ON.values())),
             ordered_episode_ids=(601, 602, 603),
@@ -3341,7 +3342,7 @@ class TestOrderOnlyHalves:
     )
 
     def test_the_attempt_result_keys_each_half_by_its_file_name_and_names_the_empty_opener(self) -> None:
-        run = [normalize_name(name) for name in self._RUN]
+        run = [normalize_file_name(name) for name in self._RUN]
         pending = pending_import(
             release_group="grp",
             seadex_files=self._RUN,
@@ -3742,7 +3743,7 @@ class TestFolderFetchFallback:
         result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
         assert result.all_done is True
-        assert result.placements == {normalize_name(name): (101,)}
+        assert result.placements == {normalize_file_name(name): (101,)}
         assert pending.file_episode_map == {}
         assert sonarr.execute_calls == []
         assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -3762,7 +3763,7 @@ class TestFolderFetchFallback:
             file_episode_map={file_map: [101]},
             ordered_episode_ids=[101],
             seadex_files=[file_map, excluded],
-            excluded_files=[normalize_name(excluded)],
+            excluded_files=[normalize_file_name(excluded)],
         )
 
         result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
@@ -3952,7 +3953,7 @@ class TestFolderFetchFallback:
 
     @pytest.mark.parametrize(
         ("by_id", "rebuilt"),
-        [(None, {normalize_name("Show - 01 [1080p].mkv"): (101,)}), ([], {})],
+        [(None, {normalize_file_name("Show - 01 [1080p].mkv"): (101,)}), ([], {})],
         ids=["failed", "empty"],
     )
     def test_folder_pinned_pending_import_rebuilds_from_history_only_after_a_failed_download_id_fetch(

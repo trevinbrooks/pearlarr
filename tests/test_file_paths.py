@@ -2,12 +2,12 @@
 """Direct tests for the path and name helpers: the name and group normalizers, file names, and download path mapping."""
 
 from pearlarr.arr_models import RemotePathMapping
-from pearlarr.file_paths import file_name, normalize_name, translate_download_path
+from pearlarr.file_paths import file_name, normalize_file_name, translate_download_path
 from pearlarr.releases import normalize_group
 
 
 class TestNormalize:
-    """`normalize_name`/`normalize_group` casefold and strip for stable comparison.
+    """`normalize_file_name`/`normalize_group` casefold and strip for stable comparison.
 
     Interior dashes in a group name are never stripped, only wrapping ones.
     """
@@ -16,35 +16,35 @@ class TestNormalize:
         # Same text, NFC (composed) vs NFD (decomposed) "é". Both fold equal.
         nfc = "Café - 01.mkv"
         nfd = "Café - 01.mkv"
-        assert normalize_name(nfc) == normalize_name(nfd)
+        assert normalize_file_name(nfc) == normalize_file_name(nfd)
 
     def test_strips_and_casefolds(self) -> None:
-        assert normalize_name("  Show - 01.MKV  ") == "show - 01.mkv"
+        assert normalize_file_name("  Show - 01.MKV  ") == "show - 01.mkv"
 
     def test_folding_a_folded_key_gives_the_same_key(self) -> None:
         # MUTATION PIN: casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
         # uncomposed, until the NFC after the casefold composes it. A stored pending import folds its keys again on
         # every load, so without that NFC the second pass would re-key it.
         name = "Der Weiß\u0323e Ritter - 01.mkv"
-        once = normalize_name(name)
+        once = normalize_file_name(name)
         assert once == "der weis\u1e63e ritter - 01.mkv"
-        assert normalize_name(once) == once
+        assert normalize_file_name(once) == once
 
     def test_canonically_equal_names_fold_alike_when_casefold_turns_a_mark_into_a_letter(self) -> None:
         # MUTATION PIN: casefold turns U+0345 (the Greek iota below) into a letter, so the NFC before it is what
         # makes these two spellings of one name fold alike. With only the NFC after it, they fold apart.
-        assert normalize_name("\u1fb4 - 01.mkv") == normalize_name("\u03b1\u0345\u0301 - 01.mkv")
+        assert normalize_file_name("\u1fb4 - 01.mkv") == normalize_file_name("\u03b1\u0345\u0301 - 01.mkv")
 
     def test_windows_paths_and_trailing_separators_still_reduce_to_a_file_name(self) -> None:
         # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
         # sees no separator at all and would key the whole path.
-        assert normalize_name(file_name("C:\\downloads\\Show\\Show - 01.mkv")) == "show - 01.mkv"
+        assert normalize_file_name("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
         # And a directory path never folds to an empty file name, which every other
         # unnamed thing would then collide with.
-        assert normalize_name(file_name("Show/NC/")) == "nc"
+        assert normalize_file_name("Show/NC/") == "nc"
 
     def test_file_name_converts_separators_but_preserves_the_name(self) -> None:
-        # The parser input, before normalize_name: same separator conversion, but
+        # The parser input, before normalize_file_name: same separator conversion, but
         # case/unicode intact - Sonarr's /parse and the video gate must see the
         # real filename, never a whole Windows path or a folded one.
         assert file_name("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"

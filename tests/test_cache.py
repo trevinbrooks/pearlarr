@@ -484,7 +484,7 @@ class TestSchemaVersionGate:
         # row winning a shared name, an exclusion another row mapped is dropped,
         # `added_at` is the oldest stamp, and `awaiting_cleanup` is set when every row had it.
         # The union keeps distinct file-name keys byte-exact (an NFC and an NFD
-        # spelling stay two keys): `normalize_name` reconciles them at read time.
+        # spelling stay two keys): `normalize_file_name` reconciles them at read time.
         db = tmp_path / "cache.db"
         first = _v4_blob("abcd", 11, excluded_files=["b.mkv", "y.mkv"], awaiting_cleanup=True)
         second = _v4_blob(
