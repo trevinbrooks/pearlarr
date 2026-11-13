@@ -23,6 +23,7 @@ import pytest
 
 from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_models import HistoryRecord
+from pearlarr.arr_strategy import ImportCompleter
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
@@ -34,7 +35,6 @@ from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeade
 from pearlarr.output.events import TitleState
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
-from pearlarr.protocols import ImportCompleter
 from pearlarr.run_loop import LegLoop
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_gateway import SkyHookGateway

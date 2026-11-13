@@ -7,13 +7,13 @@ from dataclasses import dataclass, field, replace
 import qbittorrentapi
 
 from .arr_categories import Watch
+from .arr_strategy import ImportCompleter
 from .clock import Clock
 from .config import ImportsSettings
 from .leg_state import ArrRunState
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
 from .pending_import import PendingImport, is_awaiting_cleanup
-from .pending_records import PendingImportStore
-from .protocols import ImportCompleter
+from .pending_import_store import PendingImportStore
 from .run_services import LegDeps
 from .wait_types import (
     LEAVE_PROBE,

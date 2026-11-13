@@ -33,7 +33,7 @@ from pearlarr.cli import (
 from pearlarr.config import Arr
 from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.output import Diagnostic, Severity, emit_to_hub
-from pearlarr.output.runtime import current_hub
+from pearlarr.output.process_hub import current_hub
 
 _ENVELOPE = ["schema_version", "time", "event", "level", "message"]
 

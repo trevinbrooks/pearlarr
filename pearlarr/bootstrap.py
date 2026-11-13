@@ -352,13 +352,13 @@ def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
 
     from .arr_http import ArrAuthError, ArrUnreachableError
     from .arr_models import ArrItem
+    from .arr_strategy import ArrStrategy
     from .boundary import BoundaryContractError
     from .cache import CacheSchemaError
-    from .protocols import ArrStrategy
+    from .radarr_strategy import RadarrStrategy
     from .run_loop import LegLoop
     from .run_services import LegDeps, LegServices, QbitConnectionError
-    from .seadex_radarr import RadarrStrategy
-    from .seadex_sonarr import SonarrStrategy
+    from .sonarr_strategy import SonarrStrategy
 
     arr_name = target.arr
     item_id = target.external_id

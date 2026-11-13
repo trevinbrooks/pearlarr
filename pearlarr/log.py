@@ -180,7 +180,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
             handler.setLevel(console_level(level))
 
     # Lazy: the output package imports this module at load.
-    from .output.runtime import current_hub
+    from .output.process_hub import current_hub
 
     current_hub().set_level(level)
 

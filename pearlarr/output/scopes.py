@@ -42,7 +42,7 @@ from .events import (
     severity_of,
 )
 from .hub import SeverityCounter
-from .runtime import emit_to_hub
+from .process_hub import emit_to_hub
 from ..wait_types import OutcomeKind
 
 type Emit = Callable[[Event], None]

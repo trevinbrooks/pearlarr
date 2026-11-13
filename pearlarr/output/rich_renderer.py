@@ -33,7 +33,6 @@ from rich.text import Text
 from rich.traceback import Traceback
 
 from .boot_region import BootRegion
-from .breadcrumbs import OpenScopes
 from .bridge import attributed_message, is_first_party
 from .console_lines import ConsoleLine, render_console_lines
 from .console_text import INDENT
@@ -83,6 +82,7 @@ from .events import (
 from .hub import Renderer
 from .live_region import LiveRegion
 from .scan_lines import ScanEvent, scan_event_lines
+from .scope_path import OpenScopes
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
 from ..console_caps import DetectedFeatures, console_of

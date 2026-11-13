@@ -6,7 +6,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.parse_reading import widen_range_key
+from pearlarr.parsed_episodes import widen_range_key
 from pearlarr.placement_types import EpisodeIndex
 from pearlarr.releases import EpisodeKey
 

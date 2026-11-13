@@ -42,15 +42,15 @@ flowchart LR
 
 | Subsystem | Modules | Role |
 | --- | --- | --- |
-| Composition | `cli`, `bootstrap`, `run_loop`, `run_services`, `seadex_sonarr`, `seadex_radarr` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
+| Composition | `cli`, `bootstrap`, `run_loop`, `run_services`, `sonarr_strategy`, `radarr_strategy` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
 | Configuration | `config`, `paths`, `env_registry` | validated settings, the data directory, env inventory |
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
-| Grabbing | `grab_pipeline`, `torrents` | tracker page parsing, qBittorrent adds, per-release outcomes |
-| Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `probe_verdicts`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
+| Grabbing | `grab_pipeline`, `torrent_service` | tracker page parsing, qBittorrent adds, per-release outcomes |
+| Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
-| Placement | `placement_types`, `parse_reading`, `release_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `torrent_listings`, `listing_fold`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
-| State | `cache`, `stamps`, `pending_records` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
+| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_fold`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
+| State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
 | Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
 | Reporting | `reporter`, `leg_state` | each leg's state and tally, the run summary and needs-action rows |
@@ -139,6 +139,6 @@ Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comm
 - `pearlarr/import_quality.py` - the import payload always carries a quality key. Omitting it crashes Sonarr in FileNameBuilder.AddQualityTokens (observed on Sonarr 4.x).
 - `pearlarr/mappings.py` - an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness check would fall back to Anime-IDs season heuristics and over-grab.
 - `pearlarr/planner.py` - a fallback substitute never replaces an owned copy of the preferred private release - those sets hold and warn every run.
-- `pearlarr/probe_verdicts.py` - only a CLEAN importPending defers to Sonarr. A warning/error-flagged one is a failed Sonarr import attempt it won't reliably retry, so waiting would burn the readiness deadline.
 - `pearlarr/releases.py` - a url's record is keyed by the torrent that holds its files in qBittorrent, which is SeaDex's torrent unless a cross-seed was already there. The wait and the import read the record by that key.
+- `pearlarr/sonarr_state.py` - only a CLEAN importPending defers to Sonarr. A warning/error-flagged one is a failed Sonarr import attempt it won't reliably retry, so waiting would burn the readiness deadline.
 <!-- /gen:invariants -->

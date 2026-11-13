@@ -61,8 +61,8 @@ from .events import (
     WaitStarted,
 )
 from .hub import OutputHub, Renderer
-from .runtime import install_hub, uninstall_hub
-from .textline import JsonRenderer
+from .line_renderers import JsonRenderer
+from .process_hub import install_hub, uninstall_hub
 from ..config import Arr
 from ..config_migrations import MIGRATE_HINT
 

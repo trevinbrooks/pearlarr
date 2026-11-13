@@ -16,7 +16,7 @@ import respx
 
 from pearlarr.config import Arr
 from pearlarr.notify import Notifier
-from pearlarr.output.textline import JSON_SCHEMA_VERSION
+from pearlarr.output.line_renderers import JSON_SCHEMA_VERSION
 from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 

@@ -9,9 +9,9 @@ from dataclasses import dataclass, replace
 from typing import Self
 
 from ..episode_titles import EpisodeTitles, TitleLead
-from ..parse_reading import ParsedEpisodes
+from ..file_names import NameParts, TitleNameWords, is_extras_name, split_names, whole_words
+from ..parsed_episodes import ParsedEpisodes
 from ..placement_types import PlacementBatch, PlacementTarget
-from ..release_names import NameParts, TitleNameWords, is_extras_name, split_names, whole_words
 
 
 @dataclass(frozen=True, slots=True)

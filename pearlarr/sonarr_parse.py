@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from .arr_models import ParsedFileInfo
 from .grab_placement import ListedFile
 from .output.console_text import count_noun
-from .parse_records import ParseFreshness
+from .parse_cache import ParseFreshness
 from .releases import SeadexDict
 from .run_services import LegDeps
 from .sonarr_client import AbstractSonarrClient

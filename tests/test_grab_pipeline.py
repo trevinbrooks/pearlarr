@@ -49,8 +49,8 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.pending_import import OwnedAtGrab, PendingImport
 from pearlarr.releases import ElsewhereCounts, GrabHold, Release, SeadexDict
 from pearlarr.stamps import now_stamp, stamp_of
-from pearlarr.torrent import TrackerPageError
-from pearlarr.torrents import AddResult, GrabResult, TorrentAddError
+from pearlarr.torrent_service import AddResult, GrabResult, TorrentAddError
+from pearlarr.tracker_links import TrackerPageError
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (

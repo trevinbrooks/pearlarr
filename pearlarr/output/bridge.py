@@ -41,7 +41,7 @@ from typing import final, override
 
 from .events import Diagnostic, Severity
 from .hub import OutputHub
-from .runtime import current_hub
+from .process_hub import current_hub
 from .trace import CapturedTrace
 from ..log import LOG_NAME, HubBridgeBase, clear_console_owner, mark_hub_console_owner
 

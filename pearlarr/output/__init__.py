@@ -1,6 +1,5 @@
 """Pearlarr's output architecture: producers emit frozen events, the hub's sinks own every surface."""
 
-from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, OpenScope, OpenScopes
 from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
 from .events import (
     SPARK_SAMPLES,
@@ -66,8 +65,8 @@ from .events import (
     severity_of,
 )
 from .hub import STRIKE_LIMIT, CountsMark, NullRenderer, OutputHub, Renderer, SeverityCounter, SeverityTally
-from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
-from .runtime import (
+from .line_renderers import Field, FileLogRenderer, JsonRenderer, PlainRenderer
+from .process_hub import (
     current_hub,
     emit_to_hub,
     file_log_admits,
@@ -79,6 +78,8 @@ from .runtime import (
     note_to_file_log,
     uninstall_hub,
 )
+from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
+from .scope_path import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, OpenScope, OpenScopes
 from .scopes import (
     PROCESS_SCOPE_IDS,
     BootScope,
@@ -91,7 +92,6 @@ from .scopes import (
     TitleScope,
     WaitScope,
 )
-from .textline import Field, FileLogRenderer, JsonRenderer, PlainRenderer
 from .trace import CapturedTrace
 
 __all__ = [

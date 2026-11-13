@@ -168,7 +168,7 @@ can predict CI:
    `pearlarr/config.py` (a parity test pins the set against the seadex
    library's `Tracker` enum).
 2. If its releases carry a parseable download page, add a parser to the table
-   in `pearlarr/torrents.py` (`PARSEABLE_TRACKERS` derives from it) -
+   in `pearlarr/torrent_service.py` (`PARSEABLE_TRACKERS` derives from it) -
    with tests. Trackers without a parser are skipped with a warning.
 3. `uv run python scripts/gen_docs.py`.
 

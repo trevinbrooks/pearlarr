@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Self
 
 from ._state import NumberedSequence, PlacerState, TorrentFile
+from ..file_names import sole_title_match
 from ..placement_types import PlacementVerdict
-from ..release_names import sole_title_match
 from ..releases import EpisodeKey, OrderOnlyKey
 
 

@@ -25,7 +25,7 @@ import qbittorrentapi
 import respx
 from seadex import Tracker
 
-import pearlarr.torrents as torrents
+import pearlarr.torrent_service as torrents
 from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr, ArrSettings
@@ -34,14 +34,14 @@ from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import GroupReleases, Release
 from pearlarr.run_services import LegDeps, LegServices, QbitConnectionError
-from pearlarr.torrent import TrackerPageError
-from pearlarr.torrents import (
+from pearlarr.torrent_service import (
     GRAB_FAILURES,
     PARSEABLE_TRACKERS,
     AddStatus,
     TorrentAddError,
     TorrentService,
 )
+from pearlarr.tracker_links import TrackerPageError
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (

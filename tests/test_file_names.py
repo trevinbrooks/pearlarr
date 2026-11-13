@@ -5,8 +5,8 @@ from typing import ClassVar
 
 import pytest
 
+from pearlarr.file_names import NumberedName, RangeKey, TitleNameWords, range_key, split_name, split_names
 from pearlarr.pending_import import TitleNames
-from pearlarr.release_names import NumberedName, RangeKey, TitleNameWords, range_key, split_name, split_names
 
 _NO_TITLES = TitleNameWords.of(TitleNames())
 # "100" in fullwidth digits.

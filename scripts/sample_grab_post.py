@@ -40,7 +40,7 @@ from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_obj
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.releases import GroupReleases, Release
-from pearlarr.torrents import AddStatus, GrabResult
+from pearlarr.torrent_service import AddStatus, GrabResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

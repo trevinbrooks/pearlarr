@@ -290,7 +290,7 @@ select = [
 # console-ownership latch, and the demo mock world. A global elsewhere stays loud.
 [tool.ruff.lint.per-file-ignores]
 "pearlarr/log.py" = ["PLW0603"]
-"pearlarr/output/runtime.py" = ["PLW0603"]
+"pearlarr/output/process_hub.py" = ["PLW0603"]
 "scripts/demo/demo_mocks.py" = ["PLW0603"]
 
 # Owned HTTP rides the two shared httpx clients (arr_http / web_client). A

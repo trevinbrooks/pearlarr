@@ -6,7 +6,7 @@
 import pytest
 
 from pearlarr.arr_models import CommandResource, QueueRecord, SonarrEpisode
-from pearlarr.seadex_sonarr import SonarrStrategy
+from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep

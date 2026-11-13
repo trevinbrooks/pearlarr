@@ -42,7 +42,7 @@ from .output import (
 from .output.events import TitleState
 from .pending_import import PendingImport
 from .releases import SeadexDict
-from .torrents import AddStatus, GrabResult
+from .torrent_service import AddStatus, GrabResult
 from .wait_types import ImportWaitMode, PendingImportState
 
 # The first cause present wins. PRIVATE_ONLY can't co-occur with the fallback-mode kinds

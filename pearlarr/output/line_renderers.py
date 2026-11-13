@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Final, NamedTuple, TextIO, assert_never, final, override
 
-from .breadcrumbs import OpenScopes
 from .events import (
     BootReady,
     BootStepFinished,
@@ -67,6 +66,7 @@ from .events import (
     severity_of,
 )
 from .hub import Renderer
+from .scope_path import OpenScopes
 from .wait_lines import PulseThrottle, held_back_names, held_back_sentences
 from ..log import LOG_NAME
 from ..wait_types import OutcomeKind

@@ -39,7 +39,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_import import OwnedAtGrab, PendingImport
 from pearlarr.run_loop import LegLoop
-from pearlarr.torrents import AddStatus
+from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import (
     LEAVE_PROBE,
     PENDING_STATE_FOR_OUTCOME,

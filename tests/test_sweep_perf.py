@@ -22,7 +22,7 @@ from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, 
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import ExternalIds, TitleMapping
-from pearlarr.parse_records import (
+from pearlarr.parse_cache import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_UNMATCHED_TTL_DAYS,
     ParseCacheRows,

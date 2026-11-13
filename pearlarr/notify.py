@@ -28,7 +28,7 @@ from .output import hub_warn
 from .output.console_text import count_noun, human_bytes, long_duration
 from .output.wait_lines import held_back_names, held_back_sentences
 from .releases import Release, SeadexDict
-from .torrents import AddStatus, GrabResult
+from .torrent_service import AddStatus, GrabResult
 from .wait_types import OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail

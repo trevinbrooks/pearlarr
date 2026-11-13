@@ -20,10 +20,10 @@ from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.episode_state import ImportSnapshot
 from pearlarr.pending_import import PendingImport
-from pearlarr.probe_verdicts import QueueState, classify_queue
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.sonarr_client import SonarrClient
 from pearlarr.sonarr_import import ImportExecutor, PollReading
+from pearlarr.sonarr_state import QueueState, classify_queue
 
 from .builders import episode_snapshot, make_run_deps, pending_import
 

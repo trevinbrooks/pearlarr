@@ -30,8 +30,8 @@ from .leg_state import ArrRunState, PerTitleState, Title, is_dry_run, resolve_en
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
-from .parse_records import ParseCacheRows
-from .pending_records import PendingImportStore
+from .parse_cache import ParseCacheRows
+from .pending_import_store import PendingImportStore
 from .planner import GrabPlan, GrabPlanner
 from .releases import SeadexDict
 from .reporter import RunReporter
@@ -39,7 +39,7 @@ from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
-from .torrents import TorrentService
+from .torrent_service import TorrentService
 from .wait_types import ImportWaitMode
 
 
