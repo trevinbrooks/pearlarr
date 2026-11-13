@@ -1,8 +1,9 @@
-"""The state one `place_batch` call runs its passes over: its files, their numbered runs, the run window.
+"""The state one `place_batch` call runs its passes over: its files, their numbered sequences, the consecutive episodes.
 
-`TorrentFile` holds what one call knows and decides about one file, `NumberedSequence` the files sharing one prefix,
-`ConsecutiveEpisodes` the open ids the run passes read, `NameFacts` what one name reads as before the first pass, and `PlacerState`
-every file plus the views two or more passes read. A helper of one pass sits with that pass.
+`TorrentFile` holds what one call knows about one file and the verdict it gives, `NumberedSequence` the files sharing
+one prefix, `ConsecutiveEpisodes` the unused ids the sequence passes read, `NameFacts` what one name reads as before
+the first pass, and `PlacerState` every file plus the views two or more passes read. A helper of one pass sits with
+that pass.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -24,52 +25,57 @@ from ..releases import OrderOnlyKey
 class TorrentFile:
     """One name of the torrent in one `place_batch` call: what its name and parse say, and the verdict.
 
-    Versions of one file are separate records. Records hash by identity, so passes keep sets of them. The fields
+    Versions of one file are separate objects. They hash by identity, so passes keep sets of them. The fields
     through `saved_ids` are set once in `PlacerState.start`. Placements change only through `PlacerState.place*` and
-    `PlacerState.leave_unplaced*`, and vetoes through `reject`, except that pass 5 re-reads or ties a run's readings. Passes 2
-    and 3 set the flags and `next_in_line_for`. Pass 16 alone gives a judged file a new verdict.
+    `PlacerState.leave_unplaced*`, and rejections through `reject`, except that pass 5 re-reads a sequence's parsed
+    episodes or finds them fit a season and the specials equally. Passes 2 and 3 set the flags and
+    `next_in_line_for`. Pass 16 alone gives a judged file a new verdict.
     """
 
     name: str
     """The normalized file name."""
     to_place: bool
-    """Whether the batch places this name. False for a seeded or gone name, which is evidence only."""
+    """Whether the batch places this name. False for a name in the file map or one no longer in the download folder
+    (gone), which is evidence only."""
     in_parsed: bool
-    """Whether the batch's parse map has an entry for the name, a None entry included."""
+    """Whether the batch's parses have an entry for the name, a None entry included."""
     parse: ParsedFileInfo | None
     """The widened parse (`widen_range_key`), else None when the batch has no parse for the name."""
     name_parts: NameParts
-    """The name as `split_names` reads it within the torrent: stem, run membership, title words, numbers."""
+    """The name as `split_names` reads it within the torrent: stem, sequence membership, title words, numbers."""
     episode_by_title: int | None
-    """The episode the name is titled as: its specific title, carried by no other file of the torrent, else None."""
+    """The episode whose distinctive title the name carries, when no other file of the torrent carries it, else
+    None."""
     leading_title_ids: frozenset[int]
-    """Every episode whose title starts the name's tail: run evidence, read for run members only."""
+    """Every episode whose title starts the words after the name's number (`EpisodeTitleMatches`), read for sequence
+    members only."""
     extra: bool
     """Whether the file is an extra: set aside, and left out of every count."""
     size_match: int | None
     """The episode whose listed single-file release has the file's size (`SeadexEvidence.size_matches`), else None."""
     saved_ids: tuple[int, ...] | None
-    """The ids the name is seeded on from an earlier placement, else None."""
+    """The ids the file map places the name on from an earlier grab, else None."""
     parsed_episodes: ParsedEpisodes
-    """The parse read against the scope. Pass 5 re-reads or ties it, and `reject` marks it rejected."""
+    """The parse read against the window. Pass 5 re-reads it or finds it fits a season and the specials equally, and
+    `reject` marks it rejected."""
     placement: Placement | None = None
     """The verdict and ids, once a pass judges the file."""
     numbers_disagree: bool = False
     """Whether the file's own numbers disagree over an episode of this window (`_passes._pass_reject_disagreeing`), or
-    no title confirms its count (`_passes._pass_reject_contradicted`): `MISNUMBERED` unless a later pass places it."""
+    no title confirms its number (`_passes._pass_reject_contradicted`): `MISNUMBERED` unless a later pass places it."""
     numbers_disagree_by_position: bool = False
-    """Whether the file is a `disputed` member of a keyed run numbered past an interleaved special
-    (`_passes._positions_disagree`): no run places it."""
+    """Whether the file is a member, whose numbers disagree, of a season and episode sequence numbered past an
+    interleaved special (`_passes._positions_disagree`): no sequence places it."""
     numbers_disagree_outside_window: bool = False
     """Whether the file's own numbers disagree over other windows' episodes only (`_passes._pass_reject_disagreeing`):
-    read as they are, never numberless."""
+    read as they are, never as no parsed number."""
     sequence_contradicted: bool = False
-    """Whether a mate's title refutes the numbers of the file's run and its own name carries no such title
+    """Whether a mate's title contradicts the numbers of the file's sequence and its own name carries no such title
     (`_passes._pass_reject_contradicted`): `TITLE_REFUTED` when no pass places it and pass 15 reads it no other way
     (`_passes._pass_classify`)."""
     next_in_line_for: frozenset[int] = frozenset()
-    """The ids a disputed reading would have taken first in the exact pass's order (`_passes._pass_reject_disagreeing`):
-    the file is their runner-up."""
+    """The ids a parse whose numbers disagree would have taken first in the exact pass's order
+    (`_passes._pass_reject_disagreeing`): the file is next in line for them."""
 
     @property
     def judged(self) -> bool:
@@ -97,32 +103,35 @@ class TorrentFile:
 
     @property
     def name_number(self) -> int:
-        """The release number of a run's file. Read it only on a run's files: a file in no run may have none."""
+        """The name number of a sequence's file.
+
+        Read it only on a sequence's files: a file in no sequence may have none.
+        """
 
         member = self.name_parts.member
         assert member is not None
         return member.number
 
     def contradicts(self, ids: Sequence[int]) -> bool:
-        """Whether the name is titled as an episode that is not among `ids`."""
+        """Whether the name carries the title of an episode that is not among `ids`."""
 
         return (ep_id := self.episode_by_title) is not None and ep_id not in ids
 
     def confirms(self, ids: Sequence[int]) -> bool:
-        """Whether the episode the name is titled as is among `ids`."""
+        """Whether the episode whose title the name carries is among `ids`."""
 
         return (ep_id := self.episode_by_title) is not None and ep_id in ids
 
     def next_in_line(self, ids: Iterable[int]) -> bool:
-        """Whether the file is a runner-up for any of `ids`."""
+        """Whether the file is next in line for any of `ids`."""
 
         return not self.next_in_line_for.isdisjoint(ids)
 
     @property
     def absolute_disagrees(self) -> bool:
-        """Whether the file's parse has one absolute, neither its release number nor one of its `title_numbers`.
+        """Whether the file's parse has one absolute, neither its name number nor one of its `title_numbers`.
 
-        False for a name without a release number.
+        False for a name without a name number.
         """
 
         member = self.name_parts.member
@@ -133,14 +142,14 @@ class TorrentFile:
         return absolute != member.number and absolute not in member.title_numbers
 
     def reject(self) -> None:
-        """Reject the reading: it still counts as evidence, but no pass places the file by it."""
+        """Reject the parsed episodes: they still count as evidence, but no pass places the file by them."""
 
         self.parsed_episodes = replace(self.parsed_episodes, rejected=True)
 
 
 @dataclass(frozen=True, slots=True)
 class NumberedSequence:
-    """The files whose names share one prefix before their release number."""
+    """The files whose names share one prefix before their name number."""
 
     prefix: str
     """The text before the number that every member shares."""
@@ -148,11 +157,11 @@ class NumberedSequence:
     """The top version at each number, in number order. Files tied at the top version all stay, so a number can
     repeat."""
     superseded: tuple[TorrentFile, ...]
-    """The lower versions a member's higher `vN` replaced: duplicates once the run is placed."""
+    """The lower versions a member's higher `vN` replaced: duplicates once the sequence is placed."""
 
     @classmethod
     def of(cls, prefix: str, by_number: Mapping[int, Sequence[TorrentFile]]) -> Self:
-        """One prefix's run: the top version at each number kept, the lower ones superseded."""
+        """One prefix's sequence: the top version at each number kept, the lower ones superseded."""
 
         kept: list[TorrentFile] = []
         superseded: list[TorrentFile] = []
@@ -171,32 +180,32 @@ class NumberedSequence:
 
     @property
     def numbers(self) -> tuple[int, ...]:
-        """The members' release numbers, in order."""
+        """The members' name numbers, in order."""
 
         return tuple(file.name_number for file in self.members)
 
     def consecutive(self, width: int) -> bool:
-        """Whether the run is exactly `width` consecutive numbers, wherever it starts."""
+        """Whether the sequence is exactly `width` consecutive numbers, wherever it starts."""
 
         return len(self.members) == width and is_consecutive(self.numbers)
 
     def from_one(self, width: int) -> bool:
-        """Whether the run is numbered `1..width`."""
+        """Whether the sequence is numbered `1..width`."""
 
         return self.numbers == tuple(range(1, width + 1))
 
 
 @dataclass(frozen=True, slots=True)
 class ConsecutiveEpisodes:
-    """The open ids as one run of episodes, in number order: the run window (`PlacerState.consecutive_unused`)."""
+    """The unused ids, in number order, when they are consecutive episodes (`PlacerState.consecutive_unused`)."""
 
     season: int | None
     """The season every id belongs to, or None when absolute numbers order the ids."""
     ids: tuple[int, ...]
-    """The open ids, by episode number, or by absolute number when `season` is None."""
+    """The unused ids, by episode number, or by absolute number when `season` is None."""
     numbers: tuple[int, ...]
     """The ids' episode numbers (absolute numbers when `season` is None), in the same order. Consecutive, except
-    over a scope's own specials numbered apart."""
+    over a window's own specials numbered apart."""
     id_set: frozenset[int] = field(init=False, repr=False, compare=False)
     """The ids as a set, built once for membership checks."""
 
@@ -205,30 +214,30 @@ class ConsecutiveEpisodes:
 
     @property
     def is_specials(self) -> bool:
-        """Whether the window lies in the specials season (season 0)."""
+        """Whether the episodes lie in the specials season (season 0)."""
 
         return self.season == 0
 
     def files_of(self, sequence: NumberedSequence) -> tuple[TorrentFile, ...]:
-        """The run members whose numbers are the window's episode numbers (a whole-season run over part of it)."""
+        """The sequence members whose numbers are these episode numbers (a whole-season sequence over part of it)."""
 
         return tuple(file for file in sequence.members if file.name_number in self.numbers)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NameFacts:
-    """What the passes read off one name under one scope, before the first pass."""
+    """What the passes read off one name under one window, before the first pass."""
 
     episode_by_title: int | None
-    """The episode the name is titled as (`TorrentFile.episode_by_title`), else None."""
+    """The episode whose title the name carries (`TorrentFile.episode_by_title`), else None."""
     parses_inside_window: bool
-    """Whether a trusted reading of the name resolves wholly inside the scope (`ParsedEpisodes.exact_ids`): the exact pass
-    would place it there, were its ids open and nothing disputing them."""
+    """Whether the name's usable parsed episodes resolve wholly inside the window (`ParsedEpisodes.exact_ids`): the
+    exact pass would place it there, were its ids unused and no numbers disagreeing over them."""
     extra: bool
     """Whether the name is an extra (an opening, an ending, and so on): never an episode."""
     parsed_by_title_number: bool
-    """Whether Sonarr counted the name by its own title's number and nothing confirms it (`PlacerState.parsed_by_title_number`):
-    the number is the title's, not a count."""
+    """Whether Sonarr numbered the name by its own title's number and nothing confirms it
+    (`PlacerState.parsed_by_title_number`): the number is the title's, not the episode's."""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -236,11 +245,11 @@ class PlacerState:
     """One `place_batch` call's state: every file of the torrent, and the ids used so far."""
 
     target: PlacementTarget
-    """The caller's scope with the stored map's ids it admits used (`PlacementTarget.using`)."""
+    """The caller's target with the file map's ids it admits used (`PlacementTarget.using`)."""
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
     files: tuple[TorrentFile, ...]
-    """Every file of the torrent: the files to place in batch order, then the seeded and gone ones."""
+    """Every file of the torrent: the files to place in batch order, then the file map's and gone ones."""
     placing: tuple[TorrentFile, ...]
     """The files to place, batch order."""
     non_extras: tuple[TorrentFile, ...]
@@ -248,18 +257,19 @@ class PlacerState:
     all_parses_known: bool
     """Whether every parse of the torrent is known (`PlacementBatch.all_parses_known`)."""
     non_extra_sequences: tuple[NumberedSequence, ...] = field(init=False)
-    """The `runs` among the `counted` files."""
+    """The numbered sequences among the `non_extras` files."""
     facts: Mapping[str, NameFacts] = field(init=False)
-    """What every name of the torrent reads as before the first pass. Passes 2 to 5 reject and re-read readings, so
-    this is set once at the start and never read off the files later."""
+    """What every name of the torrent reads as before the first pass. Passes 2 to 5 reject and re-read parsed
+    episodes, so this is set once at the start and never read off the files later."""
     used: set[int] = field(default_factory=set[int])
-    """Every id placed on so far, the scope's used ids included. Only `place` adds to it."""
+    """Every id placed on so far, the target's used ids included. Only `place` adds to it."""
     pairing_off: bool = False
-    """Whether the count-based passes (the absolute zip, the ordered zip, the numbered run) are turned off: an
-    earlier pass found a sign the batch's count is off."""
+    """Whether the pairing passes (pairing in absolute order, pairing in name order, the numbered sequence) are
+    turned off: an earlier pass found a sign the batch's count is off. They place files by position, not by what each
+    file says."""
     size_contradicted_prefixes: set[str] = field(default_factory=set[str])
-    """Prefixes of files placed by size against their own release numbers. `pass_sequence_over_parse` won't place a run
-    with one of these prefixes."""
+    """Prefixes of files placed by size against their own name numbers. `pass_sequence_over_parse` won't place a
+    sequence with one of these prefixes."""
 
     def __post_init__(self) -> None:
         self.non_extra_sequences = tuple(self.sequences_among(self.non_extras))
@@ -277,24 +287,25 @@ class PlacerState:
 
     @property
     def index(self) -> EpisodeIndex:
-        """The scope's episode index, whose lookups (`EpisodeIndex.key_by_id` and the rest) the passes read."""
+        """The target's episode index, whose lookups (`EpisodeIndex.key_by_id` and the rest) the passes read."""
 
         return self.target.index
 
     @classmethod
     def start(cls, batch: PlacementBatch, target: PlacementTarget) -> Self:
-        """Read every name and every parse of the torrent once, after widening each range key Sonarr read short.
+        """Read every name and every parse of the torrent once, after widening each `SxxEyy-zz` range Sonarr read short.
 
-        The stored map's ids that `scope` admits count as used from the start.
+        The file map's ids that `target` admits count as used from the start.
         """
 
-        # On the scope, not just `used`: `nothing_judged` and the duplicate proof read `target.used` as held before this call.
+        # On the target, not just `used`: `nothing_judged` and the duplicate proof read `target.used` as used before
+        # this call.
         target = target.using(ep_id for ids in batch.file_map.values() for ep_id in ids)
         widened = {
             name: None if info is None else widen_range_key(name, info, target.index)
             for name, info in batch.parsed.items()
         }
-        # The readings and every pass see the widened parses.
+        # The parsed episodes and every pass see the widened parses.
         parsed_by_name = {name: resolve_parse(widened.get(name), target) for name in batch.all_names}
         torrent = TorrentNames.of(batch, target, parsed_by_name)
         names_to_place = frozenset(batch.new_names)
@@ -331,11 +342,12 @@ class PlacerState:
         return None if info is None or spans_multiple(info, self.target) else info
 
     def parsed_by_title_number(self, file: TorrentFile) -> bool:
-        """Whether Sonarr counted the file by its own title's number (`NameParts.episode_title_number`) and nothing confirms it.
+        """Whether Sonarr numbered the file by its own title's number and nothing confirms it.
 
-        Only a parse whose every number is that count is held. The count stands beside a spelled-out key, behind
-        words too few to be a title (`spells_title`) or that name an episode, when they nearly name the one episode it
-        reads as (`EpisodeTitles.near_matches`), or, read as no episode, when it is an episode's absolute number.
+        The title's number is `NameParts.episode_title_number`. Only a parse whose every number is that number
+        counts. The number stands beside a spelled-out season and episode, behind words too few to be a title
+        (`spells_title`) or that name an episode, when they nearly name the one episode it parses as
+        (`EpisodeTitles.near_matches`), or, parsed as no episode, when it is an episode's absolute number.
         """
 
         name_parts = file.name_parts
@@ -352,14 +364,17 @@ class PlacerState:
         return name_parts.episode_title_number not in self.index.id_by_absolute
 
     def _exact_order(self) -> list[TorrentFile]:
-        """The unplaced files in the exact pass's order: `ParsedEpisodes.rank`, then the higher `vN`, then batch order."""
+        """The unjudged files in the exact pass's order.
+
+        The order is `ParsedEpisodes.rank`, then the higher `vN`, then batch order.
+        """
 
         return sorted(self.unjudged_files(), key=lambda f: (f.parsed_episodes.rank, -f.name_parts.version))
 
     def exact_pass_placements(self) -> dict[TorrentFile, tuple[int, ...]]:
-        """The files the exact pass places as the readings stand, in its order, each with its ids.
+        """The files the exact pass places as the parsed episodes stand, in its order, each with its ids.
 
-        A file is passed over when one of its ids is taken, by an earlier pick too, or when it is a runner-up for one.
+        A file is passed over when one of its ids is used, by an earlier pick too, or when it is next in line for one.
         """
 
         used = set(self.used)
@@ -373,7 +388,7 @@ class PlacerState:
 
     @property
     def has_episode_index(self) -> bool:
-        """Whether the series map is non-empty. With an empty map, every verdict that needs it is refused."""
+        """Whether the episode index is non-empty. With an empty index, no verdict that needs it is given."""
 
         return bool(self.target.id_by_key)
 
@@ -385,28 +400,28 @@ class PlacerState:
 
     @property
     def nothing_judged(self) -> bool:
-        """Whether nothing has spoken for the batch: `unjudged`, and the scope started with no used ids."""
+        """Whether nothing has judged the batch: `only_extras_judged`, and the target started with no used ids."""
 
         return self.only_extras_judged and not self.target.used
 
     def reject_each(self, files: Iterable[TorrentFile]) -> None:
-        """Reject each file's reading (`TorrentFile.reject`)."""
+        """Reject each file's parsed episodes (`TorrentFile.reject`)."""
 
         for file in files:
             file.reject()
 
     def unused_ids(self) -> list[int]:
-        """The open ids: the scope's nonzero ids minus every id used so far, in scope order."""
+        """The unused ids: the target's nonzero ids minus every id used so far, in target order."""
 
         return [i for i in self.target.episode_ids if i and i not in self.used]
 
     def consecutive_unused(self) -> ConsecutiveEpisodes | None:
-        """The open ids as a run window, else None. It needs at least two open ids.
+        """The unused ids as consecutive episodes, else None. It needs at least two unused ids.
 
         The ids must be consecutive episodes of one season, or else all carry consecutive absolute numbers (a
         special in between, or two seasons' cours). Failing both, specials whose numbers aren't consecutive form
         one when they are every episode of the title and aired in number order (`_whole_window_aired_in_turn`).
-        The ids are sorted by their numbers, never taken in scope order.
+        The ids are sorted by their numbers, never taken in target order.
         """
 
         unused_ids = self.unused_ids()
@@ -432,11 +447,11 @@ class PlacerState:
         return None
 
     def _whole_window_aired_in_turn(self, ids: Sequence[int]) -> bool:
-        """Whether the open ids, in number order, are every episode of the title in the order they aired.
+        """Whether the unused ids, in number order, are every episode of the title in the order they aired.
 
-        None of the scope may be taken, and a scope that carries AniList's episode count must hold that many
+        None of the window may be used, and a window that carries AniList's episode count must hold that many
         episodes: nothing says where in the title's order an episode Sonarr lacks falls. Each episode must have
-        aired after the one before it. Two that share an air date are numbered in no order a release has to count
+        aired after the one before it. Two that share an air date are numbered in no order a release has to number
         them in.
         """
 
@@ -458,7 +473,7 @@ class PlacerState:
         self.used.update(ids)
 
     def place_if_unused(self, file: TorrentFile, ep_id: int, verdict: PlacementVerdict) -> None:
-        """Place the file on the episode, or set it aside as `SKIPPED` when the episode is already used."""
+        """Place the file on the episode, or leave it unplaced as `NO_EPISODE_FOUND` when it is already used."""
 
         if ep_id in self.used:
             self.leave_unplaced(file, PlacementVerdict.NO_EPISODE_FOUND)
@@ -466,9 +481,9 @@ class PlacerState:
             self.place(file, (ep_id,), verdict)
 
     def pair_in_order(self, files: Sequence[TorrentFile], ids: Sequence[int], verdict: PlacementVerdict) -> bool:
-        """Place the files onto the ids pairwise, or none when a file is titled as an episode other than its pair.
+        """Place the files onto the ids in order, or none when one carries the title of an episode other than its pair.
 
-        A refused zip turns the count-based passes off: the count that paired them was wrong.
+        A blocked pairing turns the pairing passes off: the count that paired them was wrong.
         """
 
         pairs = list(zip(files, ids, strict=True))
@@ -480,7 +495,7 @@ class PlacerState:
         return True
 
     def leave_unplaced(self, file: TorrentFile, verdict: PlacementVerdict) -> None:
-        """Record a verdict that carries no ids (held, excluded, or skipped)."""
+        """Record a verdict that carries no ids (waiting on a parse, excluded, or no episode found)."""
 
         file.placement = Placement(file.name, (), verdict)
 
@@ -501,7 +516,7 @@ class PlacerState:
             self.leave_unplaced(file, verdict)
 
     def sequences_among(self, files: Iterable[TorrentFile]) -> list[NumberedSequence]:
-        """The numbered runs among `files`, formed by their release numbers, less the `absolute_disagrees` files."""
+        """The numbered sequences among `files`, formed by their name numbers, less the `absolute_disagrees` files."""
 
         by_prefix: dict[str, dict[int, list[TorrentFile]]] = {}
         for file in files:

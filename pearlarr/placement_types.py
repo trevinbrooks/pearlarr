@@ -1,4 +1,4 @@
-"""Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the scopes."""
+"""Types the placement modules share: the episode index, verdicts, one file's placement, the batch, and the targets."""
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -47,14 +47,14 @@ class EpisodeIndex:
 
     by_id: Mapping[int, SonarrEpisode]
     """Episode id -> episode, in the fetch's (season) order. `list(by_id)` is
-    the scope id list the grab stores on each entry's claim."""
+    the window id list the grab stores on each title's claim."""
 
     id_by_key: Mapping[EpisodeKey, int]
     """`(season, episode)` -> episode id (missing numbers collapse to
-    `SONARR_MISSING_KEY`, first record wins, via `index_episodes_by_key`)."""
+    `SONARR_MISSING_KEY`, first episode wins, via `index_episodes_by_key`)."""
 
     orders: Mapping[str, TvdbOrder] = field(default_factory=dict[str, TvdbOrder])
-    """The series' other TVDB orders, by name, each read onto these episodes. Never the official order."""
+    """The series' other TVDB orders, by name, each read onto these episodes. Never the aired order."""
 
     key_by_id: Mapping[int, EpisodeKey] = field(init=False, repr=False, compare=False)
     """Episode id -> `(season, episode)`."""
@@ -67,7 +67,7 @@ class EpisodeIndex:
     _titles: dict[frozenset[str], EpisodeTitles] = field(
         default_factory=dict[frozenset[str], EpisodeTitles], init=False, repr=False, compare=False
     )
-    """The memo `titles` fills: one `EpisodeTitles` per set of series title words placed under this index."""
+    """The memo `titles` fills: one `EpisodeTitles` per set of series name words placed under this index."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dicts, then wrap read-only.
@@ -88,7 +88,7 @@ class EpisodeIndex:
         )
 
     def titles(self, series_words: frozenset[str]) -> EpisodeTitles:
-        """The episode titles as words beyond the series title's words, built once per word set under this index."""
+        """The episode titles as words beyond the series name words, built once per word set under this index."""
 
         titles = self._titles.get(series_words)
         if titles is None:
@@ -97,7 +97,7 @@ class EpisodeIndex:
 
 
 def episode_index(ep_list: Iterable[SonarrEpisode], ordering: IndexOrders = NO_INDEX_ORDERS) -> EpisodeIndex:
-    """Fold one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
+    """Convert one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
 
     with_ids = [ep for ep in ep_list if ep.id]
     id_by_tvdb = {ep.tvdb_id: ep.id for ep in with_ids if ep.tvdb_id}
@@ -135,19 +135,21 @@ class PlacementVerdict(StrEnum):
     """
 
     EXACT = "exact"
-    """Its own `(season, episode)`, or Sonarr's matched pair, resolved inside the scope."""
+    """Its parsed season and episode, or Sonarr's matched episode, resolved inside the window."""
     SEQUENCE_OVER_PARSE = "release run"
-    """A numbered run's own numbers placed it onto the run window, overriding Sonarr's inconsistent reading."""
+    """A numbered sequence's own numbers placed it onto the consecutive unused episodes, overriding Sonarr's
+    inconsistent parse."""
     ABSOLUTE = "absolute"
-    """Paired with an open id in absolute-number order (the absolute zip)."""
+    """Paired with an unused id in absolute-number order (pairing in absolute order)."""
     SINGLE = "single file"
-    """The only open file, with no episode number, onto the only open id."""
+    """The only candidate file, with no episode number, onto the only unused id."""
     NAME_ORDER = "ordered"
-    """A batch of numberless files no earlier pass touched, paired with the open ids in natural name order."""
+    """A batch of files with no parsed number that no earlier pass touched, paired with the unused ids in natural
+    name order."""
     SEQUENCE = "numbered run"
-    """A `1..N` run among the files Sonarr found no episode for, paired with the run window."""
+    """A `1..N` sequence among the files Sonarr found no episode for, paired with the consecutive unused episodes."""
     TITLE_NAME = "titled"
-    """The numberless file an entry's AniList title names, onto the only open id."""
+    """The file with no parsed number that an AniList name of the title points at, onto the only unused id."""
     EPISODE_TITLE = "episode title"
     """Onto the one episode whose title its name carries, whatever its number said."""
     SIZE_MATCH = "listed size"
@@ -156,49 +158,52 @@ class PlacementVerdict(StrEnum):
     SIZE_OVER_NAME = "listed size over its name"
     """Placed by file size even though the name's number points at a different episode. The caller logs a warning."""
     SPECIAL_ALIAS = "alternate numbering"
-    """A file of a misnumbered specials pack, placed on the special its number's alias points at."""
+    """A file of a batch of misnumbered specials, placed on the special its number's alias points at."""
     OTHER_ORDER = "another TVDB order"
     """Onto the episode its own number names in another TVDB order of the series (DVD, alternate, and so on) that
     explains the torrent's numbers where the aired order fails on them (`placer._orders`)."""
     NUMBERINGS_AGREE = "every numbering agrees"
-    """A file named by number alone that no window placed or refused, placed where its numbers fall once every way
-    the group could have counted them agrees (`numberings`). Given after the windows merge, never by a pass."""
+    """A file named by number alone that no window gave a final verdict, placed where its numbers fall once every
+    way the group could have numbered them agrees (`numberings`). Given after the windows merge, never by a pass."""
     ALIAS_OUTSIDE_WINDOW = "aliased special outside the window"
-    """Not placed here: a file of a misnumbered specials pack whose alias points at a special outside this window.
-    A claim, not a refusal, so the window that holds that special may still place it."""
+    """Not placed here: a file of a batch of misnumbered specials whose alias points at a special outside this
+    window. A provisional verdict, so the window that holds that special may still place it."""
     OUTSIDE_WINDOW = "other slice"
-    """Reads wholly outside the scope, or is titled as an episode outside it and confirmed by its reading, by that
-    reading's rejection while other files hold its episodes, or by no open id being left: not this record's to
+    """Parses wholly outside the window, or carries the title of an episode outside it, confirmed by its parse, by
+    that parse's rejection while its episodes are used, or by no unused id being left: not this pending import's to
     import under its current claims."""
     ANOTHER_TITLES = "another listed title's"
-    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the record, or
-    left for a hand import by such a window with none of the record's claimed windows party to it: not this
-    record's to import or hand-import under its current claims. That title's own grab claims the torrent and places
-    or reports the file, unless the title is in `ignore_anilist_ids`, which is never grabbed for."""
+    """Placed by the window of another title SeaDex lists the torrent under, one with no claim on the pending
+    import, or left for a hand import by such a window with none of the pending import's claimed windows involved
+    in it: not this pending import's to import or hand-import under its current claims. That title's own grab
+    claims the torrent and places or reports the file, unless the title is in `ignore_anilist_ids`, which is never
+    grabbed for."""
     DUPLICATE = "duplicate"
-    """Reads inside the scope onto episodes other files provably hold, or is titled as an episode a version of the
-    same file holds."""
+    """Parses inside the window onto episodes other files are provably placed on, or carries the title of an
+    episode a version of the same file is placed on."""
     EXTRA = "extra"
     """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
     WAITING_ON_PARSE = "held"
-    """A file of the picked release run while a parse is unknown: no other pass may place it, and it is re-checked."""
+    """A file of the sequence the sequence-over-parse pass picked, while a parse is unknown: no other pass may
+    place it, and it is re-checked."""
     MISNUMBERED = "misnumbered"
-    """A file whose own numbers disagree, or whose count no title confirms, that no run places. Or a file of a
-    specials pack whose numbers don't match the windows listing it, when its special aliases can't place it either
-    or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
+    """A file whose own numbers disagree, or whose number no title confirms, that no sequence places. Or a file of
+    a batch of specials whose numbers don't match the titles listing it, when its special aliases can't place it
+    either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
     TITLE_REFUTED = "refuted by its run's titles"
-    """A plain member of a numbered run whose titled members contradict the run's numbers, when nothing else placed
-    it. A claim, not a refusal: another window may still place it. Left for a hand import when none does."""
+    """A plain member of a numbered sequence whose members carrying titles contradict the sequence's numbers, when
+    nothing else placed it. A provisional verdict: another window may still place it. Left for a hand import when
+    none does."""
     OTHER_ORDER_OUTSIDE_WINDOW = "another TVDB order, outside the window"
-    """Not placed here: a misnumbered or refuted file that the TVDB order explaining the torrent reads onto an
-    episode outside this window. A claim, not a refusal, so the window that holds the episode may place it. Left for
+    """Not placed here: a misnumbered or contradicted file that the TVDB order explaining the torrent reads onto an
+    episode outside this window. A provisional verdict, so the window that holds the episode may place it. Left for
     a hand import when none does."""
     ORDER_ONLY = "another TVDB order, not in Sonarr's list"
     """A file whose number the TVDB order explaining the torrent gives to an episode Sonarr doesn't list (one half
     of an episode that order splits in two, say). Not placed under its window, and left for a hand import unless
     another window places it or proves it a duplicate. `Placement.order_only` names the order and the key."""
     NO_EPISODE_FOUND = "skipped"
-    """Nothing placed it and nothing proved it foreign."""
+    """Nothing placed it and nothing proved it outside the window."""
 
     @property
     def placed(self) -> bool:
@@ -208,9 +213,9 @@ class PlacementVerdict(StrEnum):
 
     @property
     def excluded(self) -> bool:
-        """Whether the file isn't this record's to import under its current claims.
+        """Whether the file isn't this pending import's to import under its current claims.
 
-        A later claim's window can still place a foreign file or another listed title's.
+        A later claim's window can still place a file outside the window, or another title's.
         """
 
         row = _KIND[self]
@@ -218,7 +223,7 @@ class PlacementVerdict(StrEnum):
 
     @property
     def final_unplaced(self) -> bool:
-        """Whether the verdict settles the file with no ids: held for a re-ask, or misnumbered for a hand import."""
+        """Whether the verdict is final with no ids: waiting on a parse, or misnumbered for a hand import."""
 
         return isinstance(_KIND[self], _FinalUnplaced)
 
@@ -226,8 +231,8 @@ class PlacementVerdict(StrEnum):
     def left_for_hand_import(self) -> bool:
         """Whether the verdict leaves the file for a hand import.
 
-        Misnumbered, refuted by its run's titles, or read by another TVDB order onto an episode outside the window
-        or one Sonarr doesn't list.
+        Misnumbered, contradicted by its sequence's titles, or read by another TVDB order onto an episode outside the
+        window or one Sonarr doesn't list.
         """
 
         row = _KIND[self]
@@ -235,7 +240,7 @@ class PlacementVerdict(StrEnum):
 
     @property
     def final(self) -> bool:
-        """Whether a window that gives this verdict decides the file: it placed or refused it."""
+        """Whether the verdict is final: placed, or final with no ids (`final_unplaced`)."""
 
         return self.placed or self.final_unplaced
 
@@ -243,7 +248,7 @@ class PlacementVerdict(StrEnum):
     def from_alias(self) -> bool:
         """Whether the special aliases gave the verdict.
 
-        Placed on the aliased special, or claimed for the window that holds it.
+        Placed on the aliased special, or left provisional for the window that holds it.
         """
 
         row = _KIND[self]
@@ -251,19 +256,19 @@ class PlacementVerdict(StrEnum):
 
     @property
     def involves(self) -> bool:
-        """Whether a window giving this verdict is party to the file.
+        """Whether a window giving this verdict is involved in the file.
 
-        It placed or refused the file, left it for a hand import, or claimed it by alias. A window that wrote the file
-        off (another slice's, a duplicate, an extra, a skip) isn't.
+        It gave a final verdict, left the file for a hand import, or gave it `ALIAS_OUTSIDE_WINDOW`. A window that
+        wrote the file off (outside the window, a duplicate, an extra, no episode found) isn't.
         """
 
         return self.final or self.from_alias or self.left_for_hand_import
 
     @property
     def rank(self) -> int:
-        """How strong a claim the verdict is: a file no window decides ends with its highest-ranked claim.
+        """How strong a provisional verdict is: a file no window gives a final verdict ends with its highest-ranked one.
 
-        Read it only on a claim, a verdict a window gives without deciding the file.
+        Read it only on a provisional verdict.
         """
 
         row = _KIND[self]
@@ -282,19 +287,19 @@ class PlacementVerdict(StrEnum):
 
 
 class _Leaves(Enum):
-    """What a verdict that carries no ids means for the record."""
+    """What a verdict that carries no ids means for the pending import."""
 
     EXCLUDED = auto()
-    """The file isn't this record's to import under its current claims."""
+    """The file isn't this pending import's to import under its current claims."""
     HAND_IMPORT = auto()
     """The file is left for a hand import."""
     STAYS = auto()
-    """The file stays with the record as one nothing placed, and the caller warns of it."""
+    """The file stays with the pending import as one nothing placed, and the caller warns of it."""
 
 
 @dataclass(frozen=True, slots=True)
 class _Placed:
-    """The verdict carries ids. A window that gives it decides the file."""
+    """The verdict carries ids, and it is final."""
 
     from_alias: bool = False
     """Whether the special aliases placed it."""
@@ -302,7 +307,7 @@ class _Placed:
 
 @dataclass(frozen=True, slots=True)
 class _FinalUnplaced:
-    """The verdict settles the file with no ids. A window that gives it decides the file."""
+    """The verdict is final and carries no ids."""
 
     leaves: _Leaves
     other_order_may_place: bool = False
@@ -311,13 +316,13 @@ class _FinalUnplaced:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Provisional:
-    """One window's view of a file it neither placed nor refused. A later window may still decide the file."""
+    """One window's view of a file it gave no final verdict. A later window may still give one."""
 
     leaves: _Leaves
     rank: int
-    """A file no window decides ends with its highest-ranked claim."""
+    """A file no window gives a final verdict ends with its highest-ranked provisional one."""
     from_alias: bool = False
-    """Whether the special aliases claimed it for another window."""
+    """Whether the special aliases left it for another window."""
     other_order_may_place: bool = False
     """Whether another TVDB order may still place the file (pass 16)."""
 
@@ -348,12 +353,13 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         PlacementVerdict.NUMBERINGS_AGREE: _Placed(),
         PlacementVerdict.WAITING_ON_PARSE: _FinalUnplaced(_Leaves.STAYS),
         PlacementVerdict.MISNUMBERED: _FinalUnplaced(_Leaves.HAND_IMPORT, other_order_may_place=True),
-        # The claims, weakest first. EXTRA is lowest because it rests on one window's titles. SKIPPED beats FOREIGN
-        # and EXTRA, so a file some window couldn't place is never written off, and ALIASED_ELSEWHERE beats FOREIGN
-        # because the aliases name the file as this series' special. ORDER_ONLY beats SKIPPED, so a file one
-        # window's order reads as no episode of Sonarr's stays a hand import where another window only skipped it,
-        # and a window that proves it a duplicate still wins. OTHER_ORDER_ELSEWHERE and TITLE_REFUTED are highest,
-        # so a file whose numbers a window refused or refuted stays a hand import.
+        # The provisional verdicts, weakest first. EXTRA is lowest because it rests on one window's titles.
+        # NO_EPISODE_FOUND beats OUTSIDE_WINDOW and EXTRA, so a file some window couldn't place is never written off,
+        # and ALIAS_OUTSIDE_WINDOW beats OUTSIDE_WINDOW because the aliases name the file as this series' special.
+        # ORDER_ONLY beats NO_EPISODE_FOUND, so a file one window's order reads as no episode of Sonarr's stays a hand
+        # import where another window found no episode for it, and a window that proves it a duplicate still wins.
+        # OTHER_ORDER_OUTSIDE_WINDOW and TITLE_REFUTED are highest, so a file whose numbers a window rejected or a
+        # title contradicted stays a hand import.
         PlacementVerdict.EXTRA: _Provisional(leaves=_Leaves.EXCLUDED, rank=0),
         PlacementVerdict.OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.EXCLUDED, rank=1, other_order_may_place=True),
         PlacementVerdict.ALIAS_OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.STAYS, rank=2, from_alias=True),
@@ -373,9 +379,9 @@ class Placement:
     """One file's verdict, with its episode ids when placed."""
 
     name: str
-    """The normalized basename."""
+    """The normalized file name."""
     ids: tuple[int, ...]
-    """The episode ids, in claim order (empty unless `verdict.placed`)."""
+    """The episode ids, in the order placed (empty unless `verdict.placed`)."""
     verdict: PlacementVerdict
     """How the file left the passes."""
     order_only: OrderOnlyKey | None = None
@@ -386,14 +392,14 @@ class Placement:
 
 @dataclass(frozen=True, slots=True)
 class BatchPlacements:
-    """The outcome of assigning a torrent's on-disk files to resolved episode ids, one verdict per file."""
+    """The outcome of placing the files in a torrent's folder on resolved episode ids, one verdict per file."""
 
     placements: tuple[Placement, ...]
     """One per name in `PlacementBatch.new_names`, batch order."""
 
     @property
     def placed(self) -> dict[str, tuple[int, ...]]:
-        """Normalized basename -> episode ids for every placed file (each id in the scope, used once)."""
+        """Normalized file name -> episode ids for every placed file (each id in the window, used once)."""
 
         return {p.name: p.ids for p in self.placements if p.verdict.placed}
 
@@ -405,60 +411,61 @@ class BatchPlacements:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files not this record's under its current claims, and how (`PlacementVerdict.excluded`)."""
+        """The files not this pending import's under its current claims, and how (`PlacementVerdict.excluded`)."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
     @property
     def hand_import_files(self) -> tuple[str, ...]:
-        """The skipped files left for a hand import (`PlacementVerdict.left_for_hand_import`)."""
+        """The unplaced files left for a hand import (`PlacementVerdict.left_for_hand_import`)."""
 
         return tuple(p.name for p in self.placements if p.verdict.left_for_hand_import)
 
     @property
     def order_only(self) -> dict[str, OrderOnlyKey]:
-        """Normalized basename -> the order and key that read it, for every `ORDER_ONLY` file."""
+        """Normalized file name -> the order and key that read it, for every `ORDER_ONLY` file."""
 
         return {p.name: p.order_only for p in self.placements if p.order_only is not None}
 
 
 NO_FILE_MAP: FileEpisodeMap = MappingProxyType({})
-"""No stored map."""
+"""No file map."""
 
 
 @dataclass(frozen=True, slots=True)
 class PlacementBatch:
-    """A torrent's files to place, with the parses of the WHOLE torrent and its stored map.
+    """A torrent's files to place, with the parses of the WHOLE torrent and its file map.
 
     `parsed` may cover MORE files than `to_place`. Every parsed file is read as evidence, placed or not, and a name
     `file_map` holds is never placed, in `to_place` or not.
     """
 
     to_place: Sequence[str]
-    """Normalized basenames in SeaDex order (the order only fixes deterministic output), held as a tuple."""
+    """Normalized file names in SeaDex order (the order only fixes deterministic output), kept as a tuple."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable)."""
 
     file_map: FileEpisodeMap = NO_FILE_MAP
-    """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
-    the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
+    """The pending import's file map, normalized name -> episode ids, the ids kept as tuples. Its ids count as used
+    wherever the target admits them, and the misnumbered specials pass checks each member in the file map sits on its
+    aliased special."""
 
     new_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
-    """The distinct names to place, batch order: `to_place` less the names the map holds."""
+    """The distinct names to place, batch order: `to_place` less the names in the file map."""
 
     all_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
-    """The distinct names the placer reads: the names to place, then the rest of `parsed` (seeded, gone). A mapped
-    name with no parse entry is left out."""
+    """The distinct names the placer reads: the names to place, then the rest of `parsed` (file map, gone). A name
+    in the file map with no parse entry is left out."""
 
     all_parses_known: bool = field(init=False, repr=False, compare=False)
-    """Every parse came from Sonarr this run: no miss (None). Seeded and gone files are parsed by name too, so a miss
-    on any of them counts, as does a file to place that has no parse entry."""
+    """Every parse came from Sonarr this run: no miss (None). File map and gone files are parsed by name too, so a
+    miss on any of them counts, as does a file to place that has no parse entry."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's collections, then wrap read-only. The ids are tupled whatever the type says: a
         # cast or an untyped script can hand lists, and a list never equals `(ep_id,)` in `_aliased_specials`, so a
-        # seed on its aliased special would read as off it and the misnumbered pack would lose its aliases.
+        # file map file on its aliased special would read as off it and the misnumbered batch would lose its aliases.
         object.__setattr__(self, "to_place", tuple(self.to_place))
         object.__setattr__(self, "parsed", MappingProxyType(dict(self.parsed)))
         object.__setattr__(
@@ -478,17 +485,17 @@ episode. A file with that exact size is that episode."""
 
 @dataclass(frozen=True, slots=True)
 class TorrentListing:
-    """The windows of the SeaDex entries that list one torrent, and those entries' special aliases."""
+    """The windows of the titles SeaDex lists one torrent under, and those titles' special aliases."""
 
     windows: tuple[TitleWindow, ...] = ()
-    """One window per listing entry, in AniList id order."""
+    """One window per title in the listing, in AniList id order."""
 
     special_aliases: SpecialAliases = NO_ALIASES
-    """The union of those entries' special aliases, minus any TMDB number two entries pair differently. Empty when
-    the entries pair against different TMDB shows."""
+    """The union of those titles' special aliases, minus any TMDB number two titles pair differently. Empty when
+    the titles pair against different TMDB shows."""
 
     ids: frozenset[int] = field(init=False, repr=False, compare=False)
-    """Union of the entries' episode ids."""
+    """Union of the titles' episode ids."""
 
     def __post_init__(self) -> None:
         # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
@@ -503,13 +510,13 @@ class TorrentListing:
 
 
 EMPTY_LISTING = TorrentListing()
-"""A torrent no entry lists. Listings match by infohash, so a url without one always gets this."""
+"""A torrent no entry lists. Listings match by infohash, so a release without one always gets this."""
 
 type SizeMatches = Mapping[str, int]
 """Normalized file name -> the episode id its size matched."""
 
 NO_SIZE_MATCHES: SizeMatches = MappingProxyType({})
-"""No files placed by size: no size matched, or the size identities weren't read."""
+"""No files placed by size: no size matched, or the episodes by size weren't read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,8 +524,9 @@ class SeadexEvidence:
     """What SeaDex's listings for the series tell the placer about one torrent, as this run read them."""
 
     listing: TorrentListing = EMPTY_LISTING
-    """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
-    can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
+    """The torrent's listing and its titles' special aliases: the ids a numbered batch of specials is checked
+    against, and the aliases that can place a misnumbered one. Empty when no entry lists the torrent, which turns the
+    misnumbered specials check off."""
 
     size_matches: SizeMatches = NO_SIZE_MATCHES
     """File name -> episode id, for the files whose size matched an episode (see `EpisodeBySize`)."""
@@ -529,61 +537,62 @@ class SeadexEvidence:
 
     @property
     def ids(self) -> frozenset[int]:
-        """Every episode id covered by the entries that list this torrent, this entry included."""
+        """Every episode id of the titles SeaDex lists this torrent under, this title included."""
 
         return self.listing.ids
 
     @property
     def special_aliases(self) -> SpecialAliases:
-        """The listing's TMDB -> TVDB specials numbers (`TorrentListing.special_aliases`)."""
+        """The TMDB -> TVDB specials numbers of the listing's titles (`TorrentListing.special_aliases`)."""
 
         return self.listing.special_aliases
 
 
 NO_EVIDENCE = SeadexEvidence()
-"""Nothing from the listings: no ids and no size matches, so the size placement and the specials pack check do
-nothing."""
+"""Nothing from the listings: no ids and no size matches, so the size placement and the misnumbered specials check
+do nothing."""
 
 
 @dataclass(frozen=True, slots=True)
 class PlacementTarget:
-    """The episode set a placement batch may assign into.
+    """The window's episodes a placement batch may place onto, plus what the placer needs to place onto them.
 
-    `resolved` is the FULL id list and `used` the ids already held: an earlier window's, plus the stored map's the
-    placer adds (`PlacerState.target`). The two stay separate so a fully seeded record still enforces its scope, while an
-    EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places a name's own keys against the
-    whole series map instead of placing nothing forever.
+    `episode_ids` is the FULL id list and `used` the ids already used: an earlier window's, plus the file map's the
+    placer adds (`PlacerState.target`). The two stay separate so a pending import whose file map covers every id
+    still keeps to its window, while an EMPTY `episode_ids` means no window at all (`no_window`): the exact pass
+    then places a name's parsed season and episode against the whole episode index instead of placing nothing
+    forever.
     """
 
     episode_ids: Sequence[int]
-    """The entry's resolved episode ids, season order, seeded included, held as a tuple. A stray
-    zero id still makes the scope real. It is never placed."""
+    """The title's resolved episode ids, season order, the file map's included, kept as a tuple. A zero id still
+    makes the window real. It is never placed."""
 
     index: EpisodeIndex
     """ALL the series' episodes: the `(season, episode)` map every key resolves
-    through (membership in `resolved` does the scoping, so an exact parse
-    outside our entry is rejected), plus the titles and absolute numbers the
-    run evidence reads."""
+    through (membership in `episode_ids` limits it to the window, so an exact parse
+    outside our title is rejected), plus the titles and absolute numbers the
+    episode title matches read."""
 
     used: frozenset[int] = frozenset()
-    """Ids already held, by an earlier window or the stored map. Never placed again."""
+    """Ids already used, by an earlier window or the file map. Never placed again."""
 
     title_names: TitleNames = field(default_factory=TitleNames)
     """The series and AniList titles. Episode titles and extras words are read against them, and they break
-    ties when several runs or numberless files could fill the open ids."""
+    ties when several sequences or files with no parsed number could be placed on the unused ids."""
 
     seadex: SeadexEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent this run."""
 
     earlier: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
     """Normalized name -> the ids an earlier window placed it on, whether or not this window admits them (`after`).
-    The other-orders pass reads them as settled."""
+    The other-orders pass reads them as already placed."""
 
     episode_count: int | None = None
     """AniList's episode count for the title, None when the window carries none (`TitleWindow.episode_count`)."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
-    """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
+    """The resolved ids that can be placed. A zero id keeps the window real but is never one."""
 
     def __post_init__(self) -> None:
         # Detached from the caller's list: `real_ids` is derived from the list once.
@@ -599,33 +608,33 @@ class PlacementTarget:
 
     @property
     def no_window(self) -> bool:
-        """No resolved set to scope against at all (never just fully seeded)."""
+        """No window at all: no resolved ids (never just every id in the file map)."""
 
         return not self.episode_ids
 
     def admits(self, ep_id: int) -> bool:
-        """Whether a file may be placed on the episode: one of the resolved set, or any when unscoped."""
+        """Whether a file may be placed on the episode: one of the resolved set, or any with no window."""
 
         return self.no_window or ep_id in self.real_ids
 
     def using(self, ids: Iterable[int]) -> Self:
-        """The scope with `ids` used too: the ones it admits (every one when unscoped)."""
+        """The target with `ids` used too: the ones it admits (every one with no window)."""
 
         return replace(self, used=self.used | frozenset(i for i in ids if self.admits(i)))
 
     def after(self, earlier: FileEpisodeMap) -> Self:
-        """The scope of a window placed after others: `earlier` are their placements, the ids used where admitted."""
+        """The target of a window placed after others: `earlier` are their placements, the ids used where admitted."""
 
         return replace(self.using(ep_id for ids in earlier.values() for ep_id in ids), earlier=earlier)
 
     @property
     def specials_window(self) -> bool:
-        """A scoped window of specials only, the one shape a listing judges."""
+        """A window of specials only, the one shape a listing judges."""
 
         return not self.no_window and all_specials(self.index, self.real_ids)
 
     def specials_listing(self) -> frozenset[int] | None:
-        """The listing a numbered pack is judged by: read, all specials, covering the window. None stands it down."""
+        """The listing a numbered batch of specials is judged by: read, all specials, covering the window. Else None."""
 
         listed = self.seadex.ids
         if not (self.specials_window and listed and self.real_ids <= listed):
@@ -635,25 +644,25 @@ class PlacementTarget:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GrabbingTitle:
-    """What one entry's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
+    """What one title's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
 
     al_id: int
-    """The entry claiming the placement: a stored claim of its own is replaced by the fresh window."""
+    """The title claiming the placement: a stored claim of its own is replaced by the fresh window."""
 
     series_id: int
-    """The Sonarr series the entry's episodes belong to."""
+    """The Sonarr series the title's episodes belong to."""
 
     title_index: EpisodeIndex
-    """The entry's episodes: the resolved set, and what the slice and preowned reads cover."""
+    """The title's episodes: the resolved set, and what the window and preowned lookups cover."""
 
     series_index: EpisodeIndex
     """The WHOLE series (empty when the series list could not be read, which places nothing)."""
 
     title_names: TitleNames
-    """The series and AniList titles the placement breaks ties by, persisted onto every seed."""
+    """The series and AniList titles the placement breaks ties by, stored on every pending import update."""
 
     episode_count: int | None
-    """AniList's episode count for the entry (`SonarrEpisodes.episode_count`), None when AniList gives none."""
+    """AniList's episode count for the title (`SonarrEpisodes.episode_count`), None when AniList gives none."""
 
     alternate_titles: tuple[str, ...]
     """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
@@ -662,7 +671,7 @@ class GrabbingTitle:
     """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.aired_order`)."""
 
     window: TitleWindow = field(init=False, repr=False, compare=False)
-    """The entry's own window, built as a listing builds an entry's (`TitleWindow.of`)."""
+    """The title's own window, built as a listing builds each title's (`TitleWindow.of`)."""
 
     def __post_init__(self) -> None:
         window = TitleWindow.of(
@@ -676,10 +685,10 @@ class GrabbingTitle:
 
     @property
     def can_place(self) -> bool:
-        """Whether there is an entry index and a served series map to place against.
+        """Whether there is a title index and a fetched series index to place against.
 
-        An empty entry index must not pass as "no scope" (which places against the whole series map), and an
-        unread map places nothing: a grab-time verdict is final.
+        An empty title index must not pass as "no window" (which places against the whole series index), and an
+        unread series index places nothing: a grab-time verdict is final.
         """
 
         return bool(self.title_index.by_id and self.series_index.id_by_key)
@@ -687,13 +696,13 @@ class GrabbingTitle:
 
 @dataclass(frozen=True, slots=True)
 class FetchedListings:
-    """What this run read from one series' SeaDex entries: listings by infohash, plus the size identities."""
+    """What this run read from one series' SeaDex entries: listings by infohash, plus the episodes by size."""
 
     by_hash: Mapping[str, TorrentListing | None]
     """Infohash -> listing, or None if an entry listing that torrent couldn't be read."""
 
     episode_by_size: EpisodeBySize | None
-    """The series' size identities, minus any size that two entries give to different episodes. None if any
+    """The series' episodes by size, minus any size that two entries give to different episodes. None if any
     entry's episodes couldn't be read, since that entry's sizes would be missing."""
 
     def __post_init__(self) -> None:

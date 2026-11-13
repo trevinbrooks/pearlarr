@@ -1,5 +1,5 @@
 # pyright: strict
-"""The `(season, episode) -> id` index, a batch's copies and parse hinge, and the target scope's own rules."""
+"""The `(season, episode) -> id` index, a batch's copies and parse hinge, and the target's own rules."""
 
 from collections.abc import MutableMapping
 from typing import cast
@@ -26,12 +26,12 @@ from .builders import parsed_info, series_index, sonarr_ep, title_window, torren
 
 
 class TestEpisodeIndex:
-    """`episode_index` folds an episode fetch into the import family's three facets.
+    """`episode_index` converts an episode fetch into the import family's three facets.
 
     `id_by_key` maps `(season, episode)` to the first episode id, missing numbers
-    folding to a sentinel key (no collision with real pairs). Zero-id episodes are
+    collapsing to a sentinel key (no collision with real pairs). Zero-id episodes are
     dropped from every facet before keying. `by_id` keeps the fetch order: the
-    resolved set the add flow persists rides `list(by_id)`. `orders` reads each
+    resolved set the add flow persists is `list(by_id)`. `orders` reads each
     other TVDB order onto the same ids through the episodes' TVDB ids. The
     lookups (`key_by_id` and the rest) derive from the facets.
     """
@@ -60,7 +60,7 @@ class TestEpisodeIndex:
         assert episode_index(eps).id_by_key == {(1, 1): 7}
 
     def test_zero_id_dropped_before_keying(self) -> None:
-        # A real-id twin behind a zero-id record must still win its key.
+        # A real-id twin behind a zero-id episode must still win its key.
         eps = [sonarr_ep(1, 2, ep_id=0, episode_file_id=0), sonarr_ep(1, 2, ep_id=9, episode_file_id=0)]
         index = episode_index(eps)
         assert index.id_by_key == {(1, 2): 9}
@@ -146,7 +146,7 @@ class TestPlacementBatchParsesKnown:
         assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
 
     def test_served_parses_are_known(self) -> None:
-        # A numberless answer from Sonarr is a real answer: known, even though it places nothing.
+        # An answer from Sonarr with no number is a real answer: known, even though it places nothing.
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": parsed_info(),
             "b.mkv": parsed_info(season=1, episodes=(1,)),
@@ -154,12 +154,12 @@ class TestPlacementBatchParsesKnown:
         assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is True
 
     def test_an_empty_batch_is_known(self) -> None:
-        # A fully seeded record parses nothing, and nothing is missing.
+        # A pending import with every file in its file map parses nothing, and nothing is missing.
         assert PlacementBatch([], {}).all_parses_known is True
 
 
 class TestPlacementBatchCopies:
-    """The batch copies the caller's names, parses and map, the map's ids as tuples, and wraps them read-only."""
+    """The batch copies the caller's names, parses and file map, its ids as tuples, and wraps them read-only."""
 
     def test_the_fields_are_copied_and_read_only(self) -> None:
         # The ids go in as a list through a cast, as an untyped caller can hand one: the `(11,)` below is the
@@ -185,7 +185,7 @@ class TestPlacementBatchCopies:
 
 
 class TestPlacementBatchNames:
-    """`names` is what the placer places: the batch's distinct names less the ones its map holds."""
+    """`new_names` is what the placer places: the batch's distinct names less the ones in its file map."""
 
     def test_a_mapped_name_is_never_placed(self) -> None:
         batch = PlacementBatch(["a.mkv", "b.mkv"], {}, {"a.mkv": (1,)})
@@ -194,7 +194,7 @@ class TestPlacementBatchNames:
 
 
 class TestTargetScope:
-    """The scope admits its resolved ids, or any when unscoped, and `using` takes only the ids it admits."""
+    """The target admits its resolved ids, or any with no window, and `using` takes only the ids it admits."""
 
     _SERIES = series_index({EpisodeKey(1, 1): 11, EpisodeKey(1, 2): 12, EpisodeKey(2, 1): 21})
 
@@ -226,7 +226,7 @@ class TestTargetScope:
 
         assert later.used == {11}
         assert dict(later.earlier) == {"a.mkv": (11,), "b.mkv": (21,)}
-        # Kept through the stored map's ids the placer adds next.
+        # Kept through the file map's ids the placer adds next.
         assert later.using([12]).earlier == later.earlier
 
 
@@ -248,7 +248,7 @@ class TestTorrentListing:
 
 
 class TestListingEvidence:
-    """The identified names are copied from the caller's map and wrapped read-only."""
+    """The size-matched names are copied from the caller's map and wrapped read-only."""
 
     def test_the_identified_names_are_copied_and_read_only(self) -> None:
         size_matches = {"a.mkv": 11}
@@ -268,7 +268,7 @@ class TestListingEvidence:
 
 
 class TestPlacementVerdict:
-    """A misnumbered file is neither placed nor excluded: it stays a leftover the summary lists for a hand import."""
+    """A misnumbered file is neither placed nor excluded: it stays unplaced, listed in the summary for a hand import."""
 
     def test_misnumbered_is_an_open_leftover(self) -> None:
         verdict = PlacementVerdict.MISNUMBERED
@@ -278,7 +278,7 @@ class TestPlacementVerdict:
         assert verdict.final_unplaced
 
     def test_refused_is_held_or_misnumbered(self) -> None:
-        # Both decide a name without ids: no later window may place it by its numbers.
+        # Both give a name a final verdict without ids: no later window may place it by its numbers.
         assert {v for v in PlacementVerdict if v.final_unplaced} == {
             PlacementVerdict.WAITING_ON_PARSE,
             PlacementVerdict.MISNUMBERED,
@@ -303,7 +303,8 @@ class TestPlacementVerdict:
         assert not verdict.left_for_hand_import
 
     def test_another_listed_titles_file_is_excluded_and_no_hand_import(self) -> None:
-        # It waits for the other title's own grab to claim the torrent, so this record skips it and it's no hand import.
+        # It waits for the other title's own grab to claim the torrent, so this pending import leaves it out and it's
+        # no hand import.
         verdict = PlacementVerdict.ANOTHER_TITLES
 
         assert verdict.excluded
@@ -311,14 +312,15 @@ class TestPlacementVerdict:
         assert not verdict.left_for_hand_import
 
     def test_a_size_match_or_a_special_alias_places(self) -> None:
-        # A file placed by size, or through a specials pack's aliases, carries ids like any other placement.
+        # A file placed by size, or through the aliases of a batch of specials, carries ids like any other placement.
         for verdict in (PlacementVerdict.SIZE_MATCH, PlacementVerdict.SIZE_OVER_NAME, PlacementVerdict.SPECIAL_ALIAS):
             assert verdict.placed
             assert not verdict.excluded
             assert not verdict.final_unplaced
 
     def test_agreeing_numberings_place(self) -> None:
-        # The fill after the windows merge carries ids like a pass's placement, so the record imports it.
+        # What the numbering step places after the windows merge carries ids like a pass's placement, so the pending
+        # import imports it.
         verdict = PlacementVerdict.NUMBERINGS_AGREE
 
         assert verdict.placed
@@ -337,11 +339,11 @@ class TestPlacementVerdict:
             PlacementVerdict.TITLE_REFUTED,
         }
     )
-    """The verdicts a window gives without deciding the file."""
+    """The verdicts a window gives that aren't final."""
 
     def test_every_verdict_decides_a_file_or_is_a_claim_but_another_listed_titles(self) -> None:
         # Every property reads the verdict's kind, so a verdict with none raises here. No window gives
-        # LISTED_ELSEWHERE: it is set once the windows merge.
+        # ANOTHER_TITLES: it is set once the windows merge.
         undecided = {v for v in PlacementVerdict if not v.final}
 
         assert undecided == {*self._CLAIMS, PlacementVerdict.ANOTHER_TITLES}
@@ -350,20 +352,22 @@ class TestPlacementVerdict:
         assert len({v.rank for v in self._CLAIMS}) == len(self._CLAIMS)
 
     def test_the_numbering_fill_may_place_only_a_skipped_or_foreign_file(self) -> None:
-        # `WindowedPlacements.with_proposals` fills a merged verdict left open that is no hand import.
+        # `WindowedPlacements.with_proposals` places a file whose merged verdict is `other_order_may_place` and no
+        # hand import.
         gaps = {v for v in PlacementVerdict if v.other_order_may_place and not v.left_for_hand_import}
 
         assert gaps == {PlacementVerdict.NO_EPISODE_FOUND, PlacementVerdict.OUTSIDE_WINDOW}
 
     def test_only_a_misnumbered_or_refuted_file_is_left_open_for_a_hand_import(self) -> None:
-        # Pass 16 claims only such a file for another window: a count or a title in the names refused it.
+        # Pass 16 gives only such a file a provisional verdict for another window: a number or a title in the names
+        # left it for a hand import.
         final_unplaced_by_name = {v for v in PlacementVerdict if v.other_order_may_place and v.left_for_hand_import}
 
         assert final_unplaced_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
 
 
 class TestAllSpecials:
-    """Whether every id is one of the series' specials: the shape a listing must have to judge a specials pack."""
+    """Whether every id is one of the series' specials: the shape a listing must have to judge a batch of specials."""
 
     _SERIES = series_index({EpisodeKey(0, 1): 501, EpisodeKey(0, 2): 502, EpisodeKey(1, 1): 11})
 
@@ -381,7 +385,7 @@ class TestAllSpecials:
 
 
 class TestSpecialsListing:
-    """The listing a numbered pack is judged by: read, all specials, covering a scoped window of specials."""
+    """The listing a numbered batch of specials is judged by: read, all specials, covering a window of specials."""
 
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 

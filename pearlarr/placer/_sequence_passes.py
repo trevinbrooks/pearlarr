@@ -1,4 +1,4 @@
-"""The passes that read, place, or set aside a numbered run whole by its own release numbers.
+"""The passes that read, place, or leave unplaced a numbered sequence whole by its own name numbers.
 
 They are passes 5, 6, 8, and 14 of the list in `_passes`.
 """
@@ -14,45 +14,48 @@ from ..parsed_episodes import ParsedEpisodes, names_several_episodes
 from ..placement_types import PlacementVerdict
 from ..releases import EpisodeKey
 
-# Episode titles pick a run, or refuse one, only when at least this many members carry them.
+# Episode titles select a sequence, or contradict one, only when at least this many members carry them.
 MIN_TITLE_HITS = 2
 
 
 @dataclass(frozen=True, slots=True)
 class EpisodeTitleMatches:
-    """How many run members' tails start with only window titles, and how many with only titles outside it."""
+    """How many sequence members carry only titles of the unused episodes, and how many only other titles.
+
+    A member carries the titles its words after the number start with.
+    """
 
     in_window: int
     outside_window: int
 
     @property
     def selects(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
+        """Whether at least `MIN_TITLE_HITS` members carry unused episodes' titles, and more than carry other titles."""
 
         return self.in_window >= MIN_TITLE_HITS and self.in_window > self.outside_window
 
     @property
     def contradicts(self) -> bool:
-        """Whether at least `MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
+        """Whether at least `MIN_TITLE_HITS` members carry other titles and none carries an unused episode's title."""
 
         return self.outside_window >= MIN_TITLE_HITS and not self.in_window
 
 
 @dataclass(frozen=True, slots=True)
 class _SeasonFit:
-    """The season a `1..N` run matches, and whether the specials season matches it just as well (a tie)."""
+    """The season a `1..N` sequence matches, and whether the specials season fits it just as well."""
 
     season: int
     fits_specials_too: bool
 
 
 def pass_sequence_as_matched_season(state: PlacerState) -> None:
-    """Read a `1..N` run Sonarr matched into one N-episode season as that season's episodes 1 to N (`_season_fit`).
+    """Read a `1..N` sequence Sonarr matched into one N-episode season as that season's episodes 1 to N (`_season_fit`).
 
-    Only a run without own keys qualifies, and Sonarr shifted some of its members onto specials. In a tie (as many
-    members matched onto an N-episode specials season), the readings are rejected and each file records both
-    candidates in `ParsedEpisodes.either_ids`: the release-run pass can still place them, and the episode-title pass only onto
-    one of the two.
+    Only a sequence without a parsed season and episode qualifies, and Sonarr shifted some of its members onto
+    specials. When it fits the specials equally (as many members matched onto an N-episode specials season), the
+    parsed episodes are rejected and each file records both candidates in `ParsedEpisodes.either_ids`: the
+    sequence-over-parse pass can still place them, and the episode-title pass only onto one of the two.
     """
 
     if not state.has_episode_index:
@@ -68,11 +71,11 @@ def pass_sequence_as_matched_season(state: PlacerState) -> None:
 
 
 def _season_fit(state: PlacerState, sequence: NumberedSequence) -> _SeasonFit | None:
-    """The season a `1..N` run without own keys belongs to: Sonarr matched it into one season of exactly N episodes.
+    """The season a `1..N` sequence without a parsed season and episode belongs to.
 
-    Every member needs a parse and at most one resolved id. At least one member must be matched onto the
-    specials, but no more than into the season. It is a tie when as many went to each and the specials season
-    also has N episodes. None for any other shape.
+    Sonarr matched it into one season of exactly N episodes. Every member needs a parse and at most one resolved id.
+    At least one member must be matched onto the specials, but no more than into the season. It fits the specials
+    equally when as many went to each and the specials season also has N episodes. None for any other shape.
     """
 
     width = len(sequence.members)
@@ -101,7 +104,7 @@ def _season_fit(state: PlacerState, sequence: NumberedSequence) -> _SeasonFit | 
 
 
 def _set_season_or_specials(state: PlacerState, sequence: NumberedSequence, season: int) -> None:
-    """Reject the run's readings and record each file's episode under the season's and the specials' numbering."""
+    """Reject the parsed episodes and record each file's episode under the season's and the specials' numbering."""
 
     for file in sequence.all_versions:
         keys = (EpisodeKey(season, file.name_number), EpisodeKey(0, file.name_number))
@@ -110,7 +113,7 @@ def _set_season_or_specials(state: PlacerState, sequence: NumberedSequence, seas
 
 
 def _set_season_episodes(state: PlacerState, sequence: NumberedSequence, season: int) -> None:
-    """Read each run file as the season's episode of its release number, rejected where its title disagrees."""
+    """Read each sequence file as the season's episode of its name number, rejected where its title contradicts it."""
 
     for file in sequence.all_versions:
         ep_id = state.target.id_by_key.get(EpisodeKey(season, file.name_number))
@@ -129,28 +132,28 @@ def _set_season_episodes(state: PlacerState, sequence: NumberedSequence, season:
 
 @dataclass(frozen=True, slots=True)
 class _ListedSpecials:
-    """A misnumbered specials pack and the listed specials it is as wide as."""
+    """A batch of misnumbered specials and the listed specials it is as wide as."""
 
     sequence: NumberedSequence
     listed: frozenset[int]
 
 
 def pass_misnumbered_specials(state: PlacerState) -> None:
-    """Place a misnumbered specials pack through the listing's special aliases, or refuse it whole.
+    """Place a batch of misnumbered specials through the special aliases, or leave it all `MISNUMBERED`.
 
-    The pack is the batch as one run of specials, one file per number, as wide as the listing, with a number that
-    is no listed special (`_misnumbered_specials`). `_sole_specials_sequence` lists what else turns the pass off. The pack is
-    numbered some other way (an older TVDB state, or TMDB's order), and its own numbers would put some files on the
-    wrong specials, so only the aliases can place it. When the listing's `special_aliases` map its numbers one to
-    one onto the listed specials, and no title, size match, or seeded file puts a member anywhere else
-    (`_aliased_specials`), each file goes on its aliased special (`SPECIAL_ALIAS`, or `SKIPPED` when taken) and a
-    superseded version is `DUPLICATE`. A file whose special is outside the window is `ALIAS_OUTSIDE_WINDOW`, a claim
-    `window_placement` settles across the windows.
+    The batch is one sequence of specials, one file per number, as wide as the listing, with a number that is no
+    listed special (`_misnumbered_specials`). `_sole_specials_sequence` lists what else turns the pass off. The batch
+    is numbered some other way (an older TVDB state, or TMDB's order), and its own numbers would put some files on the
+    wrong specials, so only the aliases can place it. When the `special_aliases` map its numbers one to one onto the
+    listed specials, and no title, size match, or file in the file map puts a member anywhere else
+    (`_aliased_specials`), each file goes on its aliased special (`SPECIAL_ALIAS`, or `NO_EPISODE_FOUND` when used)
+    and a superseded version is `DUPLICATE`. A file whose special is outside the window is `ALIAS_OUTSIDE_WINDOW`, a
+    provisional verdict `window_placement` resolves across the windows.
 
-    When the aliases can't place it, every file of the run is `MISNUMBERED` for a hand import and passes 7 to 15
-    place none of it, unless some of the window's ids are already used (by the stored record's map or an earlier
-    window). Then the pass stands down and the later passes take the pack by its numbers, so on the window holding
-    a seed off its aliased special the rest of the pack places by its numbers too.
+    When the aliases can't place it, every file of the sequence is `MISNUMBERED` for a hand import and passes 7 to 15
+    place none of it, unless some of the window's ids are already used (by the pending import's file map or an
+    earlier window). Then the pass stands down and the later passes take the batch by its numbers, so on a window
+    where the file map places a file off its aliased special the rest of the batch places by its numbers too.
     """
 
     misnumbered = _misnumbered_specials(state)
@@ -171,15 +174,15 @@ def pass_misnumbered_specials(state: PlacerState) -> None:
 
 
 def _unjudged_of(files: Iterable[TorrentFile]) -> list[TorrentFile]:
-    """The files still to place, in the order given. Seeded, gone, and already judged ones drop out."""
+    """The files still to place, in the order given. File map, gone, and already judged ones drop out."""
 
     return [file for file in files if file.unjudged]
 
 
 def _aliased_specials(state: PlacerState, misnumbered: _ListedSpecials) -> dict[TorrentFile, int] | None:
-    """Each member -> its aliased special, or None if the aliases don't map the pack one to one onto the listing.
+    """Each member -> its aliased special, or None if the aliases don't map the batch one to one onto the listing.
 
-    Also None when a member's title, size match, or seed puts it anywhere but its aliased special.
+    Also None when a member's title, size match, or file map ids put it anywhere but its aliased special.
     """
 
     listing = state.target.seadex
@@ -200,10 +203,10 @@ def _aliased_specials(state: PlacerState, misnumbered: _ListedSpecials) -> dict[
 
 
 def _misnumbered_specials(state: PlacerState) -> _ListedSpecials | None:
-    """The batch as one listing-wide specials pack with a number that isn't a listed special, else None.
+    """The batch as one listing-wide batch of specials with a number that isn't a listed special, else None.
 
-    For specials the curated listing (`PlacementTarget.seadex`) beats the file names. In a regular season, a number
-    outside the listing leaves the file foreign as usual.
+    For specials the curated listing (`PlacementTarget.specials_listing`) beats the file names. In a regular season,
+    a number outside the listing leaves the file outside the window as usual.
     """
 
     listed = state.target.specials_listing()
@@ -215,10 +218,10 @@ def _misnumbered_specials(state: PlacerState) -> _ListedSpecials | None:
 
 
 def _sole_specials_sequence(state: PlacerState, width: int) -> NumberedSequence | None:
-    """The batch as one run of `width` distinct `S00Exx` names, each read by Sonarr as its own number's special.
+    """The batch as one sequence of `width` distinct `S00Exx` names, each parsed by Sonarr as its own number's special.
 
-    Seeded and gone files count as members. None if a parse is unknown, the count-based passes are off, a file
-    other than an extra already has a verdict, the batch holds another run or a file outside the run, a number
+    File map and gone files count as members. None if a parse is unknown, the pairing passes are off, a file other
+    than an extra already has a verdict, the batch holds another sequence or a file outside the sequence, a number
     repeats or spans several episodes, or every member's title confirms its number.
     """
 
@@ -235,27 +238,27 @@ def _sole_specials_sequence(state: PlacerState, width: int) -> NumberedSequence 
         info = state.single_parse(file)
         if info is None or info.season_number != 0 or info.episode_numbers != (file.name_number,):
             return None
-        # One title vouches for its own file alone: a pack it does not cover whole stays judged by the listing.
+        # One title confirms its own file alone: a batch it does not cover whole stays judged by the listing.
         confirmed += file.confirms(file.parsed_episodes.ids)
     return None if confirmed == len(sequence.all_versions) else sequence
 
 
 class _FitKind(IntEnum):
-    """How well a numbered run fits the run window, best first. The release-run pass ranks candidates by it."""
+    """How well a sequence fits the unused episodes, best first. The sequence-over-parse pass ranks candidates by it."""
 
     ONE_TO_N = 1
-    """Numbered `1..N`, where N is the window's width."""
+    """Numbered `1..N`, where N is the number of unused episodes."""
     EPISODE_NUMBERS = 2
-    """Numbered exactly as the window's episode numbers."""
+    """Numbered exactly as the unused episodes' numbers."""
     WHOLE_SEASON = 3
-    """Numbered `1..N` for the whole season, when the window holds only part of that season."""
+    """Numbered `1..N` for the whole season, when the unused episodes are only part of that season."""
     ANY_CONSECUTIVE = 4
     """Any N consecutive numbers (`_SequenceFit.at_any_start`)."""
 
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
-    """A run that could place onto the window: its position among the runs, its best tier, and its title evidence."""
+    """A sequence that fits the unused episodes: its position among the sequences, best fit kind, and title matches."""
 
     position: int
     sequence: NumberedSequence
@@ -265,26 +268,26 @@ class _Candidate:
 
 @dataclass(frozen=True, slots=True, eq=False)
 class _SequenceFit:
-    """The run window and the unplaced runs the release-run pass fits to it.
+    """The consecutive unused episodes and the unjudged sequences the sequence-over-parse pass fits to them.
 
-    `window` and `runs` are taken once when the pass starts. A run holds the live file records, so every check
-    sees the latest readings and verdicts.
+    `window` and `sequences` are taken once when the pass starts. A sequence holds the live file objects, so every
+    check sees the latest parsed episodes and verdicts.
     """
 
     state: PlacerState
     window: ConsecutiveEpisodes
     sequences: tuple[NumberedSequence, ...]
-    """The numbered runs among the unplaced files, in run order."""
+    """The numbered sequences among the unjudged files, in sequence order."""
 
     @classmethod
     def of(cls, state: PlacerState) -> Self | None:
-        """The fit when the open ids form a run window, else None."""
+        """The fit when the unused ids are consecutive episodes, else None."""
 
         window = state.consecutive_unused()
         return None if window is None else cls(state, window, tuple(state.sequences_among(state.unjudged_files())))
 
     def candidates(self) -> list[_Candidate]:
-        """Every run that could place onto the window, at the best tier it fits, sorted by tier then by run order."""
+        """Every sequence that fits the unused episodes, at its best fit kind, sorted by that then by sequence order."""
 
         width = len(self.window.ids)
         fit_kinds = {
@@ -306,9 +309,10 @@ class _SequenceFit:
         ]
 
     def title_matches(self, sequence: NumberedSequence) -> EpisodeTitleMatches:
-        """Count the members whose tail starts with only window titles, and those with only outside titles.
+        """Count the members carrying only titles of the unused episodes, and those carrying only other titles.
 
-        A tail matching titles on both sides counts for neither.
+        A member carries the titles its words after the number start with. Words matching titles on both sides count
+        for neither.
         """
 
         inside = outside = 0
@@ -321,7 +325,7 @@ class _SequenceFit:
         return EpisodeTitleMatches(inside, outside)
 
     def whole_season(self) -> list[NumberedSequence]:
-        """The runs numbered `1..N` for the window's whole season, when the window holds fewer than N ids."""
+        """The sequences numbered `1..N` for the unused episodes' whole season, when there are fewer than N of them."""
 
         season = self.window.season
         if season is None:
@@ -334,9 +338,9 @@ class _SequenceFit:
         )
 
     def whole_season_final_unplaced(self) -> bool:
-        """Whether a whole-season run cannot be trusted to number this window.
+        """Whether a whole-season sequence cannot be trusted to number these unused episodes.
 
-        True for a window spanning seasons, for a specials window, and for a season whose numbering has a gap.
+        True when they span seasons or are specials, and for a season whose numbering has a gap.
         """
 
         season = self.window.season
@@ -346,9 +350,10 @@ class _SequenceFit:
         return any(EpisodeKey(season, n) not in self.state.target.id_by_key for n in range(1, count + 1))
 
     def at_any_start(self) -> list[NumberedSequence]:
-        """The runs of consecutive numbers as wide as the window, at any start, where no member has a complete reading.
+        """The sequences of consecutive numbers as wide as the unused episodes, at any start.
 
-        Empty once any id is used (by a seeded file, an earlier window, or an earlier pass).
+        No member may have complete parsed episodes. Empty once any id is used (by the file map, an earlier window, or
+        an earlier pass).
         """
 
         if self.state.used:
@@ -361,20 +366,21 @@ class _SequenceFit:
         ]
 
     def seasons_parsed(self, sequence: NumberedSequence) -> set[int]:
-        """The seasons Sonarr read the run's members into."""
+        """The seasons Sonarr parsed the sequence's members into."""
 
         key_by_id = self.state.index.key_by_id
         return {key_by_id[ep_id].season for file in sequence.members for ep_id in file.parsed_episodes.ids}
 
     def parsed_outside_window(self, sequence: NumberedSequence) -> bool:
-        """Whether a member's reading lands in a season other than the window's, which disputes the run's numbers."""
+        """Whether a member is parsed into a season other than the unused episodes', against the sequence's numbers."""
 
         return any(read != self.window.season for read in self.seasons_parsed(sequence))
 
     def final_outside_window(self, sequence: NumberedSequence) -> bool:
-        """Whether Sonarr matched every member to its own distinct episode outside the scope (another season or cour).
+        """Whether Sonarr matched every member to its own distinct episode outside the window (another season or cour).
 
-        A tied run counts as elsewhere when none of its candidate episodes is in the scope.
+        A sequence that fits a season and the specials equally counts as outside when none of its candidate episodes
+        is in the window.
         """
 
         parsed_by_name = [file.parsed_episodes for file in sequence.members]
@@ -385,18 +391,19 @@ class _SequenceFit:
         return len({r.ids[0] for r in parsed_by_name}) == len(parsed_by_name)
 
     def final_unplaced(self, sequence: NumberedSequence) -> bool:
-        """Whether the batch shows the run cannot own the whole window."""
+        """Whether the batch shows the sequence cannot take all the unused episodes."""
 
         state, window_set = self.state, self.window.id_set
         for file in sequence.members:
             info = file.parse
-            # A missing parse, or a name that itself claims several episodes, refuses the run. A multi-episode
+            # A missing parse, or a name that itself names several episodes, blocks the sequence. A multi-episode
             # Sonarr match does not.
             if info is None or names_several_episodes(info):
                 return True
             parsed = file.parsed_episodes
             spelled_outside_window = not parsed.from_matched and parsed.complete and window_set.isdisjoint(parsed.ids)
-            # A member whose own key lies outside the window refuses the run, except on a specials window.
+            # A member whose spelled-out season and episode lie outside the unused episodes blocks the sequence,
+            # except when those are specials.
             if spelled_outside_window and not self.window.is_specials:
                 return True
         mates = set(sequence.all_versions)
@@ -406,7 +413,7 @@ class _SequenceFit:
             parsed = file.parsed_episodes
             if not window_set.isdisjoint(parsed.either_ids or ()):
                 return True
-            # A runner-up's claim on the window lost before the run was asked: it refuses nothing.
+            # A file next in line already lost those episodes before the sequence was asked: it blocks nothing.
             if not parsed.usable or file.next_in_line(parsed.ids):
                 continue
             if parsed.ids and window_set.issuperset(parsed.ids):
@@ -415,27 +422,29 @@ class _SequenceFit:
 
 
 def pass_sequence_over_parse(state: PlacerState) -> None:
-    """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
+    """Place one numbered sequence onto the unused episodes by its own numbers when Sonarr's parse of it doesn't add up.
 
-    The open ids must form a run window. Candidates are the unplaced runs that fit a `_FitKind`. Tie-breaks, in order:
-    drop runs Sonarr matched whole outside the scope (unless all are), then keep the one run the titles select, the
-    one an AniList title names, or the best tier. The run's own numbers place its members onto the window
-    (`SEQUENCE_OVER_PARSE`), unless Sonarr's reading already puts each member on its own window episode. A run isn't placed
-    when a file sharing its prefix was placed by size against that file's numbers (`PlacerState.size_contradicted_prefixes`).
-    With any parse unknown, the pick is `WAITING_ON_PARSE`. It is refused by `_SequenceFit.final_unplaced`, `whole_season_final_unplaced` for a
-    covering pick, a dispute, a member its position disputes (`TorrentFile.numbers_disagree_by_position`), a title veto
-    (`EpisodeTitleMatches.contradicts`), or an AniList title naming another run.
+    The unused ids must be consecutive episodes. Candidates are the unjudged sequences that fit a `_FitKind`.
+    Tie-breaks, in order: drop sequences Sonarr matched whole outside the window (unless all are), then keep the one
+    sequence the titles select, the one an AniList name of the title points at, or the best fit kind. The sequence's
+    own numbers place its members onto the unused episodes (`SEQUENCE_OVER_PARSE`), unless Sonarr's parse already
+    puts each member on its own unused episode. A sequence isn't placed when a file sharing its prefix was placed by
+    size against that file's numbers (`PlacerState.size_contradicted_prefixes`). With any parse unknown, the pick is
+    `WAITING_ON_PARSE`. It is blocked by `_SequenceFit.final_unplaced`, `whole_season_final_unplaced` for a
+    whole-season pick, a member parsed into another season, a member whose numbers disagree by position
+    (`TorrentFile.numbers_disagree_by_position`), titles that contradict it (`EpisodeTitleMatches.contradicts`), or an
+    AniList name of the title pointing at another sequence.
     """
 
     if not state.has_episode_index or (fit := _SequenceFit.of(state)) is None:
         return
     candidates = fit.candidates()
-    # A covering run read into another season is disputed, picked or not. Read whole into one other season, it
-    # belongs there (its files end up FOREIGN). Otherwise its readings are rejected.
+    # A whole-season sequence parsed into another season is blocked, picked or not. Parsed whole into one other
+    # season, it belongs there (its files end up OUTSIDE_WINDOW). Otherwise its parsed episodes are rejected.
     parsed_outside_window = [
         c.sequence for c in candidates if c.fit_kind is _FitKind.WHOLE_SEASON and fit.parsed_outside_window(c.sequence)
     ]
-    # Vetoes first: a rejected reading leaves its run unsettled, which `unjudged_positions` then counts as open.
+    # Rejections first: a sequence with rejected parsed episodes stays unjudged, which `unjudged_positions` then counts.
     for sequence in parsed_outside_window:
         if not (fit.final_outside_window(sequence) and len(fit.seasons_parsed(sequence)) == 1):
             state.reject_each(sequence.all_versions)
@@ -443,7 +452,7 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
         index for index, sequence in enumerate(fit.sequences) if not fit.final_outside_window(sequence)
     )
     naming = Naming.of([sequence.prefix for sequence in fit.sequences], state.target.title_names)
-    # Several candidates turn the count-based passes off, even when a tie-break picks one.
+    # Several candidates turn the pairing passes off, even when a tie-break picks one.
     state.pairing_off |= len(candidates) > 1
     chosen = _sole_candidate(candidates, unjudged_positions, naming)
     if chosen is None:
@@ -467,9 +476,10 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
         state.pairing_off = True
         return
     window = fit.window
-    # A whole-season run over a partial window places only the window's numbers. Its other members are FOREIGN.
+    # A whole-season sequence over part of its season places only the unused episodes' numbers. Its other members are
+    # OUTSIDE_WINDOW.
     files = window.files_of(sequence) if whole_season else sequence.members
-    # Sonarr already reads each member onto its own window episode: the exact pass places them.
+    # Sonarr already parses each member onto its own unused episode: the exact pass places them.
     exact = [file.parsed_episodes.exact_ids for file in files]
     if all(len(ids) == 1 and ids[0] in window.id_set for ids in exact) and len(set(exact)) == len(exact):
         return
@@ -501,11 +511,11 @@ def _sole_candidate(
 
 
 def pass_sequence(state: PlacerState) -> None:
-    """Zip the one `1..N` run among the files Sonarr found no episode for onto a run window of N ids.
+    """Pair in order the one `1..N` sequence among the files Sonarr found no episode for onto N consecutive unused ids.
 
-    Unlike the ordered zip, this works beside files that other passes placed. A file qualifies when its reading
-    resolved nothing, its name carries no `SxxExx` key, and it is not multi-episode. Skipped without a series map,
-    with any parse unknown, or with the count-based passes off.
+    Unlike pairing in name order, this works beside files that other passes placed. A file qualifies when its parsed
+    episodes resolved nothing, its name carries no `SxxExx` season and episode, and it is not multi-episode. It does
+    nothing without an episode index, with any parse unknown, or with the pairing passes off.
     """
 
     if not state.has_episode_index or not state.all_parses_known or state.pairing_off:

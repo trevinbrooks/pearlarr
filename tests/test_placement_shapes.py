@@ -4,7 +4,7 @@
 Two tiers: this catalog holds real captures (whole-series episode lists and raw
 `/parse` payloads) with expectations taken from independent truth, never from the
 placer's own output. The synthetic edge cases live in `test_placer.py`. Each case
-runs through the grab's placement, whose map the import imports as is.
+runs through the grab's placement, whose file map the import imports as is.
 """
 
 import json
@@ -31,58 +31,58 @@ class ShapeTag(StrEnum):
     """The placement shape a case exercises. Every member carries at least one case."""
 
     RELEASE_RUN_UNREAD = "release run unread"
-    """A 1..N run Sonarr read nothing for."""
+    """A 1..N numbered sequence Sonarr parsed nothing for."""
     RELEASE_RUN_MATCHED_INSIDE = "release run matched inside"
-    """Matched pairs inside the window but shifted by an interleaved special."""
+    """Matched episodes inside the window but shifted by an interleaved special."""
     RELEASE_RUN_BOGUS_KEY = "release run bogus key"
     """Members carry an SxxEyy that resolves nowhere in the series."""
     RELEASE_RUN_KEY_OUTSIDE = "release run key outside"
-    """Members' own keys resolve to another season and the window is season 0."""
+    """Members' parsed seasons and episodes resolve to another season and the window is season 0."""
     RELEASE_RUN_MATCHED_OUTSIDE = "release run matched outside"
-    """Matched pairs fall outside the window."""
+    """Matched episodes fall outside the window."""
     RELEASE_RUN_KEY_INSIDE = "release run key inside"
-    """Members' own keys resolve inside the window, so the reading stands."""
+    """Members' parsed seasons and episodes resolve inside the window, so the parse stands."""
     COHERENT_PERMUTED = "coherent permuted"
-    """Every member reads one distinct id inside the window, not in run order."""
+    """Every member reads one distinct id inside the window, not in sequence order."""
     NUMBERED_RUN = "numbered run"
-    """A blind 1..N run beside placed files, the mixed batch the ordered zip refuses."""
+    """A blind 1..N numbered sequence beside placed files, the mixed batch that blocks pairing in order."""
     TITLED_RUN = "titled run"
-    """Several 1..N runs fit the window (a franchise pack), and an entry title picks one."""
+    """Several 1..N numbered sequences fit the window (a franchise torrent), and one of the title's names picks one."""
     FOREIGN = "foreign"
-    """A file whose complete reading resolves outside the entry."""
+    """A file whose complete parse resolves outside the title."""
     EXACT = "exact"
     ABSOLUTE = "absolute"
     ORDERED = "ordered"
     SINGLE = "single"
     TITLED = "titled"
-    """One numberless leftover among several, named by an entry title."""
+    """One unplaced file with no parsed number among several, named by one of the title's names."""
     RUN_TITLED_MEMBERS = "run titled members"
-    """Several runs fit, and the episode titles the members carry pick one."""
+    """Several numbered sequences fit, and the episode titles the members carry pick one."""
     RUN_NAMED_ELSEWHERE = "run named elsewhere"
-    """The one run that fits is not the one the entry's title names: refused."""
+    """The one numbered sequence that fits is not the one the title's names point at: rejected."""
     SEASON_RUN_REREAD = "season run reread"
-    """A 1..N run Sonarr matched into the N-episode season and its specials is the season's own numbering."""
+    """A 1..N sequence Sonarr matched into the N-episode season and its specials is the season's own numbering."""
     ABSOLUTE_WINDOW = "absolute window"
-    """The entry holds a special TVDB interleaves, so the series' absolute numbering orders the window."""
+    """The title holds a special TVDB interleaves, so the series' absolute numbering orders the window."""
     COVERING_RUN = "covering run"
-    """A whole-season run listed on one cour's entry places that cour's slice."""
+    """A whole-season numbered sequence listed on one cour's entry places that cour's part."""
     VERSIONED_RUN = "versioned run"
     """Members come in two versions: the later one is the member, the earlier its duplicate."""
     SEASON_COUNTED = "season counted"
-    """The entry's title and the release count the season differently ("3" against "III")."""
+    """The title's name and the release number the season differently ("3" against "III")."""
     EXTRA = "extra"
     """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: set aside first."""
     NAMED_OUTSIDE = "named outside"
-    """A file titled as another season's episode, another slice's once the window is full."""
+    """A file titled as another season's episode, or as one outside the window once the window is full."""
 
 
 class Provenance(StrEnum):
     """What establishes a case's expectation."""
 
     TITLE = "title"
-    """The titles the file names carry, matched against the series list or the entry's own titles."""
+    """The titles the file names carry, matched against the series list or the title's names."""
     COUNT = "count"
-    """A release run as wide as the window it covers."""
+    """A numbered sequence as wide as the window it covers."""
     DISK_AGREES = "disk agrees"
     """Sonarr's own placement, upheld by one of the two above."""
     PINNED = "pinned"
@@ -98,11 +98,11 @@ class ShapeCase(BaseModel, frozen=True):
     episodes: tuple[SonarrEpisode, ...]
     """The WHOLE series, as the episode fetch returns it."""
     entry_ids: tuple[int, ...]
-    """The record's resolved set, season order."""
+    """The pending import's resolved set, season order."""
     series_title: str = ""
     """The Sonarr series title, the words every file shares."""
     titles: tuple[str, ...] = ()
-    """The entry's AniList titles, the placement's tie-break."""
+    """The title's AniList names, the placement's tie-break."""
     parses: dict[str, dict[str, Json]]
     """Raw `/parse` payload per file name, in listing order."""
     expected: dict[str, tuple[int, ...]]
@@ -122,7 +122,7 @@ def _names(case: ShapeCase) -> TitleNames:
 
 
 def _grabbing_title(case: ShapeCase) -> GrabbingTitle:
-    """The grab-time scope: the entry's slice of the whole-series index, and the names."""
+    """The grab-time target: the title's window of the whole-series index, and the names."""
 
     index = episode_index(case.episodes)
     return make_grabbing_title(
