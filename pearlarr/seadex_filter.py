@@ -291,7 +291,7 @@ class SeadexReleaseFilter:
     def filter_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrFiles,
+        arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Flip the switch on whether we're downloading each torrent or not.
@@ -306,7 +306,7 @@ class SeadexReleaseFilter:
 
         result = self._planner.plan(
             seadex_dict=seadex_dict,
-            arr_releases=arr_releases,
+            arr_files=arr_files,
             ep_list=ep_list,
         )
 

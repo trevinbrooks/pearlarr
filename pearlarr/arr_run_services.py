@@ -510,12 +510,12 @@ class ArrRunServices:
     def filter_seadex_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrFiles,
+        arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
-        return self._filter.filter_downloads(seadex_dict, arr_releases, ep_list)
+        return self._filter.filter_downloads(seadex_dict, arr_files, ep_list)
 
     def is_dry_run(self) -> bool:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""

@@ -154,12 +154,12 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         update["url"] = sd_url
         update["coverage"] = ""
 
-        radarr_releases = self.radarr_files(
+        radarr_files = self.radarr_files(
             radarr_movie_id=item.id,
         )
 
         self.logger.debug(
-            f"Radarr release {pluralize(radarr_releases.group_count(), 'group')}: {radarr_releases.groups_label()}"
+            f"Radarr release {pluralize(radarr_files.group_count(), 'group')}: {radarr_files.groups_label()}"
         )
 
         seadex_dict = services.get_seadex_dict(sd_entry=sd_entry)
@@ -183,7 +183,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
         seadex_dict = services.filter_seadex_downloads(
             seadex_dict=seadex_dict,
-            arr_releases=radarr_releases,
+            arr_files=radarr_files,
         ).seadex_dict
 
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
@@ -209,7 +209,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 seadex_dict=seadex_dict,
                 update=update,
                 # Every edition's tagged group, not just the first file's.
-                replaced_groups=radarr_releases.groups(),
+                replaced_groups=radarr_files.groups(),
                 pending_import_updates=pending_import_updates,
             ),
         )

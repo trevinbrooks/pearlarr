@@ -324,10 +324,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         update["url"] = sd_url
 
         self._report_missing_episodes(ep_list)
-        sonarr_releases = self._episodes.sonarr_files(ep_list=ep_list)
+        sonarr_files = self._episodes.sonarr_files(ep_list=ep_list)
 
         self.logger.debug(
-            f"Sonarr release {pluralize(sonarr_releases.group_count(), 'group')}: {sonarr_releases.groups_label()}"
+            f"Sonarr release {pluralize(sonarr_files.group_count(), 'group')}: {sonarr_files.groups_label()}"
         )
 
         # Produce a dictionary of info from the SeaDex request
@@ -387,7 +387,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # group we have in Sonarr
         plan = services.filter_seadex_downloads(
             seadex_dict=seadex_dict,
-            arr_releases=sonarr_releases,
+            arr_files=sonarr_files,
             ep_list=ep_list,
         )
         seadex_dict = plan.seadex_dict
@@ -420,7 +420,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 update=update,
-                replaced_groups=sonarr_releases.groups(),
+                replaced_groups=sonarr_files.groups(),
                 coverage=coverage,
                 pending_import_updates=pending_import_updates,
                 input_unread_groups=placed.input_unread_groups(seadex_dict),

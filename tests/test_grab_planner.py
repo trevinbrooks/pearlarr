@@ -38,7 +38,7 @@ from pearlarr.output import Severity
 from pearlarr.planner import GrabPlan, GrabPlanner
 from pearlarr.releases import GroupReleases, PlannedGrab, Release, ReleaseEpisode, SkipReason, releases_to_grab
 
-from .builders import arr_releases, make_planner, make_release, rg_group, sonarr_ep
+from .builders import arr_files, make_planner, make_release, rg_group, sonarr_ep
 
 
 class TestGetAnyToDownload:
@@ -643,7 +643,7 @@ class TestFilterByReleaseGroup:
         seadex = {"NewRG": rg_group({"u1": make_release(episodes=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"OldRG": (100,)}),
+            arr_files=ArrFiles(by_group={"OldRG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["NewRG"].releases["u1"].to_grab is True
@@ -653,7 +653,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"RG": (100,)}),
+            arr_files=ArrFiles(by_group={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -663,7 +663,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"RG": (100,)}),
+            arr_files=ArrFiles(by_group={"RG": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -676,7 +676,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"EMBER": (100,)}),
+            arr_files=ArrFiles(by_group={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -690,7 +690,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"EMBER": (100,)}),
+            arr_files=ArrFiles(by_group={"EMBER": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -705,7 +705,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(0, 21, episode_file_id=0)],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -716,7 +716,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"RG": (100,)}),
+            arr_files=ArrFiles(by_group={"RG": (100,)}),
             ep_list=[sonarr_ep(0, 21, size=100, release_group="RG")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -736,7 +736,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Other": (200,)}),
+            arr_files=ArrFiles(by_group={"Other": (200,)}),
             ep_list=[sonarr_ep(0, 21, size=200, release_group="Other")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
@@ -750,7 +750,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=episodes, size=[100, 999], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"RG": (100,)}),
+            arr_files=ArrFiles(by_group={"RG": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="RG")],
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -767,7 +767,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Era-Raws": (100,)}),
+            arr_files=ArrFiles(by_group={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
@@ -783,7 +783,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"SubsPlease": (100,)}),
+            arr_files=ArrFiles(by_group={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -799,7 +799,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Era-Raws": (100,)}),
+            arr_files=ArrFiles(by_group={"Era-Raws": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -817,7 +817,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
@@ -833,7 +833,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=555, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -851,7 +851,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=0, release_group=None)],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -876,7 +876,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Era-Raws": (999,)}),
+            arr_files=ArrFiles(by_group={"Era-Raws": (999,)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group=None),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -902,7 +902,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=101)],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
@@ -925,7 +925,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=999, release_group=None, ep_id=101)],
         )
         assert result.seadex_dict["Era-Raws"].releases["u2"].to_grab is True
@@ -942,7 +942,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=0)],
         )
         assert result.guards.owned_episodes == ()
@@ -958,7 +958,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Other": (100,)}),
+            arr_files=ArrFiles(by_group={"Other": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
         )
         assert result.guards.owned_episodes == ()
@@ -984,7 +984,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Era-Raws": (100, 999)}),
+            arr_files=ArrFiles(by_group={"Era-Raws": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
                 sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
@@ -1002,7 +1002,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(100,)),
+            arr_files=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -1015,7 +1015,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100, 7], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(100,)),
+            arr_files=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
@@ -1027,7 +1027,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -1038,7 +1038,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[0, 100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(0,)),
+            arr_files=ArrFiles(no_group=(0,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -1048,7 +1048,7 @@ class TestFilterByReleaseGroup:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(50,)),
+            arr_files=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
@@ -1062,7 +1062,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": make_release(episodes=[], size=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(50,)),
+            arr_files=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1076,7 +1076,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": make_release(episodes=[], size=[50], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(50, 60)),
+            arr_files=ArrFiles(no_group=(50, 60)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1089,7 +1089,7 @@ class TestFilterByReleaseGroup:
         seadex = {"": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(50,)),
+            arr_files=ArrFiles(no_group=(50,)),
             ep_list=None,
         )
         item = result.seadex_dict[""].releases["u1"]
@@ -1108,7 +1108,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(100, 60)),
+            arr_files=ArrFiles(no_group=(100, 60)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is True
@@ -1124,7 +1124,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(100,)),
+            arr_files=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict[""].releases["u1"].to_grab is False
@@ -1141,7 +1141,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=None,
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
@@ -1154,7 +1154,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"RG": ()}),
+            arr_files=ArrFiles(by_group={"RG": ()}),
             ep_list=None,
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is True
@@ -1172,7 +1172,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"SubsPlease": (100,)}),
+            arr_files=ArrFiles(by_group={"SubsPlease": (100,)}),
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
@@ -1195,7 +1195,7 @@ class TestListedSizeOnTooManyEpisodes:
     def _plan(seadex: dict[str, GroupReleases], ep_list: list[SonarrEpisode]) -> GrabPlan:
         """The planner's result for `seadex` against `ep_list`, every tagged file reported to the arr."""
 
-        return make_planner().plan(seadex, arr_releases(ep_list), ep_list)
+        return make_planner().plan(seadex, arr_files(ep_list), ep_list)
 
     @classmethod
     def _decide(cls, seadex: dict[str, GroupReleases], ep_list: list[SonarrEpisode]) -> Release:
@@ -1350,7 +1350,7 @@ class TestGroupVerdicts:
         seadex = {"Blunt": rg_group({"u1": make_release(episodes=[], size=[100, 200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Blunt": (100, 999)}),
+            arr_files=ArrFiles(by_group={"Blunt": (100, 999)}),
             ep_list=None,
         )
         assert result.seadex_dict["Blunt"].releases["u1"].to_grab is False
@@ -1385,7 +1385,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Y": (100, 999)}),
+            arr_files=ArrFiles(by_group={"Y": (100, 999)}),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group="Y"),
                 sonarr_ep(1, 13, size=999, release_group="Y"),
@@ -1403,7 +1403,7 @@ class TestGroupVerdicts:
         seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Ember": (100,)}),
+            arr_files=ArrFiles(by_group={"Ember": (100,)}),
             ep_list=None,
         )
         release = result.seadex_dict["Ember"].releases["u1"]
@@ -1426,7 +1426,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(by_group={"Ember": (100,)}),
+            arr_files=ArrFiles(by_group={"Ember": (100,)}),
             ep_list=None,
         )
         assert result.seadex_dict["Ember"].releases["u2"].to_grab is False
@@ -1455,7 +1455,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[sonarr_ep(1, 1, episode_file_id=0)],
         )
         assert set(result.guards.entry_groups) == {"RG", "Kept"}
@@ -1469,7 +1469,7 @@ class TestGroupVerdicts:
         seadex = {"Era-Raws": rg_group({"u1": make_release(episodes=[], size=[100, 200], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(),
+            arr_files=ArrFiles(),
             ep_list=[
                 sonarr_ep(1, 1, size=100, release_group=None),
                 sonarr_ep(1, 2, size=200, release_group=None),
@@ -1488,7 +1488,7 @@ class TestGroupVerdicts:
         }
         result = planner.plan(
             seadex_dict=seadex,
-            arr_releases=ArrFiles(no_group=(100,)),
+            arr_files=ArrFiles(no_group=(100,)),
             ep_list=None,
         )
         assert result.seadex_dict["A"].releases["u1"].to_grab is False
@@ -1655,7 +1655,7 @@ class TestRefusedPack:
     def _decide(seadex: dict[str, GroupReleases], ep_list: list[SonarrEpisode]) -> Release:
         """The pack's url after the planner judges it against the window `ep_list`."""
 
-        return make_planner().plan(seadex, arr_releases(ep_list), ep_list).seadex_dict["Pack"].releases["u1"]
+        return make_planner().plan(seadex, arr_files(ep_list), ep_list).seadex_dict["Pack"].releases["u1"]
 
     @staticmethod
     def _ours(episode: int, size: int, file_id: int) -> SonarrEpisode:
