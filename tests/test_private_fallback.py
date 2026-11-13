@@ -20,7 +20,7 @@ from seadex import EntryRecord, TorrentRecord, Tracker
 from pearlarr.arr_models import ArrFiles
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.leg_state import NeedsActionKind, RunContext
+from pearlarr.leg_state import ArrRunState, NeedsActionKind
 from pearlarr.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.releases import EpisodeRecord, SeadexDict
@@ -140,7 +140,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         # The Arr holds Priv's release at a STALE size (the SeaDex entry updated):
         # a fallback (a cascade loser) must not supersede the owned preferred
         # copy, so nothing is promoted and the set warns with the stale reason.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -181,7 +181,7 @@ class TestUpgradePendingHoldsForOwnedStale:
     def test_radarr_size_disjoint_warns_and_holds(self) -> None:
         # The no-episode (Radarr) twin: the size-disjoint branch re-flags the
         # private pick, and the same-set fallback stays un-promoted - hold.
-        ctx = RunContext(arr=Arr.RADARR)
+        ctx = ArrRunState(arr=Arr.RADARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
@@ -212,7 +212,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
     """
 
     def test_sonarr_owned_private_at_matching_size_stays_untouched(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -255,7 +255,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
 
     def test_radarr_owned_private_at_matching_size_stays_untouched(self) -> None:
         # The no-episode (Radarr) twin, via the arr size overlap.
-        ctx = RunContext(arr=Arr.RADARR)
+        ctx = ArrRunState(arr=Arr.RADARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -288,7 +288,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
     def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
         # the title uncached, surfacing the plain PRIVATE_ONLY needs-action row.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
@@ -330,8 +330,8 @@ class TestFilterDownloadsNoticeSeam:
         # One entry, two same-files sets: {PrivA, PubA} promotes the preferred
         # public group (an INFO notice). {PrivB} is private-only with no cover
         # (a WARNING notice, plus the skip flag + group carried onto the
-        # RunContext).
-        ctx = RunContext(arr=Arr.SONARR)
+        # ArrRunState).
+        ctx = ArrRunState(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
@@ -385,7 +385,7 @@ class TestFilterDownloadsNoticeSeam:
         assert plan.seadex_dict["PubA"].releases[self.PUBA_URL].to_grab is True
         assert plan.seadex_dict["PrivA"].releases[self.PRIVA_URL].to_grab is False
         assert plan.seadex_dict["PrivB"].releases[self.PRIVB_URL].to_grab is False
-        # Each SkipNotice reaches the logger at ITS level: the promoted set at
+        # Each PrivateOnlyNotice reaches the logger at ITS level: the promoted set at
         # INFO, the truly-blocked set at WARNING.
         info = _info_texts(recording)
         warnings = _warning_texts(recording)
@@ -436,7 +436,7 @@ class TestMixedGroupKeeperPreference:
         # G is first in dict order, but its flagged private url would be refused
         # at add time, so H wins keeper and S2 is actually obtained - pre-fix the
         # keeper was order-dependent and a G win silently lost S2.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
@@ -502,7 +502,7 @@ class TestMixedGroupKeeperPreference:
         # No fully-addable group exists: the keeper degrades to the mixed group,
         # its public S1 url is grabbed, and the surviving private batch is
         # refused at add time with a WARNING + the hold flag - never silently.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="warn",
@@ -556,7 +556,7 @@ class TestSurvivingPrivateCoverage:
         # to its public S1-only fallback. With both episodes missing, the batch
         # stays flagged and the add-time gate warns + sets the hold flag - the
         # old drop lost the S2 coverage without a trace.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -660,7 +660,7 @@ class TestPromotionGeneralization:
         # Upgrade-pending private pick + preferred public twin: pre-graft this
         # warned "no public alternative" and held the title forever. Now the
         # public group is promoted, grabbed, and the title caches normally.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -712,7 +712,7 @@ class TestPromotionGeneralization:
     def test_radarr_preferred_public_alternative_is_promoted(self) -> None:
         # The no-parse (Radarr) twin of the preferred-pair upgrade: the public
         # movie is grabbed instead of the old warn-and-hold.
-        ctx = RunContext(arr=Arr.RADARR)
+        ctx = ArrRunState(arr=Arr.RADARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
@@ -741,7 +741,7 @@ class TestPromotionGeneralization:
         # which never replaces the owned stale copy: nothing is promoted, the
         # stale bit is set (no planner notice - the add-time gate warns), and
         # the batch stays flagged for that gate to refuse.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
             want_best=True,
@@ -865,7 +865,7 @@ class TestEqualUnionMixedGroups:
         # loss as done). Both public urls must now grab in either order.
         a_pub, a_priv, b_pub, b_priv = self._torrents()
         for al_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
-            ctx = RunContext(arr=Arr.SONARR)
+            ctx = ArrRunState(arr=Arr.SONARR)
             cache = FakeCacheStore()
             filt = make_release_filter(
                 private_releases="warn",
@@ -925,7 +925,7 @@ class TestEqualUnionMixedGroups:
 class _CachedEntryReporter:
     """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
-    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
         del ctx, al_id
 
 
@@ -940,7 +940,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
     def test_fallback_marker_resurfaces_under_warn_and_persists(self) -> None:
         # 1) fallback run: Sonarr misses the episode, the keeper flow grabs the
         # public fallback, and the title caches with the marker set.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
             private_releases="fallback",
@@ -1001,7 +1001,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         # 4) the warn-mode reprocess warns and holds: the private pick is all
         # that's offered (the Arr owns the grabbed fallback's file), nothing is
         # cached, and the marker persists for the next run.
-        warn_ctx = RunContext(arr=Arr.SONARR)
+        warn_ctx = ArrRunState(arr=Arr.SONARR)
         warn_filt = make_release_filter(
             private_releases="warn",
             want_best=True,

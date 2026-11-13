@@ -261,7 +261,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         return [i for i in items if i.id == item_id]
 
     @override
-    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
+    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
         return self._anilist_ids
 
     @property

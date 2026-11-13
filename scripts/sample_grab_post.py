@@ -69,7 +69,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
                 t.url: Release(
                     url=t.url,
                     files=[f.name for f in t.files],
-                    size=[f.size for f in t.files],
+                    file_sizes=[f.size for f in t.files],
                     tracker=t.tracker,
                     is_dual_audio=t.is_dual_audio,
                     to_grab=True,

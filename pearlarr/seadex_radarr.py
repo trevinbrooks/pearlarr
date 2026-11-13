@@ -90,14 +90,14 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         return filtered
 
     @override
-    def item_anilist_ids(
+    def item_mappings(
         self,
         item: RadarrItem,
         log_ignored: bool = True,
     ) -> dict[int, TitleMapping]:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
-        return self._services.get_anilist_ids(
+        return self._services.title_mappings(
             ExternalIds(tmdb=item.tmdbId, imdb=item.imdbId),
             log_ignored=log_ignored,
         )
@@ -148,7 +148,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             return
 
         title = run.resolve_title(al_id)
-        run.log_al_title(title=title.name, sd_entry=sd_entry)
+        run.open_title_block(title=title.name, sd_entry=sd_entry)
 
         cache_details = run.new_cache_details(title, sd_entry)
         cache_details["url"] = sd_url
@@ -165,7 +165,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.no_releases_skip(al_id, cache_details)
+            run.report_no_releases(al_id, cache_details)
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -178,7 +178,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             # Every token was invalid: skip WITHOUT caching, since grab_and_cache would cache the
             # title as done and suppress it forever. It re-prompts next run.
             if len(seadex_dict) == 0:
-                run.invalid_selection_skip()
+                run.report_invalid_selection()
                 return
 
         seadex_dict = run.filter_seadex_downloads(
@@ -207,7 +207,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 seadex_dict=seadex_dict,
                 cache_details=cache_details,
                 # Every edition's tagged group, not just the first file's.
-                replaced_groups=radarr_releases.replaced_groups(),
+                replaced_groups=radarr_releases.groups(),
                 pending_seeds=pending_seeds,
             ),
         )

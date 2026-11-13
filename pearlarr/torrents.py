@@ -169,11 +169,11 @@ class _CategoryLook:
         # nothing of a cross-seed.
         if item.infohash is None:
             return None
-        candidates = self.by_size.get(sum(item.size), ())
+        candidates = self.by_size.get(sum(item.file_sizes), ())
         # SeaDex's own torrent in a listed category settles it with no file list read.
         if any(candidate.infohash == item.infohash for candidate in candidates):
             return None
-        wanted = _file_set(zip(item.files, item.size, strict=True))
+        wanted = _file_set(zip(item.files, item.file_sizes, strict=True))
         holder = next((candidate for candidate in candidates if self._files_of(candidate) == wanted), None)
         if holder is None or self.qbit.torrents_info(torrent_hashes=item.infohash):
             return None
@@ -323,7 +323,7 @@ class TorrentService:
 
         result = self.qbit.torrents_add(
             urls=torrent_url,
-            category=self.categories.grab(),
+            category=self.categories.grab_category(),
             tags=self.tags,
         )
         if result != "Ok.":

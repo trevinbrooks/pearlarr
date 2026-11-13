@@ -26,13 +26,13 @@ from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStor
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .leg_state import PerTitleState, RunContext, Title, is_dry_run, resolve_entry_title
+from .leg_state import ArrRunState, PerTitleState, Title, is_dry_run, resolve_entry_title
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .parse_records import ParseCacheRows
 from .pending_records import PendingImportStore
-from .planner import DownloadPlanner, PlanResult
+from .planner import GrabPlan, GrabPlanner
 from .releases import SeadexDict
 from .reporter import RunReporter
 from .seadex_filter import SeadexReleaseFilter
@@ -110,7 +110,7 @@ class LegDeps:
     """The TVDB order cache. The Sonarr strategy reads its records, and the run loop its outage."""
     torrents: TorrentService
     notifier: Notifier
-    planner: DownloadPlanner
+    planner: GrabPlanner
     reporter: RunReporter
 
     @classmethod
@@ -258,7 +258,7 @@ class LegDeps:
                 web=web,
             ),
             # Download-decision engine: flips each release's download flag.
-            planner=DownloadPlanner(
+            planner=GrabPlanner(
                 arr=arr,
                 interactive=app_config.advanced.interactive,
                 logger=logger,
@@ -333,11 +333,11 @@ class LegServices:
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the private-only skip flags, plus the
         # run's dry_run + resolved wait-mode flags) lives on this context, replaced
-        # fresh at the start of each run by the loop's reset_run_stats. The single
+        # fresh at the start of each run by the loop's start_arr_run. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
         # before run_leg. The run loop ADOPTS it (via `ctx`) at construction.
-        self._ctx = RunContext(arr=arr)
+        self._ctx = ArrRunState(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
         # run loop's activity scan). They bypass the cached-entry skip once.
@@ -352,7 +352,7 @@ class LegServices:
         self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
 
     @property
-    def ctx(self) -> RunContext:
+    def ctx(self) -> ArrRunState:
         """The current run context (the placeholder until a run begins).
 
         Read by the `RunLoop` run loop at construction so
@@ -371,7 +371,7 @@ class LegServices:
 
         return self._selection_stale
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
 
         Driven by the run loop's `begin_run`: once with the placeholder at
@@ -444,7 +444,7 @@ class LegServices:
 
         self._dirty_al_ids.update(al_ids)
 
-    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
+    def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
         The resolver maps and sets aside the ignore list's entries, and the ledger rows stay here.
@@ -460,7 +460,7 @@ class LegServices:
 
         return resolved.mappings
 
-    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
+    def mappings_with_ignored(self, ids: ExternalIds) -> ResolvedMappings:
         """The entries mapped to the external ids, the ignored ones set apart, for the series' listing read.
 
         An ignored entry is never processed, but a torrent it lists is still placed under its window, flagged so
@@ -512,7 +512,7 @@ class LegServices:
         seadex_dict: SeadexDict,
         arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> PlanResult:
+    ) -> GrabPlan:
         """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
         return self._filter.filter_downloads(seadex_dict, arr_releases, ep_list)
@@ -546,7 +546,7 @@ class LegServices:
 
         self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
 
-    def no_releases_skip(
+    def report_no_releases(
         self,
         al_id: int,
         cache_details: CachedTitleUpdate,
@@ -568,7 +568,7 @@ class LegServices:
             self._update_cache(al_id=al_id, cache_details=cache_details)
         self.owe_pause()
 
-    def invalid_selection_skip(self) -> None:
+    def report_invalid_selection(self) -> None:
         """Shared tail for an interactive pick that left zero valid selections.
 
         Unlike `no_releases_skip` this deliberately persists NOTHING: caching the title as done would suppress it
@@ -673,14 +673,14 @@ class LegServices:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
 
-    def log_al_title(
+    def open_title_block(
         self,
         title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
     ) -> None:
         """Log the active-entry header (delegates to RunReporter)."""
-        self._reporter.log_al_title(
+        self._reporter.open_title_block(
             self._ctx,
             title,
             sd_entry,

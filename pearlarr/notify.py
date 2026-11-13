@@ -198,15 +198,15 @@ def _release_line(item: Release) -> str:
     """One release's line: the tracker link plus size/audio/provenance markers."""
 
     parts = [f"[{item.tracker.value}]({item.url})"]
-    if item.size:
-        parts.append(human_bytes(sum(item.size)))
+    if item.file_sizes:
+        parts.append(human_bytes(sum(item.file_sizes)))
     if item.files:
         parts.append(count_noun(len(item.files), "file"))
     if item.is_dual_audio:
         parts.append("dual audio")
     if item.is_fallback:
         parts.append("fallback")
-    if item.upgrade:
+    if item.is_upgrade:
         parts.append("upgrade")
     return " · ".join(parts)
 

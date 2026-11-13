@@ -32,7 +32,7 @@ from .releases import (
 
 
 @dataclass
-class SkipNotice:
+class PrivateOnlyNotice:
     """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as `"<groups> <reason>"` on a `skipped`
@@ -46,15 +46,15 @@ class SkipNotice:
 
 
 @dataclass
-class PrivateOnlySkips:
+class PrivateOnlyNotices:
     """The private-only skip outcome of `reduce_overlapping_downloads`."""
 
-    skipped: bool = False
+    warned: bool = False
     """True when at least one same-files set was dropped with a warning: none of its flagged groups was
     public, and no public group was promoted in their place."""
     groups: list[str] = field(default_factory=list[str])
     """The dropped groups' names, for the run summary."""
-    notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
+    notices: list[PrivateOnlyNotice] = field(default_factory=list[PrivateOnlyNotice])
     """What to log for the drop."""
     stale_held: bool = False
     """A hold where the Arr owns the preferred private release at a stale size and only a fallback could
@@ -62,7 +62,7 @@ class PrivateOnlySkips:
 
 
 @dataclass
-class PlanResult:
+class GrabPlan:
     """The download-decision engine's output.
 
     Carries the annotated dict and the private-only skip outcome (`skips`) so
@@ -72,7 +72,7 @@ class PlanResult:
 
     seadex_dict: SeadexDict
     """The same dict passed in, annotated in place with per-url `download` flags."""
-    skips: PrivateOnlySkips
+    skips: PrivateOnlyNotices
     """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
     guards: GuardFacts
     """The overwrite-guard evidence the import inherits whole (see `GuardFacts`):
@@ -216,7 +216,7 @@ class _SameFilesSet:
     """The urls the reduction unflagged, scoped to THIS set - the coverage rescue's input."""
 
 
-def _promotion_notice(groups: list[str], prefix: str, promoted: str) -> SkipNotice:
+def _promotion_notice(groups: list[str], prefix: str, promoted: str) -> PrivateOnlyNotice:
     """The INFO notice for flagged groups a promoted group now stands in for.
 
     The caller unflags them. Promotion never picks a fallback group, so the
@@ -224,7 +224,7 @@ def _promotion_notice(groups: list[str], prefix: str, promoted: str) -> SkipNoti
     "falling back to".
     """
 
-    return SkipNotice(
+    return PrivateOnlyNotice(
         groups=list(groups),
         reason=f"{prefix}; grabbing public alternative {promoted}",
         severity=Severity.INFO,
@@ -266,7 +266,7 @@ def episode_coverage(
     by_key: dict[EpisodeKey, set[str]] = {}
     for seadex_rg, seadex_rg_item in seadex_dict.items():
         # Index by the normalized name so the membership checks in
-        # filter_by_release_group are case- and dash-insensitive.
+        # `plan` are case- and dash-insensitive.
         seadex_rg_normalized = normalize_rg(seadex_rg)
         if seadex_rg_normalized is None:
             continue
@@ -362,7 +362,7 @@ def _episode_identities(
             # A refused pack placed nothing: an untagged file at one of its listed sizes is its, wherever it sits.
             if release.hand_import:
                 for key, size in untagged.items():
-                    if key not in identities and size > 0 and size in release.size:
+                    if key not in identities and size > 0 and size in release.file_sizes:
                         identities[key] = _EpisodeIdentity(normalized, by_size=True, size=size)
                 continue
             for seadex_ep in release.episodes:
@@ -389,7 +389,7 @@ class _MatchContext:
     debug lines (insertion order preserved; empty on a normal INFO run)."""
     arr_sizes_by_norm: Mapping[str, list[int]]
     """The Arr's tagged file sizes merged under normalized group names. Built once per entry rather than per URL."""
-    overlapping_results: bool
+    any_release_owned: bool
     """Some pick's release is already on disk: by group tag, or as the untagged
     copy a pick's listed sizes identified whole (so a sibling pick is never
     grabbed over a copy only a rename left unrecognizable)."""
@@ -453,7 +453,7 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdic
         for release in item.releases.values():
             # Url-level and per-episode sizes both count (an episode parse can
             # carry sizes a bare listing record doesn't); zero proves nothing.
-            listed.update(s for s in release.size if s > 0)
+            listed.update(s for s in release.file_sizes if s > 0)
             listed.update(ep.size for ep in release.episodes if ep.size > 0)
 
     # The on-disk files each group must answer for. With an episode list the
@@ -484,7 +484,7 @@ def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdic
     return _GroupVerdicts(tuple(current), tuple(stale))
 
 
-class DownloadPlanner:
+class GrabPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
     Constructed once per Arr run with the arr it plans for and whether the run
@@ -506,12 +506,12 @@ class DownloadPlanner:
         self.interactive = interactive
         self.logger = logger
 
-    def filter_by_release_group(
+    def plan(
         self,
         seadex_dict: SeadexDict,
         arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> PlanResult:
+    ) -> GrabPlan:
         """Filter torrents by release group.
 
         This is either an episode-by-episode for the Sonarr
@@ -532,7 +532,7 @@ class DownloadPlanner:
         # Whether any SeaDex release group matches any Arr release tag - by
         # normalized name, matching the per-episode path's comparison.
         seadex_keys = {normalize_rg(rg) for rg in seadex_dict}
-        overlapping_results = not seadex_keys.isdisjoint(arr_sizes_by_norm)
+        any_release_owned = not seadex_keys.isdisjoint(arr_sizes_by_norm)
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the overlap map below and the per-episode match loop: looking up a
@@ -569,10 +569,10 @@ class DownloadPlanner:
         # sibling pick must hold exactly as it would had the copy kept its tag.
         # None (the common tagged library) skips the per-url compares entirely.
         untagged_counter = _untagged_counter((*arr_releases.untagged, *untagged_by_key.values()))
-        overlapping_results = overlapping_results or (
+        any_release_owned = any_release_owned or (
             untagged_counter is not None
             and any(
-                _owns_untagged_copy(untagged_counter, release.size)
+                _owns_untagged_copy(untagged_counter, release.file_sizes)
                 for group_releases in seadex_dict.values()
                 for release in group_releases.releases.values()
             )
@@ -583,7 +583,7 @@ class DownloadPlanner:
             # matchers' decision scope (they feed only debug lines).
             arr_groups_label=arr_releases.groups_label() if debug_on else "",
             arr_sizes_by_norm=arr_sizes_by_norm,
-            overlapping_results=overlapping_results,
+            any_release_owned=any_release_owned,
             sonarr_by_key=sonarr_by_key,
             episode_identities=identities,
             untagged_counter=untagged_counter,
@@ -614,7 +614,7 @@ class DownloadPlanner:
         skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
         verdicts = _group_verdicts(seadex_dict, ctx)
-        return PlanResult(
+        return GrabPlan(
             seadex_dict=seadex_dict,
             skips=skips,
             guards=GuardFacts(
@@ -656,7 +656,7 @@ class DownloadPlanner:
             # The group matches: fall through to a size comparison. A listing
             # with no sizes carries no evidence either way, so the held copy
             # stands (a vacuous disjoint must not read as an upgrade).
-            seadex_file_sizes = release.size
+            seadex_file_sizes = release.file_sizes
             arr_file_sizes = ctx.arr_sizes_by_norm[seadex_norm]
 
             if seadex_file_sizes and set(seadex_file_sizes).isdisjoint(arr_file_sizes):
@@ -673,7 +673,7 @@ class DownloadPlanner:
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                     f"{ctx.arr_groups_label}, and no listed size contradicts the on-disk copy",
                 )
-        elif _owns_untagged_copy(ctx.untagged_counter, release.size):
+        elif _owns_untagged_copy(ctx.untagged_counter, release.file_sizes):
             # A rename stripped the group tag: the untagged files on disk
             # (Radarr's None key, or Sonarr's untagged episode files) all
             # belong to this listing by size, so the copy is ours.
@@ -683,7 +683,7 @@ class DownloadPlanner:
                     f"{ctx.arr_groups_label}, but the untagged files on disk are all "
                     f"this release's - not flagging {url}",
                 )
-        elif not ctx.overlapping_results:
+        elif not ctx.any_release_owned:
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
@@ -840,7 +840,7 @@ class DownloadPlanner:
             release.plan_grab(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
-        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, release.size)
+        doubled = _doubled_sizes(unambiguous(listed_pairs), held_by_key, release.file_sizes)
         if doubled:
             self.logger.debug(
                 f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
@@ -866,7 +866,7 @@ class DownloadPlanner:
 
         url = release.url
         seadex_norm = normalize_rg(seadex_rg)
-        if _window_in_place(ctx, seadex_norm, release.size):
+        if _window_in_place(ctx, seadex_norm, release.file_sizes):
             if ctx.debug_on:
                 self.logger.debug(
                     f"Every episode of the window holds {seadex_rg}'s file or a covering release's: not flagging {url}"
@@ -878,7 +878,7 @@ class DownloadPlanner:
     def reduce_overlapping_downloads(
         self,
         seadex_dict: SeadexDict,
-    ) -> PrivateOnlySkips:
+    ) -> PrivateOnlyNotices:
         """Reduce overlapping flagged downloads down to a single release group.
 
         Where multiple preferred release groups cover the same files and the
@@ -905,7 +905,7 @@ class DownloadPlanner:
         decided what to grab.
         """
 
-        skips = PrivateOnlySkips()
+        skips = PrivateOnlyNotices()
 
         # In interactive mode, releases were explicitly hand-picked to
         # grab, so don't second-guess that choice by dropping any
@@ -933,9 +933,9 @@ class DownloadPlanner:
         for group_releases in seadex_dict.values():
             seen: set[tuple[int, ...]] = set()
             for u in group_releases.releases.values():
-                if not u.to_grab or not u.size:
+                if not u.to_grab or not u.file_sizes:
                     continue
-                identity = tuple(sorted(u.size))
+                identity = tuple(sorted(u.file_sizes))
                 if identity in seen:
                     u.drop_grab()
                 else:
@@ -947,7 +947,7 @@ class DownloadPlanner:
         self,
         seadex_dict: SeadexDict,
         same_files: _SameFilesSet,
-        skips: PrivateOnlySkips,
+        skips: PrivateOnlyNotices,
     ) -> None:
         """Resolve ONE same-files set down to a single keeper (or a skip).
 
@@ -961,7 +961,7 @@ class DownloadPlanner:
         # release wrong (a stale size, or a file on too many episodes), so an
         # unflagged public group in this set is NOT owned and may be promoted in
         # its place. Without it, promotion would re-download owned content.
-        upgrade_pending = any(u.upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
+        upgrade_pending = any(u.is_upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
 
         if len(public_flagged) == 0:
             # Only an unflagged preferred public group in THIS same-files set
@@ -992,13 +992,13 @@ class DownloadPlanner:
             else:
                 reason = "private-only (private releases not supported)"
             skips.notices.append(
-                SkipNotice(
+                PrivateOnlyNotice(
                     groups=list(flagged),
                     reason=reason,
                     severity=Severity.WARNING,
                 ),
             )
-            skips.skipped = True
+            skips.warned = True
             skips.groups.extend(flagged)
             self._unflag_all(seadex_dict, same_files)
             return
@@ -1034,7 +1034,7 @@ class DownloadPlanner:
         private_dropped = [rg for rg in flagged if not _is_public_group(seadex_dict[rg])]
         if private_dropped and _is_fallback_group(seadex_dict[keeper]):
             skips.notices.append(
-                SkipNotice(
+                PrivateOnlyNotice(
                     groups=private_dropped,
                     reason=f"private-only; falling back to {keeper}",
                     severity=Severity.INFO,

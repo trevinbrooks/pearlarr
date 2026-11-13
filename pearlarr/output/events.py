@@ -16,7 +16,7 @@ from ..releases import NO_ELSEWHERE, ElsewhereCounts
 from ..wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
-    from ..leg_state import RunStats
+    from ..leg_state import ArrRunStats
 
 
 class TitleState(StrEnum):
@@ -403,7 +403,7 @@ class LegTally:
     held_by_cap: int
 
     @classmethod
-    def from_stats(cls, stats: RunStats) -> LegTally:
+    def from_stats(cls, stats: ArrRunStats) -> LegTally:
         return cls(
             checked=stats.checked,
             added=tuple(

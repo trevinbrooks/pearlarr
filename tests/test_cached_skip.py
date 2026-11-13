@@ -20,7 +20,7 @@ import pytest
 
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import RunContext, Title
+from pearlarr.leg_state import ArrRunState, Title
 from pearlarr.pending_import import TitleNames
 from pearlarr.run_services import LegServices
 
@@ -58,7 +58,7 @@ class _RecordingReporter:
     def __init__(self) -> None:
         self.cached: list[int] = []
 
-    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
         del ctx
         self.cached.append(al_id)
 
@@ -87,7 +87,7 @@ class TestCachedEntrySkip:
     def _run(cache: FakeCacheStore) -> LegServices:
         # is_unchanged touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
-        # name backfill asks. ctx defaults to a SONARR RunContext (make_services).
+        # name backfill asks. ctx defaults to a SONARR ArrRunState (make_services).
         return make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
@@ -370,7 +370,7 @@ class TestFallbackSatisfiedResurfacing:
         # the shared tail overwrites a stale True.
         cache = self._cache(marker=True)
         run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
-        run.no_releases_skip(7, {"name": "Title"})
+        run.report_no_releases(7, {"name": "Title"})
         entry = cache.get_entry(Arr.SONARR, 7)
         assert entry is not None
         assert entry.fallback_satisfied is False
@@ -379,7 +379,7 @@ class TestFallbackSatisfiedResurfacing:
 class _CtxBind:
     """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         del state
 
 
@@ -387,20 +387,20 @@ class _TailReporter:
     """Records the no-releases / no-entry / outage-skip outcomes the shared tails report."""
 
     def __init__(self) -> None:
-        self.no_releases_ctxs: list[RunContext] = []
+        self.no_releases_ctxs: list[ArrRunState] = []
         self.no_sd_entry_ids: list[int] = []
         self.outage_skip_ids: list[int] = []
 
-    def log_no_seadex_releases(self, ctx: RunContext) -> bool:
+    def log_no_seadex_releases(self, ctx: ArrRunState) -> bool:
         self.no_releases_ctxs.append(ctx)
         return True
 
-    def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> bool:
+    def log_no_sd_entry(self, ctx: ArrRunState, al_id: int) -> bool:
         del ctx
         self.no_sd_entry_ids.append(al_id)
         return True
 
-    def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> bool:
+    def log_seadex_outage_skip(self, ctx: ArrRunState, al_id: int) -> bool:
         del ctx
         self.outage_skip_ids.append(al_id)
         return True
@@ -417,7 +417,7 @@ class TestNoReleasesSkip:
         reporter = _TailReporter()
         run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
 
-        run.no_releases_skip(7, {"name": "Title", "url": "u"})
+        run.report_no_releases(7, {"name": "Title", "url": "u"})
 
         persisted = cache.get_entry(Arr.SONARR, 7)
         assert persisted is not None
@@ -429,7 +429,7 @@ class TestNoReleasesSkip:
         reporter = _TailReporter()
         run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
 
-        run.no_releases_skip(7, {"name": "Title", "url": "u"}, metadata_unread=True)
+        run.report_no_releases(7, {"name": "Title", "url": "u"}, metadata_unread=True)
 
         assert cache.get_entry(Arr.SONARR, 7) is None
         assert len(reporter.no_releases_ctxs) == 1

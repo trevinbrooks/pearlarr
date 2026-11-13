@@ -23,7 +23,7 @@ from seadex import Tag
 from pearlarr.anilist_client import AniListClient
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext
+from pearlarr.leg_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     EntryHeader,
     Event,
@@ -106,31 +106,31 @@ class TestStatsCounters:
     """
 
     def test_unmonitored(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         _make_reporter().log_arr_item_unmonitored(ctx, "Title")
         assert ctx.stats.unmonitored == 1
 
     def test_no_mappings(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         _make_reporter().log_no_anilist_mappings(ctx, "Title")
         assert ctx.stats.no_mappings == 1
 
     def test_no_releases(self) -> None:
-        ctx = RunContext(arr=Arr.RADARR)
+        ctx = ArrRunState(arr=Arr.RADARR)
         _make_reporter().log_no_seadex_releases(ctx)
         assert ctx.stats.no_releases == 1
 
     def test_cached_uses_stored_name(self) -> None:
         # A stored name short-circuits the AniList lookup (no network)
         reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, 1)
         assert ctx.stats.unchanged == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
         client = ScriptedAniListClient()
         reporter = _make_reporter(client=client)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
         assert ctx.stats.no_seadex_entry == 1
         # Routed through the gateway: its al_cache is warmed in place and the
@@ -146,7 +146,7 @@ class TestStatsCounters:
         store.update_cache(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, 1)
         assert ctx.stats.unchanged == 1
         assert client.query_calls == [1]
@@ -157,7 +157,7 @@ class TestStatsCounters:
         # no stored name, so the title still comes from the gateway lookup.
         client = ScriptedAniListClient()
         reporter, events = _record(client=client)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 42)
 
         assert ctx.stats.seadex_unreachable == 1
@@ -173,7 +173,7 @@ class TestStatsCounters:
         # outage skip renders the stored name with no AniList lookup at all.
         client = ScriptedAniListClient()
         reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         reporter.log_seadex_outage_skip(ctx, 1)
 
         assert ctx.stats.seadex_unreachable == 1
@@ -188,7 +188,7 @@ class TestStatsCounters:
         store.update_cache(Arr.SONARR, 1, CachedTitleUpdate(coverage="S01", url="u"))
         client = ScriptedAniListClient(None)
         reporter, events = _record(store, client=client)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.arr_title = "Series"
         reporter.log_cached_entry(ctx, 1)
 
@@ -200,9 +200,9 @@ class TestActiveTitle:
     """`log_al_title` sets the context's current title, url, and coverage for the open entry."""
 
     def test_log_al_title_sets_current(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
-        _make_reporter().log_al_title(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
+        _make_reporter().open_title_block(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
         assert ctx.per_title.current_title == "Steins;Gate"
         assert ctx.per_title.current_url == "https://releases.moe/9"
         assert ctx.per_title.current_coverage == "S01 E01-E24"
@@ -220,14 +220,14 @@ class TestEntryHeaderAlId:
     def test_log_al_title_carries_the_seadex_entrys_anilist_id(self) -> None:
         reporter, events = _record()
         entry = make_entry_record(anilist_id=12345)
-        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", entry)
+        reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", entry)
         assert self._header(events).al_id == 12345
 
     def test_log_cached_entry_carries_the_al_id_param(self) -> None:
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 4242, CachedTitleUpdate(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
-        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 4242)
+        reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 4242)
         assert self._header(events).al_id == 4242
 
 
@@ -240,7 +240,7 @@ class TestCloseBoundaries:
 
     def test_scan_finished_closes_the_open_entry_first(self) -> None:
         reporter, events = _record()
-        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
+        reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
 
         reporter.scan_finished(Arr.SONARR)
 
@@ -257,7 +257,7 @@ class TestCloseBoundaries:
         # scan_finished already closed it, so run_finished's defensive close is a no-op:
         # a second ScopeClosed would demote every later fact on that stale scope.
         reporter, events = _record()
-        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
+        reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
 
         reporter.scan_finished(Arr.SONARR)
         reporter.run_finished(Arr.SONARR)
@@ -277,7 +277,7 @@ class TestCompleteBlocksSelfClose:
 
     def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record(_seeded_store(name="Cached", coverage="S01", url="u"))
-        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 1)
+        reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 1)
         assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
@@ -293,8 +293,8 @@ class TestRunSummary:
     The dry-run note wording tracks whether a qBittorrent client is configured.
     """
 
-    def _ctx_with_data(self) -> RunContext:
-        ctx = RunContext(arr=Arr.SONARR)
+    def _ctx_with_data(self) -> ArrRunState:
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.checked = 3
         ctx.torrents_added = 1
         ctx.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
@@ -374,7 +374,7 @@ class TestRunSummary:
 
 
 def _summary_messages(
-    ctx: RunContext,
+    ctx: ArrRunState,
     *,
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
 ) -> list[str]:
@@ -391,7 +391,7 @@ class TestPendingSnapshot:
 
     def test_renders_and_bumps_no_counter(self) -> None:
         reporter, events = _record()
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
 
         reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
@@ -433,7 +433,7 @@ class TestSummaryPendingCounters:
     """The carried-over counters render only when feature-on and non-zero."""
 
     def test_counters_render_when_feature_on_and_non_zero(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.queued = 2
         ctx.stats.downloaded = 1
         ctx.stats.imported = 3
@@ -449,7 +449,7 @@ class TestSummaryPendingCounters:
         assert "imported" in joined
 
     def test_counters_hidden_when_feature_off(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.queued = 2
         ctx.stats.downloaded = 1
         ctx.stats.imported = 3
@@ -463,7 +463,7 @@ class TestSummaryPendingCounters:
         assert not any("downloaded" in m for m in messages)
 
     def test_zero_counters_not_rendered_even_when_on(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)  # all counters zero
+        ctx = ArrRunState(arr=Arr.SONARR)  # all counters zero
 
         messages = _summary_messages(
             ctx,
@@ -477,7 +477,7 @@ class TestSummaryPendingCounters:
         # REGRESSION (double-report): a this-run grab is `added`. With the counters
         # left at 0 (the engine never bumps them for this-run grabs), the summary
         # shows `added` but no `queued` row for the same torrent.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.torrents_added = 1
         ctx.stats.added = [
             GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
@@ -497,12 +497,12 @@ class TestSummaryNoReleaseRow:
     """The "no release" row is gated on non-zero, like its no-mapping/no-entry siblings."""
 
     def test_zero_count_renders_no_row(self) -> None:
-        messages = _summary_messages(RunContext(arr=Arr.SONARR))
+        messages = _summary_messages(ArrRunState(arr=Arr.SONARR))
 
         assert not any("no release" in m for m in messages)
 
     def test_non_zero_count_renders_the_row(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.no_releases = 2
 
         messages = _summary_messages(ctx)
@@ -517,12 +517,12 @@ class TestSummarySeadexDownRow:
     """
 
     def test_zero_count_renders_no_row(self) -> None:
-        messages = _summary_messages(RunContext(arr=Arr.SONARR))
+        messages = _summary_messages(ArrRunState(arr=Arr.SONARR))
 
         assert not any("seadex down" in m for m in messages)
 
     def test_non_zero_count_renders_the_row_not_no_entry(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.seadex_unreachable = 3
 
         messages = _summary_messages(ctx)
@@ -537,8 +537,8 @@ class TestPrivateOnlyTip:
     Rewording the string must not kill the tip.
     """
 
-    def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:
-        ctx = RunContext(arr=Arr.SONARR)
+    def _needs_ctx(self, kind: NeedsActionKind) -> ArrRunState:
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.stats.needs_action = [
             NeedsActionRow(
                 title="B",

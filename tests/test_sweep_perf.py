@@ -40,7 +40,7 @@ from pearlarr.sonarr_episodes import (
     sonarr_series_fingerprint,
 )
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT
+from pearlarr.stamps import STAMP_FORMAT
 from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.video_files import is_video_candidate
 
@@ -73,14 +73,14 @@ def _matched(season: int, episode: int) -> ParsedFileInfo:
 
 
 def _stamp(days_ago: float) -> str:
-    return (_NOW - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
+    return (_NOW - timedelta(days=days_ago)).strftime(STAMP_FORMAT)
 
 
 def _window(series_hash: str = "fp") -> ParseFreshness:
     """The pass window anchored at `_NOW` (never the wall clock)."""
 
     return ParseFreshness(
-        now_str=_NOW.strftime(UPDATED_AT_STR_FORMAT),
+        now_str=_NOW.strftime(STAMP_FORMAT),
         matched_cutoff=_MATCHED_CUTOFF,
         unmatched_cutoff=_UNMATCHED_CUTOFF,
         series_hash=series_hash,
@@ -344,7 +344,7 @@ class _Services:
         self._identity = identity
         self._needs_scan = needs_scan
 
-    def get_anilist_ids(
+    def title_mappings(
         self,
         ids: ExternalIds,
         log_ignored: bool = True,
@@ -690,7 +690,7 @@ class TestParsedFilesUnmatchedCache:
     def test_fresh_unmatched_hit_skips_network(self) -> None:
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
-                "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
+                "fetched_at": datetime.now().strftime(STAMP_FORMAT),
                 "parse": parse_to_json(_UNMATCHED),
                 "series_fp": "fp",
             },
@@ -705,7 +705,7 @@ class TestParsedFilesUnmatchedCache:
         # present, so the key check passes it and validation is what misses.
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
-                "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
+                "fetched_at": datetime.now().strftime(STAMP_FORMAT),
                 "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
             },
         }

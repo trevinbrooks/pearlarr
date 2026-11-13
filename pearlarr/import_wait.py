@@ -9,7 +9,7 @@ import qbittorrentapi
 from .arr_categories import Watch
 from .clock import Clock
 from .config import ImportsSettings
-from .leg_state import RunContext
+from .leg_state import ArrRunState
 from .output import SPARK_SAMPLES, Phase, TorrentView, WaitKind, WaitSnapshot, hub_error, hub_note, hub_warn
 from .pending_import import PendingImport, is_awaiting_cleanup
 from .pending_records import PendingImportStore
@@ -140,7 +140,7 @@ class ImportProbes:
 class PostImportCleanup:
     """Owns the post-import effects (category move, queue close) and the flagged-record heal."""
 
-    _ctx: RunContext
+    _ctx: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
     def __init__(self, deps: LegDeps, records: PendingImportStore, probes: ImportProbes) -> None:
@@ -154,7 +154,7 @@ class PostImportCleanup:
         self._probes = probes
         self._kept_keys: set[str] = set()
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the fresh run context, forgetting the prior run's keeps."""
 
         self._ctx = state
@@ -168,7 +168,7 @@ class PostImportCleanup:
         """
 
         # No client resolves NO category: a configured untracking one must not skip the close then.
-        category = self._categories.post_import() if self._qbit is not None else None
+        category = self._categories.post_import_category() if self._qbit is not None else None
         # Both effects run regardless of the other's outcome, in pinned order (move, then close).
         statuses = (
             (CleanupEffect.CATEGORY_MOVE, self._apply_post_import_category(pending, category)),
@@ -285,14 +285,14 @@ class PostImportCleanup:
         ruled out, the attempt is one to retry. A failed qBittorrent read raises `qbittorrentapi.APIError`.
         """
 
-        target = self._categories.watch(category)
+        target = self._categories.category_watch(category)
         if target is Watch.UNWATCHED:
             return None
         current = self._categories.torrent_category(pending.infohash)
         if current is None or current == category:
             # Gone from qBittorrent, or already there: the move carries nothing anywhere.
             return None
-        seen = self._categories.watch(current)
+        seen = self._categories.category_watch(current)
         if seen is Watch.WATCHED:
             return None
         arr = self._ctx.arr.capitalize()
@@ -361,10 +361,10 @@ class ImportWaitManager:
     """The wait passes' time seam."""
     probes: ImportProbes
     """The run's fail-open pollers and the one strategy binding, shared with the cleanup (for the heal)."""
-    _ctx: RunContext
+    _ctx: ArrRunState
     """The current run's context. `__init__` seeds it through the first `begin_run`, which rebinds every run."""
 
-    def __init__(self, *, deps: LegDeps, ctx: RunContext, records: PendingImportStore) -> None:
+    def __init__(self, *, deps: LegDeps, ctx: ArrRunState, records: PendingImportStore) -> None:
         self.imports = deps.config.imports
         self.clock = deps.clock
         self.logger = deps.logger
@@ -375,7 +375,7 @@ class ImportWaitManager:
         self._cleanup = PostImportCleanup(deps, self._records, self.probes)
         self.bind_leg(ctx, None)
 
-    def bind_leg(self, state: RunContext, strategy: ImportCompleter | None) -> None:
+    def bind_leg(self, state: ArrRunState, strategy: ImportCompleter | None) -> None:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
         Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can

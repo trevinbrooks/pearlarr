@@ -62,9 +62,9 @@ def test_omitted_categories_adopt_the_sonarr_client_values_with_one_lazy_fetch()
     resolver, recording = _resolver()
 
     assert route.call_count == 0
-    assert resolver.grab() == "tv-sonarr"
-    assert resolver.post_import() == "sonarr-done"
-    assert resolver.grab() == "tv-sonarr"
+    assert resolver.grab_category() == "tv-sonarr"
+    assert resolver.post_import_category() == "sonarr-done"
+    assert resolver.grab_category() == "tv-sonarr"
     assert route.call_count == 1
     assert recording.of_type(Diagnostic) == []
 
@@ -83,8 +83,8 @@ def test_radarr_reads_the_movie_field_names() -> None:
     )
     resolver, _ = _resolver(arr=Arr.RADARR)
 
-    assert resolver.grab() == "radarr"
-    assert resolver.post_import() == "radarr-done"
+    assert resolver.grab_category() == "radarr"
+    assert resolver.post_import_category() == "radarr-done"
 
 
 @respx.mock
@@ -92,8 +92,8 @@ def test_explicit_config_wins_without_a_fetch() -> None:
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="anime", post_import_category="done"))
 
-    assert resolver.grab() == "anime"
-    assert resolver.post_import() == "done"
+    assert resolver.grab_category() == "anime"
+    assert resolver.post_import_category() == "done"
     assert route.call_count == 0
 
 
@@ -104,8 +104,8 @@ def test_a_blank_string_opts_out_without_a_fetch() -> None:
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="", post_import_category="   "))
 
-    assert resolver.grab() is None
-    assert resolver.post_import() is None
+    assert resolver.grab_category() is None
+    assert resolver.post_import_category() is None
     assert route.call_count == 0
 
 
@@ -116,8 +116,8 @@ def test_a_lone_omitted_category_adopts_only_its_own_fallback() -> None:
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(json=[download_client_json(sonarr_client_fields())])
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
-    assert resolver.grab() == "anime"
-    assert resolver.post_import() == "sonarr-done"
+    assert resolver.grab_category() == "anime"
+    assert resolver.post_import_category() == "sonarr-done"
     assert route.call_count == 1
 
 
@@ -176,8 +176,8 @@ def test_no_transport_stays_blank_and_fetchless() -> None:
     # stay blank and the explicit value still passes through.
     resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category="anime"), None)
 
-    assert resolver.grab() == "anime"
-    assert resolver.post_import() is None
+    assert resolver.grab_category() == "anime"
+    assert resolver.post_import_category() is None
 
 
 @respx.mock
@@ -194,8 +194,8 @@ def test_priority_beats_list_order_between_enabled_clients() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.grab() == "preferred"
-    assert resolver.post_import() == "preferred-done"
+    assert resolver.grab_category() == "preferred"
+    assert resolver.post_import_category() == "preferred-done"
 
 
 @respx.mock
@@ -208,7 +208,7 @@ def test_equal_priorities_keep_list_order() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.grab() == "first"
+    assert resolver.grab_category() == "first"
 
 
 @respx.mock
@@ -224,7 +224,7 @@ def test_junk_enable_spellings_read_as_disabled() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.grab() == "tv-sonarr"
+    assert resolver.grab_category() == "tv-sonarr"
 
 
 @respx.mock
@@ -238,7 +238,7 @@ def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> 
     ]
     resolver, recording = _resolver()
 
-    assert resolver.grab() is None
+    assert resolver.grab_category() is None
     assert diagnostic_messages(recording, Severity.WARNING) == [
         (
             "Could not fetch the Sonarr download clients (status code 500) - blank categories stay blank, "
@@ -246,8 +246,8 @@ def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> 
         ),
     ]
 
-    assert resolver.post_import() == "sonarr-done"
-    assert resolver.grab() == "tv-sonarr"  # the healed fetch is memoized
+    assert resolver.post_import_category() == "sonarr-done"
+    assert resolver.grab_category() == "tv-sonarr"  # the healed fetch is memoized
     assert route.call_count == 2
 
 
@@ -264,8 +264,8 @@ def test_no_enabled_qbittorrent_client_fails_open_quietly_and_memoizes() -> None
     )
     resolver, recording = _resolver()
 
-    assert resolver.grab() is None
-    assert resolver.post_import() is None
+    assert resolver.grab_category() is None
+    assert resolver.post_import_category() is None
     assert route.call_count == 1
     assert recording.of_type(Diagnostic) == []
 
@@ -287,8 +287,8 @@ def test_blank_and_junk_category_fields_fail_open() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.grab() is None
-    assert resolver.post_import() is None
+    assert resolver.grab_category() is None
+    assert resolver.post_import_category() is None
 
 
 # --- move_untracks() ---------------------------------------------------------
@@ -368,12 +368,12 @@ def test_watch_goes_by_the_categories_the_clients_name() -> None:
     _sonarr_watches_tv_sonarr()
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
-    assert resolver.watch("tv-sonarr") is Watch.WATCHED
-    assert resolver.watch("anime") is Watch.UNWATCHED
-    assert resolver.watch("") is Watch.UNWATCHED  # an uncategorized torrent
-    assert resolver.watch("TV-Sonarr") is Watch.UNWATCHED  # case-sensitive, as qBittorrent is
-    assert resolver.watch("tv-sonarr-done") is Watch.UNWATCHED  # a longer name is another category
-    assert resolver.watch("tv") is Watch.UNWATCHED  # and so is the parent of a watched one
+    assert resolver.category_watch("tv-sonarr") is Watch.WATCHED
+    assert resolver.category_watch("anime") is Watch.UNWATCHED
+    assert resolver.category_watch("") is Watch.UNWATCHED  # an uncategorized torrent
+    assert resolver.category_watch("TV-Sonarr") is Watch.UNWATCHED  # case-sensitive, as qBittorrent is
+    assert resolver.category_watch("tv-sonarr-done") is Watch.UNWATCHED  # a longer name is another category
+    assert resolver.category_watch("tv") is Watch.UNWATCHED  # and so is the parent of a watched one
 
 
 @respx.mock
@@ -387,9 +387,9 @@ def test_every_enabled_client_counts_as_watching() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.watch("anime") is Watch.WATCHED
+    assert resolver.category_watch("anime") is Watch.WATCHED
     assert resolver.move_untracks("anime") is False
-    assert resolver.watch("old") is Watch.UNWATCHED
+    assert resolver.category_watch("old") is Watch.UNWATCHED
 
 
 @respx.mock
@@ -398,7 +398,7 @@ def test_a_subcategory_is_watched_under_the_category_a_client_names(preferences:
     _sonarr_watches_tv_sonarr()
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, preferences))
 
-    assert resolver.watch("tv-sonarr/done") is Watch.WATCHED
+    assert resolver.category_watch("tv-sonarr/done") is Watch.WATCHED
     assert resolver.move_untracks("tv-sonarr/done") is False
 
 
@@ -407,9 +407,9 @@ def test_with_subcategories_off_a_name_under_a_watched_one_is_its_own_category()
     _sonarr_watches_tv_sonarr()
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, {"use_subcategories": False}))
 
-    assert resolver.watch("tv-sonarr/done") is Watch.UNWATCHED
+    assert resolver.category_watch("tv-sonarr/done") is Watch.UNWATCHED
     assert resolver.move_untracks("tv-sonarr/done") is True
-    assert resolver.watch("tv-sonarr") is Watch.WATCHED
+    assert resolver.category_watch("tv-sonarr") is Watch.WATCHED
 
 
 @respx.mock
@@ -418,9 +418,9 @@ def test_an_unreadable_subcategory_setting_leaves_a_subcategory_unread_until_it_
     down = qbittorrentapi.APIConnectionError("down")
     resolver, _ = _resolver(qbit=QbitCategoryReads(None, down, down, {"use_subcategories": False}))
 
-    assert resolver.watch("tv-sonarr/done") is Watch.UNREAD
+    assert resolver.category_watch("tv-sonarr/done") is Watch.UNREAD
     assert resolver.move_untracks("tv-sonarr/done") is False
-    assert resolver.watch("tv-sonarr/done") is Watch.UNWATCHED
+    assert resolver.category_watch("tv-sonarr/done") is Watch.UNWATCHED
 
 
 @respx.mock
@@ -434,7 +434,7 @@ def test_a_client_with_a_blank_category_watches_every_category(blank: str) -> No
     )
     resolver, _ = _resolver()
 
-    assert resolver.watch("sonarr-done") is Watch.WATCHED
+    assert resolver.category_watch("sonarr-done") is Watch.WATCHED
     assert resolver.move_untracks("sonarr-done") is False
 
 
@@ -445,7 +445,7 @@ def test_with_no_qbittorrent_client_nothing_is_called_unwatched() -> None:
     )
     resolver, _ = _resolver()
 
-    assert resolver.watch("sonarr-done") is Watch.WATCHED
+    assert resolver.category_watch("sonarr-done") is Watch.WATCHED
 
 
 @respx.mock
@@ -456,8 +456,8 @@ def test_a_failed_fetch_is_unread_and_asked_again() -> None:
     )
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 
-    assert resolver.watch("sonarr-done") is Watch.UNREAD
-    assert resolver.watch("sonarr-done") is Watch.UNWATCHED
+    assert resolver.category_watch("sonarr-done") is Watch.UNREAD
+    assert resolver.category_watch("sonarr-done") is Watch.UNWATCHED
 
 
 # --- torrent_watch() ---------------------------------------------------------

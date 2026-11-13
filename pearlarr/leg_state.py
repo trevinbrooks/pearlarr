@@ -15,7 +15,7 @@ from .wait_types import ImportWaitMode, PendingImportState
 
 if TYPE_CHECKING:
     # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.
-    from .planner import PrivateOnlySkips
+    from .planner import PrivateOnlyNotices
 
 
 def unresolved_label(al_id: int) -> str:
@@ -106,7 +106,7 @@ class NeedsActionRow:
 
 
 @dataclass
-class RunStats:
+class ArrRunStats:
     """The per-run tally rendered by the end-of-run summary."""
 
     checked: int = 0
@@ -174,23 +174,23 @@ class PerTitleState:
         if groups:
             self.skipped_groups.setdefault(hold, []).extend(groups)
 
-    def absorb_skips(self, skips: "PrivateOnlySkips") -> None:
+    def absorb_skips(self, skips: "PrivateOnlyNotices") -> None:
         """Fold a planner private-only skip result onto this title's flags."""
 
-        self.private_only_skipped |= skips.skipped
+        self.private_only_skipped |= skips.warned
         self.private_only_groups.extend(skips.groups)
         self.private_only_stale_held |= skips.stale_held
 
 
 @dataclass
-class RunContext:
+class ArrRunState:
     """Per-run state."""
 
     arr: Arr
     dry_run: bool = False
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
     """The run's resolved wait mode (cli > config > default). `OFF` makes every pending-import path a no-op."""
-    stats: RunStats = field(default_factory=RunStats)
+    stats: ArrRunStats = field(default_factory=ArrRunStats)
     torrents_added: int = 0
     per_title: PerTitleState = field(default_factory=PerTitleState)
     """Per-title scratch flags, reassigned fresh at the top of each title so none leak into the next."""
@@ -213,7 +213,7 @@ class RunContext:
     """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
 
 
-def is_dry_run(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
+def is_dry_run(ctx: ArrRunState, qbit: qbittorrentapi.Client | None) -> bool:
     """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured."""
 
     return ctx.dry_run or qbit is None

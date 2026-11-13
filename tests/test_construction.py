@@ -62,12 +62,12 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     assert runner._ctx is services.ctx
     assert all(vars(c)["_ctx"] is runner._ctx for c in holders)
 
-    # Phase 2 (fresh mint): reset_run_stats swaps a fresh RunContext AND rebinds
+    # Phase 2 (fresh mint): start_arr_run swaps a fresh ArrRunState AND rebinds
     # every ctx-holding collaborator to it. A missed rebind would route a
     # collaborator's writes into the orphaned prior context (the drift the
     # bind_leg fold guards against).
     first_ctx = runner._ctx
-    runner.reset_run_stats(dry_run=False)
+    runner.start_arr_run(dry_run=False)
 
     assert runner._ctx is not first_ctx  # a fresh ctx was swapped in
     assert services.ctx is runner._ctx  # the hub rebound to it
@@ -194,8 +194,8 @@ def test_rundeps_build_wires_lazy_categories_fetched_at_first_use(
         # Boot did no category I/O: an arr restarting under the boot must not
         # cost the run its post-import moves (the use-time fetch retries).
         assert route.call_count == 0
-        assert deps.categories.grab() == "tv-sonarr"
-        assert deps.categories.post_import() == "sonarr-done"
+        assert deps.categories.grab_category() == "tv-sonarr"
+        assert deps.categories.post_import_category() == "sonarr-done"
         assert route.call_count == 1  # memoized after the one success
         # The torrent adapter asks the same resolver at add time.
         assert deps.torrents.categories is deps.categories
@@ -214,8 +214,8 @@ def test_rundeps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> 
     deps.close()
 
     # No transport was bound, so even USING the resolver stays fetchless.
-    assert deps.categories.grab() is None
-    assert deps.categories.post_import() is None
+    assert deps.categories.grab_category() is None
+    assert deps.categories.post_import_category() is None
     assert route.call_count == 0
 
 
@@ -240,7 +240,7 @@ def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Pa
 
     assert deps.arr_http is None
     # The resolver's None-http contract: no transport, so reads stay fetchless blanks.
-    assert deps.categories.grab() is None
+    assert deps.categories.grab_category() is None
 
 
 def test_rundeps_build_category_handle_derives_from_arr_http(

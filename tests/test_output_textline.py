@@ -25,7 +25,7 @@ import pytest
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunStats
+from pearlarr.leg_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     BootReady,
     BootStepFinished,
@@ -408,7 +408,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
 
 
 def _summary_ready() -> RunSummaryReady:
-    stats = RunStats(checked=182, up_to_date=161, unchanged=14)
+    stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
     stats.queued = 1
     stats.added.append(
         GrabbedRow(
@@ -452,7 +452,7 @@ def _quiet_summary_ready() -> RunSummaryReady:
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=LegTally.from_stats(RunStats()),
+            tally=LegTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -1098,7 +1098,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
     (quiet,) = _json_lines([_quiet_summary_ready()])
     assert "held_by_cap" not in quiet
 
-    stats = RunStats(checked=3)
+    stats = ArrRunStats(checked=3)
     stats.held_by_cap = 2
     held = RunSummaryReady(
         LegSummary(

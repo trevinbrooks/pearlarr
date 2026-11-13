@@ -575,7 +575,7 @@ class SeedRelease:
     def own_group(self) -> TorrentGroup:
         """The release's group at its listing's sizes, the trust policy's last vote."""
 
-        return TorrentGroup(self.release_group, tuple(self.release.size))
+        return TorrentGroup(self.release_group, tuple(self.release.file_sizes))
 
     @property
     def facts(self) -> TorrentFacts:
