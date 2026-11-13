@@ -113,9 +113,9 @@ def collect_anime_movies(
 
     Args:
         radarr_client: Client to fetch the movie list from.
-        known_ids: Resolver exposing `anime_id_set(column)` for the
+        known_ids: Resolver exposing `known_external_ids(kind)` for the
             Anime-IDs candidate sets.
-        anibridge: AniBridge view, exposing `id_set(mapping_key)`
+        anibridge: AniBridge view, exposing `known_external_ids(kind)`
             for its precomputed candidate sets.
     """
 

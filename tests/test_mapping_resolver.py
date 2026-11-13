@@ -602,9 +602,9 @@ class TestAnimeIdsParity:
             ),
         )
         try:
-            assert resolver.anime_id_set("tvdb_id") == {200, 999}
-            assert resolver.anime_id_set("imdb_id") == {"tt100"}
-            assert resolver.anime_id_set("tmdb_movie_id") == {7000}
+            assert resolver.known_external_ids("tvdb_id") == {200, 999}
+            assert resolver.known_external_ids("imdb_id") == {"tt100"}
+            assert resolver.known_external_ids("tmdb_movie_id") == {7000}
             assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=999)) == {}  # E has no anilist
         finally:
             resolver.close()

@@ -47,7 +47,7 @@ def collect_anime_items[ItemT: ArrItem](
     """Arr library items that have an AniList mapping, sorted by title.
 
     Per filter, unions the precomputed Anime-IDs and AniBridge candidate sets
-    (the Anime-IDs sets come from `MappingResolver.anime_id_set`), then keeps
+    (the Anime-IDs sets come from `MappingResolver.known_external_ids`), then keeps
     each item that matches at least one id space.
 
     Generic in `ItemT` (an `arr_models.SonarrItem` /
@@ -100,8 +100,8 @@ def build_id_filters(
     return tuple(
         IdFilter(
             field,
-            anime_ids=known_ids.anime_id_set(field.mapping_key),
-            anibridge_ids=anibridge.id_set(field.mapping_key) if anibridge else set(),
+            anime_ids=known_ids.known_external_ids(field.mapping_key),
+            anibridge_ids=anibridge.known_external_ids(field.mapping_key) if anibridge else set(),
         )
         for field in fields
     )

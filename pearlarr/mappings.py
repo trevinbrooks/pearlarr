@@ -423,12 +423,12 @@ class KnownExternalIds(ABC):
 
     A nominal seam homed here (not in `radarr_client`) so `MappingResolver` can
     subclass it without a cycle - `radarr_client` imports `mappings`, never the
-    reverse. Supplies the DISTINCT Anime-IDs id set for a given column.
+    reverse. Supplies the DISTINCT Anime-IDs id set for a given kind.
     """
 
     @abstractmethod
-    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
-        """DISTINCT external ids the Anime-IDs source carries for `column`."""
+    def known_external_ids(self, kind: IdKind) -> AbstractSet[int | str]:
+        """DISTINCT external ids the Anime-IDs source carries for `kind`."""
 
 
 class MappingResolver(KnownExternalIds):
@@ -726,8 +726,8 @@ class MappingResolver(KnownExternalIds):
     # -- library-filter id sets ---------------------------------------------
 
     @override
-    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
-        """DISTINCT external ids the Anime-IDs source carries for `column`.
+    def known_external_ids(self, kind: IdKind) -> AbstractSet[int | str]:
+        """DISTINCT external ids the Anime-IDs source carries for `kind`.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
         `all_*` sets), so `collect_anime_items` queries these instead of
@@ -739,7 +739,7 @@ class MappingResolver(KnownExternalIds):
 
         if not self._anime_enabled:
             return set()
-        return self._store.anime_ids_distinct(column)
+        return self._store.anime_ids_distinct(kind)
 
     @property
     def has_anidb(self) -> bool:
