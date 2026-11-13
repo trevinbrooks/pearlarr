@@ -6,7 +6,7 @@ from typing import Any
 from .cache import AbstractCacheStore
 from .config import Arr
 from .leg_state import RunContext
-from .pending_import import EntryClaim, GuardFacts, PendingImport, hydrate_pending, is_awaiting_cleanup
+from .pending_import import GuardFacts, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
 from .wait_types import ImportProbe
 
 
@@ -86,14 +86,14 @@ class PendingImportStore:
         }
         return self.hydrate(rows)
 
-    def insert_fresh(self, record: PendingImport, claim: EntryClaim) -> None:
+    def insert_fresh(self, record: PendingImport, claim: TitleClaim) -> None:
         """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `added`)."""
 
         self._put(record)
         self._put_guards(claim)
         self._ctx.grabbed_this_run[record.infohash] = record
 
-    def save_with_claim(self, record: PendingImport, claim: EntryClaim) -> None:
+    def save_with_claim(self, record: PendingImport, claim: TitleClaim) -> None:
         """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
 
         self.save(record)
@@ -115,7 +115,7 @@ class PendingImportStore:
 
         self._store.put_pending(self._ctx.arr, record.infohash, record.to_json())
 
-    def _put_guards(self, claim: EntryClaim) -> None:
+    def _put_guards(self, claim: TitleClaim) -> None:
         """The claim's guard row (Sonarr only: Radarr's import reads no guards).
 
         Written only by the grab that produced the evidence, never re-put from a hydrated copy that

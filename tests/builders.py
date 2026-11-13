@@ -44,7 +44,7 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, TargetStatuses, TrustPolicy
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.grab_placement import EntryFacts, KnownTorrent, PendingSeed, TorrentEvidence, TorrentFacts
+from pearlarr.grab_placement import EntryFacts, FetchedSeadex, KnownTorrent, PendingImportUpdate, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
 from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver, MappingSources
@@ -54,29 +54,29 @@ from pearlarr.parse_records import ParseRecords
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
-    EntryClaim,
-    EntryNames,
-    EntryWindow,
     FileEpisodeMap,
     GuardFacts,
     OwnGroup,
     PendingImport,
+    TitleClaim,
+    TitleNames,
+    TitleWindow,
 )
 from pearlarr.pending_records import PendingImportStore
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_SEEDED,
-    EpisodeAssignment,
+    BatchPlacements,
+    EpisodeBySize,
     EpisodeIndex,
+    GrabbingTitle,
     PlacementBatch,
+    PlacementTarget,
     PlacementVerdict,
-    SeedScope,
-    SizeIdentities,
-    TargetScope,
     TorrentListing,
     episode_index,
 )
-from pearlarr.placer import assign_episode_ids
+from pearlarr.placer import place_batch
 from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
@@ -754,7 +754,7 @@ def make_run_deps(
         categories=categories,
         clock=clock or FakeClock(),
         web=http,
-        parse_records=ParseRecords(cache_store),
+        parse_cache_rows=ParseRecords(cache_store),
         http=http,
         qbit=None,
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
@@ -869,10 +869,10 @@ def pending_seed(
     hand_import_files: tuple[str, ...] = (),
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
-) -> PendingSeed:
+) -> PendingImportUpdate:
     """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, new unless `stored` is given."""
 
-    return PendingSeed(
+    return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
         placements=placements or {},
         excluded=(),
@@ -1145,18 +1145,18 @@ def episode_snapshot(
     )
 
 
-_NO_SIZES: SizeIdentities = MappingProxyType({})
+_NO_SIZES: EpisodeBySize = MappingProxyType({})
 """No size identities, so nothing gets placed by size."""
 
-UNLISTED = TorrentEvidence(EMPTY_LISTING, _NO_SIZES)
+UNLISTED = FetchedSeadex(EMPTY_LISTING, _NO_SIZES)
 """A torrent no entry lists, with the listings read and no size identities."""
 
 
-UNREAD_EVIDENCE = TorrentEvidence(None, None)
+UNREAD_EVIDENCE = FetchedSeadex(None, None)
 """SeaDex couldn't be read: no listing and no size identities."""
 
 
-_NO_NAMES = EntryNames()
+_NO_NAMES = TitleNames()
 """An entry with no series or AniList titles."""
 
 
@@ -1165,13 +1165,13 @@ def entry_window(
     ids: Iterable[int],
     *,
     series_id: int = 7,
-    names: EntryNames = _NO_NAMES,
+    names: TitleNames = _NO_NAMES,
     ignored: bool = False,
     episode_count: int | None = None,
-) -> EntryWindow:
+) -> TitleWindow:
     """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `entry_claim`'s), in the order given."""
 
-    return EntryWindow(
+    return TitleWindow(
         al_id=al_id,
         series_id=series_id,
         ordered_episode_ids=tuple(ids),
@@ -1181,7 +1181,7 @@ def entry_window(
     )
 
 
-def torrent_listing(*windows: EntryWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:
+def torrent_listing(*windows: TitleWindow, aliases: SpecialAliases = NO_ALIASES) -> TorrentListing:
     """The listing of a torrent the `windows`' entries list, with `aliases`."""
 
     return TorrentListing(windows, aliases)
@@ -1192,18 +1192,18 @@ ALIASED_PACK = torrent_listing(entry_window(1, (502, 504, 506)), aliases={1: 2, 
 
 
 def torrent_evidence(
-    *windows: EntryWindow, identities: SizeIdentities = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
-) -> TorrentEvidence:
+    *windows: TitleWindow, identities: EpisodeBySize = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
+) -> FetchedSeadex:
     """Evidence after a good read: the `windows`' listing with `aliases`, and size `identities` (both none by default)."""
 
-    return TorrentEvidence(torrent_listing(*windows, aliases=aliases), identities)
+    return FetchedSeadex(torrent_listing(*windows, aliases=aliases), identities)
 
 
 def known_torrent(
     record: PendingImport | None = None,
     *,
     indexes: Mapping[int, EpisodeIndex] | None = None,
-    evidence: TorrentEvidence = UNLISTED,
+    evidence: FetchedSeadex = UNLISTED,
 ) -> KnownTorrent:
     """A `KnownTorrent`, by default a new torrent that nothing lists, with no series read."""
 
@@ -1216,17 +1216,17 @@ def seed_scope(
     *,
     al_id: int = 1,
     series_id: int = 7,
-    names: EntryNames = _NO_NAMES,
+    names: TitleNames = _NO_NAMES,
     episode_count: int | None = None,
     alternate_titles: tuple[str, ...] = (),
-    aired_numbering: bool = True,
-) -> SeedScope:
+    aired_order: bool = True,
+) -> GrabbingTitle:
     """Entry `al_id`'s grab scope over `entry`, within `series` on `series_id` (series 7, as `entry_claim`'s).
 
     Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
 
-    return SeedScope(
+    return GrabbingTitle(
         al_id=al_id,
         series_id=series_id,
         entry=entry,
@@ -1234,11 +1234,11 @@ def seed_scope(
         names=names,
         episode_count=episode_count,
         alternate_titles=alternate_titles,
-        aired_numbering=aired_numbering,
+        aired_order=aired_order,
     )
 
 
-def new_torrent(scope: SeedScope) -> KnownTorrent:
+def new_torrent(scope: GrabbingTitle) -> KnownTorrent:
     """A new torrent that nothing lists, with only the scope's own series read."""
 
     return known_torrent(indexes={scope.series_id: scope.series})
@@ -1302,28 +1302,28 @@ def parsed_info(
     )
 
 
-def by_name(result: EpisodeAssignment) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+def by_name(result: BatchPlacements) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
     """One assignment keyed name -> (ids, verdict), for the tests that pin every placement."""
 
     return {p.name: (p.ids, p.verdict) for p in result.placements}
 
 
-def verdicts_of(result: EpisodeAssignment) -> set[PlacementVerdict]:
+def verdicts_of(result: BatchPlacements) -> set[PlacementVerdict]:
     """The distinct verdicts an assignment gave, for the tests that pin what kind of verdict a batch got."""
 
     return {p.verdict for p in result.placements}
 
 
-def merged_of(result: WindowedAssignment) -> EpisodeAssignment:
+def merged_of(result: WindowedAssignment) -> BatchPlacements:
     """Each file's verdict over every window, batch order (`WindowedFile.merged`)."""
 
-    return EpisodeAssignment(tuple(file.merged for file in result.files))
+    return BatchPlacements(tuple(file.merged for file in result.files))
 
 
-def under_window(result: WindowedAssignment, at: int) -> EpisodeAssignment:
+def under_window(result: WindowedAssignment, at: int) -> BatchPlacements:
     """What the placer gave each file under the window at `at`, batch order (`WindowedFile.per_window`)."""
 
-    return EpisodeAssignment(tuple(file.per_window[at] for file in result.files))
+    return BatchPlacements(tuple(file.per_window[at] for file in result.files))
 
 
 def decided_by(result: WindowedAssignment) -> dict[str, int]:
@@ -1348,23 +1348,23 @@ def batch(
     parsed: Mapping[str, ParsedFileInfo | None],
     to_place: Sequence[str] | None = None,
     *,
-    seeded: FileEpisodeMap = NO_SEEDED,
+    file_map: FileEpisodeMap = NO_SEEDED,
 ) -> PlacementBatch:
     """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `seeded`."""
 
-    return PlacementBatch(list(parsed) if to_place is None else to_place, parsed, seeded)
+    return PlacementBatch(list(parsed) if to_place is None else to_place, parsed, file_map)
 
 
 def place(
     parsed: Mapping[str, ParsedFileInfo | None],
-    scope: TargetScope,
+    scope: PlacementTarget,
     to_place: Sequence[str] | None = None,
     *,
-    seeded: FileEpisodeMap = NO_SEEDED,
-) -> EpisodeAssignment:
+    file_map: FileEpisodeMap = NO_SEEDED,
+) -> BatchPlacements:
     """The verdicts `assign_episode_ids` gives under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
 
-    return assign_episode_ids(batch(parsed, to_place, seeded=seeded), scope).assignment
+    return place_batch(batch(parsed, to_place, file_map=file_map), scope).assignment
 
 
 def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:
@@ -1380,12 +1380,12 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
 # spell a builder record's guard-row key without magic ints.
 PENDING_AL_ID = 1
 
-_CLAIM_KEYS = frozenset(EntryClaim.__dataclass_fields__)
+_CLAIM_KEYS = frozenset(TitleClaim.__dataclass_fields__)
 PENDING_STAMP = "2026-06-24 00:00:00"
 PENDING_ADDED = parse_stamp(PENDING_STAMP).astimezone()
 
 
-def entry_claim(**overrides: Any) -> EntryClaim:
+def entry_claim(**overrides: Any) -> TitleClaim:
     """An `EntryClaim` on series 7 by entry `PENDING_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
 
     defaults: dict[str, Any] = {
@@ -1395,14 +1395,14 @@ def entry_claim(**overrides: Any) -> EntryClaim:
         "coverage": None,
         "url": None,
         "ordered_episode_ids": (),
-        "names": EntryNames(),
+        "names": TitleNames(),
         "preowned_episode_ids": (),
         "slice_coverage": None,
     }
     defaults.update(overrides)
     for key in ("ordered_episode_ids", "preowned_episode_ids"):
         defaults[key] = tuple(defaults[key])
-    return EntryClaim(**defaults)
+    return TitleClaim(**defaults)
 
 
 def two_claim_record(

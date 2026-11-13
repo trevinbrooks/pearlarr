@@ -8,8 +8,8 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import Self
 
-from ._state import NumberedRun, Placer, RunWindow, TorrentFile
-from ..parse_reading import Reading, claims_several_episodes
+from ._state import ConsecutiveEpisodes, NumberedSequence, PlacerState, TorrentFile
+from ..parse_reading import ParsedEpisodes, claims_several_episodes
 from ..placement_types import PlacementVerdict
 from ..release_names import Naming
 from ..releases import EpisodeKey
@@ -19,7 +19,7 @@ MIN_TITLE_HITS = 2
 
 
 @dataclass(frozen=True, slots=True)
-class TitleEvidence:
+class EpisodeTitleMatches:
     """How many run members' tails start with only window titles, and how many with only titles outside it."""
 
     inside: int
@@ -46,7 +46,7 @@ class _SeasonFit:
     tied: bool
 
 
-def pass_reread_season_runs(state: Placer) -> None:
+def pass_reread_season_runs(state: PlacerState) -> None:
     """Read a `1..N` run Sonarr matched into one N-episode season as that season's episodes 1 to N (`_season_fit`).
 
     Only a run without own keys qualifies, and Sonarr shifted some of its members onto specials. In a tie (as many
@@ -67,7 +67,7 @@ def pass_reread_season_runs(state: Placer) -> None:
             _reread(state, run, fit.season)
 
 
-def _season_fit(state: Placer, run: NumberedRun) -> _SeasonFit | None:
+def _season_fit(state: PlacerState, run: NumberedSequence) -> _SeasonFit | None:
     """The season a `1..N` run without own keys belongs to: Sonarr matched it into one season of exactly N episodes.
 
     Every member needs a parse and at most one resolved id. At least one member must be matched onto the
@@ -96,16 +96,16 @@ def _season_fit(state: Placer, run: NumberedRun) -> _SeasonFit | None:
     return _SeasonFit(season, tied=into_season == onto_specials and state.series.season_counts.get(0) == width)
 
 
-def _tie(state: Placer, run: NumberedRun, season: int) -> None:
+def _tie(state: PlacerState, run: NumberedSequence, season: int) -> None:
     """Reject the run's readings and record each file's episode under the season's and the specials' numbering."""
 
     for file in run.whole:
         keys = (EpisodeKey(season, file.release_number), EpisodeKey(0, file.release_number))
         ids = tuple(i for key in keys if (i := state.scope.id_by_key.get(key)))
-        file.reading = replace(file.reading, vetoed=True, tied=ids)
+        file.reading = replace(file.reading, rejected=True, tied=ids)
 
 
-def _reread(state: Placer, run: NumberedRun, season: int) -> None:
+def _reread(state: PlacerState, run: NumberedSequence, season: int) -> None:
     """Read each run file as the season's episode of its release number, rejected where its title disagrees."""
 
     for file in run.whole:
@@ -113,13 +113,13 @@ def _reread(state: Placer, run: NumberedRun, season: int) -> None:
         if ep_id:
             inside = (ep_id,) if state.scope.admits(ep_id) else ()
             vetoed = file.contradicts((ep_id,))
-            file.reading = Reading(
+            file.reading = ParsedEpisodes(
                 resolved=(ep_id,),
                 inside=inside,
                 complete=True,
-                borrowed=True,
-                vetoed=vetoed,
-                corroborated=True,
+                from_matched=True,
+                rejected=vetoed,
+                sonarr_agrees=True,
             )
 
 
@@ -127,11 +127,11 @@ def _reread(state: Placer, run: NumberedRun, season: int) -> None:
 class _ListedPack:
     """A misnumbered specials pack and the listed specials it is as wide as."""
 
-    run: NumberedRun
+    run: NumberedSequence
     listed: frozenset[int]
 
 
-def pass_misnumbered_pack(state: Placer) -> None:
+def pass_misnumbered_pack(state: PlacerState) -> None:
     """Place a misnumbered specials pack through the listing's special aliases, or refuse it whole.
 
     The pack is the batch as one run of specials, one file per number, as wide as the listing, with a number that
@@ -160,19 +160,19 @@ def pass_misnumbered_pack(state: Placer) -> None:
     for file in _remaining_of(pack.run.members):
         ep_id = specials[file]
         if state.scope.admits(ep_id):
-            state.place_or_skip(file, ep_id, PlacementVerdict.ALTERNATE)
+            state.place_or_skip(file, ep_id, PlacementVerdict.SPECIAL_ALIAS)
         else:
-            state.set_aside(file, PlacementVerdict.ALIASED_ELSEWHERE)
+            state.set_aside(file, PlacementVerdict.ALIAS_OUTSIDE_WINDOW)
     state.set_aside_each(_remaining_of(pack.run.superseded), PlacementVerdict.DUPLICATE)
 
 
 def _remaining_of(files: Iterable[TorrentFile]) -> list[TorrentFile]:
     """The files still to place, in the order given. Seeded, gone, and already judged ones drop out."""
 
-    return [file for file in files if file.remaining]
+    return [file for file in files if file.unjudged]
 
 
-def _aliased_specials(state: Placer, pack: _ListedPack) -> dict[TorrentFile, int] | None:
+def _aliased_specials(state: PlacerState, pack: _ListedPack) -> dict[TorrentFile, int] | None:
     """Each member -> its aliased special, or None if the aliases don't map the pack one to one onto the listing.
 
     Also None when a member's title, size match, or seed puts it anywhere but its aliased special.
@@ -195,7 +195,7 @@ def _aliased_specials(state: Placer, pack: _ListedPack) -> dict[TorrentFile, int
     return specials if frozenset(specials.values()) == pack.listed else None
 
 
-def _misnumbered_pack(state: Placer) -> _ListedPack | None:
+def _misnumbered_pack(state: PlacerState) -> _ListedPack | None:
     """The batch as one listing-wide specials pack with a number that isn't a listed special, else None.
 
     For specials the curated listing (`TargetScope.listing`) beats the file names. In a regular season, a number
@@ -210,7 +210,7 @@ def _misnumbered_pack(state: Placer) -> _ListedPack | None:
     return _ListedPack(run, listed)
 
 
-def _sole_specials_run(state: Placer, width: int) -> NumberedRun | None:
+def _sole_specials_run(state: PlacerState, width: int) -> NumberedSequence | None:
     """The batch as one run of `width` distinct `S00Exx` names, each read by Sonarr as its own number's special.
 
     Seeded and gone files count as members. None if a parse is unknown, the count-based passes are off, a file
@@ -218,7 +218,7 @@ def _sole_specials_run(state: Placer, width: int) -> NumberedRun | None:
     repeats or spans several episodes, or every member's title confirms its number.
     """
 
-    if not state.all_parses_known or state.count_legs_barred or not state.unjudged:
+    if not state.all_parses_known or state.pairing_off or not state.unjudged:
         return None
     runs = state.counted_runs
     if len(runs) != 1 or set(runs[0].whole) != set(state.counted):
@@ -254,9 +254,9 @@ class _Candidate:
     """A run that could place onto the window: its position among the runs, its best tier, and its title evidence."""
 
     position: int
-    run: NumberedRun
+    run: NumberedSequence
     tier: _Tier
-    evidence: TitleEvidence
+    evidence: EpisodeTitleMatches
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -267,13 +267,13 @@ class _RunFit:
     sees the latest readings and verdicts.
     """
 
-    state: Placer
-    window: RunWindow
-    runs: tuple[NumberedRun, ...]
+    state: PlacerState
+    window: ConsecutiveEpisodes
+    runs: tuple[NumberedSequence, ...]
     """The numbered runs among the unplaced files, in run order."""
 
     @classmethod
-    def of(cls, state: Placer) -> Self | None:
+    def of(cls, state: PlacerState) -> Self | None:
         """The fit when the open ids form a run window, else None."""
 
         window = state.run_window()
@@ -289,14 +289,14 @@ class _RunFit:
             _Tier.COVERING: self.covering(),
             _Tier.ANYWHERE: self.from_anywhere(),
         }
-        tier_of: dict[NumberedRun, _Tier] = {}
+        tier_of: dict[NumberedSequence, _Tier] = {}
         for tier, fits in tiers.items():
             for run in fits:
                 tier_of.setdefault(run, tier)
         position = {run: index for index, run in enumerate(self.runs)}
         return [_Candidate(position[run], run, tier, self.evidence(run)) for run, tier in tier_of.items()]
 
-    def evidence(self, run: NumberedRun) -> TitleEvidence:
+    def evidence(self, run: NumberedSequence) -> EpisodeTitleMatches:
         """Count the members whose tail starts with only window titles, and those with only outside titles.
 
         A tail matching titles on both sides counts for neither.
@@ -309,9 +309,9 @@ class _RunFit:
                 inside += 1
             elif sides == {False}:
                 outside += 1
-        return TitleEvidence(inside, outside)
+        return EpisodeTitleMatches(inside, outside)
 
-    def covering(self) -> list[NumberedRun]:
+    def covering(self) -> list[NumberedSequence]:
         """The runs numbered `1..N` for the window's whole season, when the window holds fewer than N ids."""
 
         season = self.window.season
@@ -332,7 +332,7 @@ class _RunFit:
         count = self.state.series.season_counts.get(season, 0)
         return any(EpisodeKey(season, n) not in self.state.scope.id_by_key for n in range(1, count + 1))
 
-    def from_anywhere(self) -> list[NumberedRun]:
+    def from_anywhere(self) -> list[NumberedSequence]:
         """The runs of consecutive numbers as wide as the window, at any start, where no member has a complete reading.
 
         Empty once any id is used (by a seeded file, an earlier window, or an earlier pass).
@@ -347,18 +347,18 @@ class _RunFit:
             if run.consecutive(width) and not any(file.reading.complete for file in run.members)
         ]
 
-    def seasons_read(self, run: NumberedRun) -> set[int]:
+    def seasons_read(self, run: NumberedSequence) -> set[int]:
         """The seasons Sonarr read the run's members into."""
 
         key_by_id = self.state.series.key_by_id
         return {key_by_id[ep_id].season for file in run.members for ep_id in file.reading.resolved}
 
-    def read_elsewhere(self, run: NumberedRun) -> bool:
+    def read_elsewhere(self, run: NumberedSequence) -> bool:
         """Whether a member's reading lands in a season other than the window's, which disputes the run's numbers."""
 
         return any(read != self.window.season for read in self.seasons_read(run))
 
-    def settled_elsewhere(self, run: NumberedRun) -> bool:
+    def settled_elsewhere(self, run: NumberedSequence) -> bool:
         """Whether Sonarr matched every member to its own distinct episode outside the scope (another season or cour).
 
         A tied run counts as elsewhere when none of its candidate episodes is in the scope.
@@ -367,11 +367,11 @@ class _RunFit:
         readings = [file.reading for file in run.members]
         if all(r.tied is not None for r in readings):
             return not any(i in self.state.scope.real_ids for r in readings for i in r.tied or ())
-        if not all(r.outside and r.corroborated and len(r.resolved) == 1 for r in readings):
+        if not all(r.outside and r.sonarr_agrees and len(r.resolved) == 1 for r in readings):
             return False
         return len({r.resolved[0] for r in readings}) == len(readings)
 
-    def refused(self, run: NumberedRun) -> bool:
+    def refused(self, run: NumberedSequence) -> bool:
         """Whether the batch shows the run cannot own the whole window."""
 
         state, window_set = self.state, self.window.id_set
@@ -382,7 +382,7 @@ class _RunFit:
             if info is None or claims_several_episodes(info):
                 return True
             reading = file.reading
-            keyed_outside = not reading.borrowed and reading.complete and window_set.isdisjoint(reading.resolved)
+            keyed_outside = not reading.from_matched and reading.complete and window_set.isdisjoint(reading.resolved)
             # A member whose own key lies outside the window refuses the run, except on a specials window.
             if keyed_outside and not self.window.specials:
                 return True
@@ -401,7 +401,7 @@ class _RunFit:
         return False
 
 
-def pass_release_run(state: Placer) -> None:
+def pass_release_run(state: PlacerState) -> None:
     """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
 
     The open ids must form a run window. Candidates are the unplaced runs that fit a `_Tier`. Tie-breaks, in order:
@@ -427,7 +427,7 @@ def pass_release_run(state: Placer) -> None:
     open_positions = frozenset(index for index, run in enumerate(fit.runs) if not fit.settled_elsewhere(run))
     naming = Naming.of([run.prefix for run in fit.runs], state.scope.names)
     # Several candidates turn the count-based passes off, even when a tie-break picks one.
-    state.count_legs_barred |= len(candidates) > 1
+    state.pairing_off |= len(candidates) > 1
     pick = _sole_candidate(candidates, open_positions, naming)
     if pick is None:
         return
@@ -435,7 +435,7 @@ def pass_release_run(state: Placer) -> None:
     if run.prefix in state.size_refuted_runs:
         return
     if not state.all_parses_known:
-        state.set_aside_each(run.whole, PlacementVerdict.HELD)
+        state.set_aside_each(run.whole, PlacementVerdict.WAITING_ON_PARSE)
         return
     covers = pick.tier is _Tier.COVERING
     refused = (
@@ -447,7 +447,7 @@ def pass_release_run(state: Placer) -> None:
         or (naming is not None and naming.names_another(pick.position, open_positions))
     )
     if refused:
-        state.count_legs_barred = True
+        state.pairing_off = True
         return
     window = fit.window
     # A whole-season run over a partial window places only the window's numbers. Its other members are FOREIGN.
@@ -456,9 +456,9 @@ def pass_release_run(state: Placer) -> None:
     exact = [file.reading.exact_ids for file in files]
     if all(len(ids) == 1 and ids[0] in window.id_set for ids in exact) and len(set(exact)) == len(exact):
         return
-    if not state.place_zip(files, window.ids, PlacementVerdict.RELEASE_RUN):
+    if not state.pair_in_order(files, window.ids, PlacementVerdict.SEQUENCE_OVER_PARSE):
         return
-    state.set_aside_each([file for file in run.members if file not in files], PlacementVerdict.FOREIGN)
+    state.set_aside_each([file for file in run.members if file not in files], PlacementVerdict.OUTSIDE_WINDOW)
     state.set_aside_each(run.superseded, PlacementVerdict.DUPLICATE)
 
 
@@ -483,7 +483,7 @@ def _sole_candidate(
     return candidates[0] if len(candidates) == 1 else None
 
 
-def pass_numbered_run(state: Placer) -> None:
+def pass_numbered_run(state: PlacerState) -> None:
     """Zip the one `1..N` run among the files Sonarr found no episode for onto a run window of N ids.
 
     Unlike the ordered zip, this works beside files that other passes placed. A file qualifies when its reading
@@ -491,7 +491,7 @@ def pass_numbered_run(state: Placer) -> None:
     with any parse unknown, or with the count-based passes off.
     """
 
-    if not state.map_known or not state.all_parses_known or state.count_legs_barred:
+    if not state.map_known or not state.all_parses_known or state.pairing_off:
         return
     window = state.run_window()
     if window is None:
@@ -505,5 +505,5 @@ def pass_numbered_run(state: Placer) -> None:
     if len(fits) != 1:
         return
     run = fits[0]
-    if state.place_zip(run.members, window.ids, PlacementVerdict.NUMBERED_RUN):
+    if state.pair_in_order(run.members, window.ids, PlacementVerdict.SEQUENCE):
         state.set_aside_each(run.superseded, PlacementVerdict.DUPLICATE)

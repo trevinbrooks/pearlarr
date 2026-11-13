@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 from .listing_fold import EntryListing, fold_listings
 from .mappings import ResolvedMappings
-from .pending_import import EntryNames, EntryWindow
-from .placement_types import ListingsRead
+from .pending_import import TitleNames, TitleWindow
+from .placement_types import FetchedListings
 from .seadex_gateway import SeaDexMiss, SeaDexSource
 from .sonarr_episodes import SonarrEpisodes
 
@@ -28,20 +28,20 @@ class SeriesListings:
         seadex: SeaDexSource,
         episodes: SonarrEpisodes,
         ignore_tags: frozenset[str],
-        names: Callable[[int], EntryNames],
+        names: Callable[[int], TitleNames],
     ) -> None:
         self._seadex = seadex
         self._episodes = episodes
         self._ignore_tags = ignore_tags
         self._names = names
-        self._reads: dict[int, ListingsRead | None] = {}
+        self._reads: dict[int, FetchedListings | None] = {}
 
     def reset(self) -> None:
         """Forget this run's reads. Called at run start, alongside the episode cache reset."""
 
         self._reads = {}
 
-    def read(self, series_id: int, resolved: ResolvedMappings) -> ListingsRead | None:
+    def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
         """The series' listings (see `fold_listings`), or None when SeaDex is unreachable.
 
         Only the first call in a run reads anything. Later calls return the same result, whatever `resolved` they
@@ -53,7 +53,7 @@ class SeriesListings:
             self._reads[series_id] = self._read(series_id, resolved)
         return self._reads[series_id]
 
-    def _read(self, series_id: int, resolved: ResolvedMappings) -> ListingsRead | None:
+    def _read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
         """Read each entry's record, window, and special aliases, then fold them.
 
         An entry whose episode list comes back empty keeps a window with no ids.
@@ -73,7 +73,7 @@ class SeriesListings:
             window = (
                 None
                 if ep_list is None
-                else EntryWindow.of(
+                else TitleWindow.of(
                     al_id=al_id,
                     series_id=series_id,
                     ep_list=ep_list,

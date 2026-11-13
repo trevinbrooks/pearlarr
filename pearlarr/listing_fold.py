@@ -8,8 +8,8 @@ from seadex import EntryRecord
 from .anibridge import NO_ALIASES, SpecialAliasing
 from .file_paths import path_leaf
 from .pairs import unambiguous
-from .pending_import import EntryWindow
-from .placement_types import ListingsRead, SizeIdentities, TorrentListing
+from .pending_import import TitleWindow
+from .placement_types import EpisodeBySize, FetchedListings, TorrentListing
 from .releases import carries_ignored_tag, normalized_infohash
 from .video_files import is_video_candidate
 
@@ -21,14 +21,14 @@ class EntryListing:
     record: EntryRecord
     """The entry's SeaDex record."""
 
-    window: EntryWindow | None
+    window: TitleWindow | None
     """The entry's window, None if its episodes couldn't be read."""
 
     special_aliasing: SpecialAliasing | None
     """The entry's specials aliases and their TMDB show (`MappingEntry.special_aliasing`), None when it has none."""
 
 
-def fold_listings(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> ListingsRead:
+def fold_listings(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> FetchedListings:
     """Build the series' `ListingsRead` from its entries.
 
     Each infohash gets the windows of the entries that list it and the union of their special aliases
@@ -42,7 +42,7 @@ def fold_listings(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) 
             if (infohash := normalized_infohash(torrent.infohash)) is not None:
                 by_hash.setdefault(infohash, []).append(entry)
     listings = {infohash: _torrent_listing(listed) for infohash, listed in by_hash.items()}
-    return ListingsRead(listings, _series_identities(entries, ignore_tags))
+    return FetchedListings(listings, _series_identities(entries, ignore_tags))
 
 
 def _torrent_listing(entries: Sequence[EntryListing]) -> TorrentListing | None:
@@ -51,7 +51,7 @@ def _torrent_listing(entries: Sequence[EntryListing]) -> TorrentListing | None:
     When the entries pair against different TMDB shows, the hash gets no aliases.
     """
 
-    windows: list[EntryWindow] = []
+    windows: list[TitleWindow] = []
     pairs: list[tuple[int, int]] = []
     shows: set[int] = set()
     for entry in entries:
@@ -64,7 +64,7 @@ def _torrent_listing(entries: Sequence[EntryListing]) -> TorrentListing | None:
     return TorrentListing(tuple(windows), unambiguous(pairs) if len(shows) == 1 else NO_ALIASES)
 
 
-def _series_identities(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> SizeIdentities | None:
+def _series_identities(entries: Sequence[EntryListing], ignore_tags: frozenset[str]) -> EpisodeBySize | None:
     """The size identities of every entry, or None if any window is unread."""
 
     pairs: list[tuple[int, int]] = []
@@ -75,7 +75,7 @@ def _series_identities(entries: Sequence[EntryListing], ignore_tags: frozenset[s
     return unambiguous(pairs)
 
 
-def size_identities(record: EntryRecord, window: EntryWindow, ignore_tags: frozenset[str]) -> Iterator[tuple[int, int]]:
+def size_identities(record: EntryRecord, window: TitleWindow, ignore_tags: frozenset[str]) -> Iterator[tuple[int, int]]:
     """Yield `(size, episode)` for each torrent with exactly one video file, when the entry covers one episode.
 
     All trackers count, since the size identifies the file wherever it's served. Torrents with an ignored tag

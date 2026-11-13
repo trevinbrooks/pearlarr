@@ -60,7 +60,7 @@ def _reaches(source: str, rel: Path) -> list[str]:
 
 def test_the_scan_catches_outside_reaches_and_allows_the_package_its_own() -> None:
     outside = Path("pearlarr/window_placement.py")
-    assert _reaches("from .placer._state import Placer\n", outside) == [
+    assert _reaches("from .placer._state import PlacerState\n", outside) == [
         "pearlarr/window_placement.py:1 imports pearlarr.placer._state",
     ]
     assert _reaches("import pearlarr.placer._run_passes\n", Path("tests/x.py")) == [
@@ -69,8 +69,8 @@ def test_the_scan_catches_outside_reaches_and_allows_the_package_its_own() -> No
     assert _reaches("from pearlarr.placer import _passes\n", Path("scripts/x.py")) == [
         "scripts/x.py:1 imports pearlarr.placer._passes",
     ]
-    assert _reaches("from .placer import assign_episode_ids\n", outside) == []
-    assert _reaches("from ._state import Placer\n", Path("pearlarr/placer/_passes.py")) == []
+    assert _reaches("from .placer import place_batch\n", outside) == []
+    assert _reaches("from ._state import PlacerState\n", Path("pearlarr/placer/_passes.py")) == []
 
 
 def test_no_module_imports_another_packages_private_module() -> None:

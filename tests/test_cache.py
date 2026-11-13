@@ -33,7 +33,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.parse_records import parsed_info, to_parse_record
-from pearlarr.pending_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport
+from pearlarr.pending_import import GuardFacts, OwnedEpisode, PendingImport, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import OrderRow, StoredOrders
@@ -623,7 +623,7 @@ class TestSchemaVersionGate:
             assert all("episode_ids" not in record for record in records.values())
             old = PendingImport.from_json(records["old"], guards={})
             assert old.claims[0].ordered_episode_ids == (1, 2, 3)
-            assert old.claims[0].names == EntryNames()
+            assert old.claims[0].names == TitleNames()
             # The fold carries the map verbatim and only derives the window from it. The record drops the zero.
             assert records["old"]["file_episode_map"] == {"a.mkv": [2, 0]}
             assert dict(old.file_episode_map) == {"a.mkv": (2,)}
@@ -644,7 +644,7 @@ class TestSchemaVersionGate:
             (claim,) = records["u"]["claims"]
             assert claim["ordered_episode_ids"] == []
             assert claim["names"] == {"series": "Series"}
-            assert PendingImport.from_json(records["u"], guards={}).claims[0].names == EntryNames(series="Series")
+            assert PendingImport.from_json(records["u"], guards={}).claims[0].names == TitleNames(series="Series")
 
     def test_v4_migration_is_a_no_op_on_reopen(self, tmp_path: Path) -> None:
         # The migrated db reopens as found: same records, no step announced, and

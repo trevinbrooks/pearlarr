@@ -28,7 +28,7 @@ SONARR_PARSE_CACHE_TTL_DAYS = 30
 SONARR_PARSE_UNMATCHED_TTL_DAYS = 7
 
 
-class ParseWindow(NamedTuple):
+class ParseFreshness(NamedTuple):
     """The freshness window for one parse pass, computed once per call.
 
     Bundles the values the parse-cache freshness check and writes thread
@@ -45,11 +45,11 @@ class ParseWindow(NamedTuple):
     unmatched_cutoff: datetime
     """The short unmatched-record backstop."""
 
-    series_fp: str
+    series_hash: str
     """Pins unmatched records to the current series-id set (so a newly-added series self-heals)."""
 
     @classmethod
-    def open(cls, series_fp: str) -> Self:
+    def open(cls, series_hash: str) -> Self:
         """The window anchored to one instant (never per file)."""
 
         now = datetime.now()
@@ -57,7 +57,7 @@ class ParseWindow(NamedTuple):
             now_str=stamp_of(now),
             matched_cutoff=now - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
             unmatched_cutoff=now - timedelta(days=SONARR_PARSE_UNMATCHED_TTL_DAYS),
-            series_fp=series_fp,
+            series_hash=series_hash,
         )
 
 
@@ -105,7 +105,7 @@ _PARSE_FIELDS = frozenset(ParsedFileInfo.model_fields)
 """The keys `to_parse_record` writes: a row missing one was written before that field existed."""
 
 
-def _parse_is_fresh(record: Mapping[str, object], *, window: ParseWindow) -> bool:
+def _parse_is_fresh(record: Mapping[str, object], *, window: ParseFreshness) -> bool:
     """True if a persisted parse record is still usable.
 
     A legacy row is stale: one with no whole parse, or whose parse lacks a field of `ParsedFileInfo`, which an
@@ -121,7 +121,7 @@ def _parse_is_fresh(record: Mapping[str, object], *, window: ParseWindow) -> boo
     stamped = cast("dict[str, Any]", record)
     if "series_fp" not in record:
         return stamp_is_fresh(stamped, window.matched_cutoff)
-    return record["series_fp"] == window.series_fp and stamp_is_fresh(stamped, window.unmatched_cutoff)
+    return record["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.unmatched_cutoff)
 
 
 class ParseRecords:
@@ -134,13 +134,13 @@ class ParseRecords:
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
-    def is_fresh(self, filename: str, *, window: ParseWindow) -> bool:
+    def is_fresh(self, filename: str, *, window: ParseFreshness) -> bool:
         """Whether a fresh record exists, by stamp alone (the warm pass needs no model)."""
 
         record = self._store.get_sonarr_parse(filename)
         return record is not None and _parse_is_fresh(record, window=window)
 
-    def read(self, filename: str, *, window: ParseWindow) -> ParsedFileInfo | None:
+    def read(self, filename: str, *, window: ParseFreshness) -> ParsedFileInfo | None:
         """A fresh, readable record's parse, else None (stale, legacy, malformed, or absent)."""
 
         record = self._store.get_sonarr_parse(filename)
@@ -148,10 +148,10 @@ class ParseRecords:
             return None
         return parsed_info(record)
 
-    def write(self, filename: str, info: ParsedFileInfo, *, window: ParseWindow) -> None:
+    def write(self, filename: str, info: ParsedFileInfo, *, window: ParseFreshness) -> None:
         """Upsert one parse. An UNMATCHED parse (no matched pairs) is pinned to the series fingerprint."""
 
         record: SonarrParseRecord = {"fetched_at": window.now_str, "parse": to_parse_record(info)}
         if not info.matched_episodes:
-            record["series_fp"] = window.series_fp
+            record["series_fp"] = window.series_hash
         self._store.put_sonarr_parse(filename, cast("dict[str, Any]", record))

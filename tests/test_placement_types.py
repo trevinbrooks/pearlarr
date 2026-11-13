@@ -12,10 +12,10 @@ from pearlarr.pending_import import FileEpisodeMap
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     EpisodeIndex,
-    ListingEvidence,
     PlacementBatch,
+    PlacementTarget,
     PlacementVerdict,
-    TargetScope,
+    SeadexEvidence,
     all_specials,
     episode_index,
 )
@@ -173,13 +173,13 @@ class TestPlacementBatchCopies:
         parsed["c.mkv"] = None
         ids.append(12)
 
-        assert (batch.to_place, dict(batch.parsed), dict(batch.seeded)) == (
+        assert (batch.to_place, dict(batch.parsed), dict(batch.file_map)) == (
             ("a.mkv",),
             {"a.mkv": parsed_info()},
             {"b.mkv": (11,)},
         )
         with pytest.raises(TypeError):
-            cast("MutableMapping[str, tuple[int, ...]]", batch.seeded)["c.mkv"] = (12,)
+            cast("MutableMapping[str, tuple[int, ...]]", batch.file_map)["c.mkv"] = (12,)
         with pytest.raises(TypeError):
             cast("MutableMapping[str, ParsedFileInfo | None]", batch.parsed)["c.mkv"] = None
 
@@ -200,7 +200,7 @@ class TestTargetScope:
 
     def test_using_takes_the_admitted_ids_and_detaches_the_resolved_list(self) -> None:
         resolved = [11, 12, 0]
-        scope = TargetScope(resolved, self._SERIES, used=frozenset({11}))
+        scope = PlacementTarget(resolved, self._SERIES, used=frozenset({11}))
 
         resolved.append(21)
         narrowed = scope.using([12, 21, 0])
@@ -210,18 +210,18 @@ class TestTargetScope:
         assert (narrowed.resolved, narrowed.real_ids) == (scope.resolved, scope.real_ids)
 
     def test_an_unscoped_scope_uses_every_id(self) -> None:
-        assert TargetScope([], self._SERIES).using([12, 21]).used == {12, 21}
+        assert PlacementTarget([], self._SERIES).using([12, 21]).used == {12, 21}
 
     def test_using_keeps_the_listing(self) -> None:
-        listing = ListingEvidence(torrent_listing(entry_window(1, (11, 12))), {"a.mkv": 11})
-        scope = TargetScope([11], self._SERIES, listing=listing)
+        listing = SeadexEvidence(torrent_listing(entry_window(1, (11, 12))), {"a.mkv": 11})
+        scope = PlacementTarget([11], self._SERIES, listing=listing)
 
         assert scope.using([12]).listing == listing
 
     def test_after_keeps_every_earlier_placement_and_uses_the_ids_it_admits(self) -> None:
         earlier = {"a.mkv": (11,), "b.mkv": (21,)}
 
-        later = TargetScope([11, 12], self._SERIES).after(earlier)
+        later = PlacementTarget([11, 12], self._SERIES).after(earlier)
         earlier["c.mkv"] = (12,)
 
         assert later.used == {11}
@@ -236,7 +236,7 @@ class TestTorrentListing:
     def test_two_windows_under_one_anilist_id_keep_the_first(self) -> None:
         first, second, other = entry_window(1, (501,)), entry_window(1, (502,)), entry_window(2, (503,))
 
-        assert torrent_listing(other, first, second).entries == (first, other)
+        assert torrent_listing(other, first, second).windows == (first, other)
 
     def test_a_change_to_the_callers_dict_leaves_the_listing_as_it_was(self) -> None:
         aliases = {13: 12}
@@ -252,7 +252,7 @@ class TestListingEvidence:
 
     def test_the_identified_names_are_copied_and_read_only(self) -> None:
         identified = {"a.mkv": 11}
-        evidence = ListingEvidence(EMPTY_LISTING, identified)
+        evidence = SeadexEvidence(EMPTY_LISTING, identified)
         identified["b.mkv"] = 12
 
         assert evidence.identified == {"a.mkv": 11}
@@ -262,7 +262,7 @@ class TestListingEvidence:
     def test_the_ids_and_aliases_come_from_the_listing(self) -> None:
         listing = torrent_listing(entry_window(1, (501,)), aliases={13: 12})
 
-        evidence = ListingEvidence(listing)
+        evidence = SeadexEvidence(listing)
 
         assert (evidence.listing, evidence.ids, dict(evidence.special_aliases)) == (listing, {501}, {13: 12})
 
@@ -279,17 +279,20 @@ class TestPlacementVerdict:
 
     def test_refused_is_held_or_misnumbered(self) -> None:
         # Both decide a name without ids: no later window may place it by its numbers.
-        assert {v for v in PlacementVerdict if v.refused} == {PlacementVerdict.HELD, PlacementVerdict.MISNUMBERED}
+        assert {v for v in PlacementVerdict if v.refused} == {
+            PlacementVerdict.WAITING_ON_PARSE,
+            PlacementVerdict.MISNUMBERED,
+        }
 
     def test_a_hand_import_is_misnumbered_refuted_or_read_by_another_order_onto_no_episode_it_can_take(self) -> None:
         hand_import = {
             PlacementVerdict.MISNUMBERED,
             PlacementVerdict.TITLE_REFUTED,
-            PlacementVerdict.OTHER_ORDER_ELSEWHERE,
+            PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW,
             PlacementVerdict.ORDER_ONLY,
         }
 
-        assert {v for v in PlacementVerdict if v.hand_import} == hand_import
+        assert {v for v in PlacementVerdict if v.left_for_hand_import} == hand_import
         assert not any(v.refused or v.excluded or v.placed for v in hand_import - {PlacementVerdict.MISNUMBERED})
 
     def test_another_orders_placement_carries_ids(self) -> None:
@@ -297,19 +300,19 @@ class TestPlacementVerdict:
 
         assert verdict.placed
         assert not verdict.excluded
-        assert not verdict.hand_import
+        assert not verdict.left_for_hand_import
 
     def test_another_listed_titles_file_is_excluded_and_no_hand_import(self) -> None:
         # It waits for the other title's own grab to claim the torrent, so this record skips it and it's no hand import.
-        verdict = PlacementVerdict.LISTED_ELSEWHERE
+        verdict = PlacementVerdict.ANOTHER_TITLES
 
         assert verdict.excluded
         assert not verdict.placed
-        assert not verdict.hand_import
+        assert not verdict.left_for_hand_import
 
     def test_a_size_match_or_a_special_alias_places(self) -> None:
         # A file placed by size, or through a specials pack's aliases, carries ids like any other placement.
-        for verdict in (PlacementVerdict.IDENTIFIED, PlacementVerdict.OVERRIDDEN, PlacementVerdict.ALTERNATE):
+        for verdict in (PlacementVerdict.SIZE_MATCH, PlacementVerdict.SIZE_OVER_NAME, PlacementVerdict.SPECIAL_ALIAS):
             assert verdict.placed
             assert not verdict.excluded
             assert not verdict.refused
@@ -320,17 +323,17 @@ class TestPlacementVerdict:
 
         assert verdict.placed
         assert not verdict.excluded
-        assert not verdict.hand_import
+        assert not verdict.left_for_hand_import
 
     _CLAIMS = frozenset(
         {
             PlacementVerdict.EXTRA,
-            PlacementVerdict.FOREIGN,
-            PlacementVerdict.ALIASED_ELSEWHERE,
-            PlacementVerdict.SKIPPED,
+            PlacementVerdict.OUTSIDE_WINDOW,
+            PlacementVerdict.ALIAS_OUTSIDE_WINDOW,
+            PlacementVerdict.NO_EPISODE_FOUND,
             PlacementVerdict.ORDER_ONLY,
             PlacementVerdict.DUPLICATE,
-            PlacementVerdict.OTHER_ORDER_ELSEWHERE,
+            PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW,
             PlacementVerdict.TITLE_REFUTED,
         }
     )
@@ -339,22 +342,22 @@ class TestPlacementVerdict:
     def test_every_verdict_decides_a_file_or_is_a_claim_but_another_listed_titles(self) -> None:
         # Every property reads the verdict's kind, so a verdict with none raises here. No window gives
         # LISTED_ELSEWHERE: it is set once the windows merge.
-        undecided = {v for v in PlacementVerdict if not v.decides}
+        undecided = {v for v in PlacementVerdict if not v.final}
 
-        assert undecided == {*self._CLAIMS, PlacementVerdict.LISTED_ELSEWHERE}
+        assert undecided == {*self._CLAIMS, PlacementVerdict.ANOTHER_TITLES}
 
     def test_no_two_claims_share_a_rank(self) -> None:
-        assert len({v.claim_rank for v in self._CLAIMS}) == len(self._CLAIMS)
+        assert len({v.rank for v in self._CLAIMS}) == len(self._CLAIMS)
 
     def test_the_numbering_fill_may_place_only_a_skipped_or_foreign_file(self) -> None:
         # `WindowedAssignment.filled` fills a merged verdict left open that is no hand import.
-        gaps = {v for v in PlacementVerdict if v.left_open and not v.hand_import}
+        gaps = {v for v in PlacementVerdict if v.other_order_may_place and not v.left_for_hand_import}
 
-        assert gaps == {PlacementVerdict.SKIPPED, PlacementVerdict.FOREIGN}
+        assert gaps == {PlacementVerdict.NO_EPISODE_FOUND, PlacementVerdict.OUTSIDE_WINDOW}
 
     def test_only_a_misnumbered_or_refuted_file_is_left_open_for_a_hand_import(self) -> None:
         # Pass 16 claims only such a file for another window: a count or a title in the names refused it.
-        refused_by_name = {v for v in PlacementVerdict if v.left_open and v.hand_import}
+        refused_by_name = {v for v in PlacementVerdict if v.other_order_may_place and v.left_for_hand_import}
 
         assert refused_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
 
@@ -382,8 +385,8 @@ class TestSpecialsListing:
 
     _SERIES = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 5)} | {EpisodeKey(1, 1): 11})
 
-    def _scope(self, resolved: list[int], listed: tuple[int, ...] = ()) -> TargetScope:
-        return TargetScope(resolved, self._SERIES, listing=ListingEvidence(torrent_listing(entry_window(1, listed))))
+    def _scope(self, resolved: list[int], listed: tuple[int, ...] = ()) -> PlacementTarget:
+        return PlacementTarget(resolved, self._SERIES, listing=SeadexEvidence(torrent_listing(entry_window(1, listed))))
 
     def test_a_listing_covering_a_window_of_specials_judges(self) -> None:
         assert self._scope([502, 504], (502, 503, 504)).specials_listing() == {502, 503, 504}

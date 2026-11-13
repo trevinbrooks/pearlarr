@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .arr_models import MatchedEpisode, ParsedFileInfo
-from .placement_types import EpisodeIndex, TargetScope
+from .placement_types import EpisodeIndex, PlacementTarget
 from .release_names import range_key
 from .releases import EpisodeKey, season_episode_key
 
@@ -25,7 +25,7 @@ class _EpisodeClaim:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Reading:
+class ParsedEpisodes:
     """What one file's parse resolves to in our series map, and how far to trust it."""
 
     resolved: tuple[int, ...]
@@ -37,11 +37,11 @@ class Reading:
     complete: bool
     """At least one claim, and every claim resolved (a partial span is never half-placed)."""
 
-    borrowed: bool
+    from_matched: bool
     """The claims are Sonarr's matched pairs: the name carried no `(season, episode)` of its own, or its keys
     gave way to Sonarr's alias match (`_claims_of`)."""
 
-    vetoed: bool
+    rejected: bool
     """Rejected: the ids stay as evidence, but no pass places the file by them, and they never prove it foreign.
 
     Set for a full-season parse, and for a borrowed span wider than `_MATCHED_SPAN_CAP` or not matching the count
@@ -49,7 +49,7 @@ class Reading:
     confirms, a number dispute, a span another file reads differently, a tie, and a covering run read into another
     season."""
 
-    corroborated: bool
+    sonarr_agrees: bool
     """Sonarr's series match includes every claimed pair (a borrowed reading always does). An own key Sonarr
     could not match to the series is a parse it did not believe either (a CRC tag read as "E8")."""
 
@@ -62,13 +62,13 @@ class Reading:
     def keyed(self) -> bool:
         """The name's own key resolved in the series and Sonarr's match agrees: an episode, whatever else it says."""
 
-        return bool(self.resolved) and not self.borrowed and self.corroborated
+        return bool(self.resolved) and not self.from_matched and self.sonarr_agrees
 
     @property
     def trusted(self) -> bool:
         """A complete reading that was not rejected."""
 
-        return self.complete and not self.vetoed
+        return self.complete and not self.rejected
 
     @property
     def outside(self) -> bool:
@@ -86,18 +86,20 @@ class Reading:
     def rank(self) -> tuple[bool, bool]:
         """Exact-pass priority, best first: an own key Sonarr matched, a borrowed pair, an own key it did not match."""
 
-        return (not self.corroborated, self.borrowed)
+        return (not self.sonarr_agrees, self.from_matched)
 
 
-_NO_READING = Reading(resolved=(), inside=(), complete=False, borrowed=False, vetoed=False, corroborated=False)
+_NO_READING = ParsedEpisodes(
+    resolved=(), inside=(), complete=False, from_matched=False, rejected=False, sonarr_agrees=False
+)
 
 
 @dataclass(frozen=True, slots=True)
-class _Claims:
+class _ParsedKeys:
     """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
 
     claims: tuple[_EpisodeClaim, ...]
-    borrowed: bool
+    from_matched: bool
 
 
 def _matched_claims(info: ParsedFileInfo) -> tuple[_EpisodeClaim, ...]:
@@ -111,14 +113,14 @@ def _matched_claims(info: ParsedFileInfo) -> tuple[_EpisodeClaim, ...]:
     )
 
 
-def _resolve(claim: _EpisodeClaim, scope: TargetScope) -> int | None:
+def _resolve(claim: _EpisodeClaim, scope: PlacementTarget) -> int | None:
     """Our map's id for the claim's numbers, when Sonarr's own id (if any) agrees."""
 
     ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
     return ep_id if ep_id and claim.claimed_id in (None, ep_id) else None
 
 
-def _all_inside(claims: Iterable[_EpisodeClaim], scope: TargetScope) -> bool:
+def _all_inside(claims: Iterable[_EpisodeClaim], scope: PlacementTarget) -> bool:
     """Whether every claim resolves to an episode of the scope."""
 
     return all(_resolve(claim, scope) in scope.real_ids for claim in claims)
@@ -135,7 +137,7 @@ def _is_alias_shift(own: Sequence[_EpisodeClaim], matched: Sequence[_EpisodeClai
     )
 
 
-def _claims_of(info: ParsedFileInfo, scope: TargetScope) -> _Claims:
+def _claims_of(info: ParsedFileInfo, scope: PlacementTarget) -> _ParsedKeys:
     """The name's own keys, else Sonarr's matched pairs when there is a scope and the parse is not a full season.
 
     Own keys give way to Sonarr's alias match (the same numbers moved into one regular season) when not every
@@ -145,14 +147,14 @@ def _claims_of(info: ParsedFileInfo, scope: TargetScope) -> _Claims:
     own = tuple(dict.fromkeys(_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers))
     if not own:
         borrows = not scope.unscoped and not info.full_season
-        return _Claims(_matched_claims(info) if borrows else (), borrowed=borrows)
+        return _ParsedKeys(_matched_claims(info) if borrows else (), from_matched=borrows)
     matched = _matched_claims(info)
     if _is_alias_shift(own, matched) and not _all_inside(own, scope) and _all_inside(matched, scope):
-        return _Claims(matched, borrowed=True)
-    return _Claims(own, borrowed=False)
+        return _ParsedKeys(matched, from_matched=True)
+    return _ParsedKeys(own, from_matched=False)
 
 
-def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
+def read_parse(info: ParsedFileInfo | None, scope: PlacementTarget) -> ParsedEpisodes:
     """Read one parse against the scope: the name's own keys are the claims (`_claims_of` has the alias shift).
 
     A name with none borrows Sonarr's matched pairs when there is a scope and the parse is not a full season. A pair
@@ -173,10 +175,10 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     pairs = {(claim.season, claim.episode) for claim in basis.claims}
     absolutes = set(info.absolute_episode_numbers)
     vetoed = info.full_season or (
-        basis.borrowed and (len(pairs) > _MATCHED_SPAN_CAP or (bool(absolutes) and len(pairs) != len(absolutes)))
+        basis.from_matched and (len(pairs) > _MATCHED_SPAN_CAP or (bool(absolutes) and len(pairs) != len(absolutes)))
     )
     matched = {(matched.season_number, matched.episode_number) for matched in info.matched_episodes}
-    corroborated = basis.borrowed or pairs <= matched
+    sonarr_agrees = basis.from_matched or pairs <= matched
     resolved: list[int] = []
     complete = True
     for claim in basis.claims:
@@ -188,13 +190,13 @@ def read_parse(info: ParsedFileInfo | None, scope: TargetScope) -> Reading:
     # ids too, so Sonarr never receives one episode twice.
     ids = tuple(dict.fromkeys(resolved))
     inside = tuple(i for i in ids if scope.admits(i))
-    return Reading(
+    return ParsedEpisodes(
         resolved=ids,
         inside=inside,
         complete=complete,
-        borrowed=basis.borrowed,
-        vetoed=vetoed,
-        corroborated=corroborated,
+        from_matched=basis.from_matched,
+        rejected=vetoed,
+        sonarr_agrees=sonarr_agrees,
     )
 
 
@@ -303,7 +305,7 @@ def claims_several_episodes(info: ParsedFileInfo) -> bool:
     return len(set(info.episode_numbers)) > 1 or len(set(info.absolute_episode_numbers)) > 1
 
 
-def spans_multiple(info: ParsedFileInfo, scope: TargetScope) -> bool:
+def spans_multiple(info: ParsedFileInfo, scope: PlacementTarget) -> bool:
     """Whether the file likely holds more than one episode: its name claims several, or Sonarr matched several.
 
     It asks how many episodes, not which. A full-season match (a name with no episode number) counts only when one

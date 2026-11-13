@@ -21,7 +21,7 @@ import pytest
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.leg_state import RunContext, Title
-from pearlarr.pending_import import EntryNames
+from pearlarr.pending_import import TitleNames
 from pearlarr.run_services import LegServices
 
 from .builders import (
@@ -489,7 +489,7 @@ class TestResolveTitle:
         run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
 
         assert run.resolve_title(5) == Title(
-            al_id=5, name=display, names=EntryNames(arr_title, (anilist,) if anilist else ())
+            al_id=5, name=display, names=TitleNames(arr_title, (anilist,) if anilist else ())
         )
 
 
@@ -509,7 +509,7 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=_FRESH)
         run = make_services()
 
-        title = Title(al_id=5, name="Series", names=EntryNames("Series", (anilist,) if anilist else ()))
+        title = Title(al_id=5, name="Series", names=TitleNames("Series", (anilist,) if anilist else ()))
 
         details = run.new_cache_details(title, entry)
 

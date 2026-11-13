@@ -12,10 +12,10 @@ from collections.abc import Iterable, Mapping, Sequence
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.numberings import NumberingReader, _marked_title, _norm_title, _raw_title
-from pearlarr.pending_import import EntryNames, EntryWindow
-from pearlarr.placement_types import EpisodeIndex, SeedScope, TargetScope, episode_index
-from pearlarr.placer import assign_episode_ids
+from pearlarr.numberings import NumberingStep, _marked_title, _norm_title, _raw_title
+from pearlarr.pending_import import TitleNames, TitleWindow
+from pearlarr.placement_types import EpisodeIndex, GrabbingTitle, PlacementTarget, episode_index
+from pearlarr.placer import place_batch
 from pearlarr.releases import EpisodeKey
 
 from .builders import batch, entry_window, parsed_info, seed_scope, series_index
@@ -44,13 +44,13 @@ def _ids(index: EpisodeIndex, season: int) -> tuple[int, ...]:
     return tuple(ep_id for key, ep_id in sorted(index.id_by_key.items()) if key.season == season)
 
 
-def _window(al_id: int, ids: Iterable[int], count: int | None, series: str, *anilist: str) -> EntryWindow:
-    return entry_window(al_id, ids, names=EntryNames(series, anilist), episode_count=count)
+def _window(al_id: int, ids: Iterable[int], count: int | None, series: str, *anilist: str) -> TitleWindow:
+    return entry_window(al_id, ids, names=TitleNames(series, anilist), episode_count=count)
 
 
 def _scope(
-    index: EpisodeIndex, own: EntryWindow, *, alternate_titles: tuple[str, ...] = (), aired_numbering: bool = True
-) -> SeedScope:
+    index: EpisodeIndex, own: TitleWindow, *, alternate_titles: tuple[str, ...] = (), aired_order: bool = True
+) -> GrabbingTitle:
     """The grab scope of `own`'s entry over `index`."""
 
     return seed_scope(
@@ -60,7 +60,7 @@ def _scope(
         names=own.names,
         episode_count=own.episode_count,
         alternate_titles=alternate_titles,
-        aired_numbering=aired_numbering,
+        aired_order=aired_order,
     )
 
 
@@ -71,14 +71,14 @@ def _lone(number: int, title: str, *numbers: int, matched: tuple[tuple[int, int]
 
 
 def _read(
-    scope: SeedScope, windows: Sequence[EntryWindow], parsed: Mapping[str, ParsedFileInfo | None]
+    scope: GrabbingTitle, windows: Sequence[TitleWindow], parsed: Mapping[str, ParsedFileInfo | None]
 ) -> dict[str, tuple[int, ...]]:
     """What the reader proposes for `parsed` under `windows`, the facts read under the own window as `place_release` does."""
 
     torrent = batch(parsed)
     own = next(window for window in windows if window.al_id == scope.al_id)
-    facts = assign_episode_ids(torrent, TargetScope(own.ordered_episode_ids, scope.series, names=own.names)).facts
-    return dict(NumberingReader.of(scope, windows).read(torrent, facts).ids)
+    facts = place_batch(torrent, PlacementTarget(own.ordered_episode_ids, scope.series, names=own.names)).facts
+    return dict(NumberingStep.of(scope, windows).read(torrent, facts).ids)
 
 
 # Stray Cats Overrun! (Sonarr 664): seven specials without absolutes, a season of 13. Tsundere's BD batch (AnimeBytes
@@ -412,7 +412,7 @@ class TestTheReaderStandsDown:
 
     def test_off_the_aired_numbering_the_reader_proposes_nothing(self) -> None:
         # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
-        scope = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_numbering=False)
+        scope = _scope(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
 
         assert _read(scope, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
 
@@ -496,7 +496,7 @@ def _sengoku_youko() -> EpisodeIndex:
     )
 
 
-def _sengoku_youko_window(series: EpisodeIndex) -> EntryWindow:
+def _sengoku_youko_window(series: EpisodeIndex) -> TitleWindow:
     return _window(
         176660,
         _ids(series, 2),
@@ -511,7 +511,7 @@ def _gintama_name(number: str) -> str:
     return f"[CBT] Gintama {number} [DVDrip 760x576 x264 FLAC].mkv"
 
 
-def _gintama() -> tuple[EpisodeIndex, EntryWindow, dict[str, ParsedFileInfo | None]]:
+def _gintama() -> tuple[EpisodeIndex, TitleWindow, dict[str, ParsedFileInfo | None]]:
     """Gintama (Sonarr 39): the 201 rows AniList 918 covers, and CBT's 200 files, 001-002 in one."""
 
     series = _series(
@@ -536,7 +536,7 @@ def _hourou_musuko(number: str) -> str:
     return f"[aro] Hourou Musuko - {number} [BD 1080p HEVC FLAC].mkv"
 
 
-def _wandering_son() -> tuple[EpisodeIndex, tuple[EntryWindow, EntryWindow], dict[str, ParsedFileInfo | None]]:
+def _wandering_son() -> tuple[EpisodeIndex, tuple[TitleWindow, TitleWindow], dict[str, ParsedFileInfo | None]]:
     """Wandering Son (Sonarr 700) and aro's BD batch, listed under the season's entry and the specials'."""
 
     series = _series(

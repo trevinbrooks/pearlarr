@@ -64,7 +64,7 @@ from pearlarr.file_paths import normalize_basename
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
-from pearlarr.pending_import import EntryClaim, EntryNames, PendingImport
+from pearlarr.pending_import import PendingImport, TitleClaim, TitleNames
 from pearlarr.stamps import stamp_of
 
 from .builders import make_config
@@ -656,14 +656,14 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     siblings = (_ABS_SIBLING,) if scenario.listing is _Listing.ABSOLUTE else ()
     mapped = scenario.listing is not _Listing.NUMBERLESS and not scenario.imported_unseen
     stamp = stamp_of(datetime.now() - timedelta(minutes=5))
-    claim = EntryClaim(
+    claim = TitleClaim(
         al_id=_AL_ID,
         series_id=_SERIES_ID,
         title=_TITLE,
         coverage="S01 E01-E02",
         url=None,
         ordered_episode_ids=tuple(ep_id for ep_id, _ in named),
-        names=EntryNames(),
+        names=TitleNames(),
         preowned_episode_ids=(),
         slice_coverage=None,
     )

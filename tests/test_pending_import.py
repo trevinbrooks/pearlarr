@@ -11,12 +11,12 @@ import pytest
 from pearlarr.file_paths import normalize_basename
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
-    EntryClaim,
-    EntryNames,
-    EntryWindow,
     GuardFacts,
     OwnedEpisode,
     PendingImport,
+    TitleClaim,
+    TitleNames,
+    TitleWindow,
     added_at_of,
     joined_map,
     sizes_by_episode,
@@ -273,7 +273,7 @@ class TestPendingImportClaims:
             coverage="S1",
             url="https://example.invalid/1",
             ordered_episode_ids=(101, 102),
-            names=EntryNames("Show", ("Show!",)),
+            names=TitleNames("Show", ("Show!",)),
             preowned_episode_ids=(101,),
             slice_coverage="S1 E1-2",
         )
@@ -283,15 +283,15 @@ class TestPendingImportClaims:
             '"ordered_episode_ids": [101, 102], "names": {"series": "Show", "anilist": ["Show!"]}, '
             '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2"}'
         )
-        assert EntryClaim.from_json(claim.to_json(), guards={}) == claim
+        assert TitleClaim.from_json(claim.to_json(), guards={}) == claim
 
     def test_from_json_skips_a_stored_claimed_at(self) -> None:
         claim = entry_claim()
 
-        assert EntryClaim.from_json({**claim.to_json(), "claimed_at": "2026-06-24 00:00:00"}, guards={}) == claim
+        assert TitleClaim.from_json({**claim.to_json(), "claimed_at": "2026-06-24 00:00:00"}, guards={}) == claim
 
     def test_a_claims_window_is_its_entry_series_ids_and_names(self) -> None:
-        names = EntryNames("Show", ("Show!",))
+        names = TitleNames("Show", ("Show!",))
         claim = entry_claim(al_id=3, series_id=8, ordered_episode_ids=(102, 101), names=names)
 
         assert claim.window == entry_window(3, (102, 101), series_id=8, names=names)
@@ -438,12 +438,12 @@ class TestEntryWindow:
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
         episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
 
-        window = EntryWindow.of(al_id=5, series_id=7, ep_list=episodes, names=EntryNames("Show"))
+        window = TitleWindow.of(al_id=5, series_id=7, ep_list=episodes, names=TitleNames("Show"))
 
-        assert window == entry_window(5, (103, 101), series_id=7, names=EntryNames("Show"))
+        assert window == entry_window(5, (103, 101), series_id=7, names=TitleNames("Show"))
 
 
-def _guarded_claim() -> EntryClaim:
+def _guarded_claim() -> TitleClaim:
     """A scoped claim on series 55 carrying every serialized field plus a guard row."""
 
     return entry_claim(
@@ -453,7 +453,7 @@ def _guarded_claim() -> EntryClaim:
         coverage="S02 E01-E12",
         url="https://releases.moe/1",
         ordered_episode_ids=[11, 12],
-        names=EntryNames("Some Show", ("Some Show", "Aru Show")),
+        names=TitleNames("Some Show", ("Some Show", "Aru Show")),
         preowned_episode_ids=[11],
         slice_coverage="S02 E01-E02",
         guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
@@ -580,14 +580,14 @@ class TestPendingImportRoundTrip:
         rebuilt = PendingImport.from_json({"infohash": "h", "claims": [{"series_id": 1}]}, guards={})
 
         assert rebuilt.claims == (
-            EntryClaim(
+            TitleClaim(
                 al_id=0,
                 series_id=1,
                 title=None,
                 coverage=None,
                 url=None,
                 ordered_episode_ids=(),
-                names=EntryNames(),
+                names=TitleNames(),
                 preowned_episode_ids=(),
                 slice_coverage=None,
             ),

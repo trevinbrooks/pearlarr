@@ -9,7 +9,7 @@ from seadex import EntryRecord
 from pearlarr.anibridge import SpecialAliasing
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.mappings import ResolvedMappings, TitleMapping
-from pearlarr.pending_import import EntryNames, EntryWindow
+from pearlarr.pending_import import TitleNames, TitleWindow
 from pearlarr.placement_types import EMPTY_LISTING
 from pearlarr.torrent_listings import SeriesListings
 
@@ -62,13 +62,13 @@ def _windows(
     return ScriptedEpisodes(windows=windows, ambiguous=ambiguous)
 
 
-def _names(al_id: int) -> EntryNames:
+def _names(al_id: int) -> TitleNames:
     """The titles the reader's resolver gives entry `al_id`."""
 
-    return EntryNames("Show", (f"Title {al_id}",))
+    return TitleNames("Show", (f"Title {al_id}",))
 
 
-def _window(al_id: int, *ids: int) -> EntryWindow:
+def _window(al_id: int, *ids: int) -> TitleWindow:
     """Entry `al_id`'s window over `ids` on series 7, named by the resolver."""
 
     return entry_window(al_id, ids, series_id=7, names=_names(al_id))

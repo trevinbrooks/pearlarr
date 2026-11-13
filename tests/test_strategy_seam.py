@@ -47,15 +47,15 @@ from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
 from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
-from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
+from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.leg_state import RunContext, Title
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
-from pearlarr.pending_import import EntryNames, FileEpisodeMap, GuardFacts, OwnedEpisode, OwnGroup, PendingImport
+from pearlarr.pending_import import FileEpisodeMap, GuardFacts, OwnedEpisode, OwnGroup, PendingImport, TitleNames
 from pearlarr.pending_records import PendingImportStore
-from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
+from pearlarr.placement_types import FetchedListings, TorrentListing, episode_index
 from pearlarr.planner import PlanResult
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.progress import ProgressSink
@@ -249,7 +249,7 @@ class _FakeRunServices(LegServices):
 
     @override
     def resolve_title(self, al_id: int) -> Title:
-        return Title(al_id=al_id, name=self._anilist_title, names=EntryNames(anilist=(self._anilist_title,)))
+        return Title(al_id=al_id, name=self._anilist_title, names=TitleNames(anilist=(self._anilist_title,)))
 
     @override
     def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
@@ -351,10 +351,10 @@ class _ScriptedListings:
         *,
         outage: bool = False,
     ) -> None:
-        self._read = None if outage else ListingsRead(listed or {}, identities or {})
+        self._read = None if outage else FetchedListings(listed or {}, identities or {})
         self.reads: list[tuple[int, ResolvedMappings]] = []
 
-    def read(self, series_id: int, resolved: ResolvedMappings) -> ListingsRead | None:
+    def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
         self.reads.append((series_id, resolved))
         return self._read
 
@@ -362,11 +362,11 @@ class _ScriptedListings:
 class _ScriptedParse:
     """Parse collaborator serving scripted files per url (no Sonarr round-trip), none for an unscripted url."""
 
-    def __init__(self, files_by_url: dict[str, tuple[SeedFile, ...]] | None = None) -> None:
+    def __init__(self, files_by_url: dict[str, tuple[ListedFile, ...]] | None = None) -> None:
         self._files = files_by_url or {}
 
-    def parsed_files(self, seadex_dict: SeadexDict, *, series_fp: str) -> dict[str, tuple[SeedFile, ...]]:
-        del series_fp
+    def parsed_files(self, seadex_dict: SeadexDict, *, series_hash: str) -> dict[str, tuple[ListedFile, ...]]:
+        del series_hash
         return {
             url: self._files.get(url, ()) for group_releases in seadex_dict.values() for url in group_releases.releases
         }
@@ -2420,7 +2420,7 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         SonarrStrategy,
         _services=run,
         _episodes=episodes,
-        _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
+        _parse=_ScriptedParse({_SEED_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _SEED_FILES)}),
         _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0),
         logger=make_logger(),
@@ -2430,7 +2430,7 @@ def _sonarr_seed_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
 
 
 def _entry_run(
-    files: tuple[SeedFile, ...],
+    files: tuple[ListedFile, ...],
     window: list[SonarrEpisode],
     listings: _ScriptedListings,
     *,
@@ -2530,7 +2530,7 @@ class TestSonarrProcessAlIdSeeds:
             SonarrStrategy,
             _services=run,
             _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
-            _parse=_ScriptedParse({_SEED_URL: tuple(SeedFile(name, 1000, parses[name]) for name in files)}),
+            _parse=_ScriptedParse({_SEED_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
             _listings=_ScriptedListings({"h1": torrent_listing(entry_window(1, (502, 504, 506)))}),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
@@ -2548,7 +2548,7 @@ class TestSonarrProcessAlIdSeeds:
         # Two specials named as each other.
         specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
         files = tuple(
-            SeedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
+            ListedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
             for n in (1, 2)
         )
         recording = install_recording_hub()
@@ -2582,7 +2582,7 @@ class TestSonarrProcessAlIdSeeds:
             sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
         ]
         names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
-        files = tuple(SeedFile(name, 1000, parsed_info()) for name in names)
+        files = tuple(ListedFile(name, 1000, parsed_info()) for name in names)
 
         run = _entry_run(files, specials, _ScriptedListings(), episode_count=episode_count)
 
@@ -2593,7 +2593,7 @@ class TestSonarrProcessAlIdSeeds:
         # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing
         # is placed, the url is held, and the title isn't cached as done since its inputs weren't all read.
         files = tuple(
-            SeedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_SEED_FILES, 1)
+            ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_SEED_FILES, 1)
         )
 
         run = _entry_run(files, [_EP1, _EP2], _ScriptedListings(outage=True))
@@ -2639,7 +2639,7 @@ class TestSonarrProcessAlIdSeeds:
         # decides the files first, so entry 6 grabs none of them and the url is held as another title's.
         specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
         files = tuple(
-            SeedFile(name, 1000 * n, parsed_info(season=0, absolutes=(n,), matched=((1, n),)))
+            ListedFile(name, 1000 * n, parsed_info(season=0, absolutes=(n,), matched=((1, n),)))
             for n, name in enumerate(_SEED_FILES, 1)
         )
         seadex: SeadexDict = {
@@ -2696,7 +2696,7 @@ class TestPlacementDebugLine:
         logger = debug_logger("pearlarr-placement-line")
         strat = make_bare_instance(SonarrStrategy, logger=logger)
         scope = seed_scope(episode_index([_EP1]), episode_index([_EP1]))
-        placement = place_release([SeedFile("Show - 01.mkv", 1000, None)], scope, new_torrent(scope))
+        placement = place_release([ListedFile("Show - 01.mkv", 1000, None)], scope, new_torrent(scope))
 
         with caplog.at_level("DEBUG"):
             strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
@@ -2712,10 +2712,10 @@ class TestPlacementDebugLine:
         dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
         series = episode_index(season, SeriesOrdering({"dvd": dvd}, None))
         names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        scope = seed_scope(series, series, names=EntryNames("Show", ("Show Ending",)))
+        scope = seed_scope(series, series, names=TitleNames("Show", ("Show Ending",)))
         logger = debug_logger("pearlarr-placement-line-orders")
         strat = make_bare_instance(SonarrStrategy, logger=logger)
-        placement = place_release([SeedFile(name, 1000, parsed_info()) for name in names], scope, new_torrent(scope))
+        placement = place_release([ListedFile(name, 1000, parsed_info()) for name in names], scope, new_torrent(scope))
 
         with caplog.at_level("DEBUG"):
             strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
@@ -3663,16 +3663,16 @@ class TestFolderScanFallback:
     def test_history_rebuild_leaves_seeds_and_exclusions_alone(self) -> None:
         # A seeded file Sonarr placed elsewhere stays a genuine mismatch, and
         # an excluded (sibling slice) file never lands on this record.
-        seeded, excluded = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
+        file_map, excluded = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
         strat, sonarr = self._strat(
-            history=_imported_history((102, f"/d/Show/{seeded}"), (102, f"/d/Show/{excluded}")),
+            history=_imported_history((102, f"/d/Show/{file_map}"), (102, f"/d/Show/{excluded}")),
             folder_candidates=[],
         )
         sonarr.episodes_return = [sonarr_ep(1, 2, ep_id=102, release_group="SubGroup")]
         pending = pending_import(
-            file_episode_map={seeded: [101]},
+            file_episode_map={file_map: [101]},
             ordered_episode_ids=[101],
-            seadex_files=[seeded, excluded],
+            seadex_files=[file_map, excluded],
             excluded_files=[normalize_basename(excluded)],
         )
 

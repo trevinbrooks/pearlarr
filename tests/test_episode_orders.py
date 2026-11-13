@@ -99,8 +99,8 @@ def test_a_series_numbers_aired_only_when_sonarr_numbers_it_by_official(
 ) -> None:
     strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], FakeCacheStore())
 
-    assert strat._episodes.numbers_aired(1) is aired
-    assert strat._episodes.numbers_aired(2) is False
+    assert strat._episodes.aired_order(1) is aired
+    assert strat._episodes.aired_order(2) is False
 
 
 @pytest.mark.parametrize(

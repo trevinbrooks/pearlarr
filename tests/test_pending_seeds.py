@@ -21,12 +21,12 @@ from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_placement import (
     EntryFacts,
     EntryPlacements,
-    PendingSeed,
+    PendingImportUpdate,
     build_pending_seeds,
 )
 from pearlarr.parse_records import to_parse_record
-from pearlarr.pending_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport
-from pearlarr.placement_types import SeedScope, episode_index
+from pearlarr.pending_import import GuardFacts, OwnedEpisode, PendingImport, TitleNames
+from pearlarr.placement_types import GrabbingTitle, episode_index
 from pearlarr.releases import EpisodeRecord, SeadexDict
 from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.stamps import now_stamp
@@ -79,27 +79,27 @@ def _build(
     seadex_dict: SeadexDict,
     entry: EntryFacts,
     *,
-    scope: SeedScope | None = None,
-) -> dict[str, PendingSeed]:
+    scope: GrabbingTitle | None = None,
+) -> dict[str, PendingImportUpdate]:
     """Place the entry's files under `scope` (by default the strat's whole series), then fold the seeds."""
 
     series = strat._episodes.cached_episodes(entry.series_id) or []
     scope = scope or _scope(series, series)
-    files = strat._parse.parsed_files(seadex_dict, series_fp="")
+    files = strat._parse.parsed_files(seadex_dict, series_hash="")
     placed = EntryPlacements.place(scope, files, dict.fromkeys(files, new_torrent(scope)))
     return build_pending_seeds(seadex_dict, placed, entry)
 
 
-def _record(seed: PendingSeed) -> PendingImport:
+def _record(seed: PendingImportUpdate) -> PendingImport:
     """The seed persisted at the grab stamp, for the views only the record has (its label, its targets)."""
 
     return seed.record_at(_ADDED_AT, fresh=True)
 
 
-def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: EntryNames | None = None) -> SeedScope:
+def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None) -> GrabbingTitle:
     """The grab-time scope: entry 1's own list over the whole-series map."""
 
-    return seed_scope(episode_index(ep_list), episode_index(series), names=names or EntryNames())
+    return seed_scope(episode_index(ep_list), episode_index(series), names=names or TitleNames())
 
 
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustPolicy:
@@ -132,7 +132,7 @@ class TestBuildPendingSeeds:
             _strat(parses, ep_list),
             seadex_dict,
             entry=entry_facts(),
-            scope=_scope(ep_list, ep_list, EntryNames("Show", ("Show", "Shou"))),
+            scope=_scope(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -142,7 +142,7 @@ class TestBuildPendingSeeds:
         assert claim.series_id == 7
         assert claim.al_id == 1  # the entry's guard-row key
         assert claim.title == "Show"
-        assert claim.names == EntryNames("Show", ("Show", "Shou"))
+        assert claim.names == TitleNames("Show", ("Show", "Shou"))
         assert seed.stored is None
         record = seed.record_at(_ADDED_AT, fresh=True)
         assert record.added_at == _ADDED_AT

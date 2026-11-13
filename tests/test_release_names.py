@@ -5,10 +5,10 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.pending_import import EntryNames
-from pearlarr.release_names import RangeKey, RunMember, TitleGround, range_key, read_name, read_names
+from pearlarr.pending_import import TitleNames
+from pearlarr.release_names import NumberedName, RangeKey, TitleGround, range_key, read_name, split_names
 
-_NO_TITLES = TitleGround.of(EntryNames())
+_NO_TITLES = TitleGround.of(TitleNames())
 # "100" in fullwidth digits.
 _FULLWIDTH_100 = "\uff11\uff10\uff10"
 
@@ -16,7 +16,7 @@ _FULLWIDTH_100 = "\uff11\uff10\uff10"
 def _read(name: str, series: str = "", anilist: tuple[str, ...] = ()) -> tuple[int | None, tuple[int, ...]]:
     """The member number (None when unnumbered) and the bare numbers of one name read under the entry's titles."""
 
-    read = read_names([name], TitleGround.of(EntryNames(series, anilist)))[name]
+    read = split_names([name], TitleGround.of(TitleNames(series, anilist)))[name]
     return read.member.number if read.member is not None else None, read.bare_numbers
 
 
@@ -244,18 +244,18 @@ class TestReadNames:
     @staticmethod
     def _numbers(names: list[str]) -> dict[str, int | None]:
         return {
-            name: read.member.number if read.member else None for name, read in read_names(names, _NO_TITLES).items()
+            name: read.member.number if read.member else None for name, read in split_names(names, _NO_TITLES).items()
         }
 
     def test_a_set_counting_from_one_numbers_each_special_under_the_s_prefix(self) -> None:
         specials = [f"[grp] Show S{n} (BD 1080p).mkv" for n in (1, 2, 3)]
-        reads = read_names(self._EPISODES + specials, _NO_TITLES)
+        reads = split_names(self._EPISODES + specials, _NO_TITLES)
 
-        assert [reads[name].member for name in specials] == [RunMember("[grp] Show S", n, (), 1) for n in (1, 2, 3)]
+        assert [reads[name].member for name in specials] == [NumberedName("[grp] Show S", n, (), 1) for n in (1, 2, 3)]
         assert [reads[name].member for name in self._EPISODES] == [read_name(name).member for name in self._EPISODES]
 
     def test_a_higher_version_in_the_set_keeps_its_version(self) -> None:
-        reads = read_names(["[grp] Show S1.mkv", "[grp] Show S1v2.mkv", "[grp] Show S2.mkv"], _NO_TITLES)
+        reads = split_names(["[grp] Show S1.mkv", "[grp] Show S1v2.mkv", "[grp] Show S2.mkv"], _NO_TITLES)
 
         assert [(read.member.number, read.member.version) for read in reads.values() if read.member] == [
             (1, 1),
@@ -475,16 +475,16 @@ class TestTitledRead:
         ],
     )
     def test_an_ampersand_and_the_word_and_agree_between_a_name_and_its_title(self, name: str, series: str) -> None:
-        member = read_names([name], TitleGround.of(EntryNames(series)))[name].member
+        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
 
         assert member is not None
-        assert (member.number, member.tail_words) == (6, ("les", "voleurs"))
+        assert (member.number, member.words_after_number) == (6, ("les", "voleurs"))
 
     def test_the_title_check_keeps_the_prefix_a_form_would_read(self) -> None:
-        ground = TitleGround.of(EntryNames("Seeker x Seeker (2011)"))
+        ground = TitleGround.of(TitleNames("Seeker x Seeker (2011)"))
         names = ["Seeker x Seeker (2011) - 04 - Title.mkv", "Seeker x Seeker (2011) - 05 (OVA) - Title.mkv"]
 
-        assert {read.member.prefix for read in read_names(names, ground).values() if read.member} == {
+        assert {read.member.prefix for read in split_names(names, ground).values() if read.member} == {
             "Seeker x Seeker (2011)"
         }
 
@@ -530,7 +530,7 @@ class TestTitledRead:
     def test_a_title_shortened_behind_its_number_still_opens_the_name(
         self, name: str, series: str, number: int, numbers: tuple[int, ...]
     ) -> None:
-        member = read_names([name], TitleGround.of(EntryNames(series)))[name].member
+        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
 
         assert member is not None
         assert (member.number, member.title_numbers) == (number, numbers)
@@ -629,7 +629,7 @@ class TestTitledRead:
         ],
     )
     def test_an_ova_tag_behind_the_count_marks_an_extra_with_no_count(self, name: str) -> None:
-        read = read_names([name], TitleGround.of(EntryNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
+        read = split_names([name], TitleGround.of(TitleNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
 
         assert (read.member, read.titled_count) == (None, None)
 
@@ -679,17 +679,17 @@ class TestTitledRead:
     def test_the_titles_numbers_in_the_name_ride_on_the_member(
         self, name: str, series: str, numbers: tuple[int, ...]
     ) -> None:
-        member = read_names([name], TitleGround.of(EntryNames(series)))[name].member
+        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
 
         assert member is not None
         assert member.title_numbers == numbers
 
     def test_a_title_with_no_digits_leaves_every_count(self) -> None:
-        assert TitleGround.of(EntryNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
-        assert TitleGround.of(EntryNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
+        assert TitleGround.of(TitleNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
+        assert TitleGround.of(TitleNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
 
     def test_the_series_words_are_the_series_titles_and_the_entry_words_add_the_anilist_titles(self) -> None:
-        ground = TitleGround.of(EntryNames("Show Town", ("Machi Show",)))
+        ground = TitleGround.of(TitleNames("Show Town", ("Machi Show",)))
 
         assert ground.series_words == {"show", "town"}
         assert ground.entry_words == {"show", "town", "machi"}
@@ -730,13 +730,13 @@ class TestTitledRead:
 
     def test_a_quality_words_second_half_behind_the_count_opens_no_quality_tail(self) -> None:
         name = "[grp] Show - 05 Ray of Hope [1080p].mkv"
-        read = read_names([name], TitleGround.of(EntryNames("Show")))[name]
+        read = split_names([name], TitleGround.of(TitleNames("Show")))[name]
 
         assert (read.member, read.titled_count) == (None, 5)
 
     def test_fullwidth_digits_in_the_title_are_the_titles_numbers(self) -> None:
         name = f"[grp] Show {_FULLWIDTH_100} - 05 [1080p].mkv"
-        member = read_names([name], TitleGround.of(EntryNames("Show 100")))[name].member
+        member = split_names([name], TitleGround.of(TitleNames("Show 100")))[name].member
 
         assert member is not None
         assert (member.number, member.title_numbers) == (5, (100,))
@@ -776,12 +776,12 @@ class TestTitledRead:
     def test_a_count_a_word_follows_is_kept_as_the_titled_count_with_the_words_behind_it(
         self, name: str, series: str, count: int | None, words: tuple[str, ...]
     ) -> None:
-        read = read_names([name], TitleGround.of(EntryNames(series)))[name]
+        read = split_names([name], TitleGround.of(TitleNames(series)))[name]
 
         assert (read.titled_count, read.title_words) == (count, words)
 
     def test_the_titles_are_matched_longest_first_with_and_without_their_bracket(self) -> None:
-        ground = TitleGround.of(EntryNames("Seeker x Seeker (2011)", ("Seeker x Seeker", "SEEKER×SEEKER (2011)")))
+        ground = TitleGround.of(TitleNames("Seeker x Seeker (2011)", ("Seeker x Seeker", "SEEKER×SEEKER (2011)")))
 
         assert ground.titles == (
             ("seeker", "x", "seeker", "2011"),
@@ -789,9 +789,9 @@ class TestTitledRead:
             ("seeker", "seeker", "2011"),
             ("seeker", "seeker"),
         )
-        assert TitleGround.of(EntryNames()).titles == ()
+        assert TitleGround.of(TitleNames()).titles == ()
         # words that only count a season are no title: "2nd Season" left of its bracket would open any "2.01"
-        assert TitleGround.of(EntryNames("[Ame no Hi]", ("[Ame no Hi] 2nd Season",))).titles == (
+        assert TitleGround.of(TitleNames("[Ame no Hi]", ("[Ame no Hi] 2nd Season",))).titles == (
             ("ame", "no", "hi", "2"),
             ("ame", "no", "hi"),
         )

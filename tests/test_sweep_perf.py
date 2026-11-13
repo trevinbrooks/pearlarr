@@ -20,13 +20,13 @@ from seadex import EntryRecord
 
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
 from pearlarr.config import Arr
-from pearlarr.grab_placement import SeedFile
+from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import ExternalIds, TitleMapping
 from pearlarr.parse_records import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_UNMATCHED_TTL_DAYS,
+    ParseFreshness,
     ParseRecords,
-    ParseWindow,
     _parse_is_fresh,
     to_parse_record,
 )
@@ -76,23 +76,23 @@ def _stamp(days_ago: float) -> str:
     return (_NOW - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
 
 
-def _window(series_fp: str = "fp") -> ParseWindow:
+def _window(series_hash: str = "fp") -> ParseFreshness:
     """The pass window anchored at `_NOW` (never the wall clock)."""
 
-    return ParseWindow(
+    return ParseFreshness(
         now_str=_NOW.strftime(UPDATED_AT_STR_FORMAT),
         matched_cutoff=_MATCHED_CUTOFF,
         unmatched_cutoff=_UNMATCHED_CUTOFF,
-        series_fp=series_fp,
+        series_hash=series_hash,
     )
 
 
-def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_fp: str | None = None) -> dict[str, object]:
+def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_hash: str | None = None) -> dict[str, object]:
     """One persisted parse row, stamped `days_ago` and optionally pinned to a fingerprint."""
 
     row: dict[str, object] = {"fetched_at": _stamp(days_ago), "parse": to_parse_record(info)}
-    if series_fp is not None:
-        row["series_fp"] = series_fp
+    if series_hash is not None:
+        row["series_fp"] = series_hash
     return row
 
 
@@ -104,8 +104,8 @@ def _untitled(info: ParsedFileInfo) -> dict[str, object]:
     return {"fetched_at": _stamp(1), "parse": parse}
 
 
-def _fresh(record: dict[str, object], *, series_fp: str = "fp") -> bool:
-    return _parse_is_fresh(record, window=_window(series_fp))
+def _fresh(record: dict[str, object], *, series_hash: str = "fp") -> bool:
+    return _parse_is_fresh(record, window=_window(series_hash))
 
 
 class TestSeriesFingerprint:
@@ -136,18 +136,18 @@ class TestParseIsFresh:
         assert not _fresh(_record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1))
 
     def test_unmatched_fresh_when_fp_matches_and_within_backstop(self) -> None:
-        assert _fresh(_record(_UNMATCHED, days_ago=2, series_fp="fp"), series_fp="fp")
+        assert _fresh(_record(_UNMATCHED, days_ago=2, series_hash="fp"), series_hash="fp")
 
     def test_unmatched_stale_on_fp_mismatch(self) -> None:
-        assert not _fresh(_record(_UNMATCHED, days_ago=2, series_fp="old"), series_fp="fp")
+        assert not _fresh(_record(_UNMATCHED, days_ago=2, series_hash="old"), series_hash="fp")
 
     def test_unmatched_stale_beyond_backstop_ttl(self) -> None:
-        aged = _record(_UNMATCHED, days_ago=SONARR_PARSE_UNMATCHED_TTL_DAYS + 1, series_fp="fp")
-        assert not _fresh(aged, series_fp="fp")
+        aged = _record(_UNMATCHED, days_ago=SONARR_PARSE_UNMATCHED_TTL_DAYS + 1, series_hash="fp")
+        assert not _fresh(aged, series_hash="fp")
 
     def test_unmatched_rides_the_backstop_not_the_matched_ttl(self) -> None:
         # Inside the 30-day matched TTL, past the 7-day backstop: the pin decides.
-        assert not _fresh(_record(_UNMATCHED, days_ago=10, series_fp="fp"), series_fp="fp")
+        assert not _fresh(_record(_UNMATCHED, days_ago=10, series_hash="fp"), series_hash="fp")
 
     def test_legacy_row_without_a_parse_is_stale_inside_the_ttl(self) -> None:
         # The pre-reshape rows carry an episode list, not a whole parse: they
@@ -679,37 +679,37 @@ class TestParsedFilesUnmatchedCache:
 
     def test_genuine_unmatched_is_cached_with_fp(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
         self._assert_pinned(parse, "[X] Show - 01.mkv")
 
     def test_transient_none_is_not_cached(self) -> None:
         parse, _ = self._parse(parse_result=None)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
         assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
     def test_fresh_unmatched_hit_skips_network(self) -> None:
-        seeded: dict[str, dict[str, object]] = {
+        file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
                 "parse": to_parse_record(_UNMATCHED),
                 "series_fp": "fp",
             },
         }
-        parse, sonarr = self._parse(parse_result=_UNMATCHED, sonarr_parse=seeded)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        parse, sonarr = self._parse(parse_result=_UNMATCHED, sonarr_parse=file_map)
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
         assert sonarr.calls == []
 
     def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
         # A row whose parse this build cannot validate is a miss, so `_parse_for`
         # re-asks Sonarr and overwrites it with a readable record. Every field is
         # present, so the key check passes it and validation is what misses.
-        seeded: dict[str, dict[str, object]] = {
+        file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
                 "parse": {**to_parse_record(_matched(1, 1)), "episode_numbers": "one"},
             },
         }
-        parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=seeded)
+        parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=file_map)
 
         info = parse._parse_for("[X] Show - 01.mkv", window=_window())
 
@@ -733,18 +733,18 @@ class TestParsedFilesUnmatchedCache:
 
     def test_audio_file_never_parsed(self) -> None:
         parse, sonarr = self._parse(parse_result=_UNMATCHED)
-        parse.parsed_files(self._dict("[X] OST - 01.flac"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] OST - 01.flac"), series_hash="fp")
         assert sonarr.calls == []
 
     def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
         # Every url gets an entry, video files only, each with its listed size and its parse.
         parse, _ = self._parse(parse_result=_matched(1, 1))
-        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_fp="fp")
-        assert gathered == {"u": (SeedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
+        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_hash="fp")
+        assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
 
     def test_concurrent_pass_caches_each_file(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED, sleep_time=0)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_fp="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_hash="fp")
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
             self._assert_pinned(parse, name)
 

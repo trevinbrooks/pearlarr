@@ -9,7 +9,7 @@ from .arr_activity import HISTORY_MAX_LOOKBACK_DAYS, IMPORT_EVENTS, format_histo
 from .arr_models import ArrFiles, HistoryRecord, RadarrItem
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
-from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
+from .grab_placement import EntryFacts, PendingImportUpdate, build_unscoped_seed
 from .mappings import ExternalIds, TitleMapping
 from .output import hub_warn
 from .output.console_text import pluralize
@@ -189,7 +189,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         # Seed a pending record per grabbed torrent so the engine's gate persists it: the category move then
         # defers until Radarr imports the movie, and for a torrent shared with a Sonarr grab until both arrs clear.
         # A torrent already downloading under a stored record takes this entry's claim (a re-flag replaces it).
-        pending_seeds: Mapping[str, PendingSeed] = NO_SEEDS
+        pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
             flagged = releases_to_grab(seadex_dict)
             stored = run.records.stored_records(f.qbit_hash for f in flagged)

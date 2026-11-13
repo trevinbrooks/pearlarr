@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from itertools import compress, takewhile
 from typing import Self
 
-from .pending_import import EntryNames
+from .pending_import import TitleNames
 from .releases import EpisodeKey
 
 # "S01E05-06" or "S01E05-E06" with no spaces, maybe a "v2" after it. A letter or digit touching either end, as in
@@ -58,7 +58,7 @@ _MIDDLE_NUMBER = re.compile(rf"^(.*?){_MIDDLE_SEGMENT.pattern}")
 _PACKED_NUMBER = re.compile(r"^(.*?(?:^|[\s._-])[Ss]\d{2})(?P<number>\d{2})(?=[\s._-]|$)")
 # A trailing 1-3 digit integer not glued to more digits, or four behind a leading zero ("Show - 0517") or behind
 # " - " ("Show - 1001"). Glued to a hyphen ("-Group-25") or a lone "s" ("Show S1") it is a group's suffix or a
-# season token (`read_names` reads a pack's set of those); behind a digit and a dot ("Show - 21.5", "FLAC2.0") it
+# season token (`split_names` reads a pack's set of those); behind a digit and a dot ("Show - 21.5", "FLAC2.0") it
 # is a decimal's fraction. A plain "Season N" ending the name is a season token too ("[BD Menu 01] Show - Season
 # 01"); behind an ordinal, digit or word, the number counts ("Show 2nd Season 25", "The Final Season 25").
 _TRAILING_NUMBER = re.compile(
@@ -175,13 +175,13 @@ class Stem:
 
 
 @dataclass(frozen=True, slots=True)
-class RunMember:
+class NumberedName:
     """A name's numbered-run membership: its release number and the text around it."""
 
     prefix: str
     """The text before the release number: files sharing it form one run."""
     number: int
-    tail_words: tuple[str, ...]
+    words_after_number: tuple[str, ...]
     """The folded words after the release number (empty when nothing follows)."""
     version: int
     """The `vN` after the number or trailing (1 when none): of two names sharing a number, the higher is the member."""
@@ -200,11 +200,11 @@ class FileIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class NameRead:
+class NameParts:
     """One name read once: its stem, its run membership when it carries a release number, and its title words."""
 
     stem: Stem
-    member: RunMember | None
+    member: NumberedName | None
     title_words: tuple[str, ...]
     """The words an episode title is read from: a member's tail, the tail behind a `titled_count`, else the whole
     stem."""
@@ -232,15 +232,15 @@ class NameRead:
         return FileIdentity(member.prefix, member.number) if member is not None else FileIdentity(self.stem.text, None)
 
 
-def read_name(name: str) -> NameRead:
+def read_name(name: str) -> NameParts:
     """Read a name once: its stem and version, its run membership, and its title words."""
 
     stem = _stem_version(name)
     member = _member_of(stem)
-    return NameRead(
+    return NameParts(
         stem,
         member,
-        member.tail_words if member is not None else folded_words(stem.text),
+        member.words_after_number if member is not None else folded_words(stem.text),
         explicit_key=_EXPLICIT_KEY.search(stem.text) is not None,
         bare_numbers=tuple(count.number for count in _bare_counts(stem.text)),
         tagged_numbers=tuple(int(found) for found in _TAGGED_NUMBER.findall(name)),
@@ -365,22 +365,22 @@ class _Count:
 
         return cls(prefix, int(found["number"]), found.end(), int(found.groupdict().get("version") or 1))
 
-    def member(self, stem: Stem) -> RunMember:
+    def member(self, stem: Stem) -> NumberedName:
         """The run membership the count gives the name.
 
         The separators around the number are dropped, so "show_-_07v2_[bd 1080p].mkv" reads as ("show", 7).
         """
 
         tail = folded_words(stem.text[self.end :])
-        return RunMember(
+        return NumberedName(
             prefix=self.prefix.rstrip(" .-"),
             number=self.number,
-            tail_words=tail,
+            words_after_number=tail,
             version=max(stem.version, self.version),
         )
 
 
-def _member_of(stem: Stem) -> RunMember | None:
+def _member_of(stem: Stem) -> NumberedName | None:
     """A name's run membership: the release's own number, read from the text alone, and what surrounds it.
 
     None when no form fits.
@@ -534,7 +534,7 @@ _BARE_SEASON = re.compile(r"(?<=[^\W\d_])[\s.]+(\d{1,2})$")
 _PADDED_PAIR = re.compile(r"\b(\d{1,2})(?:st|[nr]d|th)?[\s.-]+(?:(?:ep|episode)[\s.-]*)?(0\d{1,3})\b", re.IGNORECASE)
 
 
-def written_keys(read: NameRead) -> tuple[EpisodeKey, ...]:
+def written_keys(read: NameParts) -> tuple[EpisodeKey, ...]:
     """The seasons and episodes a name writes in plain numbers, outside any key token like "S02E05".
 
     Each season beside a zero-padded episode, however the name sets the two apart (`_PADDED_PAIR`), and a member's
@@ -610,7 +610,7 @@ class TitleGround:
     is the title's, not a count. A season a title counts in words ("IV", "2nd") is not among them."""
 
     @classmethod
-    def of(cls, names: EntryNames) -> Self:
+    def of(cls, names: TitleNames) -> Self:
         """The series title's words, those plus every AniList title's, each title's words in order, and its digits."""
 
         every = (names.series, *names.anilist)
@@ -698,7 +698,7 @@ def _count_ends(text: str, end: int) -> bool:
     return False
 
 
-def _span_member(stem: Stem, found: re.Match[str]) -> RunMember | None:
+def _span_member(stem: Stem, found: re.Match[str]) -> NumberedName | None:
     """The count behind the title's span (`_SPAN_COUNT`) as the name's run membership, else None.
 
     A word behind that count makes it an episode title's number (`_count_ends`), a number standing alone behind it
@@ -718,7 +718,7 @@ def _span_member(stem: Stem, found: re.Match[str]) -> RunMember | None:
     return _Count.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(stem)
 
 
-def _tails_a_title(text: str, member: RunMember, end: int) -> bool:
+def _tails_a_title(text: str, member: NumberedName, end: int) -> bool:
     """Whether the member's number ends the stem behind words past the title ("[0802] Show - Squad 66" read 66)."""
 
     trailing = _TRAILING_NUMBER.match(text)
@@ -731,7 +731,7 @@ def _tails_a_title(text: str, member: RunMember, end: int) -> bool:
     )
 
 
-def _titled(read: NameRead, ground: TitleGround) -> NameRead:
+def _titled(read: NameParts, ground: TitleGround) -> NameParts:
     """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
 
     The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
@@ -770,11 +770,14 @@ def _titled(read: NameRead, ground: TitleGround) -> NameRead:
         return replace(read, bare_numbers=bare_numbers, member=None, title_words=folded_words(text))
     numbers = tuple(int(word) for word in _raw_words(_ascii_digits(blanked[start:end])) if word.isdigit())
     return replace(
-        read, bare_numbers=bare_numbers, member=replace(member, title_numbers=numbers), title_words=member.tail_words
+        read,
+        bare_numbers=bare_numbers,
+        member=replace(member, title_numbers=numbers),
+        title_words=member.words_after_number,
     )
 
 
-def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]:
+def split_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameParts]:
     """Read a pack's names: each alone, then against the entry's titles (`_titled`), then its lone-S set.
 
     Names ending in "S1", "S2", ... behind one prefix whose numbers count up from 1 are a set of specials
@@ -793,7 +796,9 @@ def read_names(names: Iterable[str], ground: TitleGround) -> dict[str, NameRead]
             continue
         for number, members in by_number.items():
             for name in members:
-                member = RunMember(prefix=prefix, number=number, tail_words=(), version=reads[name].stem.version)
+                member = NumberedName(
+                    prefix=prefix, number=number, words_after_number=(), version=reads[name].stem.version
+                )
                 reads[name] = replace(reads[name], member=member, title_words=())
     return reads
 
@@ -854,7 +859,7 @@ class Naming:
     scored: tuple[_Scored, ...]
 
     @classmethod
-    def of(cls, candidates: Sequence[str], names: EntryNames) -> Self | None:
+    def of(cls, candidates: Sequence[str], names: TitleNames) -> Self | None:
         """Score the candidates, or None when nothing names them: no ground, no titles, or the series as a title."""
 
         ground = _word_set(names.series)
@@ -901,7 +906,7 @@ class Naming:
         return bool(winners) and pick not in winners
 
 
-def sole_title_match(candidates: Sequence[str], names: EntryNames) -> int | None:
+def sole_title_match(candidates: Sequence[str], names: TitleNames) -> int | None:
     """The index of the one candidate an AniList title names, else None.
 
     The unique best sharing at least `_MIN_TITLE_OVERLAP` of the combined words beyond the series title wins,
