@@ -604,7 +604,7 @@ class LegServices:
         # Get the SeaDex entry if it exists
         sd_entry = self._seadex.entry(al_id)
         if isinstance(sd_entry, SeaDexMiss):
-            if sd_entry is SeaDexMiss.OUTAGE:
+            if sd_entry is SeaDexMiss.UNREACHABLE:
                 self._reporter.log_seadex_outage_skip(self._ctx, al_id)
             else:
                 self._reporter.log_no_sd_entry(self._ctx, al_id)

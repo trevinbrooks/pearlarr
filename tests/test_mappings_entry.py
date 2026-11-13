@@ -19,7 +19,7 @@ from pearlarr.anibridge import AniBridgeGraph, SpecialAliasing
 from pearlarr.mappings import (
     AnimeIdsMap,
     ExternalIds,
-    MappingMode,
+    MappingKind,
     MappingResolver,
     MappingSources,
     TitleMapping,
@@ -65,7 +65,7 @@ class TestKometaPath:
         assert list(mappings) == [100]
         entry = mappings[100]
         assert isinstance(entry, TitleMapping)
-        assert entry.mode is MappingMode.ANIME_IDS
+        assert entry.mode is MappingKind.SEASON_OFFSET
         assert entry.tvdb_mappings is None
         assert (entry.anilist_id, entry.tvdb_season, entry.tvdb_epoffset) == (100, 2, 3)
         assert entry.imdb_id == "tt100"
@@ -86,7 +86,7 @@ class TestKometaPath:
         assert entry.tmdb_movie_id is None
         assert entry.imdb_id is None
         assert entry.anidb_id is None
-        assert entry.mode is MappingMode.ANIME_IDS
+        assert entry.mode is MappingKind.SEASON_OFFSET
 
 
 class TestAniBridgePath:
@@ -106,7 +106,7 @@ class TestAniBridgePath:
         mappings = resolver.get_anilist_ids(ExternalIds(tvdb=74796)).mappings
 
         entry = mappings[269]
-        assert entry.mode is MappingMode.ANIBRIDGE
+        assert entry.mode is MappingKind.EPISODE_RANGES
         assert entry.tvdb_mappings == {2: [(1, 21)]}
         assert entry.anilist_id == 269
         assert entry.anidb_id == 1234
@@ -147,14 +147,14 @@ class TestModeDiscriminant:
 
     def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.
-        assert TitleMapping(anilist_id=1, tvdb_mappings={}).mode is MappingMode.ANIBRIDGE
+        assert TitleMapping(anilist_id=1, tvdb_mappings={}).mode is MappingKind.EPISODE_RANGES
 
     def test_populated_tvdb_mappings_is_anibridge(self) -> None:
-        assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).mode is MappingMode.ANIBRIDGE
+        assert TitleMapping(anilist_id=1, tvdb_mappings={2: [(1, 3)]}).mode is MappingKind.EPISODE_RANGES
 
     def test_absent_tvdb_mappings_is_anime_ids(self) -> None:
-        assert TitleMapping(anilist_id=1).mode is MappingMode.ANIME_IDS
-        assert TitleMapping(anilist_id=1, tvdb_mappings=None).mode is MappingMode.ANIME_IDS
+        assert TitleMapping(anilist_id=1).mode is MappingKind.SEASON_OFFSET
+        assert TitleMapping(anilist_id=1, tvdb_mappings=None).mode is MappingKind.SEASON_OFFSET
 
 
 def test_entry_is_frozen() -> None:

@@ -383,7 +383,7 @@ class TestRunLoopActivityWiring:
     @staticmethod
     def _outage_engine(logger: logging.Logger, cache: FakeCacheStore) -> LegLoop:
         gateway = _FakeGateway()
-        gateway.outage = True
+        gateway.unreachable = True
         return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
 
     def test_outage_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:

@@ -37,7 +37,7 @@ from .mapping_store import (
     AniBridgeRangeRow,
     AniBridgeRows,
     AniBridgeXrefRow,
-    AnimeIdColumn,
+    IdKind,
     MappingStore,
 )
 from .pairs import unambiguous
@@ -324,7 +324,7 @@ class AniBridge:
         self.tvdb_index = defaultdict(set)
         self.tmdb_movie_index = defaultdict(set)
         self.imdb_index = defaultdict(set)
-        # anibridge_distinct's per-axis overloads type each set (tvdb/tmdb ints,
+        # anibridge_distinct's per-id_kind overloads type each set (tvdb/tmdb ints,
         # imdb strs). The store raises on a mismatched stored type.
         self.all_tvdb_ids = store.anibridge_distinct("tvdb")
         self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
@@ -374,14 +374,14 @@ class AniBridge:
                 )
 
         xrefs: list[AniBridgeXrefRow] = []
-        for axis, index in (
+        for id_kind, index in (
             ("tvdb", self.tvdb_index),
             ("tmdb_movie", self.tmdb_movie_index),
             ("imdb", self.imdb_index),
         ):
-            for ext_id, anilist_ids in index.items():
+            for external_id, anilist_ids in index.items():
                 for anilist_id in anilist_ids:
-                    xrefs.append(AniBridgeXrefRow(axis, ext_id, anilist_id))
+                    xrefs.append(AniBridgeXrefRow(id_kind, external_id, anilist_id))
 
         return AniBridgeRows(entries, xrefs, ranges, alias_rows)
 
@@ -391,7 +391,7 @@ class AniBridge:
     def __len__(self) -> int:
         return self._len
 
-    def id_set(self, mapping_key: AnimeIdColumn) -> set[int] | set[str]:
+    def id_set(self, mapping_key: IdKind) -> set[int] | set[str]:
         """The precomputed candidate id set for a Kometa `mapping_key` axis.
 
         Mirrors `MappingResolver.anime_id_set` so `collect_anime_items` can
@@ -483,11 +483,11 @@ class AniBridge:
                     record.anidb_id = anidb_id
 
         elif provider == "tvdb_show":
-            ext_id = coerce_int(pid)
-            if ext_id is None:
+            external_id = coerce_int(pid)
+            if external_id is None:
                 return
-            seasons = record.tvdb_shows.setdefault(ext_id, {})
-            self.tvdb_index[ext_id].add(anilist_id)
+            seasons = record.tvdb_shows.setdefault(external_id, {})
+            self.tvdb_index[external_id].add(anilist_id)
 
             season = _parse_season(scope)
             if season is None:
@@ -584,8 +584,8 @@ class AniBridge:
 
     def _sql_lookup(
         self,
-        axis: str,
-        ext_id: int | str,
+        id_kind: str,
+        external_id: int | str,
         *,
         tvdb_id: int | None = None,
     ) -> AniBridgeLookup:
@@ -608,12 +608,12 @@ class AniBridge:
         ranges_by_anilist: dict[int, list[tuple[int, int | None, int | None]]] = {}
         aliasing_by_anilist: dict[int, SpecialAliasing] = {}
         if tvdb_id is not None:
-            for hit in store.anibridge_ranges_for(axis, ext_id, tvdb_id):
+            for hit in store.anibridge_ranges_for(id_kind, external_id, tvdb_id):
                 ranges_by_anilist.setdefault(hit.anilist_id, []).append((hit.season, hit.start_ep, hit.end_ep))
-            aliasing_by_anilist = _aliasing_by_anilist(store.anibridge_aliases_for(axis, ext_id, tvdb_id))
+            aliasing_by_anilist = _aliasing_by_anilist(store.anibridge_aliases_for(id_kind, external_id, tvdb_id))
 
         result: AniBridgeLookup = {}
-        for row in store.anibridge_entries_for(axis, ext_id):
+        for row in store.anibridge_entries_for(id_kind, external_id):
             tvdb = None
             if tvdb_id is not None:
                 tvdb_mappings = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))

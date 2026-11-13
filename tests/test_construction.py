@@ -229,7 +229,7 @@ def test_rundeps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
     assert deps.arr_http.label == "Sonarr"
     assert deps.arr_http.base_url == "http://sonarr"
     # digest_interval is the Sonarr client's own replace, never build's bind.
-    assert deps.arr_http.heartbeat_s == HEARTBEAT_INTERVAL_S
+    assert deps.arr_http.rewarn_s == HEARTBEAT_INTERVAL_S
 
 
 def test_rundeps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:

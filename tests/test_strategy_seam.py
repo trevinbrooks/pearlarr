@@ -72,7 +72,7 @@ from pearlarr.seadex_radarr import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, OrderRow, SeriesOrdering
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERING, OrderRow, SeriesOrdering
 from pearlarr.wait_types import (
     AttemptKind,
     AttemptResult,
@@ -144,7 +144,7 @@ class _Item:
     monitored: bool
     tvdbId: int
     tmdbId: int
-    seasonType: str = OFFICIAL_ORDER
+    seasonType: str = AIRED_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     alternateTitles: tuple[AlternateTitle, ...] = ()
 

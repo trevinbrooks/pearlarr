@@ -143,7 +143,7 @@ class LegLoop:
 
         with boot.step("Fetching AniList metadata") as step:
             fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_dry_run(), progress=step)
-            if self._anilist.outage:
+            if self._anilist.unreachable:
                 # Terse: the client already warned once with the failure detail.
                 step.warn("unavailable")
             else:
@@ -153,7 +153,7 @@ class LegLoop:
         # must not claim "N entries" it never fetched.
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
-            if self._seadex.outage:
+            if self._seadex.unreachable:
                 # Terse: the gateway already warned once with the failure detail.
                 step.warn("unreachable")
             else:
@@ -168,7 +168,7 @@ class LegLoop:
             # series through `title_needs_check`, which reads them.
             with boot.step("Fetching TVDB orders") as step:
                 fetched = strategy.prefetch_orders(all_items, progress=step)
-                if self._skyhook.outage:
+                if self._skyhook.unreachable:
                     # Terse: the client already warned once with the failure detail.
                     step.warn("unreachable")
                 else:
@@ -205,7 +205,7 @@ class LegLoop:
         # didn't cache it as done, holds back neither: `is_unchanged` cleared its stamp, so the next run checks
         # it whatever is committed here. An AniList outage is left out: a Sonarr title whose check read an entry
         # with no stored record of its air dates isn't cached as done, and Radarr reads AniList only for display.
-        full_scan = item_id is None and not self._seadex.outage and not self._skyhook.outage
+        full_scan = item_id is None and not self._seadex.unreachable and not self._skyhook.unreachable
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.

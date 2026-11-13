@@ -17,14 +17,14 @@ from .anibridge import TvdbMappings, season_holds
 from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .config import AppConfig
-from .mappings import ExternalIds, MappingMode, MappingSource, TitleMapping
+from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
 from .progress import ProgressSink
 from .releases import season_episode_key
 from .run_services import LegDeps, LegServices
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
-from .tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, SeriesOrderFacts, SeriesOrdering
+from .tvdb_orders import AIRED_ORDER, NO_ORDERING, SeriesOrderFacts, SeriesOrdering
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
 # advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (LegDeps.build).
@@ -326,7 +326,7 @@ class SonarrEpisodes:
         """Whether Sonarr numbers the series by TVDB's aired order. False for a series this run didn't read."""
 
         facts = self._order_facts.get(series_id)
-        return facts is not None and facts.season_type == OFFICIAL_ORDER
+        return facts is not None and facts.season_type == AIRED_ORDER
 
     def episode_count(self, al_id: int) -> int | None:
         """AniList's episode count for the entry, None when AniList gives none."""
@@ -407,7 +407,7 @@ class SonarrEpisodes:
         # Filter down here by various things. Resolve the include test once by
         # mode rather than re-branching on a string for every episode. The
         # comprehension preserves ep_list order, exactly as the append loop did.
-        if mode is MappingMode.ANIME_IDS:
+        if mode is MappingKind.SEASON_OFFSET:
             if mapping.source is MappingSource.ANIBRIDGE:
                 # Degraded AniBridge entry (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
@@ -460,7 +460,7 @@ class SonarrEpisodes:
 
         # No AniDB mapping: anime-id mappings still need the offset slice, while
         # AniBridge mappings are already fully filtered above (no-op).
-        elif mode is MappingMode.ANIME_IDS:
+        elif mode is MappingKind.SEASON_OFFSET:
             final_ep_list = self._apply_anime_id_offsets(
                 final_ep_list=final_ep_list,
                 al_id=al_id,

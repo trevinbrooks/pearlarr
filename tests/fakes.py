@@ -584,7 +584,7 @@ class FakeSkyHookClient(AbstractSkyHookClient):
 
     @property
     @override
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         return self._outage
 
     @override

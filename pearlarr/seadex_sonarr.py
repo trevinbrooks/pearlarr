@@ -123,7 +123,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             base = deps.arr_http or bind_arr_http(Arr.SONARR, self._config, deps.http)
             self.sonarr = SonarrClient(
                 # Streak re-warns pace with the wait view's digest cadence.
-                http=replace(base, heartbeat_s=self._config.imports.digest_interval),
+                http=replace(base, rewarn_s=self._config.imports.digest_interval),
                 logger=self.logger,
             )
 

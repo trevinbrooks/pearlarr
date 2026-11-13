@@ -64,10 +64,10 @@ class AniListGateway:
         self._looked_up: set[int] = set()
 
     @property
-    def outage(self) -> bool:
+    def unreachable(self) -> bool:
         """True once AniList has been declared unavailable for this run."""
 
-        return self._client.outage
+        return self._client.unreachable
 
     def unread(self, al_id: int) -> bool:
         """Whether a lookup of an id this run went without its air dates because AniList couldn't be asked.
@@ -77,7 +77,7 @@ class AniListGateway:
         and neither is one whose lookup AniList answered, with a record or with no such id.
         """
 
-        if not self.outage or al_id not in self._looked_up:
+        if not self.unreachable or al_id not in self._looked_up:
             return False
         body = self.al_cache.get(al_id)
         return body is None or lacks_air_dates(body)
@@ -131,7 +131,7 @@ class AniListGateway:
 
         # Evicting during an outage would drain the very records serving the run.
         cutoff = now - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
-        evicted = 0 if self.outage else self._cache.evict_anilist_meta(cutoff)
+        evicted = 0 if self.unreachable else self._cache.evict_anilist_meta(cutoff)
 
         if written or evicted:
             self._cache.save(preview=False)
@@ -162,7 +162,7 @@ class AniListGateway:
         for chunk in batched(wanted, ANILIST_BATCH_SIZE, strict=False):
             fetched = self._client.query_batch(list(chunk))
             # A tripped breaker answered this batch empty and answers every later one the same.
-            if self.outage:
+            if self.unreachable:
                 break
             for al_id, body in fetched.items():
                 self._store(al_id, body)
@@ -187,7 +187,7 @@ class AniListGateway:
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
             self._store(al_id, fetched)
-        elif not self.outage:
+        elif not self.unreachable:
             # AniList answered and knows no such id: an empty body remembers that for the run.
             self.al_cache[al_id] = {}
         return media_node_from(raw_media)

@@ -155,7 +155,7 @@ class TestSeaDexPrefetch:
         gateway.prefetch(ids)
 
         assert len(fake.filter_calls) == 3  # chunk 1 retried once, chunk 2 clean
-        assert gateway.outage is False
+        assert gateway.unreachable is False
         assert gateway.entry(ids[0]) is fake.entries[ids[0]]
         assert gateway.entry(ids[-1]) is fake.entries[ids[-1]]
         assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -172,12 +172,12 @@ class TestSeaDexPrefetch:
         gateway.prefetch(ids)
 
         assert len(fake.filter_calls) == 2  # chunk 1 + its retry, batches 2+3 short-circuited
-        assert gateway.outage is True
+        assert gateway.unreachable is True
         warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1
         assert "SeaDex request failed (ConnectError)" in warnings[0]
         # The per-id fallback is muted too: no fresh timeout per title.
-        assert gateway.entry(ids[0]) is SeaDexMiss.OUTAGE
+        assert gateway.entry(ids[0]) is SeaDexMiss.UNREACHABLE
         assert fake.from_id_calls == []
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1  # still just the one
 
@@ -229,10 +229,10 @@ class TestSeaDexPrefetch:
         gateway = _gateway(fake)
         recording = install_recording_hub()
 
-        assert gateway.outage is False
-        assert gateway.entry(1) is SeaDexMiss.OUTAGE
-        assert gateway.entry(2) is SeaDexMiss.OUTAGE
-        assert gateway.outage is True
+        assert gateway.unreachable is False
+        assert gateway.entry(1) is SeaDexMiss.UNREACHABLE
+        assert gateway.entry(2) is SeaDexMiss.UNREACHABLE
+        assert gateway.unreachable is True
         assert fake.from_id_calls == [1, 1]  # the retry, then id 2 never hit the network
         assert len(diagnostic_messages(recording, Severity.WARNING)) == 1
 
@@ -245,7 +245,7 @@ class TestSeaDexPrefetch:
         recording = install_recording_hub()
 
         assert gateway.entry(1) is fake.entries[1]
-        assert gateway.outage is False
+        assert gateway.unreachable is False
         assert fake.from_id_calls == [1, 1]  # the blip + its retry
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -256,8 +256,8 @@ class TestSeaDexPrefetch:
         gateway = _gateway(fake)
         recording = install_recording_hub()
 
-        assert gateway.entry(1) is SeaDexMiss.OUTAGE
-        assert gateway.outage is True
+        assert gateway.entry(1) is SeaDexMiss.UNREACHABLE
+        assert gateway.unreachable is True
         assert fake.from_id_calls == [1, 1]
         warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1

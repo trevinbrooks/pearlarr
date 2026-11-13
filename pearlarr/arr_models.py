@@ -24,7 +24,7 @@ from .boundary import (
     validate_skipping_junk,
 )
 from .releases import EpisodeKey, season_episode_key
-from .tvdb_orders import OFFICIAL_ORDER
+from .tvdb_orders import AIRED_ORDER
 
 # --- Arr items (Sonarr series / Radarr movies) ------------------------------
 
@@ -103,7 +103,7 @@ class SonarrSeries(ApiModel):
     monitored: bool = True
     tvdbId: int = 0
     imdbId: str | None = None
-    seasonType: BlankStr = OFFICIAL_ORDER
+    seasonType: BlankStr = AIRED_ORDER
     """The TVDB order Sonarr numbers the series by. Sonarr v4 sends no field and numbers by the official order. A
     null or junk value folds to "", which names no order, so the series is read without its other orders."""
     seasonTypes: tuple[SeasonTypeCount, ...] = ()

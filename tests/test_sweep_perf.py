@@ -41,7 +41,7 @@ from pearlarr.sonarr_episodes import (
 )
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import UPDATED_AT_STR_FORMAT
-from pearlarr.tvdb_orders import OFFICIAL_ORDER
+from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.video_files import is_video_candidate
 
 from .builders import (
@@ -233,7 +233,7 @@ class _Series:
     monitored: bool
     tvdbId: int
     tmdbId: int
-    seasonType: str = OFFICIAL_ORDER
+    seasonType: str = AIRED_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     alternateTitles: tuple[AlternateTitle, ...] = ()
 

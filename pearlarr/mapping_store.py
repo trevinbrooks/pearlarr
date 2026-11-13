@@ -58,7 +58,7 @@ INLINE_DIGEST = "<inline>"
 # anime_ids query columns the resolver may filter / DISTINCT on. The Literal is
 # the checker-facing vocabulary. The tuple is the runtime allowlist guarding the
 # f-string interpolation (a column name cannot be a bound parameter). Keep in sync.
-type AnimeIdColumn = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
+type IdKind = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
 _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
 # anibridge xref axes - a DIFFERENT vocabulary from the anime_ids columns above
@@ -216,8 +216,8 @@ class AniBridgeEntryRow(NamedTuple):
 class AniBridgeXrefRow(NamedTuple):
     """One `anibridge_xref` reverse-index row (`axis` -> ext id -> AniList id)."""
 
-    axis: str
-    ext_id: int | str
+    id_kind: str
+    external_id: int | str
     anilist_id: int
 
 
@@ -279,7 +279,7 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
-def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
+def _ext_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -> T:
     """Pin a stored anibridge ext id to the type its axis owns.
 
     The write path coerced these, so a mismatch means the db is corrupt - raise
@@ -287,7 +287,7 @@ def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
     """
 
     if not isinstance(value, kind):
-        raise TypeError(f"anibridge xref {axis!r} ext_id holds {type(value).__name__}, expected {kind.__name__}")
+        raise TypeError(f"anibridge xref {id_kind!r} ext_id holds {type(value).__name__}, expected {kind.__name__}")
     return value
 
 
@@ -441,7 +441,7 @@ class MappingStore:
 
     # -- anime_ids queries ---------------------------------------------------
 
-    def anime_ids_lookup(self, column: AnimeIdColumn, value: object) -> list[AnimeIdRow]:
+    def anime_ids_lookup(self, column: IdKind, value: object) -> list[AnimeIdRow]:
         """`AnimeIdRow`s matching `column == value`, in first-seen (rowid) order.
 
         Returns the full row so the caller can build a `MappingEntry`. Rows with no
@@ -464,7 +464,7 @@ class MappingStore:
     def anime_ids_distinct(self, column: Literal["tvdb_id", "tmdb_movie_id"]) -> set[int]: ...
     @overload
     def anime_ids_distinct(self, column: Literal["imdb_id"]) -> set[str]: ...
-    def anime_ids_distinct(self, column: AnimeIdColumn) -> set[int] | set[str]:
+    def anime_ids_distinct(self, column: IdKind) -> set[int] | set[str]:
         """The set of DISTINCT non-null `column` values in anime_ids.
 
         Used to build the library-filter candidate sets without scanning the map.
@@ -484,7 +484,7 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_entries_for(self, axis: str, ext_id: int | str) -> list[AniBridgeEntryRow]:
+    def anibridge_entries_for(self, id_kind: str, external_id: int | str) -> list[AniBridgeEntryRow]:
         """Every `AniBridgeEntryRow` mapped to `ext_id` on `axis`.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
@@ -497,14 +497,14 @@ class MappingStore:
             "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id "
             "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ?",
-            (axis, ext_id),
+            (id_kind, external_id),
         ).fetchall()
         return [AniBridgeEntryRow(*row) for row in rows]
 
     def anibridge_ranges_for(
         self,
-        axis: str,
-        ext_id: int | str,
+        id_kind: str,
+        external_id: int | str,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
         """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an (axis, ext_id) lookup.
@@ -522,11 +522,11 @@ class MappingStore:
             "FROM anibridge_xref x JOIN anibridge_tvdb_range r ON r.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ? AND r.tvdb_id = ? "
             "ORDER BY x.anilist_id, r.rowid",
-            (axis, ext_id, tvdb_id),
+            (id_kind, external_id, tvdb_id),
         ).fetchall()
         return [AniBridgeRangeHit(*row) for row in rows]
 
-    def anibridge_aliases_for(self, axis: str, ext_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
+    def anibridge_aliases_for(self, id_kind: str, external_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
         """The special aliases onto TVDB show `tvdb_id` of every AniList id the xref maps (axis, ext_id) to.
 
         One batched xref->alias JOIN like `anibridge_ranges_for`, ordered by `anilist_id` then write order.
@@ -537,15 +537,15 @@ class MappingStore:
             "FROM anibridge_xref x JOIN anibridge_special_alias a ON a.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ? AND a.tvdb_id = ? "
             "ORDER BY x.anilist_id, a.rowid",
-            (axis, ext_id, tvdb_id),
+            (id_kind, external_id, tvdb_id),
         ).fetchall()
         return [AniBridgeAliasHit(*row) for row in rows]
 
     @overload
-    def anibridge_distinct(self, axis: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...
+    def anibridge_distinct(self, id_kind: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...
     @overload
-    def anibridge_distinct(self, axis: Literal["imdb"]) -> set[str]: ...
-    def anibridge_distinct(self, axis: AniBridgeAxis) -> set[int] | set[str]:
+    def anibridge_distinct(self, id_kind: Literal["imdb"]) -> set[str]: ...
+    def anibridge_distinct(self, id_kind: AniBridgeAxis) -> set[int] | set[str]:
         """The set of all ext ids on `axis` (for the library-filter id sets).
 
         Unlike the anime_ids columns, the AniBridge write path coerces every ext
@@ -555,11 +555,11 @@ class MappingStore:
 
         rows = self._conn.execute(
             "SELECT DISTINCT ext_id FROM anibridge_xref WHERE axis = ?",
-            (axis,),
+            (id_kind,),
         ).fetchall()
-        if axis == "imdb":
-            return {_ext_id_as(r[0], str, axis) for r in rows}
-        return {_ext_id_as(r[0], int, axis) for r in rows}
+        if id_kind == "imdb":
+            return {_ext_id_as(r[0], str, id_kind) for r in rows}
+        return {_ext_id_as(r[0], int, id_kind) for r in rows}
 
     def anibridge_len(self) -> int:
         """Number of AniList entries (backs `AniBridge.__len__` / `__bool__`)."""

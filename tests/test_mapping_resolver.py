@@ -46,7 +46,7 @@ from pearlarr.mappings import (
     AnimeIdsMap,
     AnimeIdsRecord,
     ExternalIds,
-    MappingMode,
+    MappingKind,
     MappingResolver,
     MappingSource,
     MappingSources,
@@ -635,7 +635,7 @@ class TestGetAnilistIdsMerge:
             mappings = resolved.mappings
             assert list(mappings) == [269]  # 270 set aside, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
-            assert mappings[269].mode is MappingMode.ANIBRIDGE
+            assert mappings[269].mode is MappingKind.EPISODE_RANGES
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
         finally:
             resolver.close()
@@ -784,7 +784,7 @@ class TestVu1DegradedAniBridge:
             resolver.close()
         degraded = mappings[500]
         assert degraded.source is MappingSource.ANIBRIDGE
-        assert degraded.mode is MappingMode.ANIME_IDS  # no tvdb ranges -> would have grabbed wrong eps
+        assert degraded.mode is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
         assert degraded.tvdb_mappings is None
 
         episodes = make_bare_instance(

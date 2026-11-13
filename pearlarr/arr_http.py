@@ -154,7 +154,7 @@ class ArrHttp:
     """In-call GET retry budget. The wait-path poll handle rides `replace(http,
     retries=0)` - its monitor loop IS the retry mechanism, so in-call backoff
     would only stretch each poll."""
-    heartbeat_s: float = HEARTBEAT_INTERVAL_S
+    rewarn_s: float = HEARTBEAT_INTERVAL_S
     """Seconds between "still failing" re-warns while a streak runs (the Sonarr
     client swaps in `imports.digest_interval` via `replace` - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
@@ -504,7 +504,7 @@ class ArrHttp:
                 streak.count += 1
                 count = streak.count
                 age = now - streak.first_at
-                heartbeat_due = now - streak.last_warned_at >= self.heartbeat_s
+                heartbeat_due = now - streak.last_warned_at >= self.rewarn_s
                 if heartbeat_due:
                     streak.last_warned_at = now
         # Emit OUTSIDE the lock: hub/render work must not serialize sweep threads.

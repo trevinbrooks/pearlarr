@@ -17,7 +17,7 @@ import respx
 
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
-from pearlarr.mapping_store import AnimeIdColumn
+from pearlarr.mapping_store import IdKind
 from pearlarr.mappings import AnimeIdSets
 from pearlarr.output import Severity
 from pearlarr.radarr_client import RadarrClient, collect_anime_movies
@@ -248,7 +248,7 @@ class _RecordingIdSets(AnimeIdSets):
         self.calls: list[str] = []
 
     @override
-    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
+    def anime_id_set(self, column: IdKind) -> AbstractSet[int | str]:
         self.calls.append(column)
         return self._sets.get(column, set())
 

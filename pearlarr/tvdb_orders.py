@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, NamedTuple, Self
 
-OFFICIAL_ORDER = "official"
+AIRED_ORDER = "official"
 """SkyHook's and Sonarr's name for TVDB's aired order, the order Sonarr numbers a series by default."""
 
 _DISPLAY_NAMES: Mapping[str, str] = MappingProxyType(
