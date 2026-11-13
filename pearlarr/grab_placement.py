@@ -90,7 +90,7 @@ class FetchedSeadex:
 class KnownTorrent:
     """Everything the run knows about one torrent: its stored record, the series indexes, and the SeaDex evidence."""
 
-    record: PendingImport | None
+    pending_import: PendingImport | None
     """The store-resident record the torrent accretes onto, None when the torrent is new."""
 
     indexes: Mapping[int, EpisodeIndex]
@@ -119,7 +119,9 @@ class KnownTorrent:
         listing = self.evidence.listing
         if listing is None:
             return None
-        return ordered_windows(listing, () if self.record is None else self.record.claims, own, self.indexes)
+        return ordered_windows(
+            listing, () if self.pending_import is None else self.pending_import.claims, own, self.indexes
+        )
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
@@ -138,7 +140,7 @@ def entry_hashes(seadex_dict: SeadexDict) -> frozenset[str]:
 
 
 @dataclass(frozen=True, slots=True)
-class TorrentReads:
+class TorrentFetches:
     """The run's reads of the entry's torrents, each folded once: the store, the series indexes, the listings."""
 
     stored: Mapping[str, PendingImport]
@@ -196,7 +198,7 @@ class PlacedRelease:
     A file nothing placed adds none, and a url held for a hand import (`GrabHold.hand_import`) has none. A url with
     no records makes the planner count its release group as covering every episode."""
 
-    claimed_ids: frozenset[int]
+    covered_ids: frozenset[int]
     """The entry's episode ids the whole map covers (a stored placement on another series adds none)."""
 
     inputs_read: bool
@@ -211,7 +213,7 @@ class PlacedRelease:
     """For `GrabHold.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
     `NO_ELSEWHERE` for any other url."""
 
-    stored: PendingImport | None
+    pending_import: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
 
     intended_sizes: Mapping[int, int]
@@ -257,7 +259,7 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
     entry and either the entry's window claimed a file for a hand import or some of it is another title's.
     """
 
-    file_map: FileEpisodeMap = NO_SEEDED if torrent.record is None else torrent.record.file_episode_map
+    file_map: FileEpisodeMap = NO_SEEDED if torrent.pending_import is None else torrent.pending_import.file_episode_map
     batch = seed_batch(files, file_map=file_map)
     sizes = _sizes_by_name(files)
     order = torrent.order(scope.window)
@@ -265,16 +267,16 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
     # 1. Place under the torrent's windows.
     view = NOTHING_PLACED
     # With no file left to place, the windows have nothing to judge.
-    if batch.names and scope.can_place and order is not None:
+    if batch.new_names and scope.can_place and order is not None:
         scopes = targets_of(order.windows, torrent.indexes, torrent.listing_evidence(sizes))
         windowed = place_across_windows(batch, scopes)
         reading = NumberingStep.of(scope, order.windows).read(batch, windowed.facts[order.own_at].names)
-        view = windowed.filled(batch, reading).seen_by(order.own_at, order.imports)
+        view = windowed.with_proposals(batch, reading).seen_by(order.own_at, order.imports)
 
     # 2. What the whole map puts on the entry.
-    mapped = joined_map(file_map, view.assignment.assigned)
-    on_entry = _OnEntry.of(files, scope.entry, mapped)
-    landed = bool(on_entry.claimed_ids)
+    mapped = joined_map(file_map, view.assignment.placed)
+    on_entry = _OnEntry.of(files, scope.title_index, mapped)
+    landed = bool(on_entry.covered_ids)
 
     # 3. Whether the url is held.
     unread = (
@@ -284,7 +286,7 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
         # Every video file's parse feeds the checks on the files being placed, the seeded ones' included, and nothing
         # places a file after the grab, so an unknown parse holds the url while it has a file left to place. A url
         # the record maps whole needs no parse.
-        or (bool(batch.names) and not batch.all_parses_known)
+        or (bool(batch.new_names) and not batch.all_parses_known)
     )
     # With nothing of the whole map on the entry, a file another title's window placed or left for a hand import is
     # that title's, and so is a mapped file on an episode another title's window holds.
@@ -301,19 +303,19 @@ def place_release(files: Sequence[ListedFile], scope: GrabbingTitle, torrent: Kn
     # With every window's series read, a scope that can't place (`GrabbingTitle.can_place`) still places nothing. A new
     # torrent is then judged by group and size. A stored one's claim joins with nothing placed, a grab-time verdict
     # that would be final, so its title is re-checked.
-    known = order is not None and (torrent.record is None or scope.can_place)
+    known = order is not None and (torrent.pending_import is None or scope.can_place)
     return PlacedRelease(
         files=tuple(files),
         assignment=view.assignment,
         # A pack left for a hand import adds no records: the planner judges it by what its window holds.
         records=() if hold is not None and hold.hand_import else on_entry.records,
-        claimed_ids=on_entry.claimed_ids,
+        covered_ids=on_entry.covered_ids,
         inputs_read=not files or (known and not unread),
         hold=hold,
         hold_counts=(
             _elsewhere_counts(elsewhere, view.assignment) if hold is GrabHold.PLACED_ELSEWHERE else NO_ELSEWHERE
         ),
-        stored=torrent.record,
+        pending_import=torrent.pending_import,
         intended_sizes=sizes_by_episode(mapped, sizes),
     )
 
@@ -336,7 +338,7 @@ class _OnEntry:
 
     records: tuple[EpisodeRecord, ...]
     """One `(season, episode, size)` per file and episode of the map inside the entry, in file order."""
-    claimed_ids: frozenset[int]
+    covered_ids: frozenset[int]
     """The entry's episode ids the map covers."""
 
     @classmethod
@@ -396,7 +398,7 @@ def _elsewhere_counts(elsewhere: frozenset[str], assignment: BatchPlacements) ->
 
 
 @dataclass(frozen=True, slots=True)
-class IdentityOverride:
+class SizeOverName:
     """A file placed by size on an episode its name doesn't point at."""
 
     name: str
@@ -406,21 +408,21 @@ class IdentityOverride:
     """What the name reads as, for the warning: its own keys, else Sonarr's matched episodes, else its absolute
     numbers."""
 
-    named: EpisodeKey
+    by_size: EpisodeKey
     """The episode its size matched, where it was placed."""
 
 
-def identity_overrides(placed: PlacedRelease, series: EpisodeIndex) -> tuple[IdentityOverride, ...]:
+def identity_overrides(placed: PlacedRelease, series: EpisodeIndex) -> tuple[SizeOverName, ...]:
     """One per file placed by size over its name (`PlacementVerdict.OVERRIDDEN`)."""
 
     parses = seed_batch(placed.files).parsed
-    overrides: list[IdentityOverride] = []
+    overrides: list[SizeOverName] = []
     for placement in placed.assignment.placements:
         if placement.verdict is not PlacementVerdict.SIZE_OVER_NAME:
             continue
         if (episode := series.by_id.get(placement.ids[0])) is not None:
             named = season_episode_key(episode.season_number, episode.episode_number)
-            overrides.append(IdentityOverride(placement.name, _read_as(parses.get(placement.name)), named))
+            overrides.append(SizeOverName(placement.name, _read_as(parses.get(placement.name)), named))
     return tuple(overrides)
 
 
@@ -499,7 +501,7 @@ UNSCOPED = ClaimTerms()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class EntryFacts:
+class TitleFacts:
     """What an entry is, independent of any torrent: the fields every claim it makes carries."""
 
     al_id: int
@@ -597,7 +599,7 @@ class PendingImportUpdate:
     facts: TorrentFacts
     """The torrent's identity fields for a new record. A stored record keeps its own."""
 
-    placements: FileEpisodeMap
+    file_map: FileEpisodeMap
     """This placement's fresh map: the whole batch when the torrent is new, else the files the stored map lacks."""
 
     excluded: tuple[str, ...]
@@ -613,18 +615,18 @@ class PendingImportUpdate:
     claim: TitleClaim
     """This entry's fresh claim."""
 
-    stored: PendingImport | None
+    pending_import: PendingImport | None
     """The stored record this seed joins, None when the torrent is new."""
 
     def joined(self) -> PendingImport | None:
         """The stored record with this grab joined, None when the torrent is new."""
 
-        if self.stored is None:
+        if self.pending_import is None:
             return None
         # The hand-import files join the stored ones rather than replace them: a grab whose scope can't place
         # carries none, and would otherwise clear an earlier grab's.
         return (
-            self.stored.with_placements(self.placements)
+            self.pending_import.with_placements(self.file_map)
             .with_exclusions(self.excluded)
             .with_hand_import_files(self.hand_import_files, self.order_only)
             .with_claim(self.claim)
@@ -645,7 +647,7 @@ class PendingImportUpdate:
                 is_dual_audio=self.facts.is_dual_audio,
                 seadex_files=self.facts.seadex_files,
                 added_at=stamp,
-                file_episode_map=self.placements,
+                file_episode_map=self.file_map,
                 claims=(self.claim,),
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
@@ -657,11 +659,11 @@ class PendingImportUpdate:
         return replace(joined, added_at=stamp) if fresh else joined
 
 
-def build_entry_claim(release: SeedRelease, scope: GrabbingTitle, entry: EntryFacts) -> TitleClaim:
+def build_entry_claim(release: SeedRelease, scope: GrabbingTitle, entry: TitleFacts) -> TitleClaim:
     """The entry's claim on the release: its window, slice, and preowned ids. Pure."""
 
-    claimed = release.placed.claimed_ids
-    index = scope.entry
+    claimed = release.placed.covered_ids
+    index = scope.title_index
     # This claim's own slice of the entry, so records on sibling entries label distinctly: the episodes its
     # files claimed, else every episode it is verified against.
     slice_eps = [ep for ep in index.by_id.values() if not claimed or ep.id in claimed]
@@ -686,7 +688,7 @@ def build_entry_claim(release: SeedRelease, scope: GrabbingTitle, entry: EntryFa
     )
 
 
-def build_pending_seed(release: SeedRelease, scope: GrabbingTitle, entry: EntryFacts) -> PendingImportUpdate:
+def build_pending_seed(release: SeedRelease, scope: GrabbingTitle, entry: TitleFacts) -> PendingImportUpdate:
     """Fold one placed release into the entry's seed on its torrent. Pure, never places.
 
     A placed file is seeded, an excluded one recorded as not the record's under its current claims, and one left for
@@ -697,16 +699,16 @@ def build_pending_seed(release: SeedRelease, scope: GrabbingTitle, entry: EntryF
     placed = release.placed
     return PendingImportUpdate(
         facts=release.facts,
-        placements=placed.assignment.assigned,
+        file_map=placed.assignment.placed,
         excluded=tuple(placement.name for placement in placed.assignment.excluded),
         hand_import_files=placed.assignment.hand_import_files,
         order_only=placed.assignment.order_only,
         claim=build_entry_claim(release, scope, entry),
-        stored=placed.stored,
+        pending_import=placed.pending_import,
     )
 
 
-def build_unscoped_seed(flagged: PlannedGrab, entry: EntryFacts, stored: PendingImport | None) -> PendingImportUpdate:
+def build_unscoped_seed(flagged: PlannedGrab, entry: TitleFacts, stored: PendingImport | None) -> PendingImportUpdate:
     """The seed of a torrent whose import reads nothing but its hash in qBittorrent (a Radarr grab): an id-less claim."""
 
     return PendingImportUpdate(
@@ -719,19 +721,19 @@ def build_unscoped_seed(flagged: PlannedGrab, entry: EntryFacts, stored: Pending
             sizes_by_name=NO_SIZES_BY_NAME,
             cross_seed=flagged.item.cross_seed_hash is not None,
         ),
-        placements={},
+        file_map={},
         excluded=(),
         hand_import_files=(),
         order_only=NO_ORDER_ONLY,
         claim=entry.claim(UNSCOPED),
-        stored=stored,
+        pending_import=stored,
     )
 
 
 def build_pending_seeds(
     seadex_dict: SeadexDict,
     placed: EntryPlacements,
-    entry: EntryFacts,
+    entry: TitleFacts,
 ) -> dict[str, PendingImportUpdate]:
     """Fold every flagged url carrying an infohash and a video file into its seed, keyed by its hash in qBittorrent.
 

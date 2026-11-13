@@ -14,12 +14,12 @@ _MATCHED_SPAN_CAP = 3
 
 
 @dataclass(frozen=True, slots=True)
-class _EpisodeClaim:
+class _ParsedKey:
     """One identity claim a file's parse makes: a `(season, episode)` pair, plus Sonarr's id when borrowed."""
 
     season: int | None
     episode: int
-    claimed_id: int | None
+    matched_id: int | None
     """Sonarr's own episode id from a borrowed matched pair. It must agree
     with our map's id. None for a name-parsed claim (no id to cross-check)."""
 
@@ -28,10 +28,10 @@ class _EpisodeClaim:
 class ParsedEpisodes:
     """What one file's parse resolves to in our series map, and how far to trust it."""
 
-    resolved: tuple[int, ...]
+    ids: tuple[int, ...]
     """Every id a claim resolved to (inside the scope or not), claim order, deduped."""
 
-    inside: tuple[int, ...]
+    in_window: tuple[int, ...]
     """The subset inside the scope (all of `resolved` when the scope is `unscoped`)."""
 
     complete: bool
@@ -53,16 +53,16 @@ class ParsedEpisodes:
     """Sonarr's series match includes every claimed pair (a borrowed reading always does). An own key Sonarr
     could not match to the series is a parse it did not believe either (a CRC tag read as "E8")."""
 
-    tied: tuple[int, ...] | None = None
+    either_ids: tuple[int, ...] | None = None
     """For a tied file (see the placer's season re-read), its episode under the season's and the specials'
     numbering. No other run may take a window holding either, and a tied run counts as matched elsewhere
     only for a scope holding none of them."""
 
     @property
-    def keyed(self) -> bool:
+    def key_confirmed(self) -> bool:
         """The name's own key resolved in the series and Sonarr's match agrees: an episode, whatever else it says."""
 
-        return bool(self.resolved) and not self.from_matched and self.sonarr_agrees
+        return bool(self.ids) and not self.from_matched and self.sonarr_agrees
 
     @property
     def trusted(self) -> bool:
@@ -71,16 +71,16 @@ class ParsedEpisodes:
         return self.complete and not self.rejected
 
     @property
-    def outside(self) -> bool:
+    def wholly_outside(self) -> bool:
         """A trusted reading wholly outside the scope: the file belongs to another slice."""
 
-        return self.trusted and not self.inside
+        return self.trusted and not self.in_window
 
     @property
     def exact_ids(self) -> tuple[int, ...]:
         """The ids the exact pass places the file on: a trusted reading wholly inside the scope. Else ()."""
 
-        return self.inside if self.trusted and self.inside == self.resolved else ()
+        return self.in_window if self.trusted and self.in_window == self.ids else ()
 
     @property
     def rank(self) -> tuple[bool, bool]:
@@ -90,7 +90,7 @@ class ParsedEpisodes:
 
 
 _NO_READING = ParsedEpisodes(
-    resolved=(), inside=(), complete=False, from_matched=False, rejected=False, sonarr_agrees=False
+    ids=(), in_window=(), complete=False, from_matched=False, rejected=False, sonarr_agrees=False
 )
 
 
@@ -98,35 +98,34 @@ _NO_READING = ParsedEpisodes(
 class _ParsedKeys:
     """The claims a parse makes, and whether they are Sonarr's matched pairs rather than the name's own keys."""
 
-    claims: tuple[_EpisodeClaim, ...]
+    claims: tuple[_ParsedKey, ...]
     from_matched: bool
 
 
-def _matched_claims(info: ParsedFileInfo) -> tuple[_EpisodeClaim, ...]:
+def _matched_claims(info: ParsedFileInfo) -> tuple[_ParsedKey, ...]:
     """Sonarr's series-matched pairs as claims, junk repeats collapsed."""
 
     return tuple(
         dict.fromkeys(
-            _EpisodeClaim(matched.season_number, matched.episode_number, matched.id)
-            for matched in info.matched_episodes
+            _ParsedKey(matched.season_number, matched.episode_number, matched.id) for matched in info.matched_episodes
         )
     )
 
 
-def _resolve(claim: _EpisodeClaim, scope: PlacementTarget) -> int | None:
+def _resolve(claim: _ParsedKey, scope: PlacementTarget) -> int | None:
     """Our map's id for the claim's numbers, when Sonarr's own id (if any) agrees."""
 
     ep_id = scope.id_by_key.get(season_episode_key(claim.season, claim.episode))
-    return ep_id if ep_id and claim.claimed_id in (None, ep_id) else None
+    return ep_id if ep_id and claim.matched_id in (None, ep_id) else None
 
 
-def _all_inside(claims: Iterable[_EpisodeClaim], scope: PlacementTarget) -> bool:
+def _all_inside(claims: Iterable[_ParsedKey], scope: PlacementTarget) -> bool:
     """Whether every claim resolves to an episode of the scope."""
 
     return all(_resolve(claim, scope) in scope.real_ids for claim in claims)
 
 
-def _is_alias_shift(own: Sequence[_EpisodeClaim], matched: Sequence[_EpisodeClaim]) -> bool:
+def _is_season_shift(own: Sequence[_ParsedKey], matched: Sequence[_ParsedKey]) -> bool:
     """Whether Sonarr moved the name's episode numbers, unchanged, into one regular season (an alias match)."""
 
     seasons = {claim.season for claim in matched}
@@ -144,12 +143,12 @@ def _claims_of(info: ParsedFileInfo, scope: PlacementTarget) -> _ParsedKeys:
     key resolves inside the scope and every matched pair does: a sequel numbered as its own season 1.
     """
 
-    own = tuple(dict.fromkeys(_EpisodeClaim(info.season_number, episode, None) for episode in info.episode_numbers))
+    own = tuple(dict.fromkeys(_ParsedKey(info.season_number, episode, None) for episode in info.episode_numbers))
     if not own:
-        borrows = not scope.unscoped and not info.full_season
+        borrows = not scope.no_window and not info.full_season
         return _ParsedKeys(_matched_claims(info) if borrows else (), from_matched=borrows)
     matched = _matched_claims(info)
-    if _is_alias_shift(own, matched) and not _all_inside(own, scope) and _all_inside(matched, scope):
+    if _is_season_shift(own, matched) and not _all_inside(own, scope) and _all_inside(matched, scope):
         return _ParsedKeys(matched, from_matched=True)
     return _ParsedKeys(own, from_matched=False)
 
@@ -191,8 +190,8 @@ def read_parse(info: ParsedFileInfo | None, scope: PlacementTarget) -> ParsedEpi
     ids = tuple(dict.fromkeys(resolved))
     inside = tuple(i for i in ids if scope.admits(i))
     return ParsedEpisodes(
-        resolved=ids,
-        inside=inside,
+        ids=ids,
+        in_window=inside,
         complete=complete,
         from_matched=basis.from_matched,
         rejected=vetoed,

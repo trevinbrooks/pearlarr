@@ -30,7 +30,7 @@ from .leg_state import PerTitleState, RunContext, Title, is_dry_run, resolve_ent
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
-from .parse_records import ParseRecords
+from .parse_records import ParseCacheRows
 from .pending_records import PendingImportStore
 from .planner import DownloadPlanner, PlanResult
 from .releases import SeadexDict
@@ -103,7 +103,7 @@ class LegDeps:
     logger: logging.Logger
     seadex: SeaDexSource
     cache_store: AbstractCacheStore
-    parse_cache_rows: ParseRecords
+    parse_cache_rows: ParseCacheRows
     """The Sonarr parse-cache leaf over `cache_store`, read by the sweep's parse step."""
     anilist: AniListGateway
     skyhook: SkyHookGateway
@@ -239,7 +239,7 @@ class LegDeps:
             categories=categories,
             clock=SystemClock(),
             web=web,
-            parse_cache_rows=ParseRecords(cache_store),
+            parse_cache_rows=ParseCacheRows(cache_store),
             http=http,
             qbit=qbit,
             mappings=mappings,

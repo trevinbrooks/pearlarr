@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.numberings import NumberingReading
+from pearlarr.numberings import NumberingProposals
 from pearlarr.pending_import import FileEpisodeMap, TitleClaim, TitleNames, TitleWindow
 from pearlarr.placement_types import (
     NO_EVIDENCE,
@@ -70,13 +70,13 @@ _SERIES_7: Mapping[int, EpisodeIndex] = {7: _SERIES}
 def _window(
     resolved: list[int], *titles: str, used: Iterable[int] = (), series: EpisodeIndex = _SERIES
 ) -> PlacementTarget:
-    return PlacementTarget(resolved, series, used=frozenset(used), names=TitleNames("Show", titles))
+    return PlacementTarget(resolved, series, used=frozenset(used), title_names=TitleNames("Show", titles))
 
 
 def _listed_window(listing: SeadexEvidence, ids: list[int], series: EpisodeIndex = _MANY_SPECIALS) -> PlacementTarget:
     """One window of `ids` over `series`, carrying `listing`."""
 
-    return replace(_window(ids, series=series), listing=listing)
+    return replace(_window(ids, series=series), seadex=listing)
 
 
 def _listed_windows(listing: SeadexEvidence, *windows: list[int]) -> tuple[PlacementTarget, ...]:
@@ -150,7 +150,7 @@ class TestSeveralWindows:
 
         result = _place_across(blind(run), (_window(_FIRST_COUR), _window(_SECOND_COUR)))
 
-        assert merged_of(result).assigned == {name: (601 + i,) for i, name in enumerate(run)}
+        assert merged_of(result).placed == {name: (601 + i,) for i, name in enumerate(run)}
 
     def test_a_franchise_pack_places_each_run_under_the_window_its_title_names(self) -> None:
         alpha = numbered_names("show alpha", 3)
@@ -159,7 +159,7 @@ class TestSeveralWindows:
 
         result = _place_across(blind([*alpha, *beta]), windows)
 
-        assert merged_of(result).assigned == {
+        assert merged_of(result).placed == {
             **{name: (501 + i,) for i, name in enumerate(alpha)},
             **{name: (601 + i,) for i, name in enumerate(beta)},
         }
@@ -174,7 +174,7 @@ class TestSeveralWindows:
 
         result = _place_across(blind([*alpha, *beta]), windows)
 
-        assert merged_of(result).assigned == {name: (601 + i,) for i, name in enumerate(beta)}
+        assert merged_of(result).placed == {name: (601 + i,) for i, name in enumerate(beta)}
         assert merged_of(result).unplaced == tuple(alpha)
 
     def test_windows_on_different_series_place_their_own_files(self) -> None:
@@ -183,7 +183,7 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, windows)
 
-        assert merged_of(result).assigned == {"a.mkv": (601,), "b.mkv": (201,)}
+        assert merged_of(result).placed == {"a.mkv": (601,), "b.mkv": (201,)}
 
     def test_an_id_placed_under_one_window_is_used_under_an_overlapping_one(self) -> None:
         # The run takes the first three episodes under the first window. Alone, the second window's
@@ -192,11 +192,11 @@ class TestSeveralWindows:
         run = numbered_names("show", 3)
         parsed = {**blind(run), "b.mkv": parsed_info()}
         wider = [*_FIRST_COUR, 604]
-        assert place(parsed, _window(wider)).assigned["b.mkv"] == (601,)
+        assert place(parsed, _window(wider)).placed["b.mkv"] == (601,)
 
         result = _place_across(parsed, (_window(_FIRST_COUR), _window(wider)))
 
-        assert merged_of(result).assigned == {name: (601 + i,) for i, name in enumerate(run)}
+        assert merged_of(result).placed == {name: (601 + i,) for i, name in enumerate(run)}
         assert by_name(merged_of(result))["b.mkv"] == ((), PlacementVerdict.NO_EPISODE_FOUND)
 
     def test_a_window_untouched_by_earlier_placements_keeps_its_count_legs(self) -> None:
@@ -206,7 +206,7 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, (_window([601]), _window([701, 702, 703])))
 
-        assert merged_of(result).assigned == {"a.mkv": (601,), **{name: (701 + i,) for i, name in enumerate(run)}}
+        assert merged_of(result).placed == {"a.mkv": (601,), **{name: (701 + i,) for i, name in enumerate(run)}}
 
     def test_an_id_placed_under_one_window_narrows_an_overlapping_one(self) -> None:
         # The id the first window placed is used under the second, whose window is then the three
@@ -216,14 +216,14 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, (_window([601]), _window([601, 602, 603, 604])))
 
-        assert merged_of(result).assigned == {"a.mkv": (601,), **{name: (602 + i,) for i, name in enumerate(run)}}
+        assert merged_of(result).placed == {"a.mkv": (601,), **{name: (602 + i,) for i, name in enumerate(run)}}
 
     def test_a_placed_verdict_wins_over_every_claim(self) -> None:
         parsed = {"a.mkv": parsed_info(season=1, episodes=(1,))}
 
         result = _place_across(parsed, (_window([501]), _window([601])))
 
-        assert merged_of(result).assigned == {"a.mkv": (601,)}
+        assert merged_of(result).placed == {"a.mkv": (601,)}
         assert merged_of(result).excluded == ()
 
     @pytest.mark.parametrize(
@@ -271,7 +271,7 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, (_window([601, 602, 603, 604], used=[604]), _window([])))
 
-        assert merged_of(result).assigned == {name: (601 + i,) for i, name in enumerate(run)}
+        assert merged_of(result).placed == {name: (601 + i,) for i, name in enumerate(run)}
         assert by_name(merged_of(result))["d.mkv"] == ((), PlacementVerdict.NO_EPISODE_FOUND)
 
     def test_an_earlier_windows_held_file_outranks_a_later_windows_placement(self) -> None:
@@ -281,7 +281,7 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, (_window(_SPECIALS), _window([601])))
 
-        assert merged_of(result).assigned == {}
+        assert merged_of(result).placed == {}
         assert {by_name(merged_of(result))[name] for name in run} == {((), PlacementVerdict.WAITING_ON_PARSE)}
 
     def test_a_run_disputed_past_the_cour_boundary_places_under_the_first_cour_and_is_refused_under_the_second(
@@ -289,7 +289,7 @@ class TestSeveralWindows:
     ) -> None:
         pack, result = _disputed_pack()
 
-        assert merged_of(result).assigned == {name: (600 + n,) for n, name in enumerate(pack[:3], 1)}
+        assert merged_of(result).placed == {name: (600 + n,) for n, name in enumerate(pack[:3], 1)}
         assert {by_name(merged_of(result))[name][1] for name in pack[3:]} == {PlacementVerdict.MISNUMBERED}
 
     def test_an_earlier_windows_misnumbered_pack_outranks_a_later_windows_placement(self) -> None:
@@ -300,7 +300,7 @@ class TestSeveralWindows:
 
         result = _place_across(pack, (listed, _window([501, 502, 503], series=_MANY_SPECIALS)))
 
-        assert merged_of(result).assigned == {}
+        assert merged_of(result).placed == {}
         assert verdicts_of(merged_of(result)) == {PlacementVerdict.MISNUMBERED}
 
     def test_an_earlier_windows_title_refutal_yields_to_a_later_windows_placement(self) -> None:
@@ -319,7 +319,7 @@ class TestSeveralWindows:
             parsed, (_window([601, 602, 603], series=series), _window([701, 702, 703], series=series))
         )
 
-        assert merged_of(result).assigned == {name: (700 + n,) for n, name in enumerate(sequel, 1)}
+        assert merged_of(result).placed == {name: (700 + n,) for n, name in enumerate(sequel, 1)}
 
     def test_an_aliased_pack_places_each_member_under_the_window_holding_its_special(self) -> None:
         # Each window maps the whole pack. The member outside the first window is `ALIASED_ELSEWHERE` there and
@@ -328,7 +328,7 @@ class TestSeveralWindows:
 
         result = _place_across(specials_pack(1, 2, 3), windows)
 
-        assert merged_of(result).assigned == {
+        assert merged_of(result).placed == {
             "Show.S00E01.mkv": (502,),
             "Show.S00E02.mkv": (504,),
             "Show.S00E03.mkv": (506,),
@@ -343,11 +343,11 @@ class TestSeveralWindows:
 
         result = _place_across(specials_pack(1, 5, 6), windows)
 
-        assert [under_window(result, at).assigned for at in (0, 1)] == [
+        assert [under_window(result, at).placed for at in (0, 1)] == [
             {"Show.S00E01.mkv": (502,)},
             {"Show.S00E05.mkv": (506,), "Show.S00E06.mkv": (505,)},
         ]
-        assert merged_of(result).assigned == {
+        assert merged_of(result).placed == {
             "Show.S00E01.mkv": (502,),
             "Show.S00E05.mkv": (506,),
             "Show.S00E06.mkv": (505,),
@@ -367,7 +367,7 @@ class TestSeveralWindows:
 
         result = _place_across(specials_pack(1, 2, 3), windows)
 
-        assert merged_of(result).assigned == {}
+        assert merged_of(result).placed == {}
         assert verdicts_of(merged_of(result)) == {PlacementVerdict.MISNUMBERED}
 
     def test_a_member_whose_aliased_special_no_window_holds_stays_aliased_elsewhere_and_skipped(self) -> None:
@@ -402,7 +402,7 @@ class TestSeveralWindows:
 
         result = _place_across(parsed, (_window([501]), _window(_FIRST_COUR)))
 
-        assert merged_of(result).assigned == {}
+        assert merged_of(result).placed == {}
         assert {by_name(merged_of(result))[name] for name in run} == {((), PlacementVerdict.WAITING_ON_PARSE)}
 
     def test_two_numberless_files_over_two_one_slot_windows_place_nowhere(self) -> None:
@@ -564,7 +564,7 @@ class TestDecidedBy:
 
         assignment = result.seen_by(0, {0}).assignment
 
-        assert assignment.assigned == {name: (601 + i,) for i, name in enumerate(run[:3])}
+        assert assignment.placed == {name: (601 + i,) for i, name in enumerate(run[:3])}
         assert {by_name(assignment)[name] for name in run[3:]} == {((), PlacementVerdict.ANOTHER_TITLES)}
 
     def test_the_record_sets_aside_a_hand_import_no_window_it_imports_was_party_to(self) -> None:
@@ -629,7 +629,7 @@ def _filled(
 
     torrent = batch(parsed, file_map=file_map)
     before = place_across_windows(torrent, windows)
-    return before, before.filled(torrent, NumberingReading(proposals))
+    return before, before.with_proposals(torrent, NumberingProposals(proposals))
 
 
 def _gap_and_placed() -> dict[str, ParsedFileInfo | None]:
@@ -759,15 +759,15 @@ class TestScopesOf:
         scopes = targets_of(entries, {7: _SERIES, 8: _OTHER_SERIES}, listing)
 
         assert scopes == (
-            PlacementTarget([601, 602], _SERIES, names=names, listing=listing, episode_count=2),
-            PlacementTarget([201], _OTHER_SERIES, names=TitleNames(), listing=listing),
+            PlacementTarget([601, 602], _SERIES, title_names=names, seadex=listing, episode_count=2),
+            PlacementTarget([201], _OTHER_SERIES, title_names=TitleNames(), seadex=listing),
         )
 
     def test_a_claim_with_no_ids_gives_an_unscoped_window(self) -> None:
         (scope,) = targets_of((entry_claim(series_id=7).window,), {7: _SERIES}, NO_EVIDENCE)
 
         assert scope == PlacementTarget([], _SERIES)
-        assert scope.unscoped
+        assert scope.no_window
 
 
 class TestStoredMap:
@@ -779,7 +779,7 @@ class TestStoredMap:
         result = place_across_windows(batch(blind(run), file_map={run[0]: (601,)}), (_window(_FIRST_COUR),))
 
         assert [p.name for p in merged_of(result).placements] == run[1:]
-        assert merged_of(result).assigned == {run[1]: (602,), run[2]: (603,)}
+        assert merged_of(result).placed == {run[1]: (602,), run[2]: (603,)}
 
     def test_a_mapped_id_takes_its_slot(self) -> None:
         # One slot, one blind file: the slot is gone when the map holds it.
@@ -795,7 +795,7 @@ class TestStoredMap:
         free = _place_across(keyed, (_window([]),))
         used = place_across_windows(batch({**blind(["a.mkv"]), **keyed}, file_map={"a.mkv": (601,)}), (_window([]),))
 
-        assert merged_of(free).assigned == {"b.mkv": (601,)}
+        assert merged_of(free).placed == {"b.mkv": (601,)}
         assert by_name(merged_of(used)) == {"b.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_two_windows_on_two_series_place_each_file_under_the_first_that_resolves_it(self) -> None:
@@ -811,9 +811,9 @@ class TestStoredMap:
         held = place_across_windows(batch(parsed, file_map={"s.mkv": (601,)}), windows)
         free = place_across_windows(batch(parsed, file_map={"s.mkv": (602,)}), windows)
 
-        assert merged_of(held).assigned == {"b.mkv": (201,)}
+        assert merged_of(held).placed == {"b.mkv": (201,)}
         assert by_name(merged_of(held))["a.mkv"] == ((), PlacementVerdict.NO_EPISODE_FOUND)
-        assert merged_of(free).assigned == {"a.mkv": (601,), "b.mkv": (201,)}
+        assert merged_of(free).placed == {"a.mkv": (601,), "b.mkv": (201,)}
 
     def test_a_later_entry_places_the_rest_of_a_pack_an_earlier_entry_partly_mapped(self) -> None:
         # The already-mapped files still count as part of the pack, so the new window maps the whole pack through
@@ -823,7 +823,7 @@ class TestStoredMap:
 
         result = place_across_windows(batch(specials_pack(1, 2, 3), file_map=file_map), (stored, own))
 
-        assert merged_of(result).assigned == {"Show.S00E03.mkv": (506,)}
+        assert merged_of(result).placed == {"Show.S00E03.mkv": (506,)}
         assert by_name(merged_of(result))["Show.S00E03.mkv"][1] is PlacementVerdict.SPECIAL_ALIAS
 
     def test_a_pack_an_earlier_entry_mapped_by_its_own_numbers_is_not_placed_by_the_aliases(self) -> None:
@@ -834,5 +834,5 @@ class TestStoredMap:
 
         result = place_across_windows(batch(specials_pack(1, 2, 3), file_map=file_map), (stored, own))
 
-        assert merged_of(result).assigned == {}
+        assert merged_of(result).placed == {}
         assert PlacementVerdict.SPECIAL_ALIAS not in verdicts_of(merged_of(result))

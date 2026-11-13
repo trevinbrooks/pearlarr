@@ -6,9 +6,9 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.pending_import import TitleNames
-from pearlarr.release_names import NumberedName, RangeKey, TitleGround, range_key, read_name, split_names
+from pearlarr.release_names import NumberedName, RangeKey, TitleNameWords, range_key, split_name, split_names
 
-_NO_TITLES = TitleGround.of(TitleNames())
+_NO_TITLES = TitleNameWords.of(TitleNames())
 # "100" in fullwidth digits.
 _FULLWIDTH_100 = "\uff11\uff10\uff10"
 
@@ -16,8 +16,8 @@ _FULLWIDTH_100 = "\uff11\uff10\uff10"
 def _read(name: str, series: str = "", anilist: tuple[str, ...] = ()) -> tuple[int | None, tuple[int, ...]]:
     """The member number (None when unnumbered) and the bare numbers of one name read under the entry's titles."""
 
-    read = split_names([name], TitleGround.of(TitleNames(series, anilist)))[name]
-    return read.member.number if read.member is not None else None, read.bare_numbers
+    read = split_names([name], TitleNameWords.of(TitleNames(series, anilist)))[name]
+    return read.member.number if read.member is not None else None, read.standalone_numbers
 
 
 class TestDottedNumber:
@@ -36,7 +36,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_title_or_codec_number_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     @pytest.mark.parametrize(
         "name",
@@ -46,7 +46,7 @@ class TestDottedNumber:
         ],
     )
     def test_the_count_before_the_quality_words_is_read(self, name: str) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert (member.number, member.version) == (101, 4)
@@ -61,7 +61,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_number_in_the_quality_tail_is_no_later_count(self, name: str) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert (member.number, member.version) == (101, 4)
@@ -76,10 +76,10 @@ class TestDottedNumber:
         ],
     )
     def test_a_count_with_another_count_or_a_key_behind_it_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     def test_a_number_glued_to_a_hyphen_is_no_trailing_count(self) -> None:
-        member = read_name("Quillfox.101.480p.DVD.x264-grp-25.mkv").member
+        member = split_name("Quillfox.101.480p.DVD.x264-grp-25.mkv").member
 
         assert member is not None
         assert member.number == 101
@@ -97,11 +97,11 @@ class TestDottedNumber:
         ],
     )
     def test_a_number_a_joiner_ties_to_the_one_before_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
         assert _read(name, "Star Drums!")[0] is None
 
     def test_a_lone_season_token_is_no_trailing_count(self) -> None:
-        assert read_name("[grp] Show S01 (BD 1080p x265 FLAC).mkv").member is None
+        assert split_name("[grp] Show S01 (BD 1080p x265 FLAC).mkv").member is None
 
     @pytest.mark.parametrize(
         ("name", "prefix"),
@@ -112,7 +112,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_title_ending_in_a_codec_letter_still_counts(self, name: str, prefix: str) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert (member.prefix, member.number) == (prefix, 1)
@@ -126,7 +126,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_codec_number_behind_a_lone_letter_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     @pytest.mark.parametrize(
         ("name", "number"),
@@ -136,7 +136,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_codec_number_behind_the_count_is_no_later_count(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -150,7 +150,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_codec_number_before_the_count_is_skipped(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -166,7 +166,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_padded_count_stands_before_an_unpadded_title_number(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -181,7 +181,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_padded_number_behind_the_count_or_an_unpadded_count_is_refused(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     @pytest.mark.parametrize(
         ("name", "number"),
@@ -193,7 +193,7 @@ class TestDottedNumber:
         ],
     )
     def test_a_count_past_the_thousandth_episode_is_read_but_a_year_is_not(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -214,7 +214,7 @@ class TestSeasonTail:
         ],
     )
     def test_a_plain_season_number_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     @pytest.mark.parametrize(
         ("name", "number"),
@@ -230,7 +230,7 @@ class TestSeasonTail:
         ],
     )
     def test_the_number_behind_an_ordinal_or_a_hyphen_is_the_count(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -252,7 +252,7 @@ class TestReadNames:
         reads = split_names(self._EPISODES + specials, _NO_TITLES)
 
         assert [reads[name].member for name in specials] == [NumberedName("[grp] Show S", n, (), 1) for n in (1, 2, 3)]
-        assert [reads[name].member for name in self._EPISODES] == [read_name(name).member for name in self._EPISODES]
+        assert [reads[name].member for name in self._EPISODES] == [split_name(name).member for name in self._EPISODES]
 
     def test_a_higher_version_in_the_set_keeps_its_version(self) -> None:
         reads = split_names(["[grp] Show S1.mkv", "[grp] Show S1v2.mkv", "[grp] Show S2.mkv"], _NO_TITLES)
@@ -280,7 +280,7 @@ class TestMiddleNumber:
     """The " - NN - " count between a title and an episode title."""
 
     def test_a_second_middle_segment_is_a_title_number_and_no_count(self) -> None:
-        assert read_name("COG x CLAN - 277 - 10 - 1 = [WEBDL-1080p].mkv").member is None
+        assert split_name("COG x CLAN - 277 - 10 - 1 = [WEBDL-1080p].mkv").member is None
 
 
 class TestPaddedCounts:
@@ -295,7 +295,7 @@ class TestPaddedCounts:
         ],
     )
     def test_a_padded_middle_or_trailing_count_is_read(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert member.number == number
@@ -317,7 +317,7 @@ class TestBareNumbers:
         ],
     )
     def test_every_standalone_count_is_bare_but_a_tail_codecs(self, name: str, numbers: tuple[int, ...]) -> None:
-        assert read_name(name).bare_numbers == numbers
+        assert split_name(name).standalone_numbers == numbers
 
 
 class TestRangeKey:
@@ -368,7 +368,7 @@ class TestDecimalTail:
         ],
     )
     def test_a_fraction_is_no_count(self, name: str) -> None:
-        assert read_name(name).member is None
+        assert split_name(name).member is None
 
     @pytest.mark.parametrize(
         ("name", "number"),
@@ -378,7 +378,7 @@ class TestDecimalTail:
         ],
     )
     def test_a_minor_version_counts_as_its_major(self, name: str, number: int) -> None:
-        member = read_name(name).member
+        member = split_name(name).member
 
         assert member is not None
         assert (member.number, member.version) == (number, 2)
@@ -475,13 +475,13 @@ class TestTitledRead:
         ],
     )
     def test_an_ampersand_and_the_word_and_agree_between_a_name_and_its_title(self, name: str, series: str) -> None:
-        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
+        member = split_names([name], TitleNameWords.of(TitleNames(series)))[name].member
 
         assert member is not None
         assert (member.number, member.words_after_number) == (6, ("les", "voleurs"))
 
     def test_the_title_check_keeps_the_prefix_a_form_would_read(self) -> None:
-        ground = TitleGround.of(TitleNames("Seeker x Seeker (2011)"))
+        ground = TitleNameWords.of(TitleNames("Seeker x Seeker (2011)"))
         names = ["Seeker x Seeker (2011) - 04 - Title.mkv", "Seeker x Seeker (2011) - 05 (OVA) - Title.mkv"]
 
         assert {read.member.prefix for read in split_names(names, ground).values() if read.member} == {
@@ -512,9 +512,9 @@ class TestTitledRead:
     def test_a_title_the_name_does_not_open_with_leaves_the_read_alone(
         self, name: str, series: str, anilist: tuple[str, ...]
     ) -> None:
-        plain = read_name(name)
+        plain = split_name(name)
 
-        assert _read(name, series, anilist) == (plain.member.number if plain.member else None, plain.bare_numbers)
+        assert _read(name, series, anilist) == (plain.member.number if plain.member else None, plain.standalone_numbers)
 
     @pytest.mark.parametrize(
         ("name", "series", "number", "numbers"),
@@ -530,7 +530,7 @@ class TestTitledRead:
     def test_a_title_shortened_behind_its_number_still_opens_the_name(
         self, name: str, series: str, number: int, numbers: tuple[int, ...]
     ) -> None:
-        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
+        member = split_names([name], TitleNameWords.of(TitleNames(series)))[name].member
 
         assert member is not None
         assert (member.number, member.title_numbers) == (number, numbers)
@@ -629,9 +629,9 @@ class TestTitledRead:
         ],
     )
     def test_an_ova_tag_behind_the_count_marks_an_extra_with_no_count(self, name: str) -> None:
-        read = split_names([name], TitleGround.of(TitleNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
+        read = split_names([name], TitleNameWords.of(TitleNames("Magic Boy Lyrical Pip", ("SoLid Charge!",))))[name]
 
-        assert (read.member, read.titled_count) == (None, None)
+        assert (read.member, read.episode_title_number) == (None, None)
 
     @pytest.mark.parametrize(
         "name",
@@ -679,17 +679,17 @@ class TestTitledRead:
     def test_the_titles_numbers_in_the_name_ride_on_the_member(
         self, name: str, series: str, numbers: tuple[int, ...]
     ) -> None:
-        member = split_names([name], TitleGround.of(TitleNames(series)))[name].member
+        member = split_names([name], TitleNameWords.of(TitleNames(series)))[name].member
 
         assert member is not None
         assert member.title_numbers == numbers
 
     def test_a_title_with_no_digits_leaves_every_count(self) -> None:
-        assert TitleGround.of(TitleNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
-        assert TitleGround.of(TitleNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
+        assert TitleNameWords.of(TitleNames("Show", ("Warden II", "Meet A Star IV"))).numbers == frozenset()
+        assert TitleNameWords.of(TitleNames("Tinman 009", ("Seeker x Seeker (2011)",))).numbers == {9, 2011}
 
     def test_the_series_words_are_the_series_titles_and_the_entry_words_add_the_anilist_titles(self) -> None:
-        ground = TitleGround.of(TitleNames("Show Town", ("Machi Show",)))
+        ground = TitleNameWords.of(TitleNames("Show Town", ("Machi Show",)))
 
         assert ground.series_words == {"show", "town"}
         assert ground.entry_words == {"show", "town", "machi"}
@@ -730,13 +730,13 @@ class TestTitledRead:
 
     def test_a_quality_words_second_half_behind_the_count_opens_no_quality_tail(self) -> None:
         name = "[grp] Show - 05 Ray of Hope [1080p].mkv"
-        read = split_names([name], TitleGround.of(TitleNames("Show")))[name]
+        read = split_names([name], TitleNameWords.of(TitleNames("Show")))[name]
 
-        assert (read.member, read.titled_count) == (None, 5)
+        assert (read.member, read.episode_title_number) == (None, 5)
 
     def test_fullwidth_digits_in_the_title_are_the_titles_numbers(self) -> None:
         name = f"[grp] Show {_FULLWIDTH_100} - 05 [1080p].mkv"
-        member = split_names([name], TitleGround.of(TitleNames("Show 100")))[name].member
+        member = split_names([name], TitleNameWords.of(TitleNames("Show 100")))[name].member
 
         assert member is not None
         assert (member.number, member.title_numbers) == (5, (100,))
@@ -776,12 +776,12 @@ class TestTitledRead:
     def test_a_count_a_word_follows_is_kept_as_the_titled_count_with_the_words_behind_it(
         self, name: str, series: str, count: int | None, words: tuple[str, ...]
     ) -> None:
-        read = split_names([name], TitleGround.of(TitleNames(series)))[name]
+        read = split_names([name], TitleNameWords.of(TitleNames(series)))[name]
 
-        assert (read.titled_count, read.title_words) == (count, words)
+        assert (read.episode_title_number, read.title_words) == (count, words)
 
     def test_the_titles_are_matched_longest_first_with_and_without_their_bracket(self) -> None:
-        ground = TitleGround.of(TitleNames("Seeker x Seeker (2011)", ("Seeker x Seeker", "SEEKER×SEEKER (2011)")))
+        ground = TitleNameWords.of(TitleNames("Seeker x Seeker (2011)", ("Seeker x Seeker", "SEEKER×SEEKER (2011)")))
 
         assert ground.titles == (
             ("seeker", "x", "seeker", "2011"),
@@ -789,9 +789,9 @@ class TestTitledRead:
             ("seeker", "seeker", "2011"),
             ("seeker", "seeker"),
         )
-        assert TitleGround.of(TitleNames()).titles == ()
+        assert TitleNameWords.of(TitleNames()).titles == ()
         # words that only count a season are no title: "2nd Season" left of its bracket would open any "2.01"
-        assert TitleGround.of(TitleNames("[Ame no Hi]", ("[Ame no Hi] 2nd Season",))).titles == (
+        assert TitleNameWords.of(TitleNames("[Ame no Hi]", ("[Ame no Hi] 2nd Season",))).titles == (
             ("ame", "no", "hi", "2"),
             ("ame", "no", "hi"),
         )

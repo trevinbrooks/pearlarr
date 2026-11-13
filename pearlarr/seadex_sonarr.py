@@ -9,11 +9,11 @@ from .arr_models import HistoryRecord, SonarrItem
 from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import (
-    EntryFacts,
     EntryPlacements,
-    IdentityOverride,
     PendingImportUpdate,
-    TorrentReads,
+    SizeOverName,
+    TitleFacts,
+    TorrentFetches,
     build_pending_seeds,
     entry_hashes,
     identity_overrides,
@@ -71,10 +71,10 @@ def _file_and_why(placement: Placement) -> str:
     return f"{placement.name} ({placement.verdict}{key})"
 
 
-def _override_line(url: str, override: IdentityOverride) -> str:
+def _override_line(url: str, override: SizeOverName) -> str:
     """The warning for one file placed by size over its name."""
 
-    label = override.named.label
+    label = override.by_size.label
     return (
         f"{url}: {override.name} goes on {label} because its size matches SeaDex's {label} release "
         f"(its name reads as {override.read_as})"
@@ -352,8 +352,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         scope = GrabbingTitle(
             al_id=al_id,
             series_id=sonarr_series_id,
-            entry=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
-            series=indexes.get(sonarr_series_id, episode_index([])),
+            title_index=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
+            series_index=indexes.get(sonarr_series_id, episode_index([])),
             names=title.names,
             episode_count=self._episodes.episode_count(al_id),
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
@@ -362,7 +362,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         placed = EntryPlacements.place(
             scope,
             self._parse.parsed_files(seadex_dict, series_hash=self._episodes.series_hash),
-            TorrentReads(stored, indexes, listings).known(seadex_dict),
+            TorrentFetches(stored, indexes, listings).known(seadex_dict),
         )
         placed.attach_placements(seadex_dict)
         self._log_placements(placed)
@@ -403,7 +403,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             pending_seeds = build_pending_seeds(
                 seadex_dict,
                 placed,
-                EntryFacts(
+                TitleFacts(
                     al_id=al_id,
                     series_id=sonarr_series_id,
                     title=title.name,
@@ -449,7 +449,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         """
 
         for flagged in releases_to_grab(seadex_dict):
-            if overrides := identity_overrides(placed.by_url[flagged.url], placed.scope.series):
+            if overrides := identity_overrides(placed.by_url[flagged.url], placed.scope.series_index):
                 first, *rest = overrides
                 more = f" ({count_noun(len(rest), 'more file')} in the debug log)" if rest else ""
                 hub_warn(f"{_override_line(flagged.url, first)}{more}")

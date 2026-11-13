@@ -34,9 +34,9 @@ class _KeyedFile:
     file: TorrentFile
     keys: tuple[EpisodeKey, ...]
     """The `(season, episode)` keys its parse names."""
-    aired: tuple[int, ...] | None
+    aired_ids: tuple[int, ...] | None
     """The episodes the aired order reads the keys as, None when Sonarr's list lacks one."""
-    settled: tuple[int, ...] | None
+    placed_ids: tuple[int, ...] | None
     """The episodes the file already sits on (`_settled_ids`), None when it sits on none."""
 
 
@@ -49,7 +49,7 @@ class _KeyedFiles:
     as the passes left it."""
     still_to_place: tuple[TorrentFile, ...]
     """The keyed files to place that aren't settled and the passes left open, batch order."""
-    strays: tuple[TorrentFile, ...]
+    outside_files: tuple[TorrentFile, ...]
     """The keyed files not settled whose keys the aired order reads, any of them onto an episode away from home:
     one the window doesn't hold and SeaDex doesn't list for the torrent (`_at_home`)."""
 
@@ -58,9 +58,9 @@ class _KeyedFiles:
         """Read the keyed files off the state."""
 
         keys: dict[TorrentFile, tuple[EpisodeKey, ...]] = {}
-        for file in state.counted:
-            info = file.parsed
-            if info is None or not file.name_read.explicit_key or info.season_number is None:
+        for file in state.non_extras:
+            info = file.parse
+            if info is None or not file.name_read.spells_season_episode or info.season_number is None:
                 continue
             if info.episode_numbers:
                 keys[file] = tuple(EpisodeKey(info.season_number, episode) for episode in info.episode_numbers)
@@ -70,12 +70,14 @@ class _KeyedFiles:
         keyed_files = tuple(
             _KeyedFile(file, named, _aired(state, named), _settled_ids(state, file)) for file, named in keys.items()
         )
-        unsettled = {keyed.file: keyed for keyed in keyed_files if keyed.settled is None}
+        unsettled = {keyed.file: keyed for keyed in keyed_files if keyed.placed_ids is None}
         still_to_place = tuple(file for file in state.placing if file in unsettled and _left_open(file))
-        strays = tuple(
-            keyed.file for keyed in unsettled.values() if keyed.aired is not None and not _at_home(state, keyed.aired)
+        outside_files = tuple(
+            keyed.file
+            for keyed in unsettled.values()
+            if keyed.aired_ids is not None and not _in_window_or_listing(state, keyed.aired_ids)
         )
-        return cls(keyed_files, still_to_place, strays)
+        return cls(keyed_files, still_to_place, outside_files)
 
 
 def pass_other_orders(state: PlacerState) -> None:
@@ -107,7 +109,7 @@ def pass_other_orders(state: PlacerState) -> None:
     Then the skipped bare-numbered runs: `_place_bare_runs`.
     """
 
-    if not state.series.orders:
+    if not state.index.orders:
         return
     _place_keyed(state)
     _place_bare_runs(state)
@@ -144,8 +146,8 @@ def _place_keyed(state: PlacerState) -> None:
     files = _KeyedFiles.of(state)
     if not files.still_to_place:
         return
-    fits = [fit for name in state.series.orders if (fit := _keyed_fit(state, files, name)) is not None]
-    if _read_apart(fits, files.still_to_place) and (listed := state.scope.listing.ids):
+    fits = [fit for name in state.index.orders if (fit := _keyed_fit(state, files, name)) is not None]
+    if _read_apart(fits, files.still_to_place) and (listed := state.scope.seadex.ids):
         fits = [
             fit for fit in fits if all(listed.issuperset(fit.readings.get(file, ())) for file in files.still_to_place)
         ]
@@ -165,7 +167,7 @@ def _place_keyed(state: PlacerState) -> None:
             continue
         if not any(file in fit.readings for fit in speaking):
             continue
-        if ids == file.reading.resolved and file.verdict is not PlacementVerdict.TITLE_REFUTED:
+        if ids == file.reading.ids and file.verdict is not PlacementVerdict.TITLE_REFUTED:
             continue
         if all(state.scope.admits(ep_id) and ep_id not in state.used for ep_id in ids):
             state.place(file, ids, PlacementVerdict.OTHER_ORDER)
@@ -179,7 +181,7 @@ def _rereads_misnumbered(
     """Whether an order's readings put a misnumbered file on the episodes the earlier passes read it as."""
 
     return any(
-        file.verdict is PlacementVerdict.MISNUMBERED and readings.get(file) == file.reading.resolved
+        file.verdict is PlacementVerdict.MISNUMBERED and readings.get(file) == file.reading.ids
         for file in still_to_place
     )
 
@@ -210,14 +212,14 @@ def _settled_ids(state: PlacerState, file: TorrentFile) -> tuple[int, ...] | Non
     placed = file.placement
     if placed is not None and placed.verdict.placed:
         return placed.ids
-    return file.seeded_on or None
+    return file.saved_ids or None
 
 
 def _keyed_fit(state: PlacerState, files: _KeyedFiles, name: str) -> _OrderFit | None:
     """How the order `name` reads the keyed files when it explains the torrent (see `pass_other_orders`), else None."""
 
-    order = state.series.orders[name]
-    listed = state.scope.listing.ids
+    order = state.index.orders[name]
+    listed = state.scope.seadex.ids
     readings: dict[TorrentFile, tuple[int, ...]] = {}
     order_only: dict[TorrentFile, OrderOnlyKey] = {}
     whole = True
@@ -225,7 +227,7 @@ def _keyed_fit(state: PlacerState, files: _KeyedFiles, name: str) -> _OrderFit |
     for keyed in files.keyed:
         file = keyed.file
         if not order.keys.issuperset(keyed.keys):
-            if keyed.settled is not None:
+            if keyed.placed_ids is not None:
                 return None
             whole = False
             continue
@@ -252,7 +254,7 @@ def _keyed_fit(state: PlacerState, files: _KeyedFiles, name: str) -> _OrderFit |
     if not (whole or confirmed):
         return None
     moves_settled = any(
-        keyed.settled is not None and readings.get(keyed.file) != keyed.settled for keyed in files.keyed
+        keyed.placed_ids is not None and readings.get(keyed.file) != keyed.placed_ids for keyed in files.keyed
     )
     return _OrderFit(readings, order_only, moves_settled or _rereads_misnumbered(readings, files.still_to_place))
 
@@ -277,7 +279,7 @@ def _answers(keyed: _KeyedFile, ids: tuple[int, ...] | None) -> bool:
     doesn't list answers only a file whose key the aired list lacks.
     """
 
-    aired = keyed.aired
+    aired = keyed.aired_ids
     if aired is None:
         return True
     if ids is None or ids == aired:
@@ -294,8 +296,10 @@ def _brings_home(state: PlacerState, files: _KeyedFiles, readings: Mapping[Torre
     torrent still holds a file its listing doesn't account for.
     """
 
-    strays = files.strays
-    return bool(strays) and all((ids := readings.get(file)) is not None and _at_home(state, ids) for file in strays)
+    outside_files = files.outside_files
+    return bool(outside_files) and all(
+        (ids := readings.get(file)) is not None and _in_window_or_listing(state, ids) for file in outside_files
+    )
 
 
 def _aired(state: PlacerState, keys: Sequence[EpisodeKey]) -> tuple[int, ...] | None:
@@ -306,18 +310,18 @@ def _aired(state: PlacerState, keys: Sequence[EpisodeKey]) -> tuple[int, ...] | 
     return ids if len(ids) == len(keys) else None
 
 
-def _at_home(state: PlacerState, ids: Sequence[int]) -> bool:
+def _in_window_or_listing(state: PlacerState, ids: Sequence[int]) -> bool:
     """Whether each episode is one the window holds or SeaDex lists for the torrent."""
 
     scope = state.scope
-    return all(scope.admits(ep_id) or ep_id in scope.listing.ids for ep_id in ids)
+    return all(scope.admits(ep_id) or ep_id in scope.seadex.ids for ep_id in ids)
 
 
 def _counted_episodes(state: PlacerState, file: TorrentFile) -> list[int]:
     """The episodes the name's bracketed counts name as absolute numbers ("(0337)": episode 337)."""
 
-    by_absolute = state.series.id_by_absolute
-    return [ep_id for count in file.name_read.tagged_numbers if (ep_id := by_absolute.get(count))]
+    by_absolute = state.index.id_by_absolute
+    return [ep_id for count in file.name_read.bracketed_numbers if (ep_id := by_absolute.get(count))]
 
 
 def _place_bare_runs(state: PlacerState) -> None:
@@ -338,17 +342,17 @@ def _place_bare_runs(state: PlacerState) -> None:
     as a key Sonarr doesn't list. Read apart, it stays skipped, and so does one an earlier window placed.
     """
 
-    runs = state.runs(file for file in state.counted if not file.name_read.explicit_key)
+    runs = state.runs(file for file in state.non_extras if not file.name_read.spells_season_episode)
     open_runs = [run for run in runs if any(_skipped(member) for member in run.members)]
     if not open_runs:
         return
-    pick = sole_title_match([run.prefix for run in open_runs], state.scope.names)
+    pick = sole_title_match([run.prefix for run in open_runs], state.scope.title_names)
     if pick is None:
         return
     run = open_runs[pick]
     if len(run.members) <= len(state.scope.real_ids):
         return
-    fits = [fit for name in state.series.orders if (fit := _bare_fit(state, name, run)) is not None]
+    fits = [fit for name in state.index.orders if (fit := _bare_fit(state, name, run)) is not None]
     for member in run.members:
         judging = [fit for fit in fits if fit.judges(member)]
         readings = {fit.readings.get(member) for fit in judging}
@@ -370,11 +374,11 @@ def _skipped(file: TorrentFile) -> bool:
 def _bare_fit(state: PlacerState, name: str, run: NumberedSequence) -> _OrderFit | None:
     """How the order `name` reads the run's skipped members when it explains the run (`_place_bare_runs`), else None."""
 
-    order = state.series.orders[name]
+    order = state.index.orders[name]
     window = state.scope.real_ids
     if (season := _season_holding(state, name)) is None:
         return None
-    key_by_id = state.series.key_by_id
+    key_by_id = state.index.key_by_id
     order_keys = {key for key, ep_id in order.id_by_key.items() if ep_id in window}
     if order_keys == {key_by_id[ep_id] for ep_id in window if ep_id in key_by_id}:
         return None
@@ -382,7 +386,7 @@ def _bare_fit(state: PlacerState, name: str, run: NumberedSequence) -> _OrderFit
     order_only: dict[TorrentFile, OrderOnlyKey] = {}
     taken: set[int] = set()
     for member in run.members:
-        key = EpisodeKey(season, member.release_number)
+        key = EpisodeKey(season, member.name_number)
         ep_id = order.id_by_key.get(key)
         if ep_id is None and key not in order.keys:
             return None
@@ -409,7 +413,7 @@ def _season_holding(state: PlacerState, name: str) -> int | None:
     """The one season of the order `name` that holds every window episode, else None."""
 
     window = state.scope.real_ids
-    id_by_key = state.series.orders[name].id_by_key
+    id_by_key = state.index.orders[name].id_by_key
     seasons = {key.season for key, ep_id in id_by_key.items() if ep_id in window}
     if len(seasons) != 1:
         return None

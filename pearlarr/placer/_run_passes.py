@@ -22,20 +22,20 @@ MIN_TITLE_HITS = 2
 class EpisodeTitleMatches:
     """How many run members' tails start with only window titles, and how many with only titles outside it."""
 
-    inside: int
-    outside: int
+    in_window: int
+    outside_window: int
 
     @property
     def selects(self) -> bool:
         """Whether at least `MIN_TITLE_HITS` members carry window titles, and more than carry outside titles."""
 
-        return self.inside >= MIN_TITLE_HITS and self.inside > self.outside
+        return self.in_window >= MIN_TITLE_HITS and self.in_window > self.outside_window
 
     @property
     def vetoes(self) -> bool:
         """Whether at least `MIN_TITLE_HITS` members carry outside titles and none carries a window title."""
 
-        return self.outside >= MIN_TITLE_HITS and not self.inside
+        return self.outside_window >= MIN_TITLE_HITS and not self.in_window
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +57,7 @@ def pass_reread_season_runs(state: PlacerState) -> None:
 
     if not state.map_known:
         return
-    for run in state.runs(state.remaining()):
+    for run in state.runs(state.unjudged_files()):
         fit = _season_fit(state, run)
         if fit is None:
             continue
@@ -78,44 +78,44 @@ def _season_fit(state: PlacerState, run: NumberedSequence) -> _SeasonFit | None:
     width = len(run.members)
     if not run.from_one(width):
         return None
-    if any((info := file.parsed) is None or info.episode_numbers for file in run.members):
+    if any((info := file.parse) is None or info.episode_numbers for file in run.members):
         return None
-    if any(len(file.reading.resolved) > 1 for file in run.members):
+    if any(len(file.reading.ids) > 1 for file in run.members):
         return None
-    read = [state.series.key_by_id[resolved[0]].season for file in run.members if (resolved := file.reading.resolved)]
+    read = [state.index.key_by_id[resolved[0]].season for file in run.members if (resolved := file.reading.ids)]
     seasons = {season for season in read if season != 0}
     if len(seasons) != 1:
         return None
     season = seasons.pop()
-    if state.series.season_counts.get(season) != width:
+    if state.index.season_counts.get(season) != width:
         return None
     into_season = read.count(season)
     onto_specials = read.count(0)
     if not onto_specials or into_season < onto_specials:
         return None
-    return _SeasonFit(season, tied=into_season == onto_specials and state.series.season_counts.get(0) == width)
+    return _SeasonFit(season, tied=into_season == onto_specials and state.index.season_counts.get(0) == width)
 
 
 def _tie(state: PlacerState, run: NumberedSequence, season: int) -> None:
     """Reject the run's readings and record each file's episode under the season's and the specials' numbering."""
 
-    for file in run.whole:
-        keys = (EpisodeKey(season, file.release_number), EpisodeKey(0, file.release_number))
+    for file in run.all_versions:
+        keys = (EpisodeKey(season, file.name_number), EpisodeKey(0, file.name_number))
         ids = tuple(i for key in keys if (i := state.scope.id_by_key.get(key)))
-        file.reading = replace(file.reading, rejected=True, tied=ids)
+        file.reading = replace(file.reading, rejected=True, either_ids=ids)
 
 
 def _reread(state: PlacerState, run: NumberedSequence, season: int) -> None:
     """Read each run file as the season's episode of its release number, rejected where its title disagrees."""
 
-    for file in run.whole:
-        ep_id = state.scope.id_by_key.get(EpisodeKey(season, file.release_number))
+    for file in run.all_versions:
+        ep_id = state.scope.id_by_key.get(EpisodeKey(season, file.name_number))
         if ep_id:
             inside = (ep_id,) if state.scope.admits(ep_id) else ()
             vetoed = file.contradicts((ep_id,))
             file.reading = ParsedEpisodes(
-                resolved=(ep_id,),
-                inside=inside,
+                ids=(ep_id,),
+                in_window=inside,
                 complete=True,
                 from_matched=True,
                 rejected=vetoed,
@@ -124,14 +124,14 @@ def _reread(state: PlacerState, run: NumberedSequence, season: int) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class _ListedPack:
+class _ListedSpecials:
     """A misnumbered specials pack and the listed specials it is as wide as."""
 
     run: NumberedSequence
     listed: frozenset[int]
 
 
-def pass_misnumbered_pack(state: PlacerState) -> None:
+def pass_misnumbered_specials(state: PlacerState) -> None:
     """Place a misnumbered specials pack through the listing's special aliases, or refuse it whole.
 
     The pack is the batch as one run of specials, one file per number, as wide as the listing, with a number that
@@ -155,14 +155,14 @@ def pass_misnumbered_pack(state: PlacerState) -> None:
     specials = _aliased_specials(state, pack)
     if specials is None:
         if state.untouched:
-            state.set_aside_each(_remaining_of(pack.run.whole), PlacementVerdict.MISNUMBERED)
+            state.set_aside_each(_remaining_of(pack.run.all_versions), PlacementVerdict.MISNUMBERED)
         return
     for file in _remaining_of(pack.run.members):
         ep_id = specials[file]
         if state.scope.admits(ep_id):
             state.place_or_skip(file, ep_id, PlacementVerdict.SPECIAL_ALIAS)
         else:
-            state.set_aside(file, PlacementVerdict.ALIAS_OUTSIDE_WINDOW)
+            state.leave_unplaced(file, PlacementVerdict.ALIAS_OUTSIDE_WINDOW)
     state.set_aside_each(_remaining_of(pack.run.superseded), PlacementVerdict.DUPLICATE)
 
 
@@ -172,22 +172,22 @@ def _remaining_of(files: Iterable[TorrentFile]) -> list[TorrentFile]:
     return [file for file in files if file.unjudged]
 
 
-def _aliased_specials(state: PlacerState, pack: _ListedPack) -> dict[TorrentFile, int] | None:
+def _aliased_specials(state: PlacerState, pack: _ListedSpecials) -> dict[TorrentFile, int] | None:
     """Each member -> its aliased special, or None if the aliases don't map the pack one to one onto the listing.
 
     Also None when a member's title, size match, or seed puts it anywhere but its aliased special.
     """
 
-    listing = state.scope.listing
+    listing = state.scope.seadex
     members = frozenset(pack.run.members)
     specials: dict[TorrentFile, int] = {}
     # Every version is checked, superseded ones too.
-    for file in pack.run.whole:
-        tvdb_number = listing.special_aliases.get(file.release_number)
+    for file in pack.run.all_versions:
+        tvdb_number = listing.special_aliases.get(file.name_number)
         ep_id = None if tvdb_number is None else state.scope.id_by_key.get(EpisodeKey(0, tvdb_number))
         if ep_id is None or file.contradicts((ep_id,)):
             return None
-        if file.identified_as not in (None, ep_id) or file.seeded_on not in (None, (ep_id,)):
+        if file.size_match not in (None, ep_id) or file.saved_ids not in (None, (ep_id,)):
             return None
         if file in members:
             specials[file] = ep_id
@@ -195,7 +195,7 @@ def _aliased_specials(state: PlacerState, pack: _ListedPack) -> dict[TorrentFile
     return specials if frozenset(specials.values()) == pack.listed else None
 
 
-def _misnumbered_pack(state: PlacerState) -> _ListedPack | None:
+def _misnumbered_pack(state: PlacerState) -> _ListedSpecials | None:
     """The batch as one listing-wide specials pack with a number that isn't a listed special, else None.
 
     For specials the curated listing (`TargetScope.listing`) beats the file names. In a regular season, a number
@@ -207,7 +207,7 @@ def _misnumbered_pack(state: PlacerState) -> _ListedPack | None:
         return None
     if all(state.scope.id_by_key.get(EpisodeKey(0, n)) in listed for n in run.numbers):
         return None
-    return _ListedPack(run, listed)
+    return _ListedSpecials(run, listed)
 
 
 def _sole_specials_run(state: PlacerState, width: int) -> NumberedSequence | None:
@@ -218,34 +218,34 @@ def _sole_specials_run(state: PlacerState, width: int) -> NumberedSequence | Non
     repeats or spans several episodes, or every member's title confirms its number.
     """
 
-    if not state.all_parses_known or state.pairing_off or not state.unjudged:
+    if not state.all_parses_known or state.pairing_off or not state.only_extras_judged:
         return None
     runs = state.counted_runs
-    if len(runs) != 1 or set(runs[0].whole) != set(state.counted):
+    if len(runs) != 1 or set(runs[0].all_versions) != set(state.non_extras):
         return None
     run = runs[0]
     if len(run.numbers) != width or len(set(run.numbers)) != width:
         return None
     confirmed = 0
-    for file in run.whole:
+    for file in run.all_versions:
         info = state.single_parse(file)
-        if info is None or info.season_number != 0 or info.episode_numbers != (file.release_number,):
+        if info is None or info.season_number != 0 or info.episode_numbers != (file.name_number,):
             return None
         # One title vouches for its own file alone: a pack it does not cover whole stays judged by the listing.
-        confirmed += file.confirms(file.reading.resolved)
-    return None if confirmed == len(run.whole) else run
+        confirmed += file.confirms(file.reading.ids)
+    return None if confirmed == len(run.all_versions) else run
 
 
-class _Tier(IntEnum):
+class _FitKind(IntEnum):
     """How well a numbered run fits the run window, best first. The release-run pass ranks candidates by it."""
 
-    WHOLE = 1
+    ONE_TO_N = 1
     """Numbered `1..N`, where N is the window's width."""
-    NUMBERED = 2
+    EPISODE_NUMBERS = 2
     """Numbered exactly as the window's episode numbers."""
-    COVERING = 3
+    WHOLE_SEASON = 3
     """Numbered `1..N` for the whole season, when the window holds only part of that season."""
-    ANYWHERE = 4
+    ANY_CONSECUTIVE = 4
     """Any N consecutive numbers (`_RunFit.from_anywhere`)."""
 
 
@@ -255,7 +255,7 @@ class _Candidate:
 
     position: int
     run: NumberedSequence
-    tier: _Tier
+    tier: _FitKind
     evidence: EpisodeTitleMatches
 
 
@@ -277,19 +277,19 @@ class _RunFit:
         """The fit when the open ids form a run window, else None."""
 
         window = state.run_window()
-        return None if window is None else cls(state, window, tuple(state.runs(state.remaining())))
+        return None if window is None else cls(state, window, tuple(state.runs(state.unjudged_files())))
 
     def candidates(self) -> list[_Candidate]:
         """Every run that could place onto the window, at the best tier it fits, sorted by tier then by run order."""
 
         width = len(self.window.ids)
         tiers = {
-            _Tier.WHOLE: [run for run in self.runs if run.from_one(width)],
-            _Tier.NUMBERED: [run for run in self.runs if run.numbers == self.window.numbers],
-            _Tier.COVERING: self.covering(),
-            _Tier.ANYWHERE: self.from_anywhere(),
+            _FitKind.ONE_TO_N: [run for run in self.runs if run.from_one(width)],
+            _FitKind.EPISODE_NUMBERS: [run for run in self.runs if run.numbers == self.window.numbers],
+            _FitKind.WHOLE_SEASON: self.covering(),
+            _FitKind.ANY_CONSECUTIVE: self.from_anywhere(),
         }
-        tier_of: dict[NumberedSequence, _Tier] = {}
+        tier_of: dict[NumberedSequence, _FitKind] = {}
         for tier, fits in tiers.items():
             for run in fits:
                 tier_of.setdefault(run, tier)
@@ -304,7 +304,7 @@ class _RunFit:
 
         inside = outside = 0
         for file in run.members:
-            sides = {ep_id in self.window.id_set for ep_id in file.leaders}
+            sides = {ep_id in self.window.id_set for ep_id in file.leading_title_ids}
             if sides == {True}:
                 inside += 1
             elif sides == {False}:
@@ -317,7 +317,7 @@ class _RunFit:
         season = self.window.season
         if season is None:
             return []
-        count = self.state.series.season_counts.get(season, 0)
+        count = self.state.index.season_counts.get(season, 0)
         return [run for run in self.runs if run.from_one(count)] if count > len(self.window.ids) else []
 
     def covering_refused(self) -> bool:
@@ -327,9 +327,9 @@ class _RunFit:
         """
 
         season = self.window.season
-        if season is None or self.window.specials:
+        if season is None or self.window.is_specials:
             return True
-        count = self.state.series.season_counts.get(season, 0)
+        count = self.state.index.season_counts.get(season, 0)
         return any(EpisodeKey(season, n) not in self.state.scope.id_by_key for n in range(1, count + 1))
 
     def from_anywhere(self) -> list[NumberedSequence]:
@@ -350,8 +350,8 @@ class _RunFit:
     def seasons_read(self, run: NumberedSequence) -> set[int]:
         """The seasons Sonarr read the run's members into."""
 
-        key_by_id = self.state.series.key_by_id
-        return {key_by_id[ep_id].season for file in run.members for ep_id in file.reading.resolved}
+        key_by_id = self.state.index.key_by_id
+        return {key_by_id[ep_id].season for file in run.members for ep_id in file.reading.ids}
 
     def read_elsewhere(self, run: NumberedSequence) -> bool:
         """Whether a member's reading lands in a season other than the window's, which disputes the run's numbers."""
@@ -365,38 +365,38 @@ class _RunFit:
         """
 
         readings = [file.reading for file in run.members]
-        if all(r.tied is not None for r in readings):
-            return not any(i in self.state.scope.real_ids for r in readings for i in r.tied or ())
-        if not all(r.outside and r.sonarr_agrees and len(r.resolved) == 1 for r in readings):
+        if all(r.either_ids is not None for r in readings):
+            return not any(i in self.state.scope.real_ids for r in readings for i in r.either_ids or ())
+        if not all(r.wholly_outside and r.sonarr_agrees and len(r.ids) == 1 for r in readings):
             return False
-        return len({r.resolved[0] for r in readings}) == len(readings)
+        return len({r.ids[0] for r in readings}) == len(readings)
 
     def refused(self, run: NumberedSequence) -> bool:
         """Whether the batch shows the run cannot own the whole window."""
 
         state, window_set = self.state, self.window.id_set
         for file in run.members:
-            info = file.parsed
+            info = file.parse
             # A missing parse, or a name that itself claims several episodes, refuses the run. A multi-episode
             # Sonarr match does not.
             if info is None or claims_several_episodes(info):
                 return True
             reading = file.reading
-            keyed_outside = not reading.from_matched and reading.complete and window_set.isdisjoint(reading.resolved)
+            keyed_outside = not reading.from_matched and reading.complete and window_set.isdisjoint(reading.ids)
             # A member whose own key lies outside the window refuses the run, except on a specials window.
-            if keyed_outside and not self.window.specials:
+            if keyed_outside and not self.window.is_specials:
                 return True
-        mates = set(run.whole)
-        for file in state.remaining():
+        mates = set(run.all_versions)
+        for file in state.unjudged_files():
             if file in mates:
                 continue
             reading = file.reading
-            if not window_set.isdisjoint(reading.tied or ()):
+            if not window_set.isdisjoint(reading.either_ids or ()):
                 return True
             # A runner-up's claim on the window lost before the run was asked: it refuses nothing.
-            if not reading.trusted or file.runner_up(reading.resolved):
+            if not reading.trusted or file.runner_up(reading.ids):
                 continue
-            if reading.resolved and window_set.issuperset(reading.resolved):
+            if reading.ids and window_set.issuperset(reading.ids):
                 return True
         return False
 
@@ -419,30 +419,30 @@ def pass_release_run(state: PlacerState) -> None:
     candidates = fit.candidates()
     # A covering run read into another season is disputed, picked or not. Read whole into one other season, it
     # belongs there (its files end up FOREIGN). Otherwise its readings are rejected.
-    disputed = [c.run for c in candidates if c.tier is _Tier.COVERING and fit.read_elsewhere(c.run)]
+    disputed = [c.run for c in candidates if c.tier is _FitKind.WHOLE_SEASON and fit.read_elsewhere(c.run)]
     # Vetoes first: a rejected reading leaves its run unsettled, which `open_positions` then counts as open.
     for run in disputed:
         if not (fit.settled_elsewhere(run) and len(fit.seasons_read(run)) == 1):
-            state.veto_each(run.whole)
+            state.veto_each(run.all_versions)
     open_positions = frozenset(index for index, run in enumerate(fit.runs) if not fit.settled_elsewhere(run))
-    naming = Naming.of([run.prefix for run in fit.runs], state.scope.names)
+    naming = Naming.of([run.prefix for run in fit.runs], state.scope.title_names)
     # Several candidates turn the count-based passes off, even when a tie-break picks one.
     state.pairing_off |= len(candidates) > 1
     pick = _sole_candidate(candidates, open_positions, naming)
     if pick is None:
         return
     run = pick.run
-    if run.prefix in state.size_refuted_runs:
+    if run.prefix in state.size_contradicted_prefixes:
         return
     if not state.all_parses_known:
-        state.set_aside_each(run.whole, PlacementVerdict.WAITING_ON_PARSE)
+        state.set_aside_each(run.all_versions, PlacementVerdict.WAITING_ON_PARSE)
         return
-    covers = pick.tier is _Tier.COVERING
+    covers = pick.tier is _FitKind.WHOLE_SEASON
     refused = (
         fit.refused(run)
         or (covers and fit.covering_refused())
         or run in disputed
-        or any(file.disputed_by_position for file in run.members)
+        or any(file.numbers_disagree_by_position for file in run.members)
         or pick.evidence.vetoes
         or (naming is not None and naming.names_another(pick.position, open_positions))
     )
@@ -498,8 +498,8 @@ def pass_numbered_run(state: PlacerState) -> None:
         return
     blind = [
         file
-        for file in state.remaining()
-        if not file.reading.resolved and (info := state.single_parse(file)) is not None and not info.episode_numbers
+        for file in state.unjudged_files()
+        if not file.reading.ids and (info := state.single_parse(file)) is not None and not info.episode_numbers
     ]
     fits = [run for run in state.runs(blind) if run.from_one(len(window.ids))]
     if len(fits) != 1:

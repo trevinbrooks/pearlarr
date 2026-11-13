@@ -32,7 +32,7 @@ from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
-from pearlarr.parse_records import parsed_info, to_parse_record
+from pearlarr.parse_records import parse_from_json, parse_to_json
 from pearlarr.pending_import import GuardFacts, OwnedEpisode, PendingImport, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
@@ -970,12 +970,12 @@ class TestSonarrParse:
     def test_roundtrip_get(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             info = ParsedFileInfo(season_number=1, episode_numbers=(2,))
-            rec = {"fetched_at": "2026-06-20 12:00:00", "parse": to_parse_record(info)}
+            rec = {"fetched_at": "2026-06-20 12:00:00", "parse": parse_to_json(info)}
             store.put_sonarr_parse("file.mkv", rec)
             read_back = store.get_sonarr_parse("file.mkv")
             assert read_back == rec
             assert read_back is not None
-            assert parsed_info(read_back) == info
+            assert parse_from_json(read_back) == info
             assert store.get_sonarr_parse("missing.mkv") is None
 
     def test_series_fingerprint_key_round_trips(self, tmp_path: Path) -> None:
@@ -983,7 +983,7 @@ class TestSonarrParse:
         with _open(tmp_path) as store:
             rec = {
                 "fetched_at": "2026-06-20 12:00:00",
-                "parse": to_parse_record(ParsedFileInfo()),
+                "parse": parse_to_json(ParsedFileInfo()),
                 "series_fp": "fp",
             }
             store.put_sonarr_parse("unmatched.mkv", rec)
@@ -998,7 +998,7 @@ class TestSonarrParse:
             read_back = store.get_sonarr_parse("legacy.mkv")
             assert read_back == rec
             assert read_back is not None
-            assert parsed_info(read_back) is None
+            assert parse_from_json(read_back) is None
 
 
 class TestPendingImports:
@@ -1303,7 +1303,7 @@ class TestMaintenance:
 
     def test_evict_sonarr_parse_drops_only_stale(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            parse = to_parse_record(ParsedFileInfo(season_number=1, episode_numbers=(1,)))
+            parse = parse_to_json(ParsedFileInfo(season_number=1, episode_numbers=(1,)))
             store.put_sonarr_parse("old.mkv", {"fetched_at": "2020-01-01 00:00:00", "parse": parse})
             store.put_sonarr_parse("new.mkv", {"fetched_at": "2026-06-26 12:00:00", "parse": parse})
             assert store.evict_sonarr_parse(datetime(2026, 6, 20)) == 1
