@@ -16,6 +16,7 @@ from .manual_import import ImportWaitMode
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingRecords
+from .releases import GrabHold, SeadexDict, SeadexUrlItem
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -23,7 +24,6 @@ from .reporter import (
     RunContext,
     is_preview,
 )
-from .seadex_types import GrabHold, SeadexDict, SeadexUrlItem
 from .stamps import now_stamp, stamp_of
 from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, AddResult, ReleaseOutcome
 

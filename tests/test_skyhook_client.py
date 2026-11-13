@@ -7,8 +7,7 @@ import respx
 
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.output.recording import RecordingHub
-from pearlarr.seadex_types import SkyHookReply
-from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookMiss
+from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookMiss, SkyHookReply
 
 from .fakes import FakeSkyHookClient, install_recording_hub
 from .http_mock import skyhook_fixture

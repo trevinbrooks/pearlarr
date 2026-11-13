@@ -19,7 +19,8 @@ from seadex import EntryRecord, SeaDexEntry
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver, CategorySources
-from .arr_http import ArrHttp, make_httpx_client
+from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_httpx_client
+from .arr_models import ArrReleases, SonarrEpisode
 from .boot_flow import BootFlow
 from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .clock import Clock, SystemClock
@@ -32,15 +33,10 @@ from .output import emit_to_hub, hub_counts
 from .parse_records import ParseRecords
 from .pending_records import PendingRecords
 from .planner import DownloadPlanner, PlanResult
+from .releases import SeadexDict
 from .reporter import EntryTitle, PerTitleState, RunContext, RunReporter, is_preview, resolve_entry_title
 from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
-from .seadex_types import (
-    ARR_REQUEST_TIMEOUT_S,
-    ArrReleases,
-    SeadexDict,
-    SonarrEpisode,
-)
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
 from .torrents import TorrentService

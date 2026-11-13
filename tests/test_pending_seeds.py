@@ -13,6 +13,8 @@ Sonarr) with a seeded in-memory parse cache and a warm whole-series episode list
 
 from collections.abc import Mapping, Sequence
 
+from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
+from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
 from pearlarr.grab_placement import (
@@ -24,8 +26,8 @@ from pearlarr.grab_placement import (
 from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, normalize_basename
 from pearlarr.parse_records import to_parse_record
 from pearlarr.placement_types import SeedScope, episode_index
+from pearlarr.releases import EpisodeRecord, SeadexDict
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import EpisodeRecord, Json, ParsedFileInfo, SeadexDict, SonarrEpisode
 from pearlarr.stamps import now_stamp
 
 from .builders import (

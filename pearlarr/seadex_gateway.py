@@ -22,7 +22,7 @@ import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
 from .output import hub_warn
-from .seadex_types import ProgressSink
+from .progress import ProgressSink
 from .web_client import failure_detail
 
 # Ids per batched `from_filter` query. Mirrors ANILIST_BATCH_SIZE. ~50

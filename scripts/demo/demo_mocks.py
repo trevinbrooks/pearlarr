@@ -24,8 +24,8 @@ from urllib.parse import parse_qs, urlparse
 
 from seadex import SeaDexEntry, Tracker
 
+from pearlarr.boundary import Json
 from pearlarr.json_narrow import is_json_list, is_json_obj
-from pearlarr.seadex_types import Json
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "tests" / "fixtures" / "sonarr"

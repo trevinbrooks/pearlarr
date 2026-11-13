@@ -13,9 +13,10 @@ import qbittorrentapi
 from seadex import Tracker
 
 from .arr_categories import ArrCategoryResolver
+from .boundary import coerce_int
 from .manual_import import normalized_leaf, torrent_errored, torrent_finished
 from .output import hub_warn
-from .seadex_types import SeadexDict, SeadexUrlItem, coerce_int, normalized_infohash
+from .releases import SeadexDict, SeadexUrlItem, normalized_infohash
 from .torrent import (
     ParsedTorrent,
     TorrentParseError,

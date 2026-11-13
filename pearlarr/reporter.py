@@ -45,7 +45,7 @@ from .output import (
     SeverityCounts,
     StyledValue,
 )
-from .seadex_types import GrabHold, SeadexDict
+from .releases import GrabHold, SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
 
 if TYPE_CHECKING:

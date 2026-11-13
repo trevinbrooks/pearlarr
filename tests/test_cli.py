@@ -635,8 +635,8 @@ class TestRunFailuresAreCleanAndNonzero:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         from pearlarr.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.boundary import BoundaryContractError
         from pearlarr.run_services import QbitConnectionError, RunDeps
-        from pearlarr.seadex_types import BoundaryContractError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),

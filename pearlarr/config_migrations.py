@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 import yaml
 
+from .boundary import Json
 from .json_narrow import is_json_obj
-from .seadex_types import Json
 
 CONFIG_VERSION = 6
 

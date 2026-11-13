@@ -3,7 +3,8 @@
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
-from .seadex_types import AniListAiring, SonarrEpisode
+from .anilist_client import AniListAiring
+from .arr_models import SonarrEpisode
 
 # How far the mapped specials may air from AniList's dates and still agree with them. The two sources often date one
 # special days apart, and a weekly run one airing apart.

@@ -7,6 +7,7 @@ from enum import Enum, auto
 from types import MappingProxyType
 from typing import NamedTuple, Self
 
+from .arr_models import SonarrEpisodeFile
 from .manual_import import (
     EntryClaim,
     FileEpisodeMap,
@@ -18,7 +19,6 @@ from .manual_import import (
     sizes_by_episode,
 )
 from .placement_types import EpisodeIndex
-from .seadex_types import SonarrEpisodeFile
 
 type TrustPolicy = Mapping[str, frozenset[int] | None]
 """Normalized group -> the sizes that verify its files, or None to trust the group by name alone."""

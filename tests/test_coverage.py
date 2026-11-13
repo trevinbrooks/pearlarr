@@ -9,7 +9,7 @@ from pearlarr.coverage import (
     episodes_from_ep_list,
     format_episode_coverage,
 )
-from pearlarr.seadex_types import EpisodeRecord
+from pearlarr.releases import EpisodeRecord
 
 from .builders import sonarr_ep
 

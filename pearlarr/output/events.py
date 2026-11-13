@@ -14,7 +14,7 @@ from .trace import CapturedTrace
 from ..config import Arr
 from ..log import EntryState
 from ..manual_import import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
-from ..seadex_types import NO_ELSEWHERE, ElsewhereCounts
+from ..releases import NO_ELSEWHERE, ElsewhereCounts
 
 if TYPE_CHECKING:
     from ..reporter import RunStats

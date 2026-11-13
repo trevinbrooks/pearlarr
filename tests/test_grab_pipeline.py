@@ -45,8 +45,8 @@ from pearlarr.output import (
     severity_of,
 )
 from pearlarr.output.recording import RecordingHub
+from pearlarr.releases import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.reporter import NeedsActionKind, PerTitleState, RunContext
-from pearlarr.seadex_types import ElsewhereCounts, GrabHold, SeadexDict, SeadexUrlItem
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import AddResult, ReleaseOutcome, TorrentAddError

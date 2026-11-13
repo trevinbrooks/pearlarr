@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from pearlarr.episode_titles import EpisodeTitles
-from pearlarr.seadex_types import EpisodeKey
+from pearlarr.releases import EpisodeKey
 
 from .builders import series_index
 

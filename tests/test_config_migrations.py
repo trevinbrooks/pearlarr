@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from pearlarr import config as config_mod
 from pearlarr import config_migrations
+from pearlarr.boundary import Json
 from pearlarr.config import (
     AppConfig,
     ConfigRewriteError,
@@ -33,7 +34,6 @@ from pearlarr.config_migrations import (
     render_migrated_config,
 )
 from pearlarr.json_narrow import is_json_obj
-from pearlarr.seadex_types import Json
 
 
 class TestDeclaredVersion:

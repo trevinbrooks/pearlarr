@@ -15,21 +15,12 @@ from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
 
+from .arr_models import ArrReleases, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
 from .output import Severity
-from .seadex_types import (
-    ArrReleases,
-    EpisodeKey,
-    EpisodeRecord,
-    SeadexDict,
-    SeadexReleaseGroupItem,
-    SeadexUrlItem,
-    SonarrEpisode,
-    index_episodes_by_key,
-    season_episode_key,
-    unambiguous,
-)
+from .pairs import unambiguous
+from .releases import EpisodeKey, EpisodeRecord, SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem, season_episode_key
 
 
 @dataclass

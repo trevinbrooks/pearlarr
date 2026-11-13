@@ -30,6 +30,7 @@ import qbittorrentapi
 import respx
 
 from pearlarr.arr_categories import CategorySources
+from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, MonitorPass
@@ -54,7 +55,6 @@ from pearlarr.manual_import import (
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
-from pearlarr.seadex_types import HistoryRecord
 from pearlarr.torrents import AddOutcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult, WaitView
 

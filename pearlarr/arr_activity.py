@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import final
 
+from .arr_models import HistoryRecord
 from .cache import AbstractCacheStore, HistoryCheckpoint
 from .config import Arr
-from .seadex_types import HistoryRecord
 
 # Re-query overlap behind the checkpoint (absorbs tz/clock skew between the arr
 # server and us) and the hard lookback cap on a history query: the reply is unpaged,

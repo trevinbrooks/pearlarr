@@ -7,17 +7,11 @@ from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Self
 
+from .anibridge import NO_ALIASES, SpecialAliases
+from .arr_models import ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 from .episode_titles import EpisodeTitles
 from .manual_import import EntryNames, EntryWindow, FileEpisodeMap
-from .seadex_types import (
-    NO_ALIASES,
-    EpisodeKey,
-    OrderOnlyKey,
-    ParsedFileInfo,
-    SonarrEpisode,
-    SpecialAliases,
-    index_episodes_by_key,
-)
+from .releases import EpisodeKey, OrderOnlyKey
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 

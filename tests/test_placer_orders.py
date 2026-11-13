@@ -3,9 +3,10 @@
 
 from typing import ClassVar
 
+from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.manual_import import EntryNames
 from pearlarr.placement_types import NO_EVIDENCE, EpisodeAssignment, ListingEvidence, PlacementVerdict, TargetScope
-from pearlarr.seadex_types import EpisodeKey, OrderOnlyKey, ParsedFileInfo
+from pearlarr.releases import EpisodeKey, OrderOnlyKey
 from pearlarr.tvdb_orders import OrderRow, SeriesOrders
 from pearlarr.window_placement import WindowedAssignment, place_across_windows
 

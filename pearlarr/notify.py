@@ -28,7 +28,7 @@ from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
 from .output import hub_warn
 from .output.wait_lines import held_back_names, held_back_sentences
-from .seadex_types import SeadexDict, SeadexUrlItem
+from .releases import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail

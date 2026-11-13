@@ -5,9 +5,9 @@
 
 import pytest
 
+from pearlarr.arr_models import CommandResource, QueueRecord, SonarrEpisode
 from pearlarr.manual_import import NO_PROGRESS, AttemptKind, Deferral
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import CommandResource, QueueRecord, SonarrEpisode
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
 from .fakes import FakeClock, HookedSonarrClient

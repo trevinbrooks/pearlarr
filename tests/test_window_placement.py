@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.manual_import import EntryClaim, EntryNames, EntryWindow, FileEpisodeMap
 from pearlarr.numberings import NumberingReading
 from pearlarr.placement_types import (
@@ -16,7 +17,7 @@ from pearlarr.placement_types import (
     PlacementVerdict,
     TargetScope,
 )
-from pearlarr.seadex_types import EpisodeKey, ParsedFileInfo
+from pearlarr.releases import EpisodeKey
 from pearlarr.window_placement import (
     WindowedAssignment,
     WindowOrder,

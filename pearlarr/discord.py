@@ -13,8 +13,8 @@ from typing import NamedTuple
 import httpx
 
 from . import __version__
+from .boundary import Json
 from .paths import PROJECT_URL
-from .seadex_types import Json
 
 # The SeaDex logo, sent as the webhook's avatar so every notification posts
 # under a consistent Pearlarr identity regardless of the webhook's own setup.

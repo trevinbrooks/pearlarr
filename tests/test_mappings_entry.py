@@ -15,7 +15,7 @@ from types import MappingProxyType
 import httpx
 import pytest
 
-from pearlarr.anibridge import AniBridgeGraph
+from pearlarr.anibridge import AniBridgeGraph, SpecialAliasing
 from pearlarr.mappings import (
     AnimeIdsMap,
     ExternalIds,
@@ -24,7 +24,6 @@ from pearlarr.mappings import (
     MappingResolver,
     MappingSources,
 )
-from pearlarr.seadex_types import SpecialAliasing
 
 
 def _resolver(

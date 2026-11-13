@@ -10,9 +10,10 @@ from typing import Any, NamedTuple, NotRequired, Self, TypedDict, cast
 
 from pydantic import ValidationError
 
+from .arr_models import ParsedFileInfo
+from .boundary import Json
 from .cache import AbstractCacheStore, stamp_is_fresh
 from .json_narrow import is_json_obj
-from .seadex_types import Json, ParsedFileInfo
 from .stamps import stamp_of
 
 # How long a persisted Sonarr /parse result stays usable before it's re-queried.

@@ -7,6 +7,7 @@ from typing import ClassVar
 
 import pytest
 
+from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
 from pearlarr.grab_placement import (
     EntryPlacements,
     IdentityOverride,
@@ -45,18 +46,15 @@ from pearlarr.placement_types import (
     SeedScope,
     episode_index,
 )
-from pearlarr.seadex_types import (
+from pearlarr.releases import (
     NO_ELSEWHERE,
     ElsewhereCounts,
     EpisodeKey,
     EpisodeRecord,
     FlaggedUrl,
     GrabHold,
-    MatchedEpisode,
     OrderOnlyKey,
-    ParsedFileInfo,
     SeadexDict,
-    SonarrEpisode,
 )
 from pearlarr.tvdb_orders import OrderRow, SeriesOrdering
 

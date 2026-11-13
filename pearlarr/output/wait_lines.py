@@ -37,7 +37,7 @@ from ..log import (
     rule_string,
 )
 from ..manual_import import HeldBack, Outcome, OutcomeCategory
-from ..seadex_types import EpisodeKey, EpisodeRecord
+from ..releases import EpisodeKey, EpisodeRecord
 from ..tvdb_orders import order_display_name
 
 if TYPE_CHECKING:

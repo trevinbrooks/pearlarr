@@ -25,12 +25,12 @@ from pearlarr.arr_activity import (
     format_history_date,
     parse_history_date,
 )
+from pearlarr.arr_models import HistoryRecord
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingEntry
 from pearlarr.run_loop import RunLoop
-from pearlarr.seadex_types import HistoryRecord
 
 from .builders import FakeCacheStore, make_config, make_logger
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy

@@ -12,7 +12,7 @@ from ._state import NumberedRun, Placer, RunWindow, TorrentFile
 from ..parse_reading import Reading, claims_several_episodes
 from ..placement_types import PlacementVerdict
 from ..release_names import Naming
-from ..seadex_types import EpisodeKey
+from ..releases import EpisodeKey
 
 # Episode titles pick a run, or refuse one, only when at least this many members carry them.
 MIN_TITLE_HITS = 2

@@ -3,6 +3,7 @@
 
 import pytest
 
+from pearlarr.arr_models import SonarrEpisode
 from pearlarr.episode_state import (
     EpisodeFileStatus,
     EpisodeSnapshot,
@@ -14,7 +15,6 @@ from pearlarr.episode_state import (
 )
 from pearlarr.manual_import import GuardFacts, OwnGroup, normalize_group
 from pearlarr.placement_types import episode_index
-from pearlarr.seadex_types import SonarrEpisode
 
 from .builders import entry_claim, episode_snapshot, pending_import, sonarr_ep, target_statuses
 

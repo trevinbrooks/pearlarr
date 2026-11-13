@@ -22,10 +22,7 @@ import pytest
 import respx
 
 from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome
-from pearlarr.manual_import import PendingImport
-from pearlarr.output import Severity
-from pearlarr.seadex_types import (
-    BoundaryContractError,
+from pearlarr.arr_models import (
     CommandResource,
     DownloadClientConfig,
     HistoryRecord,
@@ -37,6 +34,9 @@ from pearlarr.seadex_types import (
     QueueRecord,
     SonarrItem,
 )
+from pearlarr.boundary import BoundaryContractError
+from pearlarr.manual_import import PendingImport
+from pearlarr.output import Severity
 from pearlarr.sonarr_client import SonarrClient
 
 from .builders import entry_claim

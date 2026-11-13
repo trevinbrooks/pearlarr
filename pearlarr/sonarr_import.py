@@ -5,6 +5,17 @@ from urllib.parse import urlsplit
 
 from .arr_categories import Watch
 from .arr_http import DeleteOutcome
+from .arr_models import (
+    CommandResource,
+    Language,
+    ManualImportCandidate,
+    ManualImportFile,
+    QualityDefinition,
+    QualitySource,
+    QueueRecord,
+    RemotePathMapping,
+    SonarrEpisode,
+)
 from .episode_state import (
     EpisodeFileStatus,
     EpisodeSnapshot,
@@ -65,19 +76,8 @@ from .probe_verdicts import (
     rescanned_since_add,
     sonarr_restarted,
 )
+from .releases import EpisodeKey
 from .run_services import RunDeps
-from .seadex_types import (
-    CommandResource,
-    EpisodeKey,
-    Language,
-    ManualImportCandidate,
-    ManualImportFile,
-    QualityDefinition,
-    QualitySource,
-    QueueRecord,
-    RemotePathMapping,
-    SonarrEpisode,
-)
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 

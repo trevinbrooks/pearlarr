@@ -12,11 +12,12 @@ from types import MappingProxyType
 from typing import Self
 
 from ._names import TorrentNames
+from ..arr_models import ParsedFileInfo
 from ..episode_titles import EpisodeTitles, spells_title
 from ..parse_reading import Reading, glued_counts, read_parse, spans_multiple, widen_range_key
 from ..placement_types import EpisodeIndex, Placement, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, NameRead, is_consecutive
-from ..seadex_types import OrderOnlyKey, ParsedFileInfo
+from ..releases import OrderOnlyKey
 
 
 @dataclass(slots=True, eq=False, kw_only=True)

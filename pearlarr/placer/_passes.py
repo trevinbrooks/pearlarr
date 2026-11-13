@@ -117,7 +117,7 @@ from ._state import NameFacts, NumberedRun, Placer, TorrentFile
 from ..parse_reading import glued_counts, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import EpisodeAssignment, PlacementBatch, PlacementVerdict, TargetScope
 from ..release_names import FileIdentity, natural_key, sole_title_match
-from ..seadex_types import EpisodeKey
+from ..releases import EpisodeKey
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,11 +9,11 @@ from datetime import timedelta
 
 import pytest
 
+from pearlarr.arr_models import SonarrItem, SonarrSeries
 from pearlarr.config import Arr
 from pearlarr.manual_import import ImportWaitMode
 from pearlarr.reporter import RunContext
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import SonarrItem, SonarrSeries
 from pearlarr.tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 
 from .builders import FakeCacheStore, make_sonarr_sync, pending_import, sonarr_ep, stored_orders

@@ -10,12 +10,7 @@ from pearlarr.planner import (
     get_same_files_groups,
     normalize_rg,
 )
-from pearlarr.seadex_types import (
-    EpisodeKey,
-    EpisodeRecord,
-    SeadexReleaseGroupItem,
-    SeadexUrlItem,
-)
+from pearlarr.releases import EpisodeKey, EpisodeRecord, SeadexReleaseGroupItem, SeadexUrlItem
 
 from .builders import sonarr_ep
 

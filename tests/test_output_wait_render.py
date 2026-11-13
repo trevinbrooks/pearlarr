@@ -39,7 +39,7 @@ from pearlarr.output.wait_lines import (
     wait_start_line,
     wait_tally_lines,
 )
-from pearlarr.seadex_types import EpisodeKey, OrderOnlyKey
+from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
 from .builders import SEP, held_files, order_only_held_back
 

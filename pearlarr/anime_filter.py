@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from .anibridge import AniBridge
+from .arr_models import ArrItem
 from .mapping_store import AnimeIdColumn
 from .mappings import AnimeIdSets
-from .seadex_types import ArrItem
 
 
 @dataclass(frozen=True)
@@ -50,8 +50,8 @@ def collect_anime_items[ItemT: ArrItem](
     (the Anime-IDs sets come from `MappingResolver.anime_id_set`), then keeps
     each item that matches at least one id space.
 
-    Generic in `ItemT` (a `seadex_types.SonarrItem` /
-    `seadex_types.RadarrItem`), so the filtered list returns the same
+    Generic in `ItemT` (an `arr_models.SonarrItem` /
+    `arr_models.RadarrItem`), so the filtered list returns the same
     concrete item type the caller fetched.
 
     Args:

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
+from .arr_models import ParsedFileInfo
 from .coverage import coverage_string, episodes_from_ep_list
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
 from .manual_import import (
@@ -22,6 +23,7 @@ from .manual_import import (
     sizes_by_episode,
 )
 from .numberings import NumberingReader
+from .pairs import unambiguous
 from .placement_types import (
     EMPTY_LISTING,
     NO_SEEDED,
@@ -35,7 +37,7 @@ from .placement_types import (
     SizeIdentities,
     TorrentListing,
 )
-from .seadex_types import (
+from .releases import (
     NO_ELSEWHERE,
     ElsewhereCounts,
     EpisodeKey,
@@ -43,12 +45,10 @@ from .seadex_types import (
     FlaggedUrl,
     GrabHold,
     OrderOnlyKey,
-    ParsedFileInfo,
     SeadexDict,
     SeadexUrlItem,
     flagged_urls,
     season_episode_key,
-    unambiguous,
 )
 from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, scopes_of
 

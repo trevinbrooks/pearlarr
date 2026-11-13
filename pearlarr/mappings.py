@@ -32,7 +32,8 @@ from xml.etree import ElementTree
 
 import httpx
 
-from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup
+from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup, SpecialAliasing, TvdbMappings
+from .arr_models import SonarrItem
 from .mapping_store import (
     INLINE_DIGEST,
     SOURCE_ANIBRIDGE,
@@ -45,7 +46,7 @@ from .mapping_store import (
 )
 from .output import hub_warn
 from .paths import resolve_paths
-from .seadex_types import ProgressSink, SonarrItem, SpecialAliasing, TvdbMappings
+from .progress import ProgressSink
 from .web_client import failure_detail
 
 type AnimeIdsRecord = dict[str, Any]
