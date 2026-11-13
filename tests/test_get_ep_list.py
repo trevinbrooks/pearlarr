@@ -1,10 +1,10 @@
 # pyright: strict
-"""`SonarrEpisodes.get_ep_list` AniBridge empty-season-map handling.
+"""`SonarrEpisodes.mapping_episodes` AniBridge empty-season-map handling.
 
 Pins the fix for the latent AniBridge bug: a mapping whose `tvdb_mappings` is an
 empty dict (AniBridge registered the series' TVDB id but parsed no usable per-season
 ranges) resolves to `[]` instead of silently selecting episodes. The caller
-(`process_al_id`) surfaces the visible NO_EPISODES skip. The sibling `{season: []}`
+(`check_title`) surfaces the visible NO_EPISODES skip. The sibling `{season: []}`
 whole-season-covered case must NOT be treated as empty.
 
 Also pins that the anime-ids path and `episode_count` resolve the AniList format /
@@ -37,7 +37,7 @@ _NO_AIRING = AniListAiring(start=None, end=None, episodes=None, duration=None)
 class _FakeSonarr:
     """Minimal Sonarr-client stand-in: `episodes` returns a fixed list.
 
-    `get_ep_list` reaches the empty-map short-circuit only after the per-series
+    `mapping_episodes` reaches the empty-map short-circuit only after the per-series
     episode fetch, so the fake just returns the scripted list (called positionally,
     no `quiet`).
     """
@@ -51,7 +51,7 @@ class _FakeSonarr:
 
 
 class _RecordingAniList:
-    """Records the gateway resolver calls `get_ep_list` routes through."""
+    """Records the gateway resolver calls `mapping_episodes` routes through."""
 
     def __init__(
         self, *, media_format: str | None = None, n_eps: int | None = None, airing: AniListAiring = _NO_AIRING

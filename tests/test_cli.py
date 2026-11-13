@@ -1064,7 +1064,7 @@ class _SignalRecorder:
 
 
 class _RunStampingRenderer(Renderer):
-    """Records each hub event alongside how many `begin_cycle` calls preceded it.
+    """Records each hub event alongside how many `begin_run` calls preceded it.
 
     Makes post-begin ordering assertable (CycleStarted lands in the fresh cycle).
     """
@@ -1181,9 +1181,9 @@ class TestConsoleFormat:
 
 
 class TestResolvedFormat:
-    """`_resolved_format` is the one "auto" fold.
+    """`_run_format` is the one "auto" fold.
 
-    The same resolved value feeds `setup_logger` and `hub.begin_cycle`, so the two can never disagree.
+    The same resolved value feeds `setup_logger` and `hub.begin_run`, so the two can never disagree.
     """
 
     def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

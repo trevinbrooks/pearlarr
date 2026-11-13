@@ -2,15 +2,15 @@
 """End-to-end smoke tests: one full pass per arr through the REAL composition root.
 
 These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
-`RunDeps.build` -> `RunServices` -> `RunLoop.run_sync` -> `SonarrSync`
-/ `RadarrSync` hooks actually run a sync wired together, with ONLY the
+`ArrRunDeps.build` -> `ArrRunServices` -> `ArrRunLoop.run_arr` -> `SonarrStrategy`
+/ `RadarrStrategy` hooks actually run a sync wired together, with ONLY the
 external network leaves faked:
 
 * the SeaDex library, faked at the composition root's `SeaDexEntry` leaf.
 * qBittorrent, left unconfigured so the whole run is a perpetual preview.
 * the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`), and the
   AniList POST and SkyHook GET (on the shared web client), all mocked via `respx`.
-* the Nyaa lookup, faked at `torrents.get_nyaa_torrent`.
+* the Nyaa lookup, faked at `torrents.fetch_nyaa_link`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
 agreement: the Arr item's external id (the `series` fixture's `tvdbId`, the

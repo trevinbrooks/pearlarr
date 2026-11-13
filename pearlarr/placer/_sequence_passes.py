@@ -51,7 +51,7 @@ def pass_sequence_as_matched_season(state: PlacerState) -> None:
 
     Only a run without own keys qualifies, and Sonarr shifted some of its members onto specials. In a tie (as many
     members matched onto an N-episode specials season), the readings are rejected and each file records both
-    candidates in `Reading.tied`: the release-run pass can still place them, and the episode-title pass only onto
+    candidates in `ParsedEpisodes.either_ids`: the release-run pass can still place them, and the episode-title pass only onto
     one of the two.
     """
 
@@ -139,12 +139,12 @@ def pass_misnumbered_specials(state: PlacerState) -> None:
     """Place a misnumbered specials pack through the listing's special aliases, or refuse it whole.
 
     The pack is the batch as one run of specials, one file per number, as wide as the listing, with a number that
-    is no listed special (`_misnumbered_pack`). `_sole_specials_run` lists what else turns the pass off. The pack is
+    is no listed special (`_misnumbered_specials`). `_sole_specials_sequence` lists what else turns the pass off. The pack is
     numbered some other way (an older TVDB state, or TMDB's order), and its own numbers would put some files on the
     wrong specials, so only the aliases can place it. When the listing's `special_aliases` map its numbers one to
     one onto the listed specials, and no title, size match, or seeded file puts a member anywhere else
-    (`_aliased_specials`), each file goes on its aliased special (`ALTERNATE`, or `SKIPPED` when taken) and a
-    superseded version is `DUPLICATE`. A file whose special is outside the window is `ALIASED_ELSEWHERE`, a claim
+    (`_aliased_specials`), each file goes on its aliased special (`SPECIAL_ALIAS`, or `SKIPPED` when taken) and a
+    superseded version is `DUPLICATE`. A file whose special is outside the window is `ALIAS_OUTSIDE_WINDOW`, a claim
     `window_placement` settles across the windows.
 
     When the aliases can't place it, every file of the run is `MISNUMBERED` for a hand import and passes 7 to 15
@@ -202,7 +202,7 @@ def _aliased_specials(state: PlacerState, misnumbered: _ListedSpecials) -> dict[
 def _misnumbered_specials(state: PlacerState) -> _ListedSpecials | None:
     """The batch as one listing-wide specials pack with a number that isn't a listed special, else None.
 
-    For specials the curated listing (`TargetScope.listing`) beats the file names. In a regular season, a number
+    For specials the curated listing (`PlacementTarget.seadex`) beats the file names. In a regular season, a number
     outside the listing leaves the file foreign as usual.
     """
 
@@ -250,7 +250,7 @@ class _FitKind(IntEnum):
     WHOLE_SEASON = 3
     """Numbered `1..N` for the whole season, when the window holds only part of that season."""
     ANY_CONSECUTIVE = 4
-    """Any N consecutive numbers (`_RunFit.from_anywhere`)."""
+    """Any N consecutive numbers (`_SequenceFit.at_any_start`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,14 +417,14 @@ class _SequenceFit:
 def pass_sequence_over_parse(state: PlacerState) -> None:
     """Place one numbered run onto the run window by its own numbers when Sonarr's reading of it does not add up.
 
-    The open ids must form a run window. Candidates are the unplaced runs that fit a `_Tier`. Tie-breaks, in order:
+    The open ids must form a run window. Candidates are the unplaced runs that fit a `_FitKind`. Tie-breaks, in order:
     drop runs Sonarr matched whole outside the scope (unless all are), then keep the one run the titles select, the
     one an AniList title names, or the best tier. The run's own numbers place its members onto the window
-    (`RELEASE_RUN`), unless Sonarr's reading already puts each member on its own window episode. A run isn't placed
-    when a file sharing its prefix was placed by size against that file's numbers (`Placer.size_refuted_runs`).
-    With any parse unknown, the pick is `HELD`. It is refused by `_RunFit.refused`, `covering_refused` for a
-    covering pick, a dispute, a member its position disputes (`TorrentFile.disputed_by_position`), a title veto
-    (`TitleEvidence.vetoes`), or an AniList title naming another run.
+    (`SEQUENCE_OVER_PARSE`), unless Sonarr's reading already puts each member on its own window episode. A run isn't placed
+    when a file sharing its prefix was placed by size against that file's numbers (`PlacerState.size_contradicted_prefixes`).
+    With any parse unknown, the pick is `WAITING_ON_PARSE`. It is refused by `_SequenceFit.final_unplaced`, `whole_season_final_unplaced` for a
+    covering pick, a dispute, a member its position disputes (`TorrentFile.numbers_disagree_by_position`), a title veto
+    (`EpisodeTitleMatches.contradicts`), or an AniList title naming another run.
     """
 
     if not state.has_episode_index or (fit := _SequenceFit.of(state)) is None:
@@ -482,7 +482,7 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
 def _sole_candidate(
     candidates: Sequence[_Candidate], unjudged_positions: frozenset[int], naming: Naming | None
 ) -> _Candidate | None:
-    """The one candidate the tie-breaks leave, else None (see `pass_release_run`)."""
+    """The one candidate the tie-breaks leave, else None (see `pass_sequence_over_parse`)."""
 
     if len(candidates) > 1:
         candidates = [c for c in candidates if c.position in unjudged_positions] or candidates

@@ -110,7 +110,7 @@ def classify_pending_import(
     wait_outcome: "TorrentStatus | None",
     all_done: bool,
 ) -> PendingImportState:
-    """Map a poll's outcome to a single carried-over `PendingState`.
+    """Map a poll's outcome to a single carried-over `PendingImportState`.
 
     Args:
         wait_outcome: The torrent's terminal outcome this
@@ -164,10 +164,10 @@ class LeftForHandImport:
     files: tuple[HandImportFile, ...] = ()
 
     missing: tuple[EpisodeKey, ...] = ()
-    """The record's unfilled window episodes that hold no file (`UnfilledTargets.missing`)."""
+    """The record's unfilled window episodes that hold no file (`StillNeeded.missing`)."""
 
     untrusted: tuple[EpisodeKey, ...] = ()
-    """The record's unfilled window episodes that hold a file (`UnfilledTargets.not_recommended`)."""
+    """The record's unfilled window episodes that hold a file (`StillNeeded.untrusted`)."""
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -220,11 +220,11 @@ class AttemptResult:
 
     unplaced_files: tuple[str, ...] = ()
     """The download's on-disk files no episode claimed (one per distinct basename), when that is all the poll
-    found. Non-empty only from `unmatched()`: `files_present` and `command_issued` False, `deferral` NONE."""
+    found. Non-empty only from `unmatched()`: `all_done` and `command_issued` False, `pause_reason` NONE."""
 
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
     """The download's on-disk files the grab left for a hand import (`PendingImport.hand_import_files`), once every
-    placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `files_present`
+    placed file is in and the hand import isn't. Its names are non-empty only from `hand_import()`: `all_done`
     and `command_issued` False."""
 
     def __post_init__(self) -> None:
@@ -358,7 +358,7 @@ class Outcome(Enum):
     """The longer human phrase the run report / notification use."""
 
     kind: OutcomeKind
-    """The `OutcomeCategory` driving glyph + color + tally."""
+    """The `OutcomeKind` driving glyph + color + tally."""
 
     dropped: bool
     """Whether the engine removes the record from the durable store on this outcome.

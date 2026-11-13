@@ -6,8 +6,8 @@
 
 The rest of the suite builds the hub/loop/strategy via `make_bare_instance`
 (`object.__new__`), which bypasses `__init__`. These drive the real
-`RunServices` / `RunLoop` / `SonarrSync` constructors off a hand-built
-`RunDeps` so the collaborator wiring and the `begin_run` two-phase rebind
+`ArrRunServices` / `ArrRunLoop` / `SonarrStrategy` constructors off a hand-built
+`ArrRunDeps` so the collaborator wiring and the `begin_run` two-phase rebind
 have an in-suite guard (previously only an offline smoke).
 """
 
@@ -38,7 +38,7 @@ def _state_holders(loop: ArrRunLoop, services: ArrRunServices) -> list[object]:
 
     Introspective on purpose: a hand-enumerated holder list silently passes when
     a future collaborator is constructed with a ctx but missed by a `begin_run`
-    cascade - discovery here means its stale `_ctx` fails the identity asserts.
+    cascade - discovery here means its stale `_state` fails the identity asserts.
     """
 
     return [
@@ -126,7 +126,7 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
 
 
 def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
-    """`RunDeps.build` over the throwaway wiring every construction test shares."""
+    """`ArrRunDeps.build` over the throwaway wiring every construction test shares."""
 
     return ArrRunDeps.build(
         Arr.SONARR,
@@ -140,7 +140,7 @@ def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
 
 
 def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`RunDeps.build` constructs the run's httpx client with THIS arr's `verify_ssl`.
+    """`ArrRunDeps.build` constructs the run's httpx client with THIS arr's `verify_ssl`.
 
     It's the per-arr escape hatch for a self-signed HTTPS arr.
     """

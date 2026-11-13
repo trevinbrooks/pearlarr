@@ -1,4 +1,4 @@
-"""`assign_episode_ids`, the glossary and pass list below, and every pass not in `_run_passes` or `_orders`.
+"""`place_batch`, the glossary and pass list below, and every pass not in `_sequence_passes` or `_orders`.
 
 Our episode ids for the entry are authoritative. Sonarr's parse of a file name, and the number the name
 carries, only ever choose among them.
@@ -9,12 +9,12 @@ Terms used across the placement modules:
   A name without an own key borrows Sonarr's matched pairs.
 - Range key: an own key spelled as a tight range ("S01E05-06"). When Sonarr read only its first episode, the
   parse is widened to the whole range before any pass runs (`widen_range_key` says when it isn't).
-- Scope (`TargetScope`): the entry's episode ids a file may be placed on, plus the whole series' episode
+- Scope (`PlacementTarget`): the entry's episode ids a file may be placed on, plus the whole series' episode
   map every key is looked up in. An empty id list means no scope ("unscoped"): a file's own keys then
   place against the whole series.
 - Window (`window_placement`): the scope of one entry a torrent is listed on or claimed by. A torrent is
   placed under every window in turn, season windows first, then specials windows, each in AniList id order.
-- Listing (`TargetScope.listing`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
+- Listing (`PlacementTarget.seadex`): what SeaDex's listings tell us about the torrent. `ids` are the episodes of
   every entry that lists it, which a numbered specials pack is checked against (empty when no entry lists it, so
   the check is skipped). `identified` maps files to the episode whose single-file release has the same size.
   `special_aliases` maps a TMDB specials number to the TVDB special it stands for.
@@ -23,26 +23,26 @@ Terms used across the placement modules:
   Its ids start out used, as do ids an earlier window placed. Seeded files, and files since moved off disk
   ("gone"), are never placed again, but their parses and names still count as evidence.
 - Alias match: Sonarr moved a name's episode numbers, unchanged, into one regular season (a sequel as season 1).
-- Reading (`Reading`): the episode ids a file's parse resolves to in our series map, with flags saying how
-  far to trust them. A rejected reading (`Reading.vetoed`) is kept as evidence, but no pass places the file
+- Reading (`ParsedEpisodes`): the episode ids a file's parse resolves to in our series map, with flags saying how
+  far to trust them. A rejected reading (`ParsedEpisodes.rejected`) is kept as evidence, but no pass places the file
   by it.
 - Complete reading: every episode the parse names resolved in our series map (a partial span is never placed).
-- Trusted reading: a complete reading that was not rejected (`Reading.trusted`).
-- Runner-up: a file whose reading the exact pass's order (`Reading.rank`, the higher `vN`, batch order) places
+- Trusted reading: a complete reading that was not rejected (`ParsedEpisodes.usable`).
+- Runner-up: a file whose reading the exact pass's order (`ParsedEpisodes.rank`, the higher `vN`, batch order) places
   after a disputed file's reading for an episode. A refusal opens no episode to a runner-up: it never takes the
   episode by its reading or its title, and its claim on it refuses no run.
 - Unknown parse: a missing parse. `PlacementBatch.all_parses_known` is False while any file of the torrent has one.
 - Numberless: the file name carries no episode or absolute number (a key the series lacks may count as none).
 - Release number: the episode number the file name carries ("Show - 07"), read without Sonarr. A trailing "S2"
-  counts as one only when the names sharing its prefix count up from "S1" (`read_names`).
-- Numbered run (`NumberedRun`): the files whose names share the text before their release number, in number
+  counts as one only when the names sharing its prefix count up from "S1" (`split_names`).
+- Numbered run (`NumberedSequence`): the files whose names share the text before their release number, in number
   order. Of two versions of one number, the higher `vN` is the member and the lower is superseded.
 - Tail: the words of a run member's name after its release number.
-- Run window (`RunWindow`): the open ids, in number order, when they are consecutive episodes of one season or
+- Run window (`ConsecutiveEpisodes`): the open ids, in number order, when they are consecutive episodes of one season or
   carry consecutive absolute numbers. Specials numbered apart are one too when they are every episode of the
   title and each aired after the one before it.
 - Covering run: a run numbered `1..N` for a whole season when the run window holds only part of that season.
-- Tied file: a run file the season re-read (pass 5) fits to a season and the specials equally well (`Reading.tied`).
+- Tied file: a run file the season re-read (pass 5) fits to a season and the specials equally well (`ParsedEpisodes.either_ids`).
 - Open file: a file with no verdict yet whose trusted reading does not lie wholly outside the scope.
 - Specific title: an episode title with enough words beyond the series title to place a file by.
 - Titled as: the file name carries the specific title of exactly one episode, and no other file of the torrent
@@ -53,22 +53,22 @@ Terms used across the placement modules:
   episode other than its pair.
 - Count-based passes: the absolute zip, the ordered zip, and the numbered-run pass. They place files by
   position, not by what each file says, so any sign that the batch's count is off turns them off
-  (`Placer.count_legs_barred`).
+  (`PlacerState.pairing_off`).
 - Slice: the part of a series one entry covers when a season is split across several entries. A file of
   another slice is `FOREIGN`.
 - Stored record: the pending import record already saved for a torrent, one per infohash.
-- Claim: one entry's part of a stored record (`EntryClaim`). In `parse_reading`: a `(season, episode)` a parse names.
+- Claim: one entry's part of a stored record (`TitleClaim`). In `parsed_episodes`: a `(season, episode)` a parse names.
   In `window_placement`: one window's verdict on a file it neither placed nor refused, which a later window may still
-  decide. A file no window decides ends with its strongest claim (`PlacementVerdict.claim_rank`).
+  decide. A file no window decides ends with its strongest claim (`PlacementVerdict.rank`).
 - Lone-number file: a file Sonarr parsed to absolute numbers alone ("Show - 07"), no own key, no season above 0,
   neither a special nor a season pack. Not an extra, and not counted by its own title.
 - Numberings reader (`numberings`): reads a torrent's lone-number files under every way the release group could
   have counted the series (from its first episode, from the window's, by Sonarr's episode numbers, straight through
   the torrent's windows, by TVDB's absolutes) and proposes each file's row when every fitting way agrees. It runs
-  once per torrent, after the windows merge, and the fill (`WindowedAssignment.filled`) places a proposal only on a
+  once per torrent, after the windows merge, and the fill (`WindowedPlacements.with_proposals`) places a proposal only on a
   file no window placed, refused or read inside itself (`NUMBERINGS_AGREE`), so it never outranks a pass. No count
   sign turns it off: its own gates refuse instead.
-- Other order (`EpisodeOrder`): another way TVDB numbers the series (DVD, alternate, and so on), read onto Sonarr's
+- Other order (`TvdbOrder`): another way TVDB numbers the series (DVD, alternate, and so on), read onto Sonarr's
   episodes. The index holds them only for a series Sonarr numbers as aired.
 - Order-only key: a `(season, episode)` an other order gives to an episode Sonarr doesn't list, such as one half of
   an episode that order splits in two.
@@ -78,22 +78,22 @@ Terms used across the placement modules:
 The passes run in this order. Each places files only onto the ids that earlier passes left open:
 
 1. Extras (`_pass_extras`): `EXTRA`.
-2. Title contradictions (`_pass_refuse_refuted`): rejects the readings a title contradicts or no title confirms.
-3. Number disputes (`_pass_refuse_disputed`): `DUPLICATE`, and rejects the disputed readings.
-4. Overlapping spans (`_pass_refuse_overlaps`): rejects the multi-episode readings another file's reading overlaps.
-5. Season re-read (`_run_passes.pass_reread_season_runs`): re-reads a `1..N` run into one season, or ties it.
-6. Misnumbered pack (`_run_passes.pass_misnumbered_pack`): `ALTERNATE`, `ALIASED_ELSEWHERE`, `MISNUMBERED`,
+2. Title contradictions (`_pass_reject_contradicted`): rejects the readings a title contradicts or no title confirms.
+3. Number disputes (`_pass_reject_disagreeing`): `DUPLICATE`, and rejects the disputed readings.
+4. Overlapping spans (`_pass_reject_overlaps`): rejects the multi-episode readings another file's reading overlaps.
+5. Season re-read (`_sequence_passes.pass_sequence_as_matched_season`): re-reads a `1..N` run into one season, or ties it.
+6. Misnumbered pack (`_sequence_passes.pass_misnumbered_specials`): `SPECIAL_ALIAS`, `ALIAS_OUTSIDE_WINDOW`, `MISNUMBERED`,
    `SKIPPED`, `DUPLICATE`.
-7. Size identity (`_pass_identity`): `IDENTIFIED`, `OVERRIDDEN`, `SKIPPED`, `FOREIGN`.
-8. Release run (`_run_passes.pass_release_run`): `RELEASE_RUN`, `HELD`, `FOREIGN`, `DUPLICATE`.
+7. Size identity (`_pass_size_match`): `SIZE_MATCH`, `SIZE_OVER_NAME`, `SKIPPED`, `FOREIGN`.
+8. Release run (`_sequence_passes.pass_sequence_over_parse`): `SEQUENCE_OVER_PARSE`, `WAITING_ON_PARSE`, `FOREIGN`, `DUPLICATE`.
 9. Exact (`_pass_exact`): `EXACT`.
 10. Episode title (`_pass_episode_title`): `EPISODE_TITLE`.
-11. Absolute zip (`_pass_counted`, `_absolute_order`): `ABSOLUTE`.
-12. Single file (`_pass_counted`, `_place_single`): `SINGLE`, `TITLED`.
-13. Ordered zip (`_pass_counted`, `_natural_order`): `ORDERED`.
-14. Numbered run (`_run_passes.pass_numbered_run`): `NUMBERED_RUN`, `DUPLICATE`.
+11. Absolute zip (`_pass_pairing`, `_absolute_order`): `ABSOLUTE`.
+12. Single file (`_pass_pairing`, `_place_single`): `SINGLE`, `TITLED`.
+13. Ordered zip (`_pass_pairing`, `_natural_order`): `ORDERED`.
+14. Numbered run (`_sequence_passes.pass_sequence`): `NUMBERED_RUN`, `DUPLICATE`.
 15. Classify (`_pass_classify`): `MISNUMBERED`, `DUPLICATE`, `FOREIGN`, `TITLE_REFUTED`, `SKIPPED`.
-16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, `OTHER_ORDER_ELSEWHERE`, `ORDER_ONLY`.
+16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, `OTHER_ORDER_OUTSIDE_WINDOW`, `ORDER_ONLY`.
 
 At most one of passes 11 to 13 is tried: the absolute zip when its conditions hold, else the single-file
 pass when one id is open, else the ordered zip. They consider only open files. Every zip (passes 8, 11,
@@ -122,13 +122,13 @@ from ..releases import EpisodeKey
 
 @dataclass(frozen=True, slots=True)
 class PlacerResult:
-    """What one `assign_episode_ids` call gives: each file's verdict, and what the passes read off every name."""
+    """What one `place_batch` call gives: each file's verdict, and what the passes read off every name."""
 
     placements: BatchPlacements
-    """One verdict per name in `PlacementBatch.names`, batch order."""
+    """One verdict per name in `PlacementBatch.new_names`, batch order."""
     facts: Mapping[str, NameFacts]
     """Every name of the torrent, seeded and gone names included, as the names read before the first pass. Read-only
-    (`Placer.facts`)."""
+    (`PlacerState.facts`)."""
 
 
 def place_batch(batch: PlacementBatch, target: PlacementTarget) -> PlacerResult:
@@ -174,9 +174,9 @@ def _pass_reject_contradicted(state: PlacerState) -> None:
     A title contradicts a reading when the file's name carries the title of an episode other than the one the
     reading points at. In a numbered run, that rejects the in-scope readings of the other members too, and a seeded
     member's title refutes its run like any mate's. A member whose own title confirms its reading keeps it, and one
-    rejected for a mate's title is noted (`TorrentFile.run_refuted`), which pass 15 reads as `TITLE_REFUTED`. A file
+    rejected for a mate's title is noted (`TorrentFile.sequence_contradicted`), which pass 15 reads as `TITLE_REFUTED`. A file
     Sonarr read onto an episode by the number its own title opens with, when no title confirms the count
-    (`Placer.counted_by_title`), is held for a hand import like a disputed one: `MISNUMBERED` unless a later pass
+    (`PlacerState.parsed_by_title_number`), is held for a hand import like a disputed one: `MISNUMBERED` unless a later pass
     places or claims it. Any rejection turns the count-based passes off.
     """
 
@@ -201,13 +201,13 @@ def _pass_reject_contradicted(state: PlacerState) -> None:
 def _pass_reject_disagreeing(state: PlacerState) -> None:
     """Reject each reading that another count of its own name, or its run's shape, puts on a different episode.
 
-    A name that counts two ways is right about at most one of them (`_disputes`), and a keyed run that numbers past
+    A name that counts two ways is right about at most one of them (`_numbers_disagree`), and a keyed run that numbers past
     its season's end, in a season whose absolute numbering interleaves a special, is disputed from that special's
-    position on (`_positions_disputed`). The window that admits one of the episodes a dispute is over rejects the
+    position on (`_positions_disagree`). The window that admits one of the episodes a dispute is over rejects the
     reading, and the file is `MISNUMBERED` unless a later pass places or claims it. The release run (pass 8) never
     places a run with a member its position disputes. Under any other window the file reads as it did. A lower
     version of a disputed number is `DUPLICATE`, a copy of its top version. The files a disputed reading would have
-    beaten to an episode are its runner-ups (`_runner_ups`): the refusal never hands them the episode. The
+    beaten to an episode are its runner-ups (`_next_in_line`): the refusal never hands them the episode. The
     count-based passes are turned off under every window.
     """
 
@@ -239,7 +239,7 @@ def _numbers_disagree(state: PlacerState, file: TorrentFile) -> frozenset[int] |
 
     Only a count that is another episode's absolute number disputes. Beside a spelled-out key or a reading borrowed
     from Sonarr's match, that is a bracketed count ("S10E01 (0337)"). Beside a key Sonarr guessed, it is any count
-    when Sonarr's series match doesn't back the key, else the one the key was glued from (`glued_counts`).
+    when Sonarr's series match doesn't back the key, else the one the key was glued from (`glued_numbers`).
     """
 
     info = file.parse
@@ -346,12 +346,12 @@ def _pass_reject_overlaps(state: PlacerState) -> None:
 
 
 def _pass_size_match(state: PlacerState) -> None:
-    """Place files on the episode their size matched (`ListingEvidence.identified`), even over their names.
+    """Place files on the episode their size matched (`SeadexEvidence.size_matches`), even over their names.
 
     A file with the same size as a single-file release SeaDex lists for one episode goes on that episode
-    (`IDENTIFIED`). It is left for later passes if its reading already agrees, its title names another episode, or
+    (`SIZE_MATCH`). It is left for later passes if its reading already agrees, its title names another episode, or
     the matched episode belongs to another series. If the file's numbers point at a different episode
-    (`_numbers_another`), it's `OVERRIDDEN` and the caller warns. That means the batch's numbering is off, so the
+    (`_numbers_another`), it's `SIZE_OVER_NAME` and the caller warns. That means the batch's numbering is off, so the
     count-based passes are turned off and the release run (pass 8) skips the file's numbered run. If the episode is
     already taken the file is `SKIPPED`, and if it's outside the scope it's `FOREIGN`. This runs after the
     misnumbered pack (pass 6), so it never pulls a file out of a pack that pass refused or placed through its
@@ -413,7 +413,7 @@ def _pass_exact(state: PlacerState) -> None:
     """Place each unplaced file whose trusted reading lies wholly inside the scope on unused ids.
 
     Unscoped, a name's own keys place against the whole series. When two files resolve to one episode,
-    `Reading.rank` decides, then the higher `vN`, then batch order. So a "17.5 (S00E01)" beats a "- 17" whose match
+    `ParsedEpisodes.rank` decides, then the higher `vN`, then batch order. So a "17.5 (S00E01)" beats a "- 17" whose match
     Sonarr shifted onto the same special, a "- 08" beats a "- Bonus" whose CRC tag parsed as its key, and a
     "- 09v2" beats its "- 09". The loser stays unplaced.
     """
@@ -490,7 +490,7 @@ def _absolute_order(
 
     The zip pairs the open files with the open ids in absolute-number order, only when every open file carries
     exactly one absolute number, the counts match, every parse is known, and no two files of the torrent share an
-    absolute number. An absolute Sonarr counted from the file's own title's number (`Placer.counted_by_title`) is
+    absolute number. An absolute Sonarr counted from the file's own title's number (`PlacerState.parsed_by_title_number`) is
     no absolute.
     """
 
@@ -520,7 +520,7 @@ def _absolute_order(
 def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep_id: int) -> None:
     """Fill the one open id: with the only open file if it is numberless, else the numberless file a title names.
 
-    Numberless here means the file's parse has no usable episode number (`_reads_no_number`). The only open file
+    Numberless here means the file's parse has no usable episode number (`_has_no_parsed_number`). The only open file
     takes the id as `SINGLE`, and the file a title names takes it as `TITLED`. The title is an AniList title of the
     entry, and that match runs only when every parse is known. A runner-up for the id takes it neither way, and no
     other file takes it in its place.
@@ -598,7 +598,7 @@ class _DuplicateProof:
 def _pass_classify(state: PlacerState) -> None:
     """Classify every unplaced file.
 
-    Each becomes `MISNUMBERED` (its own numbers disagree, or its count stands unconfirmed: `TorrentFile.disputed`),
+    Each becomes `MISNUMBERED` (its own numbers disagree, or its count stands unconfirmed: `TorrentFile.numbers_disagree`),
     `DUPLICATE` (it reads inside the scope onto episodes other files provably hold, or a version of the same file
     holds its titled episode), `FOREIGN` (its reading lies wholly outside the scope, or it is titled as an episode
     outside it and confirmed by its reading, by that reading's rejection while other files hold its episodes, or by

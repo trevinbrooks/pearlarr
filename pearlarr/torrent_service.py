@@ -80,7 +80,7 @@ class AddResult(NamedTuple):
     name: str | None
     """The qBittorrent-reported name. A new add falls back to the tracker's release title. None when neither exists."""
     added_on: datetime | None = None
-    """qBittorrent's own add time for an `ALREADY_ADDED` torrent (local-naive, like `now_stamp`), else None."""
+    """qBittorrent's own add time for an `ALREADY_IN_QBIT` torrent (local-naive, like `now_stamp`), else None."""
 
 
 def _row_added_on(row: object) -> datetime | None:
@@ -161,7 +161,7 @@ class _CategoryLook:
 
         The oldest, so every run picks the same one: the url's record is keyed by its hash. None when there's
         none, or SeaDex's own torrent is anywhere in qBittorrent. Names count, not sizes alone: sizes are the
-        planner's identity for one release (`DownloadPlanner.reduce_overlapping_downloads`), but a record finds its
+        planner's identity for one release (`GrabPlanner.reduce_overlapping_grabs`), but a record finds its
         files on disk by name, so a torrent is usable only when the url's names are in it.
         """
 
@@ -288,7 +288,7 @@ class TorrentService:
         return AddResult(AddStatus.ADDED, name or source_name)
 
     def _already_added(self, item: Release) -> AddResult | None:
-        """The `ALREADY_ADDED` result when qBittorrent has the url's torrent (`SeadexUrlItem.qbit_hash`), else None."""
+        """The `ALREADY_IN_QBIT` result when qBittorrent has the url's torrent (`Release.qbit_hash`), else None."""
 
         qbit_hash = item.qbit_hash
         # A private torrent has no info hash to dedup by, so qBittorrent dedups it internally.

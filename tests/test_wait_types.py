@@ -101,7 +101,7 @@ class TestPendingStateAndProbe:
 
 
 class TestClassifyPending:
-    """`classify_pending` folds a poll's outcome + the files-present flag into a state."""
+    """`classify_pending_import` folds a poll's outcome + the files-present flag into a state."""
 
     def test_missing(self) -> None:
         assert classify_pending_import(TorrentStatus.GONE, False) is PendingImportState.GONE

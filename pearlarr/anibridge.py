@@ -75,7 +75,7 @@ type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 
 type AniBridgeRawMapping = dict[str, Any]
 """One consumer-facing mapping entry (mixed-typed). `mappings` reads it via
-`_entry_from_raw`. Stays a loose `dict` - it is the raw->typed boundary,
+`_mapping_from_raw`. Stays a loose `dict` - it is the raw->typed boundary,
 not the typed domain."""
 
 type AniBridgeLookup = dict[int, AniBridgeRawMapping]
@@ -98,7 +98,7 @@ class AniBridgeTitle:
     `anilist:*` entry points to. It is *mutable and built up* by
     `AniBridge._add_target` (appending to the list/dict fields as targets
     are folded in), so the collection fields default-construct empty rather than
-    being passed at once. `_consumer_entry` then reads attributes off it.
+    being passed at once. `_raw_mapping_for` then reads attributes off it.
     """
 
     anidb_id: int | None = None
@@ -339,7 +339,7 @@ class AniBridge:
         """Flatten this (graph-backed) view into store row tuples.
 
         Persists the *computed* consumer-entry picks (`_first`) and the already
-        filtered specials aliases, so the SQL backing reproduces `_consumer_entry`
+        filtered specials aliases, so the SQL backing reproduces `_raw_mapping_for`
         with zero re-derivation.
 
         Returns:
@@ -591,11 +591,11 @@ class AniBridge:
     ) -> AniBridgeLookup:
         """Batched SQL twin of the graph `lookup_by_*` (on a stored view).
 
-        One xref->entry JOIN fetches every entry mapped to `ext_id` on `axis`.
+        One xref->entry JOIN fetches every entry mapped to `external_id` on `id_kind`.
         For a tvdb-scoped lookup, an xref->range JOIN and an xref->alias JOIN fetch
         all their range and alias rows at once (grouped here by AniList id), so
         resolving k ids costs 3 queries rather than the 1 + 3k point queries a per-id
-        approach needs. Reproduces `_consumer_entry` exactly: `tvdb_mappings` attaches
+        approach needs. Reproduces `_raw_mapping_for` exactly: `tvdb_mappings` attaches
         whenever `tvdb_id` is supplied, and `special_aliasing` whenever the id also has
         alias rows. The only such caller (`lookup_by_tvdb`)
         iterates the tvdb xref, so every resolved id is guaranteed to carry that

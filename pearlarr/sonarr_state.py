@@ -50,8 +50,8 @@ def classify_queue(records: Sequence[QueueRecord]) -> QueueState:
     2. any record `importing` -> `IMPORTING`
     3. else any record in motion -> `WAIT`
     4. else any record `importBlocked`, `failed`, `failedPending`, `ignored`, or `importPending` with a
-       warning or error status -> `STEP_IN`
-    5. else a clean `importPending` -> `PENDING_CLEAN`, otherwise -> `STEP_IN`
+       warning or error status -> `STUCK`
+    5. else a clean `importPending` -> `IMPORT_PENDING_OK`, otherwise -> `STUCK`
     """
 
     if not records:
@@ -151,7 +151,7 @@ def manual_import_in_flight(
     """The queued or started ManualImport covering this download, or None.
 
     Matched by its files' download id (case-insensitive), or, for a command whose files carry no download id, by a
-    `content_paths` prefix or a `target_ep_ids` overlap.
+    `content_paths` prefix or a `file_map_episode_ids` overlap.
     """
 
     target_hash = identifiers.infohash.casefold()
@@ -284,7 +284,7 @@ def classify_commands(
 ) -> CommandBlock | None:
     """Reduce one `/api/v3/command` snapshot to the block holding a step-in, or None when clear.
 
-    `is_own` says whether a command id is one this run POSTed.
+    `is_auto_import` says whether a command id is one this run POSTed.
     """
 
     in_flight = manual_import_in_flight(commands, identifiers)

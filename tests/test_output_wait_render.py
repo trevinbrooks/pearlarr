@@ -4,11 +4,11 @@
 """Tests for the wait surface's pure line builders + throttle + reducers.
 
 The byte guarantees on the wait ledger live in the builders (consumed by the
-WaitRegion's durable prints) and the `output.textline`
+WaitRegion's durable prints) and the `output.line_renderers`
 grammar. The region-side rendering is pinned in test_output_wait_region. Here:
-the `PulseThrottle` unit contract, the builder edge cases (including the
+the `ProgressLineThrottle` unit contract, the builder edge cases (including the
 category-based graduation level), and the pure cockpit reducers
-(`live_model` / `sparkline` / `graduation_tail`).
+(`live_model` / `sparkline` / `row_finished_note`).
 """
 
 import logging

@@ -7,7 +7,7 @@ for diagnostics - never position, never layout.
 
 The fold is replay-deterministic: the same event stream always yields the same
 state. The fixed transition table IS `KIND_DEPTH` plus the `match` in
-`BreadcrumbFold.apply` - boundary events close strictly-deeper nodes, never
+`OpenScopes.apply` - boundary events close strictly-deeper nodes, never
 heuristic inference. A close on an unknown/already-closed id is a no-op, so
 defensive closes (the unwind teardown, the doubled run-close) are idempotent.
 """

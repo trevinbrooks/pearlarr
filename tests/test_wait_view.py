@@ -7,7 +7,7 @@ hub events - rendering lives behind the hub (WaitRegion for the console, the
 textline sinks for file/plain/json, pinned in test_output_wait_region /
 test_output_textline). These pin the narrator's event grammar (lazy open,
 graduation dedup + exact field mapping, the close tally), the `make_wait_view`
-probe (wants_telemetry + the pulse interval), the pure `graduations` helper,
+probe (wants_telemetry + the pulse interval), the pure `newly_finished` helper,
 the WaitResult counting, and the no-throw contract.
 """
 

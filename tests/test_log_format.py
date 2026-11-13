@@ -6,7 +6,7 @@ Pins the contract:
 * "rich" (and "auto" on a TTY) attaches exactly ONE `RichConsoleHandler`.
   It is the only non-bridge handler - no FileHandler anywhere (the hub's
   FileLogSink owns the file), no logger filters (severity tallies live on the
-  hub's `SeverityCounts`).
+  hub's `SeverityCounter`).
 * "plain"/"json" (and "auto" off a TTY) attach NO console handler at all:
   level-only configuration. The bridge is the only handler, so records still
   reach the hub and `logging.lastResort` can never fire.
@@ -181,7 +181,7 @@ class TestRichHandlerSeam:
         """Plain WARNING+ (incl. exc_info) never render here while a bridge is installed.
 
         The hub places the badge instead - rendering here too would double it.
-        Ownership is registration, not seat state: pre-`begin_cycle` or after a
+        Ownership is registration, not seat state: pre-`begin_run` or after a
         strike-out, the hub's STDERR fallback is the single net.
         """
 

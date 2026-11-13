@@ -2,7 +2,7 @@
 # reportPrivateUsage is off for the skip-set pins alone: _TEXT_SKIP/_JSON_SKIP are
 # deliberately private tables, imported to pin their exact membership (as is the
 # rotation stamp format, _BACKUP_STAMP_FORMAT).
-"""Tests for the shared text grammar + text sinks (`output.textline`).
+"""Tests for the shared text grammar + text sinks (`output.line_renderers`).
 
 Golden-pin the `ts LEVEL [path] message k=v` grammar (the file-log contract),
 the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
@@ -108,8 +108,8 @@ _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 def _format(event: Event, *events_before: Event) -> str | None:
     """The REAL plain sink's rendering of one event (None = wrote nothing).
 
-    Goldens pin the shipping `LineRenderer` path - not a parallel formatter -
-    so an assembly change in `_GrammarSink._render` moves these bytes. Context
+    Goldens pin the shipping `PlainRenderer` path - not a parallel formatter -
+    so an assembly change in `_GrammarRenderer._render` moves these bytes. Context
     events render+fold first (their output is discarded via the stream mark).
     The DEBUG threshold admits every line, matching the old unthresholded
     `format_line`. The trailing newline is the sink's write framing, not part
@@ -1242,7 +1242,7 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     """A `Field` key that collides with an envelope member would silently clobber it in every JSON line.
 
     `JsonRenderer` writes fact fields straight into the envelope dict, and every
-    `Field` key in `textline.py` is a string literal, so this AST canary pins the
+    `Field` key in `line_renderers.py` is a string literal, so this AST canary pins the
     disjointness for current and future field vocabulary.
     """
 

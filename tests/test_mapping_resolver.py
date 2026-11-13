@@ -828,7 +828,7 @@ def _anidb_resolver() -> MappingResolver:
 
 
 class TestAnidbMappingDict:
-    """`anidb_mapping_dict` resolves season-scoped id->episode maps.
+    """`anidb_episode_by_tvdb` resolves season-scoped id->episode maps.
 
     Missing season/id reads as empty, a repeated season keeps the last one, an ambiguous id raises, and a
     disabled anidb source is always empty.

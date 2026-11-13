@@ -1,9 +1,9 @@
 """The download-decision engine: which SeaDex releases to grab.
 
-`DownloadPlanner` is near-pure: it consumes the shaped `seadex_dict`, the
+`GrabPlanner` is near-pure: it consumes the shaped `seadex_dict`, the
 Arr's current release info and an optional episode list, and returns a
-`PlanResult`. It flips the per-url `download` flags in place and reports the
-private-only skip outcome (`PlanResult.skips`: *what to log* and *what was
+`GrabPlan`. It flips the per-url `download` flags in place and reports the
+private-only skip outcome (`GrabPlan.skips`: *what to log* and *what was
 skipped*) as data, rather than reaching into the orchestrator's run state or
 its log formatter.
 """
@@ -47,7 +47,7 @@ class PrivateOnlyNotice:
 
 @dataclass
 class PrivateOnlyNotices:
-    """The private-only skip outcome of `reduce_overlapping_downloads`."""
+    """The private-only skip outcome of `reduce_overlapping_grabs`."""
 
     warned: bool = False
     """True when at least one same-files set was dropped with a warning: none of its flagged groups was
@@ -73,9 +73,9 @@ class GrabPlan:
     seadex_dict: SeadexDict
     """The same dict passed in, annotated in place with per-url `download` flags."""
     skips: PrivateOnlyNotices
-    """The private-only skip outcome from `reduce_overlapping_downloads`, folded onto run state by the caller."""
+    """The private-only skip outcome from `reduce_overlapping_grabs`, folded onto run state by the caller."""
     guards: OwnedAtGrab
-    """The overwrite-guard evidence the import inherits whole (see `GuardFacts`):
+    """The overwrite-guard evidence the import inherits whole (see `OwnedAtGrab`):
     the size-verified current groups, the positively-stale ones, and the owned
     untagged `(episode id, size)` claims. Only Sonarr's import reads it."""
 
@@ -102,7 +102,7 @@ def _owns_no_group_copy(counter: Counter[int] | None, listed_sizes: Iterable[int
     holds (subtitles, fonts, creditless extras), so requiring every LISTED size
     on disk would only ever match a single-file release. Multisets, so two
     untagged files at one size need two listed twins. `counter` is the
-    `_untagged_counter` fold (None short-circuits: nothing ownable on disk).
+    `_no_group_counter` fold (None short-circuits: nothing ownable on disk).
     """
 
     return counter is not None and counter <= Counter(listed_sizes)
@@ -297,13 +297,13 @@ class _FileReleaseGroup(NamedTuple):
     group: str | None
     """The normalized group: the file's own tag, or the pick a listed size named."""
     by_size: bool
-    """Identified by exact listed size, not a tag (see `_episode_identities`)."""
+    """Identified by exact listed size, not a tag (see `_file_release_groups`)."""
     size: int | None
     """The file's on-disk size (always the listed size for a `by_size` identity)."""
 
 
 class _FileReleaseGroups(NamedTuple):
-    """`_episode_identities`' two views of the on-disk files - deliberately OVERLAPPING.
+    """`_file_release_groups`' two views of the on-disk files - deliberately OVERLAPPING.
 
     `identities` holds every identified file (tagged or size-identified);
     `untagged_by_key` holds every untagged file, the size-identified ones
@@ -379,7 +379,7 @@ def _file_release_groups(
 class _PlanContext:
     """Per-entry invariants for the URL match loop.
 
-    Computed once per entry in `filter_by_release_group` and shared by both
+    Computed once per entry in `plan` and shared by both
     per-URL matchers. Nothing here changes inside the loop (only each
     `url_item`'s `download`/`upgrade` fields flip).
     """
@@ -395,10 +395,10 @@ class _PlanContext:
     grabbed over a copy only a rename left unrecognizable)."""
     sonarr_by_key: dict[EpisodeKey, SonarrEpisode]
     file_release_groups: Mapping[EpisodeKey, _FileReleaseGroup]
-    """Each on-disk file's effective release identity (see `_episode_identities`)."""
+    """Each on-disk file's effective release identity (see `_file_release_groups`)."""
     untagged_counter: Counter[int] | None
     """The untagged on-disk files' size multiset (Radarr's `None` key, or Sonarr's
-    untagged episode files), pre-folded by `_untagged_counter` - the unparseable-url
+    untagged episode files), pre-folded by `_no_group_counter` - the unparseable-url
     ownership input. None when nothing untagged can claim ownership."""
     coverage: EpisodeCoverage
     """Which sibling picks cover each episode (see `episode_coverage`)."""
@@ -425,7 +425,7 @@ def _window_in_place(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: C
 
 
 class _GroupOwnership(NamedTuple):
-    """The plan's size-evidence verdicts per pick group, feeding `GuardFacts` by name."""
+    """The plan's size-evidence verdicts per pick group, feeding `OwnedAtGrab` by name."""
 
     owned: tuple[str, ...]
     """Groups whose every attributed on-disk file sits at a listed size (vacuously, none on disk)."""
@@ -488,10 +488,10 @@ class GrabPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
     Constructed once per Arr run with the arr it plans for and whether the run
-    is interactive. `filter_by_release_group` takes the already-shaped
-    `seadex_dict` plus the Arr's release info and returns a `PlanResult`. The
+    is interactive. `plan` takes the already-shaped
+    `seadex_dict` plus the Arr's release info and returns a `GrabPlan`. The
     planner keeps a logger only for the per-release debug breadcrumbs. The
-    operator-facing private-only skip is returned as a `SkipNotice`, never
+    operator-facing private-only skip is returned as a `PrivateOnlyNotice`, never
     logged here.
     """
 
@@ -643,7 +643,7 @@ class GrabPlanner:
         Radarr and weirdly named TV: if the group isn't in the Arr's releases
         (and nothing overlaps) grab it. If it is, grab it only when the file
         sizes are disjoint. A copy a rename left untagged is identified by size
-        instead (`_owns_untagged_copy`).
+        instead (`_owns_no_group_copy`).
         """
 
         url = release.url
@@ -712,7 +712,7 @@ class GrabPlanner:
         the file sizes match. A release-group mismatch with no covering
         alternative, or an all-sizes mismatch among the rg-matched episodes,
         flips download on. An untagged on-disk file the entry's sizes
-        identified (`_episode_identities`) matches by that group instead of by
+        identified (`_file_release_groups`) matches by that group instead of by
         its missing tag.
 
         A listed size our group holds on more episodes than the listing places
@@ -891,7 +891,7 @@ class GrabPlanner:
         on too many episodes) and an unflagged *preferred* public group covers
         the same files, that group is promoted (grabbed) with an INFO notice.
         A fallback is never promoted over an owned copy of the preferred
-        private release - those sets warn and hold (`stale_held`).
+        private release - those sets warn and hold (`outdated`).
 
         After each set resolves, just-dropped public urls whose coverage no
         surviving url carries are re-flagged (group-atomic drops must not lose

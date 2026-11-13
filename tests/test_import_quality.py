@@ -67,7 +67,7 @@ class TestParseQualityFromFilename:
 
 
 class TestQualityAxesFromModel:
-    """`quality_axes_from_model` reads the `(source, resolution)` pair off a `QualityModel`.
+    """`quality_parts_from_model` reads the `(source, resolution)` pair off a `QualityModel`.
 
     An unknown source or zero resolution is treated as undetermined, as is a None model.
     """
@@ -92,7 +92,7 @@ class TestQualityAxesFromModel:
 
 
 class TestQualityAxesFromName:
-    """`quality_axes_from_name` resolves a display name to its `(source, resolution)` pair via the definitions."""
+    """`quality_parts_from_name` resolves a display name to its `(source, resolution)` pair via the definitions."""
 
     def test_resolves_default_name_to_axes(self) -> None:
         assert quality_parts_from_name("Bluray-2160p", _DEFS) == QualityParts(

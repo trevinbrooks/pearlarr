@@ -330,7 +330,7 @@ def _configured_format(config_path: str) -> LogFormat:
     """The configured `advanced.log_format` peek, still possibly "auto".
 
     Folds to "auto" when the config is missing or unreadable - the real load
-    owns reporting those. `_resolved_format` folds "auto" to a concrete
+    owns reporting those. `_run_format` folds "auto" to a concrete
     format via `resolve_console_format` (the one fold home).
     """
 
@@ -342,7 +342,7 @@ def _run_format(config_path: str) -> LogFormat:
     """The cycle's console format, "auto" folded once (`resolve_console_format`).
 
     Both run commands call this once per cycle and feed the SAME resolved value
-    to `setup_logger` AND `hub.begin_cycle`, so the handler graph and the
+    to `setup_logger` AND `hub.begin_run`, so the handler graph and the
     hub's console seat can never disagree within a cycle.
     """
 

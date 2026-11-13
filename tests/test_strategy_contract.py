@@ -6,10 +6,10 @@
 """Seam tests for the composition split.
 
 These pin the contract between the run machinery and the Arr strategies: each
-`ArrSync` hook reaches the shared pipeline only through the injected
-`RunServices` the strategy holds as `self._services` - and since the hub
+`ArrStrategy` hook reaches the shared pipeline only through the injected
+`ArrRunServices` the strategy holds as `self._services` - and since the hub
 split out of the old god class, that seam is literal: the scripted fake below
-is a real `RunServices` subclass. The strategies are built bare
+is a real `ArrRunServices` subclass. The strategies are built bare
 (`object.__new__`) so no live Sonarr/Radarr client is constructed.
 """
 
@@ -165,9 +165,9 @@ class GetAniListIdsCall(NamedTuple):
 
 
 class _FakeRunServices(ArrRunServices):
-    """A scripted `RunServices` - the seam a strategy holds as `self._services`.
+    """A scripted `ArrRunServices` - the seam a strategy holds as `self._services`.
 
-    A REAL `RunServices` subclass (the seam name is literal now, so it also
+    A REAL `ArrRunServices` subclass (the seam name is literal now, so it also
     satisfies the constructors' typed `services` parameter), with its own
     `__init__` that never calls the heavy real one. Every member of the
     strategy-facing surface is overridden: each scriptable result is a
@@ -338,7 +338,7 @@ class _FakeRunServices(ArrRunServices):
 def test_fake_overrides_the_full_public_surface() -> None:
     """`@override` catches renames and signature drift but NOT additions.
 
-    A new public `RunServices` member would be silently inherited here (real
+    A new public `ArrRunServices` member would be silently inherited here (real
     body over fake state) and only fail at test runtime. Reflection closes
     that gap - extend the fake when this fails.
     """
@@ -677,7 +677,7 @@ def _make_sonarr_for_import(
     clock: FakeClock | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A bare `SonarrSync` plus its scripted `self.sonarr` `HookedSonarrClient`.
+    """A bare `SonarrStrategy` plus its scripted `self.sonarr` `HookedSonarrClient`.
 
     The fake returns the given queue records, current episodes, manual-import
     candidates, quality definitions, languages and an execute command id -
@@ -2448,14 +2448,14 @@ def _grab_episodes(
 ) -> ScriptedEpisodes:
     """Entry 5's window is episode 102 of `sonarr`'s series.
 
-    The `unread_series` have no order record, and the `unread_entries` no AniList record.
+    The `unread_series` have no order record, and the `unread_al_ids` no AniList record.
     """
 
     return ScriptedEpisodes(sonarr, windows={5: [_EP2]}, unread_series=unread_series, unread_al_ids=unread_al_ids)
 
 
 def _sonarr_grab_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: ScriptedEpisodes) -> _FakeRunServices:
-    """Drive a Sonarr `process_al_id` for entry 5 (series 7) listing one two-file torrent.
+    """Drive a Sonarr `check_title` for entry 5 (series 7) listing one two-file torrent.
 
     The series maps to entries 4 and 5 and to the ignored entry 6.
     """
@@ -2496,7 +2496,7 @@ def _run_title_check(
     *,
     episode_count: int | None = None,
 ) -> _FakeRunServices:
-    """Drive a Sonarr `process_al_id` for entry 5 over `window` (all of series 7), listing one torrent of `files`.
+    """Drive a Sonarr `check_title` for entry 5 over `window` (all of series 7), listing one torrent of `files`.
 
     `episode_count` is AniList's count for entry 5, None when it gives none.
     """
@@ -2857,13 +2857,13 @@ class TestSonarrProcessAlIdMetadataUnread:
 
 
 class TestRadarrProcessAlIdSeeds:
-    """A Radarr grab seeds a `PendingSeed` per download+hash, keyed by its hash in qBittorrent, gated on wait mode."""
+    """A Radarr grab seeds a `PendingImportUpdate` per download+hash, keyed by its hash in qBittorrent, gated on wait mode."""
 
     @staticmethod
     def _run_process(
         mode: ImportWaitMode, *, store: FakeCacheStore | None = None, cross_seed: str | None = None
     ) -> _FakeRunServices:
-        """Drive `process_al_id` to grab_and_cache and return the recording services hub.
+        """Drive `check_title` to grab_and_cache and return the recording services hub.
 
         `cross_seed` marks the url as held by that torrent.
         """
@@ -3346,7 +3346,7 @@ class TestOrderOnlyHalves:
 class TestDefaultQualityWarning:
     """An unmatched `imports.default_quality` warns once per run, at the consume seam.
 
-    `quality_axes_from_name` stays pure (its silent-empty return is pinned
+    `quality_parts_from_name` stays pure (its silent-empty return is pinned
     elsewhere). The executor is where the configured name meets the run's real
     Sonarr definitions, and it runs once per FILE, hence the once-per-run guard.
     """

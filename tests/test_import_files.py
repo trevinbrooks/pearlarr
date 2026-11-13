@@ -134,7 +134,7 @@ class TestOwnCopyAlongside:
 
 
 class TestDiskLeftover:
-    """`disk_leftover`: the scan's video files the map lacks, split by what the record says of them."""
+    """`unplaced_in_folder`: the scan's video files the map lacks, split by what the record says of them."""
 
     def test_the_leftover_runs_in_seadex_order_then_disk_order_split_by_the_record(self) -> None:
         # On disk: an unlisted file first, a subtitle, a duplicate leaf in a second folder, and four listed files.

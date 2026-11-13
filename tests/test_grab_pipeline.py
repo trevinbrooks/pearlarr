@@ -4,8 +4,8 @@
 # strict re-flags. The repo disables reportPrivateUsage for tests.
 """Unit tests for the grab "produce" side (`GrabPipeline`).
 
-Pin the add path - `_add_one_url` registering durable `PendingImport`
-records, `add_torrent`'s cap bookkeeping, and `_grab` returning a pure
+Pin the add path - `_grab_release` registering durable `PendingImport`
+records, `grab_releases`'s cap bookkeeping, and `_grab` returning a pure
 cap-reached bool (it never finalizes. The engine owns the single finalize site).
 Built bare (`object.__new__` via `make_bare_instance`) so no live qBittorrent
 login happens. The client `add` is faked by `FakeTorrents`.
@@ -72,7 +72,7 @@ from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
 
 
 def _stub_add_torrent(req: GrabRequest) -> tuple[int, list[GrabResult]]:
-    """Replaces `GrabPipeline.add_torrent` for the cap-notice tests.
+    """Replaces `GrabPipeline.grab_releases` for the cap-notice tests.
 
     Returns a fixed `(n_added, results)` so `_grab`'s cap notice is exercised without a real qBittorrent add. The
     counter it reads (`ctx.torrents_added`) is set by the test.
@@ -258,7 +258,7 @@ class TestGrabPushesNotice:
 
 
 class TestAddOneUrlRegistersPending:
-    """`_add_one_url` persists a seed's record for both a fresh and an already-present torrent.
+    """`_grab_release` persists a seed's record for both a fresh and an already-present torrent.
 
     It records a grab and counts toward the cap only for a fresh add.
     """
@@ -843,7 +843,7 @@ class TestUpToDateTally:
 def _anidex_release(*, url: str, infohash: str) -> Release:
     """A download-flagged release on AniDex: public (clears the private-only gate), in the default tracker set.
 
-    It has no parser, so it hits `_add_one_url`'s new skip.
+    It has no parser, so it hits `_grab_release`'s new skip.
     """
 
     item = make_release(url=url, infohash=infohash, download=True)

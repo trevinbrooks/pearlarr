@@ -24,7 +24,7 @@ from pearlarr.wait_types import ImportWaitMode
 
 
 class TestOverlayShape:
-    """`_env_overlay` maps a qualifying name to a key path with a YAML value."""
+    """`_env_overrides` maps a qualifying name to a key path with a YAML value."""
 
     def test_path_mapping_and_lowercasing(self) -> None:
         assert _env_overrides({"PEARLARR_SONARR__URL": "http://x"}) == {"sonarr": {"url": "http://x"}}

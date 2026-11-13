@@ -217,7 +217,7 @@ class TestSizesByEpisode:
 
 
 class TestJoinedMap:
-    """`joined_map`: a base map, then the added map's new names."""
+    """`joined_file_map`: a base map, then the added map's new names."""
 
     def test_adds_the_new_names_after_the_base_entries(self) -> None:
         joined = joined_file_map({"b.mkv": (2,), "a.mkv": (1,)}, {"c.mkv": (3,)})

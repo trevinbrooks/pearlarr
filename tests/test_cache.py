@@ -46,7 +46,7 @@ CONFIG_HASH = "0123456789abcdef0123456789abcdef"
 
 
 def _cached_title_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
-    """The entry's stored name via `get_entry` (None when the row is absent)."""
+    """The entry's stored name via `get_cached_title` (None when the row is absent)."""
 
     cached = store.get_cached_title(arr, al_id)
     return None if cached is None else cached.name
@@ -885,7 +885,7 @@ class TestPreviewGate:
 
 
 class TestSelectionDigest:
-    """`selection_stale`/`vouch_selection`: missing-key-fresh, per-arr, commit-gated."""
+    """`selection_changed`/`store_selection_hash`: missing-key-fresh, per-arr, commit-gated."""
 
     def test_no_digest_on_record_reads_fresh(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:

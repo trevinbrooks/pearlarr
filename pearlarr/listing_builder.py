@@ -25,14 +25,14 @@ class ListedTitle:
     """The entry's window, None if its episodes couldn't be read."""
 
     special_aliasing: SpecialAliasing | None
-    """The entry's specials aliases and their TMDB show (`MappingEntry.special_aliasing`), None when it has none."""
+    """The entry's specials aliases and their TMDB show (`TitleMapping.special_aliasing`), None when it has none."""
 
 
 def build_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> FetchedListings:
-    """Build the series' `ListingsRead` from its entries.
+    """Build the series' `FetchedListings` from its entries.
 
     Each infohash gets the windows of the entries that list it and the union of their special aliases
-    (`_torrent_listing`), and the size identities come from `size_identities`. An unread window marks its hashes
+    (`_torrent_listing`), and the size identities come from `single_episode_sizes`. An unread window marks its hashes
     and the identities unread. A size or a TMDB number that two entries map differently is dropped.
     """
 

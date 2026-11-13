@@ -386,7 +386,7 @@ class NeedsActionRow:
 
 @dataclass(frozen=True, slots=True)
 class ArrRunTally:
-    """`RunStats` frozen at summary time."""
+    """`ArrRunStats` frozen at summary time."""
 
     checked: int
     added: tuple[GrabbedRow, ...]
@@ -479,7 +479,7 @@ SPARK_SAMPLES = 8
 
 @dataclass(frozen=True, slots=True)
 class TorrentView:
-    """One torrent's state for a single frame. `outcome` is non-None iff `phase` is `TERMINAL`."""
+    """One torrent's state for a single frame. `outcome` is non-None iff `phase` is `FINISHED`."""
 
     key: str
     label: str

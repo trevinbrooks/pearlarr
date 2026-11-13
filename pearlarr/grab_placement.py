@@ -101,7 +101,7 @@ class KnownTorrent:
     """The torrent's listing and the series' size identities."""
 
     def seadex_evidence(self, sizes: Mapping[str, int]) -> SeadexEvidence:
-        """The `ListingEvidence` every window of this torrent is placed with: this run's listing and size matches.
+        """The `SeadexEvidence` every window of this torrent is placed with: this run's listing and size matches.
 
         `sizes` is each file's listed size by normalized name. No size matches when the identities weren't read.
         """
@@ -126,7 +126,7 @@ class KnownTorrent:
 
 
 type KnownTorrents = Mapping[str, KnownTorrent]
-"""One per url of the entry, keyed by url as `SeadexReleaseGroupItem.urls` keys them."""
+"""One per url of the entry, keyed by url as `GroupReleases.releases` keys them."""
 
 
 def entry_hashes(seadex_dict: SeadexDict) -> frozenset[str]:
@@ -192,7 +192,7 @@ class PlacedRelease:
     placements: BatchPlacements
     """This placement's verdicts, one per distinct normalized file name: the whole batch when the torrent
     is new, else the files the stored record's map does not cover. A file that is another listed title's is
-    `LISTED_ELSEWHERE` (`EntryView.assignment`)."""
+    `ANOTHER_TITLES` (`TitleView.placements`)."""
 
     episodes: tuple[ReleaseEpisode, ...]
     """One `(season, episode, size)` per file and episode of the whole map inside the entry, in file order.
@@ -212,7 +212,7 @@ class PlacedRelease:
 
     another_titles_counts: AnotherTitlesCounts
     """For `SkipReason.PLACED_ELSEWHERE`, how many of the files are another title's and how many nothing placed.
-    `NO_ELSEWHERE` for any other url."""
+    `NO_ANOTHER_TITLES_COUNTS` for any other url."""
 
     pending_import: PendingImport | None
     """The record the url was placed against, None when the torrent is new."""
@@ -240,7 +240,7 @@ def listed_batch(files: Sequence[ListedFile], file_map: FileEpisodeMap = NO_FILE
     """One url's files as a placement batch keyed by NORMALIZED file name, as the on-disk names are at import time.
 
     NFC/NFD-safe: two listed files with one normalized name share its verdict (the first parse) and keep their sizes.
-    `seeded` is the stored record's map (`PendingImport.file_episode_map`), whose names are never placed.
+    `file_map` is the stored record's map (`PendingImport.file_episode_map`), whose names are never placed.
     """
 
     parsed: dict[str, ParsedFileInfo | None] = {}
@@ -253,7 +253,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     """Place one url's files under the torrent's windows (`KnownTorrent.order`), with no I/O.
 
     Nothing is placed when the listing or a window's series wasn't read. After the windows merge, a file named by
-    number alone that they left is placed where every numbering agrees (`NumberingReader`, `WindowedAssignment.filled`),
+    number alone that they left is placed where every numbering agrees (`NumberingStep`, `WindowedPlacements.with_proposals`),
     the window holding its ids deciding it. A file another title's window placed, or left for a hand import with no
     window the record imports party to it, is set aside as that title's. The url is held (`SkipReason`) when a file of
     the entry's own window is misnumbered, when a read the placement needs failed, or when nothing of it lands on the
@@ -382,8 +382,8 @@ def _skip_reason_of(
     """Why the url isn't grabbed: the first of these that holds, in this order.
 
     Four inputs, since their order is the rule. `misnumbered`: a file of the entry's own window is misnumbered
-    (`EntryView.misnumbered`). `unread`: a read the placement needs failed. `hand_claim`: the claim the entry's own
-    window made for a hand import that no window placed (`EntryView.hand_claim`),
+    (`TitleView.misnumbered`). `unread`: a read the placement needs failed. `hand_import_verdict`: the claim the entry's own
+    window made for a hand import that no window placed (`TitleView.hand_import_verdict`),
     when nothing of the whole map lands on the entry. A title's refusal holds as refuted, and a file another TVDB
     order reads outside every listed title as misnumbered. It outranks `elsewhere`, since a file the entry's own
     window claimed is its own hand import, and saying it's another title's would be wrong. `elsewhere`: nothing of
@@ -428,7 +428,7 @@ class SizeOverName:
 
 
 def size_over_name_files(placed: PlacedRelease, series: EpisodeIndex) -> tuple[SizeOverName, ...]:
-    """One per file placed by size over its name (`PlacementVerdict.OVERRIDDEN`)."""
+    """One per file placed by size over its name (`PlacementVerdict.SIZE_OVER_NAME`)."""
 
     parses = listed_batch(placed.files).parsed
     overrides: list[SizeOverName] = []
@@ -456,7 +456,7 @@ def _parsed_as(info: ParsedFileInfo | None) -> str:
 
 @dataclass(frozen=True, slots=True)
 class EntryPlacements:
-    """Every url of one entry placed, keyed as `SeadexReleaseGroupItem.urls` keys them."""
+    """Every url of one entry placed, keyed as `GroupReleases.releases` keys them."""
 
     grabbing_title: GrabbingTitle
     """The scope every url was placed under (the seeds persist its names)."""
@@ -533,7 +533,7 @@ class TitleFacts:
     url: str | None
     """The SeaDex entry URL at grab time (logging only)."""
     guards: OwnedAtGrab
-    """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `GuardFacts`)."""
+    """The plan's overwrite-guard evidence, copied onto every claim unchanged (see `OwnedAtGrab`)."""
 
     def claim(self, terms: ClaimTerms) -> TitleClaim:
         """The entry's claim on `terms`."""
@@ -570,7 +570,7 @@ class TorrentFacts:
     """Normalized listing name -> its listed size, the file each placed episode should hold (a name listed at two
     sizes is left out)."""
     is_cross_seed: bool = False
-    """Whether the torrent is a cross-seed of the listing's (`PendingImport.cross_seed`)."""
+    """Whether the torrent is a cross-seed of the listing's (`PendingImport.is_cross_seed`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -624,11 +624,11 @@ class PendingImportUpdate:
     """The names this placement proved aren't the record's to import under its current claims."""
 
     hand_import_files: tuple[str, ...]
-    """The names this placement left for a hand import (`EpisodeAssignment.hand_import_files`), which keep the
+    """The names this placement left for a hand import (`BatchPlacements.hand_import_files`), which keep the
     record pending once the placed files are in."""
 
     order_only: Mapping[str, OrderOnlyKey]
-    """The keys of those names that only another TVDB order numbers (`EpisodeAssignment.order_only`)."""
+    """The keys of those names that only another TVDB order numbers (`BatchPlacements.order_only`)."""
 
     claim: TitleClaim
     """This entry's fresh claim."""

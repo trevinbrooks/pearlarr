@@ -5,13 +5,13 @@
 """Guards the run loop's commit points and its single end-of-run finalize site.
 
 A title held past `max_torrents_to_add` never stops the scan, and the ONE
-post-loop `_finalize_run` site runs once on every path. These pin that hoist so
+post-loop `_finish_arr_run` site runs once on every path. These pin that hoist so
 a future change can't silently double-finalize or skip the blocking/import pass.
 A real run also commits after each title, so a stop keeps the titles it finished.
 
-The strategy is the shared typed `FakeStrategy` (an `ArrSync` recording
-its `process_al_id` calls), the engine's collaborators are small typed fakes,
-and `_finalize_run` is mostly replaced by a typed recorder - so the contracts are
+The strategy is the shared typed `FakeStrategy` (an `ArrStrategy` recording
+its `check_title` calls), the engine's collaborators are small typed fakes,
+and `_finish_arr_run` is mostly replaced by a typed recorder - so the contracts are
 pinned by asserting recorded state.
 """
 
@@ -115,7 +115,7 @@ class _FakeBound:
 
 
 class _FinalizeRecorder:
-    """A typed stand-in for `RunLoop._finalize_run` that counts its calls."""
+    """A typed stand-in for `ArrRunLoop._finish_arr_run` that counts its calls."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -125,7 +125,7 @@ class _FinalizeRecorder:
 
 
 def _services(*, qbit: object = None, **overrides: object) -> ArrRunServices:
-    """A bare real `RunServices` whose per-id collaborators are ctx-bind fakes. `qbit` set makes the run real."""
+    """A bare real `ArrRunServices` whose per-id collaborators are ctx-bind fakes. `qbit` set makes the run real."""
 
     return make_services(
         qbit=qbit,
@@ -149,14 +149,14 @@ def _engine(
     wait_manager: _FakeBound | ImportWaitManager | None = None,
     skyhook: SkyHookGateway | None = None,
 ) -> ArrRunLoop:
-    """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
+    """A bare `ArrRunLoop` wired with typed fakes for the run-loop collaborators.
 
-    The strategy reaches `run_sync` typed (it's an `ArrSync`). The rest are
-    injected as bare attributes (the methods only read them), and `_finalize_run`
+    The strategy reaches `run_arr` typed (it's an `ArrStrategy`). The rest are
+    injected as bare attributes (the methods only read them), and `_finish_arr_run`
     is shadowed by the recorder so the single finalize site is observable
     (`None` keeps the real one). The `_services` hub defaults to a preview
     `_services()` (the loop reads its `arr`, `begin_run`, `mark_dirty`,
-    `is_preview` and `pay_pause`). The `cache_store` backs the activity scan's checkpoint.
+    `is_dry_run` and `pay_pause`). The `cache_store` backs the activity scan's checkpoint.
     `config` overrides the loop's config (the activity-scan toggle tests).
     `cache_store` shares one store across engines (the checkpoint replay tests).
     `anilist` swaps in a real gateway (the AniList boot-note tests) or a fake that is down (the vouch test).
@@ -240,7 +240,7 @@ class TestPerIdErrorContainment:
 class _ItemRaisingStrategy(FakeStrategy):
     """A `FakeStrategy` whose mapping lookup raises for one item id.
 
-    This is the seam `run_sync` hits per item BEFORE the per-id loop (the
+    This is the seam `run_arr` hits per item BEFORE the per-id loop (the
     OUTER containment arm).
     """
 
@@ -293,7 +293,7 @@ class TestPerItemErrorContainment:
 
 
 class _StagingStrategy(FakeStrategy):
-    """A `FakeStrategy` whose items each map ids 1 and 2, every id staging a row through `no_releases_skip`.
+    """A `FakeStrategy` whose items each map ids 1 and 2, every id staging a row through `report_no_releases`.
 
     A row is keyed `item.id * 10 + al_id`. `stop_at` (item id, AniList id) raises `SystemExit` after that id's
     row, standing in for the SIGTERM handler. `None` never stops.
@@ -350,7 +350,7 @@ def _still_cached(path: Path, keys: list[int]) -> list[int]:
 
 
 def _run(engine: ArrRunLoop, strategy: _StagingStrategy, mode: ImportWaitMode = ImportWaitMode.OFF) -> None:
-    """One full-library `run_sync` of `strategy` with wait mode `mode`."""
+    """One full-library `run_arr` of `strategy` with wait mode `mode`."""
 
     engine.run_arr(strategy, item_id=None, dry_run=False, import_wait_mode=mode, boot=BootFlow())
 
@@ -593,7 +593,7 @@ _IMPORT_EVENT = HistoryRecord(
 class TestSelectionRecheck:
     """The stale-selection announcement + the full-coverage vouch rule.
 
-    Vouch state is read back through `selection_stale`: after a vouch, any
+    Vouch state is read back through `selection_changed`: after a vouch, any
     OTHER digest reads stale. With nothing vouched, everything reads fresh.
     """
 

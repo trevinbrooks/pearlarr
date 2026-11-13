@@ -11,7 +11,7 @@ from .sonarr_episodes import SonarrEpisodes
 
 
 class SeriesListings:
-    """Reads every SeaDex entry of a series into a `ListingsRead`, once per series per run.
+    """Reads every SeaDex entry of a series into a `FetchedListings`, once per series per run.
 
     The caller passes the series' resolved mappings, the ignored entries set apart: an ignored entry still lists
     its own files, and its window is flagged so `ordered_windows` runs it after the kept windows of the same kind
@@ -42,7 +42,7 @@ class SeriesListings:
         self._reads = {}
 
     def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
-        """The series' listings (see `fold_listings`), or None when SeaDex is unreachable.
+        """The series' listings (see `build_listings`), or None when SeaDex is unreachable.
 
         Only the first call in a run reads anything. Later calls return the same result, whatever `resolved` they
         pass. An entry with an ambiguous AniDB id is skipped (its own run reports the error), and the identities

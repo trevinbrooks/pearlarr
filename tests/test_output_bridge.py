@@ -489,7 +489,7 @@ def _production_stack(
 ) -> Generator[tuple[logging.Logger, TtyStringIO, Path]]:
     """The real production wiring under `rich`, at `log_level` on logger AND hub.
 
-    The hub (`FileLogSink` first) and bridge install BEFORE `setup_logger`
+    The hub (`FileLogRenderer` first) and bridge install BEFORE `setup_logger`
     builds the rich console over a fake TTY. `apply_log_level` then lands the
     level on every surface, as bootstrap does.
     """
@@ -546,7 +546,7 @@ class TestFullStackSeams:
         """An unmigrated INFO one-liner renders once per surface, both via the hub.
 
         The raw handler stands down (no double render). The hub renderer places
-        the line and the `FileLogSink` keeps it.
+        the line and the `FileLogRenderer` keeps it.
         """
 
         logger, stream, log_file = full_stack
@@ -633,7 +633,7 @@ class TestFullStackSeams:
         app_logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two `setup_logger` + `begin_cycle` rounds simulate scheduled mode.
+        """Two `setup_logger` + `begin_run` rounds simulate scheduled mode.
 
         The bridge stays singly-installed and the renderer resolves the
         CURRENT cycle's console.

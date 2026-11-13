@@ -1,7 +1,7 @@
 """Read file names without Sonarr.
 
 Range keys, sort keys, stems, versions, run membership, the entry's title told apart from a name's numbers
-(`TitleGround`, `read_names`), and title matching.
+(`TitleNameWords`, `split_names`), and title matching.
 """
 
 import re
@@ -208,17 +208,17 @@ class NameParts:
     stem: Stem
     member: NumberedName | None
     title_words: tuple[str, ...]
-    """The words an episode title is read from: a member's tail, the tail behind a `titled_count`, else the whole
+    """The words an episode title is read from: a member's tail, the tail behind a `episode_title_number`, else the whole
     stem."""
     spells_season_episode: bool
-    """Whether the name spells an episode token out (`_EXPLICIT_KEY`). Without one, a parsed key is derived."""
+    """Whether the name spells an episode token out (`_SPELLED_SEASON_EPISODE`). Without one, a parsed key is derived."""
     standalone_numbers: tuple[int, ...]
     """The three- and four-digit counts standing alone in the stem, in order."""
     bracketed_numbers: tuple[int, ...]
     """The three- and four-digit counts standing alone inside a bracket of the name, in order."""
     episode_title_number: int | None = None
     """The count behind the entry's title that a word behind it made an episode title's number ("13" of
-    "Show - 13 Rainy Days"), when no form counted the name. The placer judges it (`Placer.counted_by_title`)."""
+    "Show - 13 Rainy Days"), when no form counted the name. The placer judges it (`PlacerState.parsed_by_title_number`)."""
 
     @property
     def version(self) -> int:
@@ -608,7 +608,7 @@ class TitleNameWords:
     """The series and AniList titles' words: an extras word among them is a title word, not an extra."""
     titles: tuple[tuple[str, ...], ...]
     """Each title's words (`_title_words`), with and without its bracketed part, longest first: a name opening
-    with one carries the title, and the numbers in it are the title's (`read_names`). Words that only count a
+    with one carries the title, and the numbers in it are the title's (`split_names`). Words that only count a
     season ("2nd Season" left of "[Show] 2nd Season") are no title."""
     numbers: frozenset[int]
     """The numbers a title writes in digits ("009", "100", "2011"): a count read off one of them inside the title
@@ -688,7 +688,7 @@ class TitleNameWords:
 
 
 def _name_number_ends(text: str, end: int) -> bool:
-    """Whether the count ending at `end` ends there (`_COUNT_END`), past any release tags: no title word follows."""
+    """Whether the count ending at `end` ends there (`_NAME_NUMBER_END`), past any release tags: no title word follows."""
 
     while (found := _NAME_NUMBER_END.match(text, end)) is not None:
         if found["word"] is None:
@@ -704,9 +704,9 @@ def _name_number_ends(text: str, end: int) -> bool:
 
 
 def _span_member(stem: Stem, found: re.Match[str]) -> NumberedName | None:
-    """The count behind the title's span (`_SPAN_COUNT`) as the name's run membership, else None.
+    """The count behind the title's span (`_NAME_NUMBER`) as the name's run membership, else None.
 
-    A word behind that count makes it an episode title's number (`_count_ends`), a number standing alone behind it
+    A word behind that count makes it an episode title's number (`_name_number_ends`), a number standing alone behind it
     with only separators between makes it a range's or a decimal's first number ("Show 01-02", "Show - 21.5"), a
     key behind it says more than it does ("Show.101.S03"), and an OVA tag behind it marks an extra
     (`_EXTRA_BEHIND`): none of them counts.
@@ -737,11 +737,11 @@ def _ends_stem_after_title(text: str, member: NumberedName, end: int) -> bool:
 
 
 def _titled(parts: NameParts, name_words: TitleNameWords) -> NameParts:
-    """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
+    """The read with the entry's title told apart, when the name opens with one of `TitleNameWords.titles`.
 
-    The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
+    The title's numbers leave `standalone_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
     or by one of the title's own, counts by the first count behind the title ("Show.009.10" reads 10), unless words
-    follow it (then it is the `titled_count`). Without one, a title digit set off by a dash or a label still counts
+    follow it (then it is the `episode_title_number`). Without one, a title digit set off by a dash or a label still counts
     ("Show - 2" under "Show 2"). A number trailing words past the title, in a name counted before it, is no count.
     """
 
@@ -909,7 +909,7 @@ class Naming:
         )
 
     def names_another(self, chosen: int, among: Iterable[int]) -> bool:
-        """Whether a title names candidates among `among` best and not `pick`. Refuses the pick, never promotes."""
+        """Whether a title names candidates among `among` best and not `chosen`. Refuses the pick, never promotes."""
 
         winners = self.best_among(among)
         return bool(winners) and chosen not in winners

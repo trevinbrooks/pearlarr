@@ -1,14 +1,14 @@
 """The numberings reader: where a file named by number alone falls, once every way of counting agrees.
 
 A release group that names a file "Show - 07" counted the series' episodes some way: from the first episode of the
-whole series (`Numbering.SERIES_ROW`), from the first episode of the entry's season (`WINDOW_SEASON`), from the
-first episode the entry covers (`WINDOW_ROW`), straight through every entry the torrent is listed under
-(`UNION_ROW`), or by TVDB's absolute numbers (`ABSOLUTE`). The passes place such a file when Sonarr's reading of its
+whole series (`Numbering.FROM_SERIES_START`), from the first episode of the entry's season (`SEASON_NUMBERS`), from the
+first episode the entry covers (`FROM_WINDOW_START`), straight through every entry the torrent is listed under
+(`ACROSS_WINDOWS`), or by TVDB's absolute numbers (`ABSOLUTE`). The passes place such a file when Sonarr's reading of its
 number lands inside the window or a run carries it. For a lone-number file they leave, the reader reads the number
 under every numbering that fits the torrent's windows and proposes its row only when the numberings that fit all
 name the same row. A torrent whose windows don't match AniList's episode counts, a number repeated under one title,
 a series row that doesn't carry its number, two numberings that disagree, or a lifted series title the run doesn't
-know each refuse the file, which keeps its verdict. Nothing the reader proposes outranks a pass: `WindowedAssignment.filled`
+know each refuse the file, which keeps its verdict. Nothing the reader proposes outranks a pass: `WindowedPlacements.with_proposals`
 places a proposal only into a gap the windows left.
 
 The reader runs once per torrent, after the windows merge, on the grabbing entry's series only, and only while
@@ -82,7 +82,7 @@ NO_PROPOSALS = NumberingProposals({})
 def _norm_title(title: str) -> str:
     """The title lowercased, `&` read as "and", every other run of non-alphanumerics one space.
 
-    `release_names._raw_words` splits a name into words the same way, casefolded and without the `&` reading. This
+    `file_names._raw_words` splits a name into words the same way, casefolded and without the `&` reading. This
     key stays its own so the title keys below never drift with the name reader's.
     """
 
@@ -205,13 +205,13 @@ class _Window:
         )
 
     def row(self, k: int) -> int | None:
-        """`WINDOW_ROW`: the k-th regular row, or the k-th special when the window has no regular rows."""
+        """`FROM_WINDOW_START`: the k-th regular row, or the k-th special when the window has no regular rows."""
 
         rows = self.regular_ids or self.specials
         return rows[k - 1] if 1 <= k <= len(rows) else None
 
     def season_row(self, k: int) -> int | None:
-        """`WINDOW_SEASON`: episode k of the window's first regular season."""
+        """`SEASON_NUMBERS`: episode k of the window's first regular season."""
 
         return self.season_rows.get(k)
 
@@ -220,7 +220,7 @@ class _Window:
 class _WideFit:
     """A numbering that fits the torrent and reads through no one window.
 
-    `SERIES_ROW` and `ABSOLUTE` read over the whole series, `UNION_ROW` over the torrent's windows together.
+    `FROM_SERIES_START` and `ABSOLUTE` read over the whole series, `ACROSS_WINDOWS` over the torrent's windows together.
     """
 
     numbering: Numbering
@@ -228,7 +228,7 @@ class _WideFit:
 
 @dataclass(frozen=True, slots=True)
 class _WindowFit:
-    """A `WINDOW_ROW` or `WINDOW_SEASON` that fits the torrent, read through one window."""
+    """A `FROM_WINDOW_START` or `SEASON_NUMBERS` that fits the torrent, read through one window."""
 
     numbering: Numbering
     window: _Window
@@ -275,7 +275,7 @@ def _is_absolute_only(info: ParsedFileInfo) -> bool:
 class _Pool:
     """The torrent's lone-number files, the numberings that fit them, and what the repeat and partition gates read.
 
-    Built by `NumberingReader._pool`, once per torrent: a file is read under the pool's fits, or under its title's
+    Built by `NumberingStep._pool`, once per torrent: a file is read under the pool's fits, or under its title's
     part.
     """
 
@@ -304,7 +304,7 @@ class _Pool:
 def _window_numberings_disagree(rows_by_fit: Mapping[_Fit, tuple[int | None, ...]]) -> bool:
     """Whether neither series-wide numbering fits and the ones that do read the file to different rows.
 
-    `UNION_ROW` counts among them: like the window numberings it counts the torrent's own rows from one, not
+    `ACROSS_WINDOWS` counts among them: like the window numberings it counts the torrent's own rows from one, not
     TVDB's.
     """
 
@@ -329,11 +329,11 @@ class NumberingStep:
     series: EpisodeIndex
     """The grabbing entry's whole series."""
     regular_ids: tuple[int, ...]
-    """The series' regular rows, in season and episode order: what `SERIES_ROW` counts."""
+    """The series' regular rows, in season and episode order: what `FROM_SERIES_START` counts."""
     windows: tuple[_Window, ...]
     """The torrent's windows on the series, in window order. A window on another series is left out."""
     union_regular_ids: tuple[int, ...]
-    """The regular rows of every window together, in season and episode order: what `UNION_ROW` counts."""
+    """The regular rows of every window together, in season and episode order: what `ACROSS_WINDOWS` counts."""
     union_monotone: bool
     """Whether the union's regular rows all carry absolutes that strictly increase."""
     known_titles: frozenset[str]
@@ -432,7 +432,7 @@ class NumberingStep:
         for ids in gated.values():
             rows = _rows(ids)
             if rows is None:
-                # Only `SERIES_ROW` reads a fitting number to no row: the k-th regular row doesn't carry absolute k.
+                # Only `FROM_SERIES_START` reads a fitting number to no row: the k-th regular row doesn't carry absolute k.
                 return None
             distinct.add(rows)
         if len(distinct) != 1 or not any(fit.numbering in _PLACING for fit in gated):
@@ -451,9 +451,9 @@ class NumberingStep:
     def _fits(self, numbers: Sequence[int], windows: Sequence[_Window]) -> tuple[_Fit, ...]:
         """The numberings under which every number reads to a row inside `windows`.
 
-        `SERIES_ROW` and `ABSOLUTE` fit together when TVDB's row for every number lies inside the windows: a group
+        `FROM_SERIES_START` and `ABSOLUTE` fit together when TVDB's row for every number lies inside the windows: a group
         counting the series from one lands on TVDB's numbers wherever TVDB counts straight, and where it doesn't,
-        the position check on each file tells. `WINDOW_ROW` and `WINDOW_SEASON` fit per window. `UNION_ROW` fits
+        the position check on each file tells. `FROM_WINDOW_START` and `SEASON_NUMBERS` fit per window. `ACROSS_WINDOWS` fits
         two or more windows when every number has a union row.
         """
 

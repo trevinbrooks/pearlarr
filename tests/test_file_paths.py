@@ -7,7 +7,7 @@ from pearlarr.releases import normalize_group
 
 
 class TestNormalize:
-    """`normalize_basename`/`normalize_group` casefold and strip for stable comparison.
+    """`normalize_name`/`normalize_group` casefold and strip for stable comparison.
 
     Interior dashes in a group name are never stripped, only wrapping ones.
     """

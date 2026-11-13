@@ -39,7 +39,7 @@ class ParsedEpisodes:
 
     from_matched: bool
     """The claims are Sonarr's matched pairs: the name carried no `(season, episode)` of its own, or its keys
-    gave way to Sonarr's alias match (`_claims_of`)."""
+    gave way to Sonarr's alias match (`_parsed_keys_of`)."""
 
     rejected: bool
     """Rejected: the ids stay as evidence, but no pass places the file by them, and they never prove it foreign.
@@ -154,7 +154,7 @@ def _parsed_keys_of(info: ParsedFileInfo, target: PlacementTarget) -> _ParsedKey
 
 
 def resolve_parse(info: ParsedFileInfo | None, target: PlacementTarget) -> ParsedEpisodes:
-    """Read one parse against the scope: the name's own keys are the claims (`_claims_of` has the alias shift).
+    """Read one parse against the scope: the name's own keys are the claims (`_parsed_keys_of` has the alias shift).
 
     A name with none borrows Sonarr's matched pairs when there is a scope and the parse is not a full season. A pair
     may resolve anywhere in the series, but only when its own episode id agrees with our map's, so a wrong-series
@@ -228,7 +228,7 @@ def widen_range_key(name: str, info: ParsedFileInfo, series: EpisodeIndex) -> Pa
 def _matched_season(first: int, matched: Iterable[MatchedEpisode]) -> int | None:
     """The one regular season Sonarr matched the range's first episode into, else None.
 
-    As in `_is_alias_shift`, a match into the specials or spread over several seasons isn't a shift.
+    As in `_is_season_shift`, a match into the specials or spread over several seasons isn't a shift.
     """
 
     seasons = {pair.season_number for pair in matched if pair.episode_number == first}

@@ -82,7 +82,7 @@ class ArrActivityReader:
 
     `scan` reads the stored checkpoint, queries the overlapped window, dedups
     on the id cursor and stashes the advanced checkpoint.
-    `commit_checkpoint` stages it through the cache store. The run loop calls it
+    `stage_checkpoint` stages it through the cache store. The run loop calls it
     only when the pass covered the whole library, and it persists only at a
     non-preview save point (so a dry run never advances the cursor).
     """

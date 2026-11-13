@@ -292,7 +292,7 @@ class FakeArrItem:
 
 
 class FakeStrategy(ArrStrategy[FakeArrItem]):
-    """A typed `ArrSync` with scripted returns, for engine-orchestration tests."""
+    """A typed `ArrStrategy` with scripted returns, for engine-orchestration tests."""
 
     def __init__(
         self,
@@ -631,8 +631,8 @@ class FakeRadarrClient(AbstractRadarrClient):
 class FakeSkyHookClient(AbstractSkyHookClient):
     """SkyHook scripted per (TVDB id, order type).
 
-    An unscripted pair answers `SkyHookMiss.NOT_FOUND`, as SkyHook does for a series TVDB lacks. A fetch of a
-    `failing` pair trips the outage, and every fetch after it is `SkyHookMiss.OUTAGE`, as the real client's latch
+    An unscripted pair answers `SkyHookNoReply.NOT_FOUND`, as SkyHook does for a series TVDB lacks. A fetch of a
+    `failing` pair trips the outage, and every fetch after it is `SkyHookNoReply.UNREACHABLE`, as the real client's latch
     makes it.
     """
 
@@ -662,9 +662,9 @@ class FakeSkyHookClient(AbstractSkyHookClient):
 class ScriptedEpisodes:
     """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
 
-    `get_ep_list` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
+    `mapping_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
     given, else the whole series list. Without a client every read is None, a failed fetch. The `unread_series` have
-    no stored order record, and the `unread_entries` no AniList record. `counts` are AniList's episode counts by
+    no stored order record, and the `unread_al_ids` no AniList record. `counts` are AniList's episode counts by
     AniList id, None for an id left out.
     """
 
@@ -687,7 +687,7 @@ class ScriptedEpisodes:
         self._unread_al_ids = unread_al_ids
         self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
-        """Each `get_ep_list` call's (series id, AniList id), in call order."""
+        """Each `mapping_episodes` call's (series id, AniList id), in call order."""
 
     def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The whole-series list off the client, None without one."""
@@ -727,7 +727,7 @@ class ScriptedEpisodes:
         return self._counts.get(al_id)
 
     def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
-        """Whether any of the entries is one of the `unread_entries`."""
+        """Whether any of the entries is one of the `unread_al_ids`."""
 
         return not self._unread_al_ids.isdisjoint(al_ids)
 

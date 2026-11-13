@@ -78,10 +78,10 @@ class EpisodeStatuses:
     """One status per de-duplicated target id."""
 
     at_torrent_size: frozenset[int]
-    """The targets whose current file is at one of this torrent's listed sizes (`TargetJudgment.own_copy`)."""
+    """The targets whose current file is at one of this torrent's listed sizes (`EpisodeFileFacts.has_torrent_size`)."""
 
     at_torrent_size_no_group: frozenset[int] = frozenset()
-    """The targets whose current file is an untagged copy of this torrent's (`TargetJudgment.untagged_copy`)."""
+    """The targets whose current file is an untagged copy of this torrent's (`EpisodeFileFacts.has_torrent_size_no_group`)."""
 
     @classmethod
     def for_episodes(
@@ -274,7 +274,7 @@ class ImportSnapshot:
     """Each claim's snapshot by AniList id: its series' same index under the claim's OWN guard evidence."""
 
     sole_claim_without_window: Mapping[int, TitleClaim] = field(init=False)
-    """Each series' one unscoped claim where it has exactly one (see `lone_unscoped_claims`)."""
+    """Each series' one unscoped claim where it has exactly one (see `sole_claims_without_window`)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_series", MappingProxyType(dict(self.by_series)))

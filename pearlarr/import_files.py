@@ -54,7 +54,7 @@ def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]
 def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, CandidateFile]:
     """Index on-disk candidates by normalized basename: a basename duplicated across folders carries one verdict.
 
-    The candidates arrive parsed at the Sonarr client boundary (`SonarrClient.manual_import_candidates`), so each is
+    The candidates arrive parsed at the Sonarr client boundary (`SonarrClient.manual_import_candidates_by_download_id`), so each is
     read by attribute and the raw DTO never reaches the decision path.
     """
 
@@ -112,7 +112,7 @@ class UnplacedInFolder:
 def unplaced_in_folder(
     pending: PendingImport, candidates_by_name: Mapping[str, CandidateFile], file_map: FileEpisodeMap
 ) -> UnplacedInFolder:
-    """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
+    """The video files among `candidates_by_name` that `mapped` lacks, split by what `pending` says of them."""
 
     video = {name for name, candidate in candidates_by_name.items() if is_video_candidate(file_name(candidate.path))}
     # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
@@ -131,7 +131,7 @@ class ImportAction(StrEnum):
     """What `plan_import_files` decided for one entry in OUR map.
 
     A `StrEnum` (so each member IS its rendered word, matching the
-    `PendingState` / `QueueVerdict` / `EpisodeFileStatus`
+    `PendingImportState` / `QueueState` / `EpisodeFileStatus`
     style): the consumer branches on a typed value instead of a magic string.
     Only `IMPORT` and `MISSING` drive behavior. The three "nothing to import
     for this file" members are kept distinct purely for reporting.
@@ -178,7 +178,7 @@ def plan_import_files(
     """Decide, for each file in OUR map (never the candidates), whether to import it and onto which episodes.
 
     A mapped file Sonarr didn't find is `missing`, one no episode needs is `skip_done` or `already`, and a needed
-    one goes onto the episodes `TargetStatuses.import_ids` picks. One decision per map entry, in map order.
+    one goes onto the episodes `EpisodeStatuses.import_ids` picks. One decision per map entry, in map order.
     """
 
     decisions: list[ImportDecision] = []

@@ -84,10 +84,10 @@ def episodes_from_ep_list(
     ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
 ) -> list[ReleaseEpisode]:
-    """Convert a Sonarr ep_list into `EpisodeRecord` coverage records.
+    """Convert a Sonarr ep_list into `ReleaseEpisode` coverage records.
 
     Sonarr episodes carry "seasonNumber"/"episodeNumber". The coverage helpers
-    read `EpisodeRecord.season`/`.episode`. `missing_only` keeps only missing
+    read `ReleaseEpisode.season`/`.episode`. `missing_only` keeps only missing
     episodes (no file on disk), to summarize what is still needed.
     """
 

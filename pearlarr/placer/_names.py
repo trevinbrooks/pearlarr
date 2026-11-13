@@ -1,6 +1,6 @@
 """A torrent's file names read against the series' episode titles: which episode each name is titled as.
 
-`TorrentNames` reads every name once, and `Placer.start` is its one reader. No I/O.
+`TorrentNames` reads every name once, and `PlacerState.start` is its one reader. No I/O.
 """
 
 from collections import Counter
@@ -33,7 +33,7 @@ def _title_lead(episodes: EpisodeTitles, read: NameParts, resolved: Collection[i
 
     A counted name is read whole too, its season tag left out: "Show - 17 Steps 2" is titled "17 Steps 2". A name
     that each reading titles as a different episode is titled as neither. `resolved` are the episodes Sonarr read
-    for the file (`EpisodeTitles.keyed_by`).
+    for the file (`EpisodeTitles.episodes_numbered_by`).
     """
 
     words = read.title_words
@@ -56,7 +56,7 @@ class TorrentNames:
     """Every file name of the torrent, read once: stem, run membership, episode title, and whether it is an extra."""
 
     by_name: Mapping[str, NameTitle]
-    """Each name read on its own and against the episode titles, in `PlacementBatch.torrent_names` order."""
+    """Each name read on its own and against the episode titles, in `PlacementBatch.all_names` order."""
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
 
@@ -65,7 +65,7 @@ class TorrentNames:
         """Read every name, seeded and gone ones included.
 
         Two versions of one file carrying the same title still count as titled as it. A file whose own key Sonarr
-        matched (`Reading.keyed`) is an episode, whatever extras word its name carries.
+        matched (`ParsedEpisodes.key_confirmed`) is an episode, whatever extras word its name carries.
         """
 
         ground = TitleNameWords.of(target.title_names)

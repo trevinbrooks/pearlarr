@@ -102,8 +102,8 @@ class BootRegion(LiveRegion):
     Durable lines (banner, graduations, heads-up, capstone) print the moment
     their event arrives - they reflow ABOVE the transient spinner via the shared
     Console lock, exactly like the diagnostic lines. The spinner is torn down by
-    `section_left` when the renderer's fold evicts the boot-section node
-    (whatever event evicted it - and defensively by `begin_cycle`/`close`),
+    `scope_closed` when the renderer's fold evicts the boot-section node
+    (whatever event evicted it - and defensively by `begin_run`/`close`),
     so scan output never lands under a stale live region.
     """
 

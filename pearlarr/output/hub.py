@@ -5,20 +5,20 @@ becomes the combiner: it drains the queue and calls renderers with the lock
 RELEASED, re-checking for new entries before handing the baton back - so no
 event ever waits for a future emit. Dispatch is lock-free, so it can never form
 the hub-lock→console-lock (ABBA) inversion. The lifecycle calls that DO hold the
-hub lock across a renderer (`begin_cycle`/`close`/`_swap_console`, where
+hub lock across a renderer (`begin_run`/`close`/`_swap_console`, where
 `close` reaches `Live.stop`'s Console lock) stay deadlock-free by the
 separate lock-ordering guarantee, not by this drain. Deliberately not a consumer
 thread: this hub is the
 app's UI, and synchronous main-path dispatch keeps output ordered with program
 actions and crash-faithful. Cross-thread events are rare stragglers the active
-drain picks up. Lifecycle calls (`begin_cycle`/`set_level`/`close`) park
+drain picks up. Lifecycle calls (`begin_run`/`set_level`/`close`) park
 until no drain is in flight, so they never race a renderer's `handle` - and
 they hold the drain baton for their body, so a re-entrant emit from inside a
 renderer's lifecycle call (a bridge-adopted `logger.debug` in a teardown path)
 enqueues instead of draining against a half-mutated subscriber list.
 
 Renderers that raise strike out (3 per cycle) and are skipped until
-`begin_cycle` re-arms them - never a process-latching quarantine (the verified
+`begin_run` re-arms them - never a process-latching quarantine (the verified
 daemon hazard). Striking out also closes the renderer, so a quarantined seat
 releases its resources (a live spinner must stop repainting). `emit` itself never raises on a renderer bug, so presentation
 can never abort a run or the cache save. KeyboardInterrupt/SystemExit still
@@ -192,7 +192,7 @@ class OutputHub:
 
     `renderers` are the stable sinks (file/json/...) and never contain a
     console. The console renderer lives in its own tracked seat (`console` at
-    construction, thereafter swapped by `begin_cycle` via `console_factory`).
+    construction, thereafter swapped by `begin_run` via `console_factory`).
     """
 
     def __init__(

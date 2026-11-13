@@ -4,7 +4,7 @@
 The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
 naming the cause), the strict library-fetch matrix (the same failures RAISE
-typed `ArrConnectionError`/`ArrAuthError` instead), the GET retry policy
+typed `ArrUnreachableError`/`ArrAuthError` instead), the GET retry policy
 (transient statuses retry with backoff, terminal ones don't - the `retries=0`
 poll handle never retries), the consecutive-failure coalescing (streak dict,
 heartbeat re-warns, recovery notes, shared ledger), the POST policy

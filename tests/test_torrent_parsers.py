@@ -269,7 +269,7 @@ def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.M
 
 @respx.mock
 def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
-    """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a `TorrentParseError` naming the feed URL, not a raw `JSONDecodeError`."""
+    """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a `TrackerPageError` naming the feed URL, not a raw `JSONDecodeError`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -281,7 +281,7 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
-    """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a `TorrentParseError`, not an AttributeError from iterating its keys."""
+    """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a `TrackerPageError`, not an AttributeError from iterating its keys."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 

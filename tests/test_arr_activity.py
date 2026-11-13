@@ -2,13 +2,13 @@
 # pyright: reportPrivateUsage=false
 # The run-loop section reads the services hub's private dirty set (the wiring
 # under test). Strict re-flags that and the repo disables it for tests.
-"""The arr-side activity scan (`ArrActivityMonitor`) and its run-loop wiring.
+"""The arr-side activity scan (`ArrActivityReader`) and its run-loop wiring.
 
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + item-id filters (no own-grab exemption), and the fail-open contract. Run-loop
 half (reusing `test_run_finalize`'s `_engine` harness): touched items flow into
-`RunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
+`ArrRunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
 only on full-library, non-outage runs (held drift signals replay on the next
 healthy run), and either config toggle disables the fetch entirely.
 """
@@ -95,7 +95,7 @@ class TestDateHelpers:
 
 
 class TestScan:
-    """`ArrActivityMonitor.scan` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
+    """`ArrActivityReader.read` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
 
     def test_bootstrap_queries_lookback_window_and_stores_max_id_checkpoint(self) -> None:
         activity, cache = _activity_reader()

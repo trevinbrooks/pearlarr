@@ -923,7 +923,7 @@ class TestEqualUnionMixedGroups:
 
 
 class _CachedTitleReporter:
-    """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
+    """Just enough reporter surface for `is_unchanged`'s logging tail."""
 
     def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
         del state, al_id

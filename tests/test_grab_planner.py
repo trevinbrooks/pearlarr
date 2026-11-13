@@ -1,14 +1,14 @@
 # pyright: strict
 """Characterization tests for the download-decision engine.
 
-This is the core domain logic extracted into `DownloadPlanner` in Phase 4:
-`get_any_to_download`, `reduce_overlapping_downloads` and
-`filter_by_release_group`. The tests assert on the resulting per-url
+This is the core domain logic extracted into `GrabPlanner` in Phase 4:
+`any_to_grab`, `reduce_overlapping_grabs` and
+`plan`. The tests assert on the resulting per-url
 `download` flags and the private-only skip outcome surfaced on the
-`PlanResult` / `PrivateOnlySkips` (rather than mutated run state, as before
+`GrabPlan` / `PrivateOnlyNotices` (rather than mutated run state, as before
 Phase 4).
 
-The `reduce_overlapping_downloads` branch matrix these tests pin:
+The `reduce_overlapping_grabs` branch matrix these tests pin:
 
     interactive ............................ early return, nothing touched
     per same-files set (no flagged: skip set), public_flagged == 0:
@@ -42,7 +42,7 @@ from .builders import arr_files, make_planner, make_release, rg_group, sonarr_ep
 
 
 class TestGetAnyToDownload:
-    """`get_any_to_download` reports whether any url in the group dict has its `download` flag set."""
+    """`any_to_grab` reports whether any url in the group dict has its `download` flag set."""
 
     def test_false_when_none_flagged(self) -> None:
         seadex = {"A": rg_group({"u": make_release(download=False)})}
@@ -54,7 +54,7 @@ class TestGetAnyToDownload:
 
 
 class TestFlaggedUrls:
-    """`flagged_urls` is the one grab-set filter both arrs' seed builders share."""
+    """`releases_to_grab` is the one grab-set filter both arrs' seed builders share."""
 
     def test_only_hash_carrying_grabs_ride_the_triples(self) -> None:
         grabbed = make_release(url="u1", download=True, infohash="h1")
@@ -67,7 +67,7 @@ class TestFlaggedUrls:
 
 
 class TestReduceOverlappingDownloads:
-    """`reduce_overlapping_downloads` picks one keeper per same-files set per the module's branch matrix, accumulating skip state across sets."""
+    """`reduce_overlapping_grabs` picks one keeper per same-files set per the module's branch matrix, accumulating skip state across sets."""
 
     def test_interactive_is_noop(self) -> None:
         planner = make_planner(interactive=True)
@@ -636,7 +636,7 @@ class TestSameGroupDuplicateDedup:
 
 
 class TestFilterByReleaseGroup:
-    """`filter_by_release_group` skips a release whose group and size(s) already match what the arr holds (case-insensitively), downloading otherwise."""
+    """`plan` skips a release whose group and size(s) already match what the arr holds (case-insensitively), downloading otherwise."""
 
     def test_new_group_no_episodes_downloads(self) -> None:
         planner = make_planner()

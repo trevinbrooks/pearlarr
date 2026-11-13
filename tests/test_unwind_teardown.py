@@ -2,7 +2,7 @@
 """The composition root's unwind teardown: close the leg before reporting its death.
 
 `run_arrs` wraps each arr's body in an INNER `except BaseException` that emits
-`RunFinished` and re-raises. Being inner, it runs during the unwind BEFORE the
+`ArrRunFinished` and re-raises. Being inner, it runs during the unwind BEFORE the
 outer `except` arms log the leg-fatal error - so that error is a cycle-level fact
 rendered at column 0, never a detail indented inside whatever entry / item / boot
 step the leg happened to die in.
@@ -11,12 +11,12 @@ These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - 
 error actually landing at column 0 - is pinned against the real renderer in
 `test_output_rich_renderer.TestUnwindPlacement`. The run tail's own boundary calls
 are pinned in `test_import_wait.TestFinalizeRunOrdering` / `TestFinalizeRunUnwind`.
-`RunFinished` is emitted exactly once per leg: the tail emits on success, and
+`ArrRunFinished` is emitted exactly once per leg: the tail emits on success, and
 bootstrap's inner handler emits only when the leg died first. The fold's close
 idempotency (`test_output_breadcrumbs`) and the renderer no-op
 (`TestUnwindPlacement`) remain as defense in depth.
 
-`RunDeps.build` is the failure site: it is the earliest thing inside the inner
+`ArrRunDeps.build` is the failure site: it is the earliest thing inside the inner
 try, so it also exercises the `deps is None` path - no reporter exists yet, which
 is why bootstrap must emit through the process hub seam rather than the reporter.
 """
@@ -69,7 +69,7 @@ def _memory_resolver(
 
 
 def _failing_build(exc: Exception) -> object:
-    """A `RunDeps.build` replacement that raises `exc` with the real signature.
+    """A `ArrRunDeps.build` replacement that raises `exc` with the real signature.
 
     Patched onto the class, so it is reached as a plain function (no `cls`). The
     real `build` is a classmethod and the call site passes `arr` positionally.
@@ -110,11 +110,11 @@ def _run_failing_arr(
     app_logger: logging.Logger,
     exc: Exception,
 ) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr leg whose `RunDeps.build` raises `exc`. Record the stream.
+    """Drive one Sonarr leg whose `ArrRunDeps.build` raises `exc`. Record the stream.
 
     The real hub AND the real logging bridge are installed (production parity), so
     the composition root's `hub_note` ERROR lands in the same event stream as the
-    unwind's `RunFinished` - which is the only way their relative order is observable.
+    unwind's `ArrRunFinished` - which is the only way their relative order is observable.
     """
 
     _write_config()
@@ -181,28 +181,28 @@ class TestUnwindEmitsRunFinished:
 
 
 class _StubDeps:
-    """A `RunDeps` stand-in whose only exercised method is the outer finally's close."""
+    """A `ArrRunDeps` stand-in whose only exercised method is the outer finally's close."""
 
     def close(self) -> None:
         """No run-scoped resources to release (bootstrap's outer finally calls this)."""
 
 
 class _FakeRunServices:
-    """The per-id hub bootstrap builds. Never driven, since `RunLoop` is faked."""
+    """The per-id hub bootstrap builds. Never driven, since `ArrRunLoop` is faked."""
 
     def __init__(self, deps: ArrRunDeps, arr: Arr) -> None:
         del deps, arr
 
 
 class _FakeSonarrSync:
-    """The strategy handed to `run_sync`. The faked loop never consults it."""
+    """The strategy handed to `run_arr`. The faked loop never consults it."""
 
     def __init__(self, deps: ArrRunDeps, services: _FakeRunServices) -> None:
         del deps, services
 
 
 class _FakeRunLoop:
-    """A run loop whose `run_sync` returns without emitting the tail's RunFinished."""
+    """A run loop whose `run_arr` returns without emitting the tail's RunFinished."""
 
     def __init__(self, deps: ArrRunDeps, services: _FakeRunServices) -> None:
         del deps, services
@@ -220,7 +220,7 @@ class _FakeRunLoop:
 
 
 def _completing_build() -> object:
-    """A `RunDeps.build` replacement returning a close-only stub (real signature)."""
+    """A `ArrRunDeps.build` replacement returning a close-only stub (real signature)."""
 
     def build(
         arr: Arr,
@@ -245,7 +245,7 @@ def _run_completing_arr(
     """Drive one Sonarr leg that completes normally. Record the event stream.
 
     The construction seams are faked so the leg finishes without real deps: `build`
-    returns a close-only stub, and `RunServices` / `RunLoop` / `SonarrSync` are
+    returns a close-only stub, and `ArrRunServices` / `ArrRunLoop` / `SonarrStrategy` are
     minimal no-ops. bootstrap lazy-imports the latter three INSIDE `run_arrs`, so the
     source-module attributes are what the leg resolves.
     """
