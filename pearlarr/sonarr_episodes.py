@@ -1,10 +1,10 @@
 """Sonarr episode-domain collaborator: series enumeration + episode resolution.
 
-`SonarrEpisodes` owns the per-run episode cache (and the series-id fingerprint
-that pins unmatched `/parse` records) and the logic that turns a (series,
+`SonarrEpisodes` owns the per-run episode cache (and the series-id hash
+that pins the `/parse` cache rows with no series) and the logic that turns a (series,
 AniList id, mapping) into the relevant episode list: season / AniBridge
-filtering, AniDB remaps, offset slicing, the specials picked by air date, the
-existing-file release dict, and the concurrent prefetch warm. It also keeps each
+filtering, AniDB remaps, offset slicing, the specials chosen by air date, the
+existing files as `ArrFiles`, and the concurrent prefetch warm. It also keeps each
 series' TVDB order facts and serves the orders its episode indexes are built with.
 """
 
@@ -47,11 +47,11 @@ def fetch_workers(config: AppConfig) -> int:
 
 
 def sonarr_series_hash(series_ids: Iterable[int]) -> str:
-    """Stable fingerprint of the current Sonarr series-id set.
+    """Stable hash of the current Sonarr series-id set.
 
-    Invalidates unmatched `/parse` records: an unmatched parse almost always means
-    the file's series isn't present, so a new series id flips the fingerprint and
-    re-parses the affected entries. `hashlib` (not `hash()`) for stability
+    Invalidates the `/parse` cache rows with no series: a parse with no series almost always means
+    the file's series isn't in Sonarr, so a new series id flips the hash and
+    re-parses the affected rows. `hashlib` (not `hash()`) for stability
     across processes.
 
     Args:
@@ -110,8 +110,8 @@ class SonarrEpisodes:
     """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic, and each series' orders.
 
     Constructed once per run in `SonarrStrategy` from the shared
-    `ArrRunDeps`, the strategy's Sonarr client, and the services
-    hub (held as `self._services` for the prefetch needs-scan gate).
+    `ArrRunDeps`, the strategy's Sonarr client, and the arr run
+    services (kept as `self._services` for the prefetch needs-check gate).
     The TVDB orders come off `deps.skyhook`, read once per series per run.
     """
 
@@ -123,8 +123,8 @@ class SonarrEpisodes:
                 gateway/SkyHook order gateway are unpacked off it).
             sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
-            services: The services hub. `prefetch` calls into it to
-                resolve AniList ids and the needs-scan gate.
+            services: The arr run services. `prefetch` calls into it to
+                resolve AniList ids and the needs-check gate.
         """
 
         self.sonarr = sonarr
@@ -133,20 +133,20 @@ class SonarrEpisodes:
         self._resolver = deps.resolver
         self.anibridge = deps.resolver.anibridge
         # Episode counts / formats resolve through the gateway (shared with the
-        # engine), so its warm cache and retry narration apply here too.
+        # arr run loop), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
         self._skyhook = deps.skyhook
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
         # otherwise re-fetch the same whole-series episode list. Cache it for the
-        # run so the network round-trip happens once per series. Reset at run start
+        # run so the network round-trip happens once per series. Reset at the arr run's start
         # (refresh_library, driven by the strategy's get_items hook).
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
-        # Fingerprint of the current Sonarr series-id set, recomputed each run in
-        # refresh_library. Pins unmatched `/parse` cache records to the library
-        # state so they self-heal when a missing series is added.
+        # Hash of the current Sonarr series-id set, recomputed each run in
+        # refresh_library. Pins the `/parse` cache rows with no series to the library
+        # state so they are parsed again once Sonarr has the series.
         self._series_hash: str = ""
 
         # Each series row's order facts, and the orderings built from them and the order cache. Both reset in
@@ -154,19 +154,19 @@ class SonarrEpisodes:
         self._order_facts: dict[int, SonarrSeriesOrders] = {}
         self._orderings: dict[int, IndexOrders] = {}
 
-        # The AniList ids whose pick of specials by air date this run already logged. Reset in refresh_library.
+        # The AniList ids whose choice of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
 
     @property
     def series_hash(self) -> str:
-        """The current run's series-id fingerprint (read by the parse cache)."""
+        """The current run's series-id hash (read by the parse cache)."""
 
         return self._series_hash
 
     def refresh_library(self) -> list[SonarrItem]:
-        """Enumerate the AniList-mapped Sonarr series. The run-start reset point.
+        """Enumerate the AniList-mapped Sonarr series. The arr run's start reset point.
 
-        Drops the per-run episode cache and re-fingerprints the series-id set so a
+        Drops the per-run episode cache and rehashes the series-id set so a
         fresh run always re-reads the current library. Called once per run from the
         strategy's `get_items` hook.
         """
@@ -175,8 +175,8 @@ class SonarrEpisodes:
         self._orderings = {}
         self._picks_logged = set()
         series = self.get_all_sonarr_series()
-        # Fingerprint the current series-id set once per run for unmatched-parse
-        # cache invalidation (see sonarr_series_hash).
+        # Hash the current series-id set once per run to invalidate the parse cache
+        # rows with no series (see sonarr_series_hash).
         self._series_hash = sonarr_series_hash(s.id for s in series)
         self._order_facts = {
             s.id: SonarrSeriesOrders(
@@ -210,22 +210,22 @@ class SonarrEpisodes:
         fetch fails is left unwarmed and re-fetched (and logged) by
         `mapping_episodes` on the main thread during the loop.
 
-        Only series the per-id loop would actually process are warmed: a series
-        whose every AniList id the loop short-circuits (no SeaDex entry, or cached
-        and unchanged - `title_needs_check`) is skipped, since `mapping_episodes`
+        Only series the per-title loop would actually check are warmed: a series
+        whose every title the loop short-circuits (no SeaDex entry, or cached
+        and unchanged - `title_needs_check`) is left out, since `mapping_episodes`
         would never run for it. This keeps a warm run from re-fetching the episode
-        lists the loop's cached-entry skip already obviates.
+        lists the loop's unchanged-title short-circuit already obviates.
 
         Args:
             items: The run's series list (already narrowed for
                 a single-series run).
-            progress: Boot cockpit step fed per-series
+            progress: Boot step fed per-series
                 fraction + "done/total" detail as each fetch completes. None
-                outside the cockpit.
+                outside the boot.
 
         Returns:
-            How many series were warmed (attempted) - the needs-scan subset,
-            for the caller's ledger detail. A series whose fetch returned None
+            How many series were warmed (attempted) - the needs-check subset,
+            for the caller's boot step detail. A series whose fetch returned None
             still counts.
         """
 
@@ -234,10 +234,10 @@ class SonarrEpisodes:
             return 0
 
         def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
-            # quiet: a transient miss here isn't logged from a worker. mapping_episodes
+            # quiet: a transient failure here isn't logged from a worker. mapping_episodes
             # retries and logs it on the main thread if it still fails. A RAISE (not
-            # just a None return) degrades to None too, so one bad series can't abort
-            # the whole concurrent sweep (the docstring's per-series degradation).
+            # just a None return) becomes None too, so one bad series can't abort
+            # the whole concurrent sweep (the per-series failure handling the docstring describes).
             try:
                 return series_id, self.sonarr.episodes(series_id, quiet=True)
             except Exception:
@@ -261,15 +261,15 @@ class SonarrEpisodes:
                     if progress is not None:
                         progress.progress(done / total, f"{done}/{total}")
             except BaseException:
-                # A stop (SIGTERM, Ctrl-C) drops the queued fetches, which the `with` exit would otherwise run.
+                # A stop (SIGTERM, Ctrl-C) drops the fetches not yet started, which the `with` exit would otherwise run.
                 pool.shutdown(wait=False, cancel_futures=True)
                 raise
         return total
 
     def titles_needing_check(self, items: Iterable[SonarrItem]) -> list[int]:
-        """The ids of the series the per-id loop will process, in item order, each once.
+        """The ids of the series the per-title loop will check, in item order, each once.
 
-        Skips a series whose every AniList id the loop short-circuits on (`title_needs_check`), and an unmonitored
+        Leaves out a series whose every title the loop short-circuits on (`title_needs_check`), and an unmonitored
         one under `ignore_unmonitored`.
         """
 
@@ -293,7 +293,7 @@ class SonarrEpisodes:
     def prefetch_orders(self, series_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB orders of the series (see `SkyHookGateway.prefetch`). Returns how many were written.
 
-        A series missing from this run's library read is skipped: there is no TVDB id to ask for.
+        A series absent from this run's library read is left out: there is no TVDB id to ask for.
         """
 
         by_tvdb = {
@@ -327,17 +327,17 @@ class SonarrEpisodes:
         return facts is not None and facts.season_type == AIRED_ORDER
 
     def episode_count(self, al_id: int) -> int | None:
-        """AniList's episode count for the entry, None when AniList gives none."""
+        """AniList's episode count for the title, None when AniList gives none."""
 
         return self._anilist.episode_count(al_id)
 
     def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
-        """Whether AniList left any of the entries unread (`AniListGateway.air_dates_unread`)."""
+        """Whether AniList left any of the titles unread (`AniListGateway.air_dates_unread`)."""
 
         return any(self._anilist.air_dates_unread(al_id) for al_id in al_ids)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
-        """Whether any of the series has no stored order record, as when SkyHook was down before its first fetch.
+        """Whether any of the series has no stored orders, as when SkyHook was unreachable before its first fetch.
 
         A series this run's library read doesn't have is never unread: nothing could fetch it.
         """
@@ -382,7 +382,7 @@ class SonarrEpisodes:
         """Get a list of relevant episodes for an AniList mapping.
 
         They are the mapping's episodes, unless those are specials that aired off AniList's dates and
-        `specials_by_date` picks others of the series. None when the series' episodes couldn't be read.
+        `specials_by_date` chooses others of the series. None when the series' episodes couldn't be read.
         """
 
         tvdb_season = mapping.tvdb_season
@@ -403,20 +403,20 @@ class SonarrEpisodes:
             return None
 
         # Filter down here by various things. Resolve the include test once by
-        # mode rather than re-branching on a string for every episode. The
+        # mapping kind rather than re-branching on a string for every episode. The
         # comprehension preserves ep_list order, exactly as the append loop did.
         if mode is MappingKind.SEASON_OFFSET:
             if mapping.source is MappingSource.ANIBRIDGE:
-                # Degraded AniBridge entry (imdb/tmdb-resolved, so no tvdb season
+                # AniBridge mapping without TVDB mappings (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
-                # Skip. check_title surfaces NO_EPISODES + the AniBridge warning.
+                # Return none. check_title surfaces NO_EPISODES + the AniBridge warning.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
             if not tvdb_mappings:
                 # AniBridge attached no usable per-season ranges, so nothing resolves.
-                # Return empty. check_title surfaces the visible NO_EPISODES skip.
+                # Return empty. check_title surfaces the visible NO_EPISODES row.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
@@ -427,7 +427,7 @@ class SonarrEpisodes:
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
         # being in Season 0. The resolver owns the AniDB parse: it returns the
-        # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an
+        # season's {tvdb_ep: anidb_ep} dict ({} when none) and raises on an
         # ambiguous id.
         anidb_episode_by_tvdb: dict[int, dict[int, int]] = {}
         if self._resolver.has_anidb and anidb_id is not None and (al_format != "TV" or tvdb_season == 0):
@@ -437,7 +437,7 @@ class SonarrEpisodes:
         if len(anidb_episode_by_tvdb) > 0:
             anidb_final_ep_list: list[SonarrEpisode] = []
 
-            # See if we have the mapping for each entry
+            # See if we have the mapping for each episode
             for ep in final_ep_list:
                 season_number = ep.season_number
                 episode_number = ep.episode_number
@@ -470,9 +470,9 @@ class SonarrEpisodes:
     def _picked_by_date(
         self, al_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
     ) -> list[SonarrEpisode]:
-        """The entry's episodes: `mapped`, or the specials of `series_episodes` AniList's dates pick over them.
+        """The title's episodes: `mapped`, or the specials of `series_episodes` AniList's dates choose over them.
 
-        A pick is logged once per run, though a run resolves an entry several times.
+        A choice is logged once per run, though a run resolves a title several times.
         """
 
         airing = self._anilist.airing(al_id)
@@ -499,7 +499,7 @@ class SonarrEpisodes:
         Args:
             final_ep_list: Season-filtered episodes to slice.
             al_id: AniList ID, used to resolve the expected episode count.
-            mapping: SeaDex mapping (read for `tvdb_epoffset` and `tvdb_season`.
+            mapping: The title's mapping (read for `tvdb_epoffset` and `tvdb_season`.
                 A `tvdb_season` of -1 means single-season offset slice).
         """
 
@@ -522,10 +522,10 @@ class SonarrEpisodes:
         self,
         ep_list: list[SonarrEpisode],
     ) -> ArrFiles:
-        """Fold the episodes' existing files into an `ArrFiles`."""
+        """Convert the episodes' existing files into an `ArrFiles`."""
 
-        # keep_no_group=False: untagged episode files ride the episode list
-        # into the planner's identity pass instead (pinned).
+        # keep_no_group=False: episode files with no group go with the episode list
+        # into the planner's size matching instead (pinned).
         return ArrFiles.from_files(
             [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
             keep_no_group=False,

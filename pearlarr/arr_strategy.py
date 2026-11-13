@@ -1,4 +1,4 @@
-"""The engine-facing strategy contracts: the hooks a per-arr strategy implements."""
+"""The strategy contracts the arr run drives: the hooks a per-arr strategy implements."""
 
 from abc import ABC, abstractmethod
 
@@ -10,7 +10,7 @@ from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress
 
 
 class ImportCompleter(ABC):
-    """The strategy hooks the engine drives after a download completes, deliberately non-generic."""
+    """The strategy hooks the wait pass drives after a torrent completes, deliberately non-generic."""
 
     @abstractmethod
     def import_completed(
@@ -19,24 +19,25 @@ class ImportCompleter(ABC):
         content_path: str,
         attempt_kind: AttemptKind,
     ) -> AttemptResult:
-        """Reconcile one completed download with the arr (one poll).
+        """Reconcile one completed torrent with the arr (one attempt).
 
-        A manual import assigns with *our* file->episode mapping, never the arr's title parse.
-        The probe carries any files the arr's history placed, for the engine to persist onto the record.
+        An auto import goes by pearlarr's file map, never the arr's parse of the names.
+        The attempt result carries any files the arr's history put on episodes, for the wait pass to persist onto the
+        pending import.
         """
 
     @abstractmethod
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Cheap, read-only "files inserted" count for the wait cockpit's bar.
+        """Cheap, read-only imported-files count for the wait region's bar.
 
         MUST NOT refresh downloads, read the queue, or issue commands.
         """
 
     def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
-        """Dismiss the arr's leftover queue entry for a fully imported torrent.
+        """Dismiss the arr's remaining queue record for a fully imported torrent.
 
-        Sonarr auto-closes a tracked download only when ONE import covers the grab's full episode count.
-        RETRY asks the manager for another in-run attempt. FAILED keeps the record for a later run.
+        Sonarr closes a tracked download by itself only when ONE import covers the grab's full episode count.
+        RETRY asks the manager for another try this run. FAILED keeps the pending import for a later run.
         """
 
         del pending
@@ -45,15 +46,15 @@ class ImportCompleter(ABC):
     @property
     @abstractmethod
     def supports_blocking_wait(self) -> bool:
-        """Whether the engine may run the end-of-run waiting monitor."""
+        """Whether the arr run loop may run the blocking wait pass."""
 
 
 class ArrStrategy[ItemT: ArrItem](ImportCompleter):
-    """An Arr-specific sync strategy the run machinery drives: the Arr REST client plus its domain logic."""
+    """An Arr-specific strategy the arr run machinery drives: the Arr REST client plus its domain logic."""
 
     @abstractmethod
     def get_items(self) -> list[ItemT]:
-        """Every Arr item to consider this run (also the run-start hook)."""
+        """Every Arr item to consider this arr run (also the arr run's start hook)."""
 
     @abstractmethod
     def filter_to_single(self, items: list[ItemT], item_id: int) -> list[ItemT]:
@@ -70,7 +71,7 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
     @property
     @abstractmethod
     def warms_episodes(self) -> bool:
-        """Whether `prefetch_episodes` does real work. The run calls `prefetch_orders` only when it does."""
+        """Whether `prefetch_episodes` does real work. The arr run calls `prefetch_orders` only when it does."""
 
     @abstractmethod
     def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressCallback | None = None) -> int:
@@ -94,11 +95,11 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
         al_id: int,
         mapping: TitleMapping,
     ) -> None:
-        """Process one AniList id for one Arr item: judge it, grab or hold, cache the outcome."""
+        """Check one title for one Arr item: decide, grab or skip, cache the result."""
 
     @abstractmethod
     def pending_import_series_id(self, item: ItemT) -> int | None:
-        """The Arr series id whose carried-over pending records this item owns.
+        """The Arr series id whose carried-over pending imports belong to this item.
 
-        None skips the engine's per-item pending snapshot.
+        None turns off the arr run loop's per-item pending-import snapshot.
         """

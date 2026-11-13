@@ -4,7 +4,7 @@
 Pins the fix for the latent AniBridge bug: a mapping whose `tvdb_mappings` is an
 empty dict (AniBridge registered the series' TVDB id but parsed no usable per-season
 ranges) resolves to `[]` instead of silently selecting episodes. The caller
-(`check_title`) surfaces the visible NO_EPISODES skip. The sibling `{season: []}`
+(`check_title`) surfaces the visible NO_EPISODES row. The sibling `{season: []}`
 whole-season-covered case must NOT be treated as empty.
 
 Also pins that the anime-ids path and `episode_count` resolve the AniList format /
@@ -17,7 +17,7 @@ AniDB map bypasses it entirely, while an empty one falls through to it), and the
 None-key skip (an episode without a season/episode number can't hit the map).
 
 Last, the mapped specials AniList's dates disagree with give way to the ones
-`specials_by_date` picks, logged once per run.
+`specials_by_date` chooses, logged once per run.
 """
 
 from datetime import date
@@ -98,8 +98,8 @@ class _FakeAniDbMappings:
 def test_anime_ids_lookups_route_through_the_gateway() -> None:
     """Format + episode-count lookups go through the AniList gateway.
 
-    The gateway carries the warm run cache and the bound wire client (with its
-    per-run retry narration), so an AniList backoff here narrates instead of
+    The gateway carries the warm arr run cache and the bound wire client (with its
+    per-arr-run retry narration), so an AniList backoff here narrates instead of
     hanging silently - these lookups must never bypass it to the bare wire.
     """
 
@@ -128,7 +128,7 @@ def test_the_episode_count_is_the_gateways() -> None:
 
 
 def test_an_entry_the_gateway_left_unread_is_unread() -> None:
-    # AniList goes down on entry 5. Entry 4 is looked up after that, from its record in the run cache.
+    # AniList turns unreachable on title 5. Title 4 is looked up after that, from its answer in the arr run cache.
     down = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({5})))
     down.al_cache[4] = anilist_body(4)
     down.episode_count(5)
@@ -140,7 +140,7 @@ def test_an_entry_the_gateway_left_unread_is_unread() -> None:
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
-    """An empty `tvdb_mappings` -> `[]` (no silent grab, caller logs the skip)."""
+    """An empty `tvdb_mappings` -> `[]` (no silent grab, caller logs the no-episodes row)."""
 
     sonarr = _FakeSonarr([sonarr_ep(1, 1)])
     episodes = make_sonarr_episodes(sonarr=sonarr)
@@ -265,7 +265,7 @@ def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
 def test_season_zero_is_grabbed_at_season_zero_but_dropped_at_minus_one() -> None:
     """Movies-as-specials live in season 0 and must grab at `tvdb_season=0`.
 
-    The VU1 fix matters here: a degraded AniBridge entry carries `tvdb_season=-1`,
+    The VU1 fix matters here: an AniBridge mapping without TVDB mappings carries `tvdb_season=-1`,
     which DROPS every season-0 episode (`-1 & season 0 -> False`), so a movie
     shadowed to -1 was never grabbed as a special. Restoring Kometa's season 0
     (Part 1) makes the s0 episode selectable again.

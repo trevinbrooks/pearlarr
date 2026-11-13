@@ -1,7 +1,7 @@
 # pyright: strict, reportPrivateUsage=false
 # reportPrivateUsage is off for the dual-list parity pins alone: the producer's
 # _TIP_PRECEDENCE and the builder's _TIP_TEXTS are deliberately private twins.
-"""Golden harness for the scan surface: the grammar contract.
+"""Golden harness for the scan output: the grammar contract.
 
 Every constant below was captured by RUNNING the current `RunReporter` (not
 hand-derived): each scenario pins the exact `(level, message, payload)` records
@@ -12,7 +12,7 @@ pinning the new event-driven rendering layer to this grammar. The producer
 rewrite (a later band) must keep every one of these green.
 
 Each scenario also carries its EVENT form (the `output.events` value a future
-producer will emit), so the golden is one shared spine: reporter call -> lines,
+producer will emit), so the golden is one shared source: reporter call -> lines,
 event -> the same lines.
 """
 
@@ -81,7 +81,7 @@ _I = logging.INFO
 _W = logging.WARNING
 
 # The one tag the action-block goldens use. Deliberately a single tag: today's
-# reporter joins a frozenset, so multi-tag order is hash-random across runs.
+# reporter joins a frozenset, so multi-tag order is hash-random across processes.
 _HDR_TAG = Tag.HDR
 
 
@@ -101,19 +101,19 @@ def _styled(message: str, style: str) -> Line:
 
 
 def _detail(message: str, key: str, value: str, style: str | None = "grey50", tail: str | None = None) -> Line:
-    """An entry-detail row: the colon-less gutter kv at indent 2, key width 9."""
+    """A title-detail row: the colon-less gutter kv at indent 2, key width 9."""
 
     return (_I, message, KeyValue(key=key, value=value, key_width=9, value_style=style, indent=2, sep="", tail=tail))
 
 
 def _srow(message: str, key: str, value: str, style: str | None = None) -> Line:
-    """A summary scoreboard row: "key : value" at indent 1, key width 12."""
+    """An arr run summary row: "key : value" at indent 1, key width 12."""
 
     return (_I, message, KeyValue(key=key, value=value, key_width=12, value_style=style, indent=1))
 
 
 def _brow(message: str, key: str, value: str | Text, style: str) -> Line:
-    """A summary per-entry block row: gutter kv at indent 3, key width 7."""
+    """A summary per-title block row: gutter kv at indent 3, key width 7."""
 
     return (_I, message, KeyValue(key=key, value=value, key_width=7, value_style=style, indent=3, sep=""))
 
@@ -125,7 +125,7 @@ def _torrent_text(name: str | None, group: str, *, dry: bool) -> str | Text:
     return group_highlight(name, group, group_style=dim if dry else "cyan", base_style=dim if dry else "green")
 
 
-# --- run/item banners ---------------------------------------------------------------
+# --- scan/item banners --------------------------------------------------------------
 
 SCAN_STARTED_SONARR = ScanStarted(arr=Arr.SONARR, total=3)
 SCAN_STARTED_SONARR_LINES: tuple[Line, ...] = (
@@ -151,7 +151,7 @@ ITEM_STARTED_RADARR_LINES: tuple[Line, ...] = (
     _titled("[1/1] Radarr: Perfect Blue"),
 )
 
-# --- self-contained ledger rows -------------------------------------------------------
+# --- self-contained title rows --------------------------------------------------------
 
 UNMONITORED_ROW = TitleRow(state=TitleState.UNMONITORED, label="Unmonitored Show")
 UNMONITORED_LINES: tuple[Line, ...] = (
@@ -183,7 +183,7 @@ IGNORED_TITLED_LINES: tuple[Line, ...] = (
     _detail("    anilist   123", "anilist", "123", style=None),
 )
 
-# --- entry headers (row + coverage/link continuation) ---------------------------------
+# --- title headers (row + coverage/link continuation) ---------------------------------
 
 CHECKING_FULL = TitleHeader(
     state=TitleState.CHECKING,
@@ -236,7 +236,7 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
     _styled("  unchanged   Bare Show", "grey50"),
 )
 
-# --- titled entries with detail continuations (outage skip / no entry) ----------------
+# --- titled rows with detail continuations (SeaDex unreachable / no entry) ------------
 
 UNREACHABLE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
 UNREACHABLE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
@@ -246,7 +246,7 @@ UNREACHABLE_STATUS_DETAIL = TitleDetail(
 UNREACHABLE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  skipped     Cached Show", "grey50"),
-    # The anilist id repeats on its own detail row under any real title, the
+    # The anilist id repeats on its own detail row under any real name, the
     # cached name included. Only the id-form label omits it (it names the id itself).
     _detail("    anilist   1", "anilist", "1", style=None),
     _detail("    status    lookup skipped (SeaDex unreachable)", "status", "lookup skipped (SeaDex unreachable)"),
@@ -299,7 +299,7 @@ PENDING_DOWNLOADED_LINES = _pending_import_lines(_styled("  downloaded  My Show 
 PENDING_IMPORT_IMPORTED = _pending_import_header(TitleState.IMPORTED)
 PENDING_IMPORTED_LINES = _pending_import_lines(_styled("  imported    My Show · SubGroup", "green"))
 
-# --- entry details -----------------------------------------------------------------------
+# --- title details -----------------------------------------------------------------------
 
 NO_RELEASES_DETAIL = TitleDetail(label="status", value=StyledValue("no suitable releases on SeaDex", Accent.DIM))
 NO_RELEASES_LINES: tuple[Line, ...] = (
@@ -398,7 +398,7 @@ ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
     ),
 )
 
-# Mixed outcomes render grouped - all added, then all downloading - regardless
+# Mixed outcomes render grouped - all added, then all already in qBittorrent - regardless
 # of results order (accepted Band-D delta, OLD interleaved in results order).
 ACTION_MIXED = GrabAction(
     status=GrabStatus.ADDING,
@@ -433,7 +433,7 @@ CAP_REACHED_LINES: tuple[Line, ...] = (
     ),
 )
 
-# --- run summaries ------------------------------------------------------------------------
+# --- arr run summaries --------------------------------------------------------------------
 
 _RULE_LINE: Line = (_I, "=" * 80, SeparatorRule(char="="))
 
@@ -603,7 +603,7 @@ SUMMARY_DRY_HAS_CLIENT = ArrRunSummaryReady(
 )
 SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
-    # The DRY RUN note rides the console title only. The file keeps the plain title.
+    # The DRY RUN note goes on the console title only. The file keeps the plain title.
     _titled(
         "Pearlarr (Sonarr) run complete",
         title="Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)",
@@ -735,7 +735,7 @@ def _wait_off_stats() -> ArrRunStats:
                 cause=NeedsActionCause.PRIVATE_ONLY_STALE,
             ),
         ],
-        # Non-zero pending counters that must stay hidden with the wait mode off.
+        # Non-zero pending import counters that must stay hidden with the wait mode off.
         downloading=2,
         downloaded=1,
         imported=3,
@@ -838,7 +838,7 @@ class TestBannerParity:
 
 
 class TestLedgerRowParity:
-    """The self-contained ledger rows (unmonitored, no-mapping, no-episodes, ignored) reproduce their golden lines."""
+    """The self-contained title rows (unmonitored, no-mapping, no-episodes, ignored) reproduce their golden lines."""
 
     def test_unmonitored(self) -> None:
         harness = _Harness()
@@ -867,7 +867,7 @@ class TestLedgerRowParity:
 
 
 class TestEntryHeaderParity:
-    """`open_title_block` / `log_cached_title` / `log_pending_import` reproduce the pinned entry-header golden lines.
+    """`open_title_block` / `log_cached_title` / `log_pending_import` reproduce the pinned title-header golden lines.
 
     Covers the checking, cached, and pending states.
     """
@@ -910,7 +910,7 @@ class TestEntryHeaderParity:
 class TestTitledEntryParity:
     """`log_no_sd_entry` / `log_seadex_unreachable` reproduce the pinned golden lines.
 
-    A title is resolved via the AniList gateway, else the arr item's own title, else the id form alone.
+    A title's name is resolved via the AniList gateway, else the arr item's own name, else the id form alone.
     """
 
     def test_no_entry_with_resolved_title(self) -> None:
@@ -953,7 +953,7 @@ def _xdetail(level: int, message: str, key: str, value: str, style: str) -> Line
 
 @dataclass(frozen=True, slots=True)
 class _DetailSite:
-    """One migrated producer site: the `reporter.detail` args + its pinned record."""
+    """One migrated producer site: the `reporter.detail` args + its pinned line."""
 
     label: str
     value: StyledValue
@@ -963,7 +963,7 @@ class _DetailSite:
 
 @dataclass(frozen=True, slots=True)
 class _FactSite:
-    """One flipped producer site: the typed fact `reporter.post` takes + its pinned record."""
+    """One flipped producer site: the typed fact `reporter.post` takes + its pinned line."""
 
     fact: ReleaseSkipped | GrabFailed
     golden: Line
@@ -1034,7 +1034,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._may_grab: a url whose files place under another title, some of them on none.
+        # grab_pipeline._may_grab: a release whose files place under another title, some of them on none.
         _FactSite(
             ReleaseSkipped(
                 group="GroupA",
@@ -1051,7 +1051,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._may_grab: a url whose one file is another title's.
+        # grab_pipeline._may_grab: a release whose one file is another title's.
         _FactSite(
             ReleaseSkipped(
                 group="GroupA",
@@ -1093,7 +1093,7 @@ class TestExternalDetailParity:
     )
 
     SITES: tuple[_DetailSite, ...] = (
-        # grab_pipeline.grab_and_cache: nothing to download (the blue NOTE accent).
+        # grab_pipeline.grab_and_cache: nothing to grab (the blue NOTE accent).
         _DetailSite(
             "status",
             StyledValue("already have the recommended release", Accent.NOTE),
@@ -1155,13 +1155,13 @@ class TestExternalDetailParity:
         assert harness.lines() == tuple(site.golden for site in self.SITES)
 
     def test_post_rides_the_open_entry_then_emits_scope_free(self) -> None:
-        # Inside an open entry the fact carries the entry scope. After a boundary
+        # Inside an open title the fact carries the title scope. After a boundary
         # closes it, a post emits scope-free (col-0 by design, like _post).
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.post(self.FACT_SITES[0].fact)
-        harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the entry
+        harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the title scope
         harness.reporter.post(next(site.fact for site in self.FACT_SITES if isinstance(site.fact, GrabFailed)))
 
         opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
@@ -1174,7 +1174,7 @@ class TestExternalDetailParity:
 class TestActionBlockParity:
     """`log_seadex_action` / `log_max_torrents_added` reproduce the pinned action-block golden lines.
 
-    Covers fresh, dry-run, already-downloading, and mixed-outcome renders.
+    Covers fresh, dry-run, already-in-qBittorrent, and mixed-outcome renders.
     """
 
     _SEADEX_DICT: ClassVar[SeadexDict] = {
@@ -1216,7 +1216,7 @@ class TestActionBlockParity:
         assert harness.lines() == ACTION_DOWNLOADING_NO_WAIT_LINES
 
     def test_mixed_results_group_added_before_downloading(self) -> None:
-        # Downloading-first input still renders added-first: the grouping, not
+        # Already-in-qBittorrent-first input still renders added-first: the grouping, not
         # results order, is the pinned contract.
         harness = _Harness()
         results = [
@@ -1240,13 +1240,13 @@ def _summary_lines(
     warnings: int = 0,
     errors: int = 0,
 ) -> tuple[Line, ...]:
-    """Capture exactly what log_run_summary emits, with scripted issue deltas."""
+    """Capture exactly what log_arr_run_summary emits, with scripted issue deltas."""
 
     harness = _Harness()
-    # Production shape: run start stamps the mark (bound to the harness counter),
-    # then the run's issues accrue on it.
+    # Production shape: the arr run's start takes the mark (bound to the harness counter),
+    # then the arr run's issues accrue on it.
     state.counts_mark = harness.reporter.counts_mark()
-    # Scripted issues ride the bound counter directly (the issues-row delta).
+    # Scripted issues go on the bound counter directly (the issues-row delta).
     # They produce no events, so only the summary's feed the re-derived lines.
     for _ in range(warnings):
         harness.counts.record(Severity.WARNING)
@@ -1325,7 +1325,7 @@ class TestTorrentValuePins:
 
 
 class TestScopeLifecycle:
-    """A1/A3: the entry-scope open/close discipline over multi-method sequences.
+    """A1/A3: the title-scope open/close discipline over multi-method sequences.
 
     Asserts on the RAW recorded event stream (scope boundaries included). Serials
     mint from the process-wide minter, so the checks are RELATIONAL - which scope
@@ -1334,7 +1334,7 @@ class TestScopeLifecycle:
     """
 
     def test_item_entry_entry_item_sequence(self) -> None:
-        # item -> entry -> entry -> item: each new entry closes the previous, and
+        # item -> title -> title -> item: each new title closes the previous, and
         # the closing item boundary closes the last one.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
@@ -1346,7 +1346,7 @@ class TestScopeLifecycle:
         boundaries = [e for e in harness.events if isinstance(e, (ScopeOpened, ScopeClosed))]
         assert len(boundaries) == 4
         first_open, first_close, second_open, second_close = boundaries
-        # Each entry is closed before the next one opens (one entry at a time).
+        # Each title is closed before the next one opens (one title at a time).
         assert isinstance(first_open, ScopeOpened) and first_open.label == "First"
         assert isinstance(first_close, ScopeClosed) and first_close.scope == first_open.scope
         assert isinstance(second_open, ScopeOpened) and second_open.label == "Second"
@@ -1356,7 +1356,7 @@ class TestScopeLifecycle:
         assert [h.scope for h in headers] == [first_open.scope, second_open.scope]
 
     def test_bare_titled_rows_open_no_scope(self) -> None:
-        # The self-contained ledger rows never open an entry scope (col-0 rows).
+        # The self-contained title rows never open a title scope (col-0 rows).
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.log_arr_item_unmonitored(state, "Unmon")
@@ -1368,19 +1368,19 @@ class TestScopeLifecycle:
         assert all(isinstance(e, TitleRow) for e in harness.events)
 
     def test_close_is_idempotent(self) -> None:
-        # A second boundary with no open entry emits no spurious ScopeClosed.
+        # A second boundary with no open title emits no spurious ScopeClosed.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
-        harness.reporter.log_arr_item_start(Arr.SONARR, "A", 1, 1)  # closes the entry
+        harness.reporter.log_arr_item_start(Arr.SONARR, "A", 1, 1)  # closes the title scope
         harness.reporter.log_arr_item_start(Arr.SONARR, "B", 1, 1)  # nothing left to close
 
         assert len([e for e in harness.events if isinstance(e, ScopeClosed)]) == 1
 
     def test_action_keeps_the_entry_open_for_a_trailing_diagnostic(self) -> None:
-        # A1(b): log_seadex_action POSTS but does not close, so the entry stays on
-        # the frontier - a diagnostic emitted before the next boundary indents
-        # under this entry (live-verified), not col-0.
+        # A1(b): log_seadex_action POSTS but does not close, so the title stays among
+        # the open scopes - a diagnostic emitted before the next boundary indents
+        # under this title (live-verified), not col-0.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
@@ -1397,8 +1397,8 @@ class TestScopeLifecycle:
         assert action.scope == opened.scope
 
     def test_fresh_reporter_has_no_open_entry(self) -> None:
-        # A3: _entry starts None on a fresh reporter, so the first current-entry
-        # detail (no header before it) opens no scope and rides scope-free.
+        # A3: _title_scope starts None on a fresh reporter, so the first current-title
+        # detail (no header before it) opens no scope and goes scope-free.
         harness = _Harness()
         harness.reporter.log_no_seadex_releases(ArrRunState(arr=Arr.SONARR))
 
@@ -1408,7 +1408,7 @@ class TestScopeLifecycle:
 
     def test_cap_closes_the_open_entry(self) -> None:
         # The scan breaks at the cap and _finish_arr_run's reconcile runs before
-        # the summary: a still-open ENTRY frontier would misplace its diagnostics.
+        # the summary: a still-open TITLE scope would misplace its diagnostics.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))

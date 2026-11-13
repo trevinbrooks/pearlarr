@@ -1,4 +1,4 @@
-"""A leg's state: the run context and stats, the grab and needs-action records, per-title flags, and entry titles."""
+"""An arr run's state and stats, the grabbed and needs-action rows, per-title flags, and titles."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -18,36 +18,36 @@ if TYPE_CHECKING:
 
 
 def unresolved_label(al_id: int) -> str:
-    """The id-form label an entry falls back to when no title resolved."""
+    """The id-form label a title falls back to when no name resolved."""
 
     return f"AniList #{al_id}"
 
 
 @dataclass(frozen=True, slots=True)
 class Title:
-    """An entry's resolved title: what the run shows, and the AniList title when one resolved."""
+    """A title's resolved name: what the run shows, and the AniList name when one resolved."""
 
     al_id: int
     name: str
-    """The AniList title, else the arr item's own title, else the id form."""
+    """The AniList name, else the arr item's own name, else the id form."""
     names: TitleNames = field(default_factory=TitleNames)
-    """The arr title and every AniList title, the placement's tie-break between look-alike files."""
+    """The arr item's name and every AniList name, the placement's tie-break between look-alike files."""
 
     @property
     def anilist(self) -> str | None:
-        """The first AniList title alone, the only value the cache stores as the entry's name."""
+        """The first AniList name alone, the only value the cache stores as the title's name."""
 
         return self.names.anilist[0] if self.names.anilist else None
 
     @property
     def resolved(self) -> bool:
-        """False when nothing named the entry and `display` fell back to the id form."""
+        """False when nothing named the title and `name` fell back to the id form."""
 
         return self.name != unresolved_label(self.al_id)
 
 
 def title_from_names(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
-    """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
+    """The title, named by the first AniList name, else the arr item's own name, else the id form."""
 
     names = TitleNames(arr_title, tuple(title for title in anilist_titles if title))
     named = names.anilist[0] if names.anilist else arr_title
@@ -56,7 +56,7 @@ def title_from_names(al_id: int, anilist_titles: tuple[str, ...], arr_title: str
 
 @dataclass
 class ArrRunStats:
-    """The per-run tally rendered by the end-of-run summary."""
+    """The arr run's tally rendered by the arr run summary."""
 
     checked: int = 0
     added: list[GrabbedRow] = field(default_factory=list[GrabbedRow])
@@ -64,7 +64,7 @@ class ArrRunStats:
     unchanged: int = 0
     no_seadex_entry: int = 0
     seadex_unreachable: int = 0
-    """Lookups skipped this run, counted apart from `no_seadex_entry`."""
+    """Lookups left undone with SeaDex unreachable this arr run, counted apart from `no_seadex_entry`."""
     no_releases: int = 0
     no_mappings: int = 0
     needs_action: list[NeedsActionRow] = field(
@@ -72,13 +72,13 @@ class ArrRunStats:
     )
     unmonitored: int = 0
     downloading: int = 0
-    """Carried-over `QUEUED` records (a this-run grab stays in `added`)."""
+    """Carried-over `DOWNLOADING` pending imports (a grab of this arr run stays in `added`)."""
     downloaded: int = 0
-    """Carried-over `DOWNLOADED` records (a this-run grab stays in `added`)."""
+    """Carried-over `DOWNLOADED` pending imports (a grab of this arr run stays in `added`)."""
     imported: int = 0
-    """Carried-over `IMPORTED` records (a this-run grab stays in `added`)."""
+    """Carried-over `IMPORTED` pending imports (a grab of this arr run stays in `added`)."""
     held_by_cap: int = 0
-    """Titles with a grabbable release held past the run cap (re-checked and grabbed next run)."""
+    """Titles with a grabbable release held past the cap (re-checked and grabbed next run)."""
 
 
 @dataclass
@@ -86,45 +86,47 @@ class PerTitleState:
     """Per-title scratch flags, reset at the top of each title."""
 
     held_by_cap: bool = False
-    """A grabbable release was held by the run cap, so the title must not be cached as done."""
+    """A grabbable release was held by the cap, so the title must not be cached."""
     private_only_skipped: bool = False
-    """A private-only release forced a skip, so the title must not be cached as done."""
+    """A private-only release forced a skip, so the title must not be cached."""
     private_only_groups: list[str] = field(default_factory=list[str])
-    """Group names of the private-only skip, riding along for the run summary's "needs action" list."""
+    """Group names of the private-only skip, carried for the arr run summary's "needs action" list."""
     private_only_outdated: bool = False
-    """A stale owned private pick is held because only a fallback covers it."""
+    """The arr's copy of a preferred private release is outdated, and the release is skipped because only a fallback
+    covers it."""
     unsupported_tracker_skipped: bool = False
-    """The tracker has no parser, so the title must not be cached as done."""
+    """The tracker has no parser, so the title must not be cached."""
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
-    """Group names of the unsupported-tracker skip, riding along for the summary."""
+    """Group names of the unsupported-tracker skip, carried for the summary."""
     grab_failed_groups: list[str] = field(default_factory=list[str])
-    """Groups whose release hit a contained grab failure (tracker or client down), so the title stays uncached."""
+    """Groups whose release hit a contained grab failure (tracker or client unreachable), so the title stays
+    uncached."""
     skipped_groups: dict[SkipReason, list[str]] = field(default_factory=dict[SkipReason, list[str]])
-    """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
-    run, and a hand-import hold re-warns until the import covers it. `SkipReason.INPUT_UNREAD` also carries the
-    groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
+    """The groups a skip stopped, by skip reason. While any are here the title stays uncached and is checked again
+    next run, and a hand-import skip re-warns until the import covers it. `SkipReason.INPUT_UNREAD` also carries the
+    groups whose placement waited on a failed read, though a release of such a group may have been grabbed. Filled by
     `add_skipped`."""
     metadata_unread: bool = False
-    """An entry of the series was looked up without its AniList record, or a series was read without its TVDB
+    """A title of the series was looked up without its AniList answer, or a series was read without its TVDB
     orders, so the title stays uncached and re-checks. Nothing for the user to do."""
     title_name: str | None = None
-    """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
+    """Name of the title being checked, so grabs and the summary can attribute what they grab."""
     entry_url: str | None = None
-    """SeaDex URL of the entry currently being processed, so grabs and the summary can link what they grab."""
+    """SeaDex URL of the title being checked, so grabs and the summary can link what they grab."""
     entry_coverage: str | None = None
-    """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
+    """Coverage of the title being checked, so grabs and the summary can attribute what they grab."""
 
     def add_skipped(self, skip_reason: SkipReason, groups: Sequence[str]) -> None:
-        """List `groups` under `hold` in `skipped_groups`.
+        """List `groups` under `skip_reason` in `skipped_groups`.
 
-        No groups adds no key, so an empty `skipped_groups` means nothing held the title.
+        No groups adds no key, so an empty `skipped_groups` means nothing was skipped for the title.
         """
 
         if groups:
             self.skipped_groups.setdefault(skip_reason, []).extend(groups)
 
     def add_private_only_notices(self, skips: "PrivateOnlyNotices") -> None:
-        """Fold a planner private-only skip result onto this title's flags."""
+        """Merge a planner private-only skip result into this title's flags."""
 
         self.private_only_skipped |= skips.warned
         self.private_only_groups.extend(skips.groups)
@@ -133,36 +135,36 @@ class PerTitleState:
 
 @dataclass
 class ArrRunState:
-    """Per-run state."""
+    """One arr run's state."""
 
     arr: Arr
     dry_run: bool = False
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
-    """The run's resolved wait mode (cli > config > default). `OFF` makes every pending-import path a no-op."""
+    """The arr run's resolved wait mode (cli > config > default). `OFF` makes every pending-import path a no-op."""
     stats: ArrRunStats = field(default_factory=ArrRunStats)
     torrents_added: int = 0
     per_title: PerTitleState = field(default_factory=PerTitleState)
     """Per-title scratch flags, reassigned fresh at the top of each title so none leak into the next."""
     arr_title: str = ""
-    """The arr item under scan, the display fallback for its ids when AniList names none."""
+    """The name of the arr item under scan, the display fallback for its titles when AniList names none."""
     started_monotonic: float | None = None
-    """Run clock (monotonic, so an NTP or DST step cannot move it)."""
+    """Arr run clock (monotonic, so an NTP or DST step cannot move it)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounter().bound_mark())
-    """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
+    """Marked at the arr run's start and diffed for the summary's issues row (an unmarked state diffs to zero)."""
     grabbed_this_run: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
-    """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
+    """Pending imports written THIS arr run, keyed by hash for the run-list writes. The durable copies live in
     `cache_store`."""
     reacquired_keys: set[str] = field(default_factory=set[str])
-    """Store-resident records this run re-saw (`ALREADY_IN_QBIT`) without grabbing them, skipped by the snapshot
-    but counted by the tally. Never also a `pending_imports` record."""
+    """Stored pending imports this arr run saw again (`ALREADY_IN_QBIT`) without grabbing them, left out of the
+    snapshot but counted by the tally. Never also in `grabbed_this_run`."""
     pending_import_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
-    """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
+    """Observed status of each carried-over pending import, keyed by hash. Never a grab of this arr run, which stays
     `added`."""
     pause_owed: bool = False
-    """An id's queries owe the `advanced.sleep_time` pause. The run loop sleeps it before the next id."""
+    """A title's queries owe the `advanced.sleep_time` pause. The arr run loop sleeps it before the next title."""
 
 
 def is_dry_run(state: ArrRunState, qbit: qbittorrentapi.Client | None) -> bool:
-    """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured."""
+    """A run is a dry run when one was requested OR qBittorrent is not configured."""
 
     return state.dry_run or qbit is None

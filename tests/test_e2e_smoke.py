@@ -1,20 +1,20 @@
 # pyright: strict
-"""End-to-end smoke tests: one full pass per arr through the REAL composition root.
+"""End-to-end smoke tests: one full arr run per arr through the REAL composition root.
 
 These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
 `ArrRunDeps.build` -> `ArrRunServices` -> `ArrRunLoop.run_arr` -> `SonarrStrategy`
-/ `RadarrStrategy` hooks actually run a sync wired together, with ONLY the
+/ `RadarrStrategy` hooks actually run an arr run wired together, with ONLY the
 external network leaves faked:
 
 * the SeaDex library, faked at the composition root's `SeaDexEntry` leaf.
-* qBittorrent, left unconfigured so the whole run is a perpetual preview.
-* the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`), and the
+* qBittorrent, left unconfigured so the whole run is a perpetual dry run.
+* the Arr HTTP (every raw endpoint uses the httpx-based `ArrHttp`), and the
   AniList POST and SkyHook GET (on the shared web client), all mocked via `respx`.
 * the Nyaa lookup, faked at `torrents.fetch_nyaa_link`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
 agreement: the Arr item's external id (the `series` fixture's `tvdbId`, the
-inline movie body's `tmdbId`) -> an inline `anime_mappings` entry -> an
+inline movie body's `tmdbId`) -> an inline `anime_mappings` mapping -> an
 AniList id -> the faked SeaDex entry. The fakes record, so the assertions prove
 that id actually flowed end to end (a vacuous run that resolved nothing would
 still return True - the recorded calls are what make this non-hollow).
@@ -112,7 +112,7 @@ def test_sonarr_run_drives_real_composition_root(
     monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
 
     # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
-    # qBittorrent unset -> preview, and the one inline tvdb->anilist mapping that lets
+    # qBittorrent unset -> dry run, and the one inline tvdb->anilist mapping that lets
     # the REAL resolver resolve a live id with no network (anidb/anibridge disabled).
     monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
     config = make_config(
@@ -125,7 +125,7 @@ def test_sonarr_run_drives_real_composition_root(
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
     # The Sonarr + AniList + SkyHook HTTP boundary. respx covers every endpoint: the
-    # Sonarr reads ride the httpx-based ArrHttp, the AniList POST and SkyHook GET the
+    # Sonarr reads use the httpx-based ArrHttp, the AniList POST and SkyHook GET the
     # shared web client.
     with respx.mock:
         series_route = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
@@ -147,7 +147,7 @@ def test_sonarr_run_drives_real_composition_root(
             f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
         }
 
-    # The real composition root ran one full Sonarr pass with zero real network.
+    # The real composition root ran one full Sonarr run with zero real network.
     assert result is True
     # The inline tvdb->anilist mapping resolved id 20920 and the gateway was consulted
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
@@ -158,19 +158,19 @@ def test_sonarr_run_drives_real_composition_root(
     assert f"GET {_BASE}/parse" in respx_fired
     # The series' TVDB orders were fetched at boot.
     assert orders_route.call_count == 1
-    # The resolved entry's release reached the (preview) grab at the torrent source.
+    # The resolved entry's release reached the (dry run) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
-    # ...and the whole pass logged no error (a swallowed failure would tally on
-    # the run's installed hub, which run_single seated).
+    # ...and the whole run logged no error (a swallowed failure would tally on
+    # the run's hub, which run_single installed).
     assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
     # isolation - only here does it run through run_single) and the REAL plain
-    # stdout seat rendered the summary's structured line. Reading capsys also
-    # keeps the cockpit off the terminal under `-s`.
+    # stdout renderer printed the summary's structured line. Reading capsys also
+    # keeps the live region off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out
 
 
-# Three-way id agreement for the Radarr pass: the inline movie body's tmdbId
+# Three-way id agreement for the Radarr run: the inline movie body's tmdbId
 # (372058) -> the inline mapping -> AniList 21519 -> the faked SeaDex entry.
 _RADARR_TMDB = 372058
 _RADARR_ANILIST = 21519
@@ -196,7 +196,7 @@ _RADARR_ANILIST_BODY: dict[str, object] = {
     },
 }
 
-# A minimal `/api/v3/movie` record: the item fields the run reads
+# A minimal `/api/v3/movie` body: the item fields the run reads
 # (id/title/tmdbId/imdbId/monitored) plus a couple of extras proving
 # `RadarrMovie` ignores unknown keys.
 _MOVIE_BODY: dict[str, object] = {
@@ -252,7 +252,7 @@ def test_radarr_run_drives_real_composition_root(
     monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
     monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
 
-    # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and
+    # A real config.yml on disk: Radarr creds, qBittorrent unset -> dry run, and
     # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a
     # live id with no network (anidb/anibridge disabled).
     monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
@@ -267,8 +267,8 @@ def test_radarr_run_drives_real_composition_root(
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
     # The Radarr + AniList HTTP boundary. respx covers every endpoint: the
-    # Radarr reads ride the httpx-based ArrHttp (the empty moviefile read ->
-    # a fileless ArrFiles record), the AniList POST the shared web client.
+    # Radarr reads use the httpx-based ArrHttp (the empty moviefile read ->
+    # a fileless ArrFiles), the AniList POST the shared web client.
     with respx.mock:
         movie_route = respx.get(f"{_RADARR_BASE}/movie").respond(json=[_MOVIE_BODY])
         moviefile_route = respx.get(f"{_RADARR_BASE}/moviefile").respond(json=[])
@@ -277,7 +277,7 @@ def test_radarr_run_drives_real_composition_root(
 
         result = run_single(radarr=True, import_wait_mode=ImportWaitMode.OFF)
 
-    # The real composition root ran one full Radarr pass with zero real network.
+    # The real composition root ran one full Radarr run with zero real network.
     assert result is True
     # The inline tmdb->anilist mapping resolved id 21519 and the gateway was consulted
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
@@ -285,13 +285,13 @@ def test_radarr_run_drives_real_composition_root(
     # The real Radarr client drove the library fetch + the movie-file read.
     assert movie_route.call_count == 1
     assert moviefile_route.call_count == 1
-    # The resolved entry's release reached the (preview) grab at the torrent source.
+    # The resolved entry's release reached the (dry run) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
-    # ...and the whole pass logged no error (a swallowed failure would tally on
-    # the run's installed hub, which run_single seated).
+    # ...and the whole run logged no error (a swallowed failure would tally on
+    # the run's hub, which run_single installed).
     assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
     # isolation - only here does it run through run_single) and the REAL plain
-    # stdout seat rendered the summary's structured line. Reading capsys also
-    # keeps the cockpit off the terminal under `-s`.
+    # stdout renderer printed the summary's structured line. Reading capsys also
+    # keeps the live region off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out
