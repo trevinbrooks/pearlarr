@@ -10,8 +10,8 @@ from .import_wait import ImportWaitManager
 from .leg_state import RunContext, unresolved_label
 from .output import hub_error, hub_note, hub_warn
 from .output.console_text import arr_item_noun, count_noun
-from .protocols import ArrSync, ImportCompleter
-from .run_services import RunDeps, RunServices
+from .protocols import ArrStrategy, ImportCompleter
+from .run_services import LegDeps, LegServices
 from .wait_types import ImportWaitMode, PendingState
 from .wait_view import (
     WaitResult,
@@ -19,10 +19,10 @@ from .wait_view import (
 
 
 @final
-class RunLoop:
+class LegLoop:
     """The Arr-agnostic run loop driving an injected strategy."""
 
-    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+    def __init__(self, deps: LegDeps, services: LegServices) -> None:
         """Receive the shared collaborators + services hub and set up per-run state."""
 
         self._config = deps.config
@@ -38,22 +38,22 @@ class RunLoop:
 
         self._services = services
 
-        # (Re)set at the top of run_sync. The None placeholder is replaced before any import hook runs.
-        # Held under the narrow, non-generic ImportCompleter ABC (a concrete ArrSync subclasses it), so no ItemT cast.
+        # (Re)set at the top of run_leg. The None placeholder is replaced before any import hook runs.
+        # Held under the narrow, non-generic ImportCompleter ABC (a concrete ArrStrategy subclasses it), so no ItemT cast.
         self._active_strategy: ImportCompleter | None = None
 
         # Adopt the hub's placeholder ctx, never mint a second one.
-        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_sync.
+        # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_leg.
         self._ctx = services.ctx
 
         self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, records=services.records)
-        self.begin_run(self._ctx)
+        self.bind_leg(self._ctx)
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the fresh run context to every per-run collaborator."""
 
-        self._services.begin_run(ctx)
-        self._wait_manager.begin_run(ctx, self._active_strategy)
+        self._services.bind_leg(state)
+        self._wait_manager.bind_leg(state, self._active_strategy)
 
     def reset_run_stats(
         self,
@@ -70,7 +70,7 @@ class RunLoop:
             started_monotonic=time.monotonic(),
             counts_mark=self._reporter.counts_mark(),
         )
-        self.begin_run(self._ctx)
+        self.bind_leg(self._ctx)
 
     @property
     def _wait_active(self) -> bool:
@@ -80,9 +80,9 @@ class RunLoop:
 
     # --- Run orchestration --------------------------------------------------
 
-    def run_sync[ItemT: ArrItem](
+    def run_leg[ItemT: ArrItem](
         self,
-        strategy: ArrSync[ItemT],
+        strategy: ArrStrategy[ItemT],
         *,
         item_id: int | None,
         dry_run: bool,
@@ -165,7 +165,7 @@ class RunLoop:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
                 step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
             # Like the episode step, after the SeaDex warm and the activity scan's dirty marks: both pick their
-            # series through `al_id_needs_scan`, which reads them.
+            # series through `title_needs_check`, which reads them.
             with boot.step("Fetching TVDB orders") as step:
                 fetched = strategy.prefetch_orders(all_items, progress=step)
                 if self._skyhook.outage:
@@ -205,16 +205,16 @@ class RunLoop:
         # didn't cache it as done, holds back neither: `is_unchanged` cleared its stamp, so the next run checks
         # it whatever is committed here. An AniList outage is left out: a Sonarr title whose check read an entry
         # with no stored record of its air dates isn't cached as done, and Radarr reads AniList only for display.
-        full_pass = item_id is None and not self._seadex.outage and not self._skyhook.outage
+        full_scan = item_id is None and not self._seadex.outage and not self._skyhook.outage
 
         # Held on outage so the next healthy run re-derives the same dirty ids (the query overlap and id
         # dedup absorb the replay). The staged write persists only at _finalize_run's non-preview save.
-        if monitor is not None and full_pass:
+        if monitor is not None and full_scan:
             monitor.commit_checkpoint()
 
         # A contained per-id error still vouches: otherwise one flaky title re-scans the library every run. A title
         # whose check raised past the cached-entry gate is checked again next run all the same.
-        if full_pass:
+        if full_scan:
             self.cache_store.vouch_selection(arr, self._config.selection_hash())
 
         # The finalize save persists the checkpoint and vouch with the tail's own writes.
@@ -222,7 +222,7 @@ class RunLoop:
 
     def _scan_item[ItemT: ArrItem](
         self,
-        strategy: ArrSync[ItemT],
+        strategy: ArrStrategy[ItemT],
         item: ItemT,
         item_idx: int,
         n_items: int,
@@ -258,7 +258,7 @@ class RunLoop:
             # Past the run cap a title is still checked (a torrent already downloading keeps its mapping), its grab
             # held for the next run.
             try:
-                strategy.process_al_id(item=item, al_id=al_id, mapping=mapping)
+                strategy.check_title(item=item, al_id=al_id, mapping=mapping)
             except Exception as e:
                 # Contain the failure to THIS AniList id: one bad season must not skip the item's others.
                 hub_error(
@@ -278,7 +278,7 @@ class RunLoop:
         """Shared run tail: the one-cycle check + tally, print the summary, THEN the waiting monitor."""
 
         # Close the scan before anything below logs: these diagnostics are run-level facts.
-        # Always ScanStarted-paired: run_sync, the only caller, has no early return between log_arr_start and here.
+        # Always ScanStarted-paired: run_leg, the only caller, has no early return between log_arr_start and here.
         self._reporter.scan_finished(self._ctx.arr)
 
         preview = self._services.is_dry_run()

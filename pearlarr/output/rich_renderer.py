@@ -62,10 +62,10 @@ from .events import (
     GrabFailed,
     ItemStarted,
     LedgerRow,
+    LegFinished,
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
-    RunFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -149,7 +149,7 @@ class RichRenderer(Renderer):
             time_source=time_source,
         )
         # Each region owns one Live slot. A frontier departure tears its slot down
-        # no matter which event evicted the node (ScopeClosed, a RunFinished unwind).
+        # no matter which event evicted the node (ScopeClosed, a LegFinished unwind).
         self._regions: tuple[tuple[ScopeKind, LiveRegion], ...] = (
             (ScopeKind.BOOT_SECTION, self._boot),
             (ScopeKind.WAIT_REGION, self._wait),
@@ -161,7 +161,7 @@ class RichRenderer(Renderer):
         # Placement must be settled BEFORE rendering (fold-first also keeps the
         # fold advancing when rendering raises). A region departure tears its live
         # slot down no matter which event evicted the node (ScopeClosed, a
-        # RunFinished unwind, anything).
+        # LegFinished unwind, anything).
         open_before = tuple(self._frontier_has(kind) for kind, _ in self._regions)
         self._crumbs.apply(event)
         for was_open, (kind, region) in zip(open_before, self._regions, strict=True):
@@ -199,7 +199,7 @@ class RichRenderer(Renderer):
                 self._wait.handle(event)
             case NextRunScheduled(at=at):
                 self._next_run(at)
-            case CycleStarted() | ScanFinished() | RunFinished():
+            case CycleStarted() | ScanFinished() | LegFinished():
                 # Pure boundaries: the banner leads each cycle and the summary
                 # closes each run, so none draws a console line of its own.
                 pass
@@ -222,10 +222,10 @@ class RichRenderer(Renderer):
                 assert_never(event)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self._crumbs.reset()
-        self._boot.begin_cycle()
-        self._wait.begin_cycle()
+        self._boot.begin_run()
+        self._wait.begin_run()
 
     @override
     def set_level(self, level: int) -> None:

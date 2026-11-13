@@ -33,7 +33,7 @@ from pearlarr.leg_state import RunContext
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import GroupReleases, Release
-from pearlarr.run_services import QbitConnectionError, RunDeps, RunServices
+from pearlarr.run_services import LegDeps, LegServices, QbitConnectionError
 from pearlarr.torrent import TorrentParseError
 from pearlarr.torrents import (
     GRAB_FAILURES,
@@ -371,7 +371,7 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
     assert not isinstance(ValueError("x"), GRAB_FAILURES)
 
 
-# --- QbitConnectionError mapping (RunDeps.build login path) ------------------
+# --- QbitConnectionError mapping (LegDeps.build login path) ------------------
 
 
 def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -391,7 +391,7 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
     assert config.qbittorrent.credentials() is not None
 
     with pytest.raises(QbitConnectionError):
-        RunDeps.build(
+        LegDeps.build(
             Arr.SONARR,
             app_config=config,
             logger=logging.getLogger("pearlarr.test"),
@@ -498,7 +498,7 @@ def _row(infohash: str, *, category: str = _GRAB, state: str = "downloading", pr
 def _marked(service: TorrentService, item: Release, *, pearlarr_imports: bool = True) -> str | None:
     """Mark one title's dict holding `item` on a run Pearlarr imports for, and return the hash it was marked with."""
 
-    service.begin_run(pearlarr_imports=pearlarr_imports)
+    service.bind_leg(pearlarr_imports=pearlarr_imports)
     service.mark_cross_seeds({"Group": GroupReleases(releases={item.url: item})})
     return item.cross_seed_hash
 
@@ -651,8 +651,8 @@ def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imp
     """The dict a run builds from a SeaDex entry is marked, a finished torrent counting only on a Sonarr run that waits."""
 
     qbit = _FakeQbit(rows=(_row(_CROSS, category=_POST, state="stalledUP", progress=1.0),), files=_HELD)
-    services = RunServices(replace(make_run_deps(), torrents=_service(qbit)), arr)
-    services.begin_run(RunContext(arr=arr, import_wait_mode=wait_mode))
+    services = LegServices(replace(make_run_deps(), torrents=_service(qbit)), arr)
+    services.bind_leg(RunContext(arr=arr, import_wait_mode=wait_mode))
     listed = make_torrent_record(
         release_group="Group", infohash=_SEADEX, file_names=("Show - 01.mkv", "Show - 02.mkv"), file_sizes=(100, 200)
     )

@@ -24,15 +24,15 @@ from .output import (
     GrabStatus,
     ItemStarted,
     LedgerRow,
+    LegFinished,
+    LegSummary,
+    LegTally,
     NeedsActionCause,
     NeedsActionFact,
     RecommendedGroup,
     ReleaseName,
     ReleaseSkipped,
-    RunFinished,
-    RunSummary,
     RunSummaryReady,
-    RunTally,
     ScanFinished,
     ScanStarted,
     ScopeFactory,
@@ -163,7 +163,7 @@ class RunReporter:
         """Close the run (the leg-close boundary). bootstrap emits it on unwind."""
 
         self._close_entry()
-        self._emit(RunFinished(arr=arr))
+        self._emit(LegFinished(arr=arr))
 
     # --- self-contained ledger rows ------------------------------------------
 
@@ -388,12 +388,12 @@ class RunReporter:
         if preview:
             dry_run_note = "nothing grabbed" if has_client else "qBittorrent not configured; nothing grabbed"
 
-        tally = RunTally.from_stats(ctx.stats)
+        tally = LegTally.from_stats(ctx.stats)
         elapsed_s = (time.monotonic() - ctx.started_monotonic) if ctx.started_monotonic is not None else None
 
         self._emit(
             RunSummaryReady(
-                summary=RunSummary(
+                summary=LegSummary(
                     arr=ctx.arr,
                     dry_run_note=dry_run_note,
                     added_count=ctx.torrents_added,

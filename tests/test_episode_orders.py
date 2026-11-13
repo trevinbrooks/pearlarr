@@ -12,7 +12,7 @@ import pytest
 from pearlarr.arr_models import SonarrItem, SonarrSeries
 from pearlarr.config import Arr
 from pearlarr.leg_state import RunContext
-from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 from pearlarr.wait_types import ImportWaitMode
 
@@ -47,7 +47,7 @@ def _sync(
     series: list[SonarrItem],
     cache: FakeCacheStore,
     client: FakeSkyHookClient | None = None,
-) -> SonarrSync:
+) -> SonarrStrategy:
     """The Sonarr strategy after the run's library read of `series`, its orders fetched through `client`."""
 
     strat = make_sonarr_sync(
@@ -151,7 +151,7 @@ def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(
     record = pending_import(infohash="h", series_id=2)
     cache = FakeCacheStore(pending={str(Arr.SONARR): {record.infohash: record.to_json()}})
     strat = _sync(monkeypatch, [_series(2, 60)], cache)
-    strat._services.begin_run(RunContext(arr=Arr.SONARR, import_wait_mode=mode))
+    strat._services.bind_leg(RunContext(arr=Arr.SONARR, import_wait_mode=mode))
 
     assert strat.prefetch_orders([]) == fetched
 

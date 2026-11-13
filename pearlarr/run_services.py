@@ -64,7 +64,7 @@ def bind_arr_http(arr: Arr, config: AppConfig, client: httpx.Client) -> ArrHttp:
 
 
 @dataclass(frozen=True)
-class RunDeps:
+class LegDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
 
     A plain value object the composition root (`bootstrap.py`) builds via
@@ -124,7 +124,7 @@ class RunDeps:
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
-    ) -> "RunDeps":
+    ) -> "LegDeps":
         """Construct the shared collaborators in dependency order.
 
         Args:
@@ -287,7 +287,7 @@ class RunDeps:
 
 # Deliberately NOT @final: the strategy-seam tests subclass this with a
 # scripted fake (_FakeRunServices), so the seam stays overridable.
-class RunServices:
+class LegServices:
     """The per-AniList-id services hub the strategies call.
 
     Receives its shared collaborators as a `RunDeps` bundle (built and
@@ -300,7 +300,7 @@ class RunServices:
     down via `begin_run`, so the strategies never see the loop type.
     """
 
-    def __init__(self, deps: RunDeps, arr: Arr) -> None:
+    def __init__(self, deps: LegDeps, arr: Arr) -> None:
         """Receive the shared collaborators and set up the per-id pipeline.
 
         `arr` is the authority for the run's arr. Every fresh run context
@@ -336,7 +336,7 @@ class RunServices:
         # fresh at the start of each run by the loop's reset_run_stats. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
-        # before run_sync. The run loop ADOPTS it (via `ctx`) at construction.
+        # before run_leg. The run loop ADOPTS it (via `ctx`) at construction.
         self._ctx = RunContext(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
@@ -344,11 +344,11 @@ class RunServices:
         self._dirty_al_ids: set[int] = set()
 
         # The shared per-id collaborators, built from the deps hub + the
-        # placeholder ctx. begin_run rebinds their ctx at the top of each run.
+        # placeholder ctx. bind_leg rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
         self._records = PendingImportStore(deps.cache_store)
-        self._records.begin_run(self._ctx)
+        self._records.bind_leg(self._ctx)
         self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
 
     @property
@@ -371,7 +371,7 @@ class RunServices:
 
         return self._selection_stale
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
 
         Driven by the run loop's `begin_run`: once with the placeholder at
@@ -380,15 +380,15 @@ class RunServices:
         stays on the loop side (the loop owns the manager).
         """
 
-        self._ctx = ctx
+        self._ctx = state
         # Per-run state: the loop's activity scan re-marks dirty ids after this.
         self._dirty_al_ids.clear()
-        self._filter.begin_run(ctx)
-        self._grab_pipeline.begin_run(ctx)
-        self._records.begin_run(ctx)
+        self._filter.bind_leg(state)
+        self._grab_pipeline.bind_leg(state)
+        self._records.bind_leg(state)
         # Radarr imports its own downloads, and so does Sonarr with the wait off.
-        self._torrents.begin_run(
-            pearlarr_imports=self.arr is Arr.SONARR and ctx.import_wait_mode is not ImportWaitMode.OFF
+        self._torrents.bind_leg(
+            pearlarr_imports=self.arr is Arr.SONARR and state.import_wait_mode is not ImportWaitMode.OFF
         )
 
     @property
@@ -397,7 +397,7 @@ class RunServices:
 
         return self._records
 
-    def al_id_needs_scan(self, al_id: int) -> bool:
+    def title_needs_check(self, al_id: int) -> bool:
         """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip gates.
 
         True iff the per-id loop would actually process this id. Lets
@@ -590,7 +590,7 @@ class RunServices:
             self._ctx.pause_owed = False
             self._clock.sleep(self._config.advanced.sleep_time)
 
-    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
+    def begin_check(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
 
         Returns the entry to process, or None for a missing entry or a SeaDex outage skip.

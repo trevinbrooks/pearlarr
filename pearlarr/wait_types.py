@@ -44,10 +44,10 @@ class WaitOutcome(Enum):
 class AttemptKind(Enum):
     """Which kind of import attempt a poll is (see `ImportCompleter.import_completed`)."""
 
-    POLL = auto()
+    ORDINARY = auto()
     """An ordinary poll: a clean `importPending` is Sonarr's while its completed download handling is on."""
 
-    DEADLINE = auto()
+    FINAL = auto()
     """The attempt past the stall bound: steps in past a clean `importPending`, and an uncredited
     result graduates the row."""
 
@@ -55,7 +55,7 @@ class AttemptKind(Enum):
     def at_deadline(self) -> bool:
         """The final attempt for the record."""
 
-        return self is AttemptKind.DEADLINE
+        return self is AttemptKind.FINAL
 
 
 class EffectStatus(Enum):

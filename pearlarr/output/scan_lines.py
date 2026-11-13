@@ -72,7 +72,7 @@ _CAP_MESSAGE: Final = (
 )
 
 # Causes without a tip render no line. The PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by
-# whoever populates `RunSummary.tip`, never re-derived here.
+# whoever populates `LegSummary.tip`, never re-derived here.
 _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
     NeedsActionCause.PRIVATE_ONLY: (
         "Tip: manually grab private releases or set private_releases: fallback to "

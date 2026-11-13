@@ -18,11 +18,11 @@ from pearlarr.output import (
     EntryHeader,
     Event,
     ItemStarted,
-    RunFinished,
+    LegFinished,
+    LegSummary,
+    LegTally,
     RunStarted,
-    RunSummary,
     RunSummaryReady,
-    RunTally,
     ScanFinished,
     ScanStarted,
     ScopeClosed,
@@ -55,11 +55,11 @@ def _kinds(fold: BreadcrumbFold) -> list[ScopeKind]:
 
 def _summary_ready() -> RunSummaryReady:
     return RunSummaryReady(
-        RunSummary(
+        LegSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=RunTally.from_stats(RunStats()),
+            tally=LegTally.from_stats(RunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,
@@ -181,12 +181,12 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
         ScopeOpened(scope=_ENTRY, label="A"),
-        RunFinished(arr=Arr.SONARR),
+        LegFinished(arr=Arr.SONARR),
     )
     assert fold.nodes() == ()
 
     # The defensive teardown close re-emits it, a no-op on an empty stack.
-    fold.apply(RunFinished(arr=Arr.SONARR))
+    fold.apply(LegFinished(arr=Arr.SONARR))
     assert fold.nodes() == ()
 
 

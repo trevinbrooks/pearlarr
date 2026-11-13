@@ -6,11 +6,11 @@ It covers the run lifecycle, the subsystems, the decisions behind the complex on
 ## The run, end to end
 
 A run is one sweep over every configured arr: a single `pearlarr run single`, or one cycle of the scheduled loop.
-`cli.py` is the command surface. It resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrSync`/`RadarrSync`).
+`cli.py` is the command surface. It resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrStrategy`/`RadarrStrategy`).
 
 For one arr:
 
-1. builds the runtime dependencies (`RunDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
+1. builds the runtime dependencies (`LegDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph.
 3. for each ID with a SeaDex entry that changed since it was last handled: selects the releases to grab (the planner), skips what the arr already owns, and adds the survivors to qBittorrent (the grab pipeline).
 4. notifies (Discord embed per grab), records the decisions in the cache, and prints the run summary.

@@ -23,13 +23,13 @@ from pearlarr.output import (
     GrabFailed,
     ItemStarted,
     LedgerRow,
+    LegFinished,
+    LegSummary,
+    LegTally,
     NeedsActionCause,
     NeedsActionFact,
     PlacedBy,
     ReleaseSkipped,
-    RunFinished,
-    RunSummary,
-    RunTally,
     ScanFinished,
     ScanStarted,
     ScopeId,
@@ -70,11 +70,11 @@ def test_dry_run_derives_from_the_note() -> None:
     A noteless "DRY RUN" title (the literal-None render bug class) is unrepresentable.
     """
 
-    real = RunSummary(
+    real = LegSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=RunTally.from_stats(RunStats()),
+        tally=LegTally.from_stats(RunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -148,7 +148,7 @@ def test_structural_events_default_to_info() -> None:
     # The close boundaries are markers, not tallied facts: INFO tallies as nothing
     # in the warnings / errors counts.
     assert severity_of(ScanFinished(arr=Arr.SONARR)) is Severity.INFO
-    assert severity_of(RunFinished(arr=Arr.SONARR)) is Severity.INFO
+    assert severity_of(LegFinished(arr=Arr.SONARR)) is Severity.INFO
 
 
 def test_diagnostic_defaults_are_ambient_and_shared() -> None:
@@ -160,7 +160,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
     assert not diag.file_only
 
 
-# --- RunTally: the single conversion site ------------------------------------------
+# --- LegTally: the single conversion site ------------------------------------------
 
 
 def test_run_tally_freezes_run_stats_whole() -> None:
@@ -185,7 +185,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     stats.added.append(grab)
     stats.needs_action.append(needs)
 
-    tally = RunTally.from_stats(stats)
+    tally = LegTally.from_stats(stats)
 
     grab_fact = GrabFact(title="T", coverage="S01", url="u", name="n", group="G")
     needs_fact = NeedsActionFact(
@@ -196,7 +196,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         reason="private tracker",
         cause=NeedsActionCause.PRIVATE_ONLY,
     )
-    assert tally == RunTally(
+    assert tally == LegTally(
         checked=182,
         added=(grab_fact,),
         up_to_date=161,
@@ -217,13 +217,13 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     assert tally.added == (grab_fact,)
 
 
-# Fields allowed to differ between RunStats and RunTally - deliberately empty.
+# Fields allowed to differ between RunStats and LegTally - deliberately empty.
 _PARITY_ALLOWLIST: Final[frozenset[str]] = frozenset()
 
 
 def test_run_tally_field_names_mirror_run_stats() -> None:
     stats_names = {f.name for f in dataclasses.fields(RunStats)} - _PARITY_ALLOWLIST
-    tally_names = {f.name for f in dataclasses.fields(RunTally)} - _PARITY_ALLOWLIST
+    tally_names = {f.name for f in dataclasses.fields(LegTally)} - _PARITY_ALLOWLIST
     assert stats_names == tally_names
 
 

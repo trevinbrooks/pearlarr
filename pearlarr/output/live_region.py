@@ -49,7 +49,7 @@ class LiveRegion:
 
         self._stop_live()
 
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self._reset()
         self._caps_cache.reset()
 

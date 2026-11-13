@@ -48,7 +48,7 @@ class ImportCompleter(ABC):
         """Whether the engine may run the end-of-run waiting monitor."""
 
 
-class ArrSync[ItemT: ArrItem](ImportCompleter):
+class ArrStrategy[ItemT: ArrItem](ImportCompleter):
     """An Arr-specific sync strategy the run machinery drives: the Arr REST client plus its domain logic."""
 
     @abstractmethod
@@ -88,7 +88,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         """Arr history records since `date`, or None on failure."""
 
     @abstractmethod
-    def process_al_id(
+    def check_title(
         self,
         item: ItemT,
         al_id: int,

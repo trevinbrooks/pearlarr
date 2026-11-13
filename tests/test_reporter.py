@@ -28,8 +28,8 @@ from pearlarr.output import (
     EntryHeader,
     Event,
     GrabAction,
+    LegFinished,
     NeedsActionCause,
-    RunFinished,
     RunSummaryReady,
     ScanFinished,
     ScopeClosed,
@@ -251,7 +251,7 @@ class TestCloseBoundaries:
 
         reporter.run_finished(Arr.SONARR)
 
-        assert events == [RunFinished(arr=Arr.SONARR)]
+        assert events == [LegFinished(arr=Arr.SONARR)]
 
     def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
         # scan_finished already closed it, so run_finished's defensive close is a no-op:

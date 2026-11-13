@@ -31,7 +31,7 @@ from pearlarr.parse_records import (
     to_parse_record,
 )
 from pearlarr.releases import SeadexDict
-from pearlarr.run_services import RunServices
+from pearlarr.run_services import LegServices
 from pearlarr.seadex_gateway import SeaDexMiss
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
@@ -355,7 +355,7 @@ class _Services:
             return {ids.tvdb: TitleMapping(anilist_id=ids.tvdb)}
         return self._mapping.get(ids.tvdb, {})
 
-    def al_id_needs_scan(self, al_id: int) -> bool:
+    def title_needs_check(self, al_id: int) -> bool:
         if self._needs_scan is None:
             return True
         return al_id in self._needs_scan
@@ -510,28 +510,28 @@ class TestAlIdNeedsScan:
     """
 
     @staticmethod
-    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> RunServices:
+    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> LegServices:
         return make_services(_seadex=_Seadex(entry), cache_store=cache, **cfg)
 
     def test_no_seadex_entry_does_not_need_scan(self) -> None:
         run = self._run(entry=None, cache=FakeCacheStore())
-        assert run.al_id_needs_scan(7) is False
+        assert run.title_needs_check(7) is False
 
     def test_uncached_entry_needs_scan(self) -> None:
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=FakeCacheStore())
-        assert run.al_id_needs_scan(7) is True
+        assert run.title_needs_check(7) is True
 
     def test_cached_and_matching_does_not_need_scan(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
-        assert run.al_id_needs_scan(7) is False
+        assert run.title_needs_check(7) is False
 
     def test_cached_but_stale_needs_scan(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
-        assert run.al_id_needs_scan(7) is True
+        assert run.title_needs_check(7) is True
 
     def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
         # A matching cached entry is normally skipped. ignore_seadex_update_times
@@ -543,12 +543,12 @@ class TestAlIdNeedsScan:
             cache=cache,
             ignore_seadex_update_times=True,
         )
-        assert run.al_id_needs_scan(7) is True
+        assert run.title_needs_check(7) is True
 
     def test_ignore_update_times_still_skips_when_no_entry(self) -> None:
-        # No SeaDex entry -> al_id_prologue would skip regardless of the flag.
+        # No SeaDex entry -> begin_check would skip regardless of the flag.
         run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
-        assert run.al_id_needs_scan(7) is False
+        assert run.title_needs_check(7) is False
 
     def test_dirty_id_needs_scan_despite_matching_cache(self) -> None:
         # An arr-side file change re-warms the id even when the cache matches.
@@ -556,13 +556,13 @@ class TestAlIdNeedsScan:
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
         run.mark_dirty([7])
-        assert run.al_id_needs_scan(7) is True
+        assert run.title_needs_check(7) is True
 
     def test_dirty_id_without_seadex_entry_still_skips(self) -> None:
         # The no-entry short-circuit stays first: dirty or not, no entry -> no scan.
         run = self._run(entry=None, cache=FakeCacheStore())
         run.mark_dirty([7])
-        assert run.al_id_needs_scan(7) is False
+        assert run.title_needs_check(7) is False
 
     @staticmethod
     def _marked_cache() -> FakeCacheStore:
@@ -574,11 +574,11 @@ class TestAlIdNeedsScan:
         # Prefetch must agree with is_unchanged's warn-mode resurfacing of
         # fallback-satisfied entries, or the reprocessed id goes un-warmed.
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="warn")
-        assert run.al_id_needs_scan(7) is True
+        assert run.title_needs_check(7) is True
 
     def test_fallback_mode_fallback_marker_does_not_need_scan(self) -> None:
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="fallback")
-        assert run.al_id_needs_scan(7) is False
+        assert run.title_needs_check(7) is False
 
 
 class TestPrefetchSkipsUnchanged:

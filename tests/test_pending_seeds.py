@@ -28,7 +28,7 @@ from pearlarr.parse_records import to_parse_record
 from pearlarr.pending_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport
 from pearlarr.placement_types import SeedScope, episode_index
 from pearlarr.releases import EpisodeRecord, SeadexDict
-from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_sonarr import SonarrStrategy
 from pearlarr.stamps import now_stamp
 
 from .builders import (
@@ -61,7 +61,7 @@ def _rows(parses: ParseCache) -> dict[str, dict[str, Json]]:
     return {name: {"fetched_at": stamp, "parse": to_parse_record(info)} for name, info in parses.items()}
 
 
-def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrSync:
+def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrStrategy:
     """A strat holding the pre-seeded parse records and series 7's whole episode list.
 
     Every parse resolves through that whole-series map, so an unread list
@@ -75,7 +75,7 @@ def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrSync:
 
 
 def _build(
-    strat: SonarrSync,
+    strat: SonarrStrategy,
     seadex_dict: SeadexDict,
     entry: EntryFacts,
     *,
@@ -776,7 +776,7 @@ class TestParseWriteFeedsSeeds:
     """One `/parse` per file name: the gather asks Sonarr, persists the reading, and the placement seeds by it."""
 
     @staticmethod
-    def _cold(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> tuple[SonarrSync, FakeSonarrClient]:
+    def _cold(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> tuple[SonarrStrategy, FakeSonarrClient]:
         """A strat whose Sonarr answers every `/parse` with `parse`, its cache cold."""
 
         sonarr = FakeSonarrClient(parse_fn=lambda _f: parse)

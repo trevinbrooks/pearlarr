@@ -41,6 +41,8 @@ from .events import (
     ItemStarted,
     JsonValue,
     LedgerRow,
+    LegFinished,
+    LegSummary,
     NeedsActionFact,
     NextRunScheduled,
     PathsShown,
@@ -48,9 +50,7 @@ from .events import (
     PlacedBy,
     ReleaseName,
     ReleaseSkipped,
-    RunFinished,
     RunStarted,
-    RunSummary,
     RunSummaryReady,
     ScanFinished,
     ScanStarted,
@@ -296,7 +296,7 @@ def _pulse_fact(event: WaitProgress) -> _Fact:
     return _Fact("wait_pulse", Severity.INFO, "still waiting", fields, event.scope, "wait")
 
 
-def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
+def _fields_summary_head(summary: LegSummary) -> tuple[Field, ...]:
     tally = summary.tally
     fields: list[Field] = [Field("arr", str(summary.arr))]
     if summary.dry_run_note is not None:
@@ -470,7 +470,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
             return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")
-        case RunFinished(arr=arr):
+        case LegFinished(arr=arr):
             return _Fact("run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
             return _Fact("diagnostic", severity, message, _placement_fields(event, crumbs), None, origin)
@@ -510,7 +510,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
 
 # Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker), plus the effective-config
 # document (its config object has no logfmt line).
-_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown})
+_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, LegFinished, EffectiveConfigShown})
 # Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 
@@ -525,7 +525,7 @@ def _scope_bracket(scope: ScopeId | None, crumbs: BreadcrumbFold, fallback: str)
     return fallback
 
 
-def _record_lines(summary: RunSummary) -> tuple[_Line, ...]:
+def _record_lines(summary: LegSummary) -> tuple[_Line, ...]:
     needs = tuple(
         _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(record))
         for record in summary.tally.needs_action
@@ -683,7 +683,7 @@ class _TextLineSink(Renderer):
             self._crumbs.apply(event)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self._crumbs.reset()
         self._turn_over()
 
@@ -715,9 +715,9 @@ class _GrammarSink(_TextLineSink):
         self._ts = _PerSecondMemo(lambda dt: dt.strftime(TS_FORMAT))
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self._pulse.reset()
-        super().begin_cycle()
+        super().begin_run()
 
     @override
     def _render(self, event: Event, when: float, severity: Severity) -> None:

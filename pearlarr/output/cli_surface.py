@@ -43,10 +43,10 @@ from .events import (
     GrabFailed,
     ItemStarted,
     LedgerRow,
+    LegFinished,
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
-    RunFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -135,7 +135,7 @@ class CliTextRenderer(Renderer):
                 | WaitProgress()
                 | TorrentGraduated()
                 | WaitFinished()
-                | RunFinished()
+                | LegFinished()
             ):
                 # Run-lifecycle events never reach the cli seat.
                 pass
@@ -143,7 +143,7 @@ class CliTextRenderer(Renderer):
                 assert_never(event)
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override

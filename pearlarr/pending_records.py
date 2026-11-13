@@ -23,10 +23,10 @@ class PendingImportStore:
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the fresh run context the views and writes read."""
 
-        self._ctx = ctx
+        self._ctx = state
 
     def fresh_keys(self) -> set[str]:
         """Keys of the records written THIS run, tallied as `added` and never carried-over."""

@@ -22,7 +22,7 @@ from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.leg_state import RunContext, Title
 from pearlarr.pending_import import EntryNames
-from pearlarr.run_services import RunServices
+from pearlarr.run_services import LegServices
 
 from .builders import (
     AddOutcome,
@@ -84,7 +84,7 @@ class TestCachedEntrySkip:
     """
 
     @staticmethod
-    def _run(cache: FakeCacheStore) -> RunServices:
+    def _run(cache: FakeCacheStore) -> LegServices:
         # is_unchanged touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
         # name backfill asks. ctx defaults to a SONARR RunContext (make_services).
@@ -236,7 +236,7 @@ class TestCachedEntrySkip:
             _records=_CtxBind(),
         )
         run.mark_dirty([7])
-        run.begin_run(run.ctx)
+        run.bind_leg(run.ctx)
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
@@ -250,7 +250,7 @@ class TestACheckedTitleLosesItsStamp:
     _ENTRY = make_entry_record(updated_at=_CACHED_ON)
 
     @staticmethod
-    def _run(cache: FakeCacheStore, **wiring: object) -> RunServices:
+    def _run(cache: FakeCacheStore, **wiring: object) -> LegServices:
         return make_services(
             cache_store=cache,
             _reporter=_RecordingReporter(),
@@ -258,7 +258,7 @@ class TestACheckedTitleLosesItsStamp:
             **wiring,
         )
 
-    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> RunServices:
+    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> LegServices:
         """A run made to check entry 7 again over its cached row, as a library change makes it."""
 
         cache.update_cache(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
@@ -269,7 +269,7 @@ class TestACheckedTitleLosesItsStamp:
         run.mark_dirty([7])
         return run
 
-    def _grab(self, run: RunServices) -> None:
+    def _grab(self, run: LegServices) -> None:
         """The check's tail over one flagged release, hash h1, seeded as a strategy seeds it."""
 
         run.grab_and_cache(
@@ -379,8 +379,8 @@ class TestFallbackSatisfiedResurfacing:
 class _CtxBind:
     """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
 
-    def begin_run(self, ctx: RunContext) -> None:
-        del ctx
+    def bind_leg(self, state: RunContext) -> None:
+        del state
 
 
 class _TailReporter:
@@ -442,7 +442,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)
 
-        assert run.al_id_prologue(5) is None
+        assert run.begin_check(5) is None
         assert reporter.no_sd_entry_ids == [5]
         assert reporter.outage_skip_ids == []
         assert run._ctx.stats.checked == 1
@@ -453,7 +453,7 @@ class TestAlIdPrologue:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(outage=True), _reporter=reporter)
 
-        assert run.al_id_prologue(5) is None
+        assert run.begin_check(5) is None
         assert reporter.outage_skip_ids == [5]
         assert reporter.no_sd_entry_ids == []
         assert run._ctx.stats.checked == 1
@@ -463,7 +463,7 @@ class TestAlIdPrologue:
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
         run._ctx.per_title.private_only_skipped = True  # stale flag from a previous title
 
-        assert run.al_id_prologue(5) is entry
+        assert run.begin_check(5) is entry
         assert run._ctx.per_title.private_only_skipped is False
         assert run._ctx.stats.checked == 1
 
@@ -472,7 +472,7 @@ class TestResolveTitle:
     """`resolve_title` shows AniList's title, else the arr's own, else the id form."""
 
     @staticmethod
-    def _run(client: ScriptedAniListClient, arr_title: str = "") -> RunServices:
+    def _run(client: ScriptedAniListClient, arr_title: str = "") -> LegServices:
         run = make_services(_anilist=make_anilist_gateway(client))
         run._ctx.arr_title = arr_title
         return run

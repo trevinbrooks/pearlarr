@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# Drives RunLoop._notify_wait_complete directly (the containment arm has no public
+# Drives LegLoop._notify_wait_complete directly (the containment arm has no public
 # seam). The repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the run loop's commit points and its single end-of-run finalize site.
 
@@ -35,8 +35,8 @@ from pearlarr.output.events import EntryState
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ImportCompleter
-from pearlarr.run_loop import RunLoop
-from pearlarr.run_services import RunServices
+from pearlarr.run_loop import LegLoop
+from pearlarr.run_services import LegServices
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
 from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeCategory
@@ -111,8 +111,8 @@ class _FakeReporter:
 class _FakeBound:
     """A collaborator whose only run-loop hook is the `begin_run` ctx bind."""
 
-    def begin_run(self, ctx: RunContext, strategy: ImportCompleter | None = None) -> None:
-        del ctx, strategy
+    def bind_leg(self, state: RunContext, strategy: ImportCompleter | None = None) -> None:
+        del state, strategy
 
 
 class _FinalizeRecorder:
@@ -125,7 +125,7 @@ class _FinalizeRecorder:
         self.calls += 1
 
 
-def _services(*, qbit: object = None, **overrides: object) -> RunServices:
+def _services(*, qbit: object = None, **overrides: object) -> LegServices:
     """A bare real `RunServices` whose per-id collaborators are ctx-bind fakes. `qbit` set makes the run real."""
 
     return make_services(
@@ -146,10 +146,10 @@ def _engine(
     seadex: _FakeGateway | None = None,
     cache_store: AbstractCacheStore | None = None,
     anilist: AniListGateway | _FakeGateway | None = None,
-    services: RunServices | None = None,
+    services: LegServices | None = None,
     wait_manager: _FakeBound | ImportWaitManager | None = None,
     skyhook: SkyHookGateway | None = None,
-) -> RunLoop:
+) -> LegLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
     The strategy reaches `run_sync` typed (it's an `ArrSync`). The rest are
@@ -171,7 +171,7 @@ def _engine(
     services = services if services is not None else _services()
     shadowed = {} if finalize is None else {"_finalize_run": finalize}
     return make_bare_instance(
-        RunLoop,
+        LegLoop,
         qbit=services.qbit,
         logger=logger,
         _config=config,
@@ -200,7 +200,7 @@ class TestHeldTitleKeepsScanning:
             held_through=engine._services,
         )
 
-        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         # The hold on the first item never stopped the scan: the second item's id is still checked.
         assert strategy.process_calls == [1, 1]
@@ -220,7 +220,7 @@ class TestPerIdErrorContainment:
         )
         finalize = _FinalizeRecorder()
         recording = install_recording_hub()
-        _engine(finalize, logger).run_sync(
+        _engine(finalize, logger).run_leg(
             strategy,
             item_id=None,
             dry_run=True,
@@ -276,7 +276,7 @@ class TestPerItemErrorContainment:
         finalize = _FinalizeRecorder()
         recording = install_recording_hub()
 
-        _engine(finalize, logger).run_sync(
+        _engine(finalize, logger).run_leg(
             strategy,
             item_id=None,
             dry_run=True,
@@ -300,13 +300,13 @@ class _StagingStrategy(FakeStrategy):
     row, standing in for the SIGTERM handler. `None` never stops.
     """
 
-    def __init__(self, *, items: list[FakeArrItem], services: RunServices, stop_at: tuple[int, int] | None) -> None:
+    def __init__(self, *, items: list[FakeArrItem], services: LegServices, stop_at: tuple[int, int] | None) -> None:
         super().__init__(items=items, anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)})
         self._services = services
         self._stop_at = stop_at
 
     @override
-    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
+    def check_title(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
         self._services.no_releases_skip(item.id * 10 + al_id, {"name": item.title})
         if (item.id, al_id) == self._stop_at:
             raise SystemExit(0)
@@ -350,10 +350,10 @@ def _kept(path: Path, keys: list[int]) -> list[int]:
         reopened.close()
 
 
-def _run(engine: RunLoop, strategy: _StagingStrategy, mode: ImportWaitMode = ImportWaitMode.OFF) -> None:
+def _run(engine: LegLoop, strategy: _StagingStrategy, mode: ImportWaitMode = ImportWaitMode.OFF) -> None:
     """One full-library `run_sync` of `strategy` with wait mode `mode`."""
 
-    engine.run_sync(strategy, item_id=None, dry_run=False, import_wait_mode=mode, boot=BootFlow())
+    engine.run_leg(strategy, item_id=None, dry_run=False, import_wait_mode=mode, boot=BootFlow())
 
 
 class TestPerTitleCommit:
@@ -486,7 +486,7 @@ class TestNotifyWaitCompleteContainment:
 
     def test_push_failure_is_swallowed_with_a_warning(self) -> None:
         loop = make_bare_instance(
-            RunLoop,
+            LegLoop,
             _config=make_config(wait_notify=True),
             _notifier=_RaisingNotifier(),
             _ctx=RunContext(arr=Arr.SONARR),
@@ -529,7 +529,7 @@ class TestBootNotes:
         )
         anilist = make_anilist_gateway(client) if client is not None else None
         recording = install_recording_hub()
-        _engine(_FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_sync(
+        _engine(_FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_leg(
             strategy,
             item_id=None,
             dry_run=True,
@@ -580,7 +580,7 @@ class TestScanItemContext:
         engine = _engine(_FinalizeRecorder(), logger)
         install_recording_hub()
 
-        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._ctx.arr_title == "A"
 
@@ -610,7 +610,7 @@ class TestSelectionRecheck:
         seadex: _FakeGateway | None = None,
         anilist: _FakeGateway | None = None,
         held: bool = False,
-    ) -> tuple[RunLoop, RecordingHub]:
+    ) -> tuple[LegLoop, RecordingHub]:
         recording = install_recording_hub()
         engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
@@ -620,13 +620,13 @@ class TestSelectionRecheck:
             history=[_IMPORT_EVENT],
         )
         engine._services._selection_stale = stale
-        engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
+        engine.run_leg(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine, recording
 
     def _notes(self, recording: RecordingHub) -> list[str]:
         return [d.message for d in recording.of_type(Diagnostic)]
 
-    def _vouched_any(self, engine: RunLoop) -> bool:
+    def _vouched_any(self, engine: LegLoop) -> bool:
         """Whether the run recorded a digest at all (an alien digest then reads stale)."""
 
         return engine.cache_store.selection_changed(Arr.SONARR, "some-other-digest")
@@ -715,14 +715,14 @@ class _OrderFetchingStrategy(FakeStrategy):
 
 
 @pytest.mark.parametrize(
-    ("failing", "note", "full_pass"),
+    ("failing", "note", "full_scan"),
     [
         pytest.param(frozenset({(3, "official")}), "unreachable", False, id="outage"),
         pytest.param(frozenset[tuple[int, str]](), "1 series", True, id="healthy"),
     ],
 )
 def test_a_skyhook_outage_notes_unreachable_and_the_run_neither_vouches_nor_commits(
-    logger: logging.Logger, failing: frozenset[tuple[int, str]], note: str, full_pass: bool
+    logger: logging.Logger, failing: frozenset[tuple[int, str]], note: str, full_scan: bool
 ) -> None:
     # A series the outage left unrefreshed was read by its old order record, so the pass stays open and the next one
     # repeats the re-checks a settings or file change drove.
@@ -731,9 +731,9 @@ def test_a_skyhook_outage_notes_unreachable_and_the_run_neither_vouches_nor_comm
     skyhook = SkyHookGateway(client=FakeSkyHookClient(failing=failing), cache_store=store)
     engine = _engine(_FinalizeRecorder(), logger, cache_store=store, skyhook=skyhook)
 
-    engine.run_sync(_OrderFetchingStrategy(skyhook), item_id=None, dry_run=True, boot=BootFlow())
+    engine.run_leg(_OrderFetchingStrategy(skyhook), item_id=None, dry_run=True, boot=BootFlow())
 
     [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching TVDB orders"]
     assert step.detail == note
-    assert store.selection_changed(Arr.SONARR, "some-other-digest") is full_pass
-    assert (store.get_history_checkpoint(Arr.SONARR) is not None) is full_pass
+    assert store.selection_changed(Arr.SONARR, "some-other-digest") is full_scan
+    assert (store.get_history_checkpoint(Arr.SONARR) is not None) is full_scan

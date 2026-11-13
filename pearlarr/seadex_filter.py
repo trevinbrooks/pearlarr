@@ -19,7 +19,7 @@ from .releases import GroupReleases, Release, SeadexDict, carries_ignored_tag, i
 
 if TYPE_CHECKING:
     # Annotation-only: run_services imports this module at runtime (cycle).
-    from .run_services import RunDeps
+    from .run_services import LegDeps
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
@@ -65,7 +65,7 @@ class SeadexReleaseFilter:
     def __init__(
         self,
         *,
-        deps: "RunDeps",
+        deps: "LegDeps",
         ctx: RunContext,
     ) -> None:
         self._config = deps.config
@@ -73,14 +73,14 @@ class SeadexReleaseFilter:
         self.logger = deps.logger
         self._reporter = deps.reporter
         # Seeded with the services hub's placeholder ctx, rebound each run via
-        # begin_run (the same object the hub holds, so a write here is seen by the
+        # bind_leg (the same object the hub holds, so a write here is seen by the
         # grab tail).
         self._ctx = ctx
 
-    def begin_run(self, ctx: RunContext) -> None:
+    def bind_leg(self, state: RunContext) -> None:
         """Bind the run context `filter_downloads` stamps private-only flags onto."""
 
-        self._ctx = ctx
+        self._ctx = state
 
     def build(self, sd_entry: EntryRecord) -> SeadexDict:
         """Parse and filter a SeaDex entry into the run's release dict."""

@@ -54,9 +54,9 @@ from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressSink
-from pearlarr.protocols import ArrSync
+from pearlarr.protocols import ArrStrategy
 from pearlarr.radarr_client import AbstractRadarrClient
-from pearlarr.run_services import RunServices
+from pearlarr.run_services import LegServices
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.tvdb_orders import NO_ORDERING, SeriesOrdering
@@ -227,7 +227,7 @@ class FakeArrItem:
         self.monitored = monitored
 
 
-class FakeStrategy(ArrSync[FakeArrItem]):
+class FakeStrategy(ArrStrategy[FakeArrItem]):
     """A typed `ArrSync` with scripted returns, for engine-orchestration tests."""
 
     def __init__(
@@ -235,7 +235,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         *,
         items: list[FakeArrItem],
         anilist_ids: dict[int, TitleMapping],
-        held_through: RunServices | None = None,
+        held_through: LegServices | None = None,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_monitor: bool = True,
@@ -283,7 +283,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return self.history
 
     @override
-    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
+    def check_title(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")

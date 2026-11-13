@@ -39,7 +39,7 @@ _HISTORY_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 @dataclass(frozen=True, slots=True)
-class ActivityScan:
+class ActivityRead:
     """One scan's outcome: the touched item ids, or a re-scan-everything signal."""
 
     touched: frozenset[int]
@@ -98,7 +98,7 @@ class ArrActivityMonitor:
         fetch: Callable[[str], list[HistoryRecord] | None],
         *,
         now: datetime | None = None,
-    ) -> ActivityScan:
+    ) -> ActivityRead:
         """Scan the window since the checkpoint for arr-side file changes.
 
         A fetch failure (None) fails open: nothing dirty, the checkpoint untouched
@@ -122,7 +122,7 @@ class ArrActivityMonitor:
             self._logger.debug(
                 f"Could not read {self._arr.capitalize()} history; skipping activity detection this run",
             )
-            return ActivityScan(touched=frozenset(), rescan_all=False)
+            return ActivityRead(touched=frozenset(), rescan_all=False)
 
         last_id = checkpoint.last_id if checkpoint is not None else 0
         fresh = [record for record in records if record.id > last_id]
@@ -133,10 +133,10 @@ class ArrActivityMonitor:
             if newest.date:
                 self._pending_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
         if window.rescan_all or not fresh:
-            return ActivityScan(touched=frozenset(), rescan_all=window.rescan_all)
+            return ActivityRead(touched=frozenset(), rescan_all=window.rescan_all)
 
         touched = frozenset(record.item_id for record in fresh if record.item_id > 0 and _is_file_change(record))
-        return ActivityScan(touched=touched, rescan_all=False)
+        return ActivityRead(touched=touched, rescan_all=False)
 
     def _resolve_window(self, checkpoint: HistoryCheckpoint | None, now: datetime) -> _QueryWindow:
         """Derive the history query cursor from the stored checkpoint."""

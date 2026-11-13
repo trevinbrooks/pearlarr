@@ -629,7 +629,7 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         from pearlarr.arr_http import ArrAuthError, ArrConnectionError
         from pearlarr.boundary import BoundaryContractError
-        from pearlarr.run_services import QbitConnectionError, RunDeps
+        from pearlarr.run_services import LegDeps, QbitConnectionError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
@@ -645,7 +645,7 @@ class TestRunFailuresAreCleanAndNonzero:
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
             raise exceptions[error]
 
-        monkeypatch.setattr(RunDeps, "build", fail_build)
+        monkeypatch.setattr(LegDeps, "build", fail_build)
         _write_runnable_config()
 
         assert run_single(sonarr=True) is False
@@ -1079,7 +1079,7 @@ class _CycleStampingRenderer(Renderer):
         self.events.append((event, self.cycles))
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         self.cycles += 1
 
     @override
@@ -1231,7 +1231,7 @@ class TestHubSeats:
             [FileLogSink(str(log_dir))],
             console_factory=partial(_console_seat, caps_cache=CapsCache()),
         )
-        hub.begin_cycle(console_format=console_format, level=level)
+        hub.begin_run(console_format=console_format, level=level)
         return hub, stream
 
     @pytest.mark.parametrize("level", [logging.INFO, logging.WARNING])

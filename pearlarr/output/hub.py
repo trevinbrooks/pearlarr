@@ -42,7 +42,7 @@ from .events import Diagnostic, Event, Severity, severity_of
 from .trace import CapturedTrace
 from ..config import LogFormat
 
-# Strikes per renderer per cycle before it is skipped until the next begin_cycle.
+# Strikes per renderer per cycle before it is skipped until the next begin_run.
 STRIKE_LIMIT: Final = 3
 
 # Bound on the pending-event queue. Overflow sheds the newest DIAGNOSTIC only (one
@@ -71,7 +71,7 @@ class Renderer(ABC):
     def handle(self, event: Event, when: float) -> None: ...
 
     @abstractmethod
-    def begin_cycle(self) -> None: ...
+    def begin_run(self) -> None: ...
 
     @abstractmethod
     def set_level(self, level: int) -> None: ...
@@ -89,7 +89,7 @@ class NullRenderer(Renderer):
         pass
 
     @override
-    def begin_cycle(self) -> None:
+    def begin_run(self) -> None:
         pass
 
     @override
@@ -438,7 +438,7 @@ class OutputHub:
                 self._drainer = None
                 self._idle.notify_all()
 
-    def begin_cycle(self, *, console_format: LogFormat, level: int) -> None:
+    def begin_run(self, *, console_format: LogFormat, level: int) -> None:
         """Per-cycle turnover: re-arm strikes, clear once-keys, reseat the console, rotate/reset sinks.
 
         The console renderer is swapped only when the re-peeked format changed.
@@ -456,7 +456,7 @@ class OutputHub:
                     self._swap_console(console_format)
                 for sub in self._subs:
                     try:
-                        sub.renderer.begin_cycle()
+                        sub.renderer.begin_run()
                     except Exception:
                         self._strike(sub)
                 self._set_level_locked(level)
@@ -504,7 +504,7 @@ class OutputHub:
                         sub.renderer.close()
                 self._closed = True
                 # Dispatching under the lock is safe here: file sinks never touch
-                # the Console lock (begin_cycle's rotation is the precedent).
+                # the Console lock (begin_run's rotation is the precedent).
                 while self._pending:
                     event, when = self._pending.popleft()
                     for sub in file_subs:
@@ -566,7 +566,7 @@ class OutputHub:
         self._subs.append(sub)
         self._console_sub = sub
         self._console_format = console_format
-        # No set_level here: begin_cycle (the only caller) applies the cycle's
+        # No set_level here: begin_run (the only caller) applies the cycle's
         # level to every sub - the fresh console included - right after the swap,
         # and nothing dispatches in between (re-entrant emits enqueue under the
         # baton). A second call would just burn a strike twice on one bug.

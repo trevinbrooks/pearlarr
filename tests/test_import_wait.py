@@ -33,12 +33,12 @@ from pearlarr.arr_categories import CategorySources
 from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
-from pearlarr.import_wait import ImportProbes, ImportWaitManager, MonitorPass
+from pearlarr.import_wait import ImportProbes, ImportWaitManager, WaitPass
 from pearlarr.leg_state import RunContext
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_import import GuardFacts, PendingImport
-from pearlarr.run_loop import RunLoop
+from pearlarr.run_loop import LegLoop
 from pearlarr.torrents import AddOutcome
 from pearlarr.wait_types import (
     LEAVE_PROBE,
@@ -1099,7 +1099,7 @@ class TestUnmatchedGraduation:
         assert [(row.outcome, row.left_for_hand_import) for row in result.rows] == [
             (Outcome.UNMATCHED, held_files(*self._NAMES))
         ]
-        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
+        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.ORDINARY]
         assert view.final("h").left_for_hand_import.names == self._NAMES
         assert mgr._ctx.pending_states["h"] is PendingState.DOWNLOADED
         assert set(mgr._records.rows()) == {"h"}
@@ -1117,7 +1117,7 @@ class TestUnmatchedGraduation:
         assert final.outcome is Outcome.UNMATCHED
         assert final.left_for_hand_import.names == self._NAMES
         assert final.phase_elapsed_s < 600
-        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.POLL]
+        assert [call.attempt for call in strategy.import_calls] == [AttemptKind.ORDINARY]
         assert set(mgr._records.rows()) == {"h"}
 
     def test_later_monitor_cycles_never_re_poll_a_graduated_row(self) -> None:
@@ -1525,7 +1525,7 @@ class TestRunMonitor:
         # The final in-bound poll forces AND flags the deadline, for THIS torrent's path.
         last = strategy.import_calls[-1]
         assert last.content_path == "/d"
-        assert last.attempt is AttemptKind.DEADLINE
+        assert last.attempt is AttemptKind.FINAL
 
     def test_landing_files_re_anchor_the_ready_deadline(self) -> None:
         # A season pack Sonarr copies file-by-file: a baseline (t=0) then a rise
@@ -1770,7 +1770,7 @@ class TestRunMonitor:
         assert set(mgr._records.rows()) == {"h"}
         # Three polls (t=0/30/60): the third is the forced deadline attempt.
         assert len(strategy.import_calls) == 3
-        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
+        assert strategy.import_calls[-1].attempt is AttemptKind.FINAL
 
     def test_fast_lane_landing_re_anchors_the_deadline(self) -> None:
         # The cheap Tier-2 poll sees a file land (1/3 -> 2/3) even though the
@@ -1795,7 +1795,7 @@ class TestRunMonitor:
         # Heavy polls at t=0/30/60/90: the t=60 poll is in-bound only because the
         # t=10 fast-lane rise re-anchored the deadline to fire at t=70.
         assert len(strategy.import_calls) == 4
-        assert strategy.import_calls[-1].attempt is AttemptKind.DEADLINE
+        assert strategy.import_calls[-1].attempt is AttemptKind.FINAL
 
     @pytest.mark.parametrize(
         ("torrents", "outcome", "kept"),
@@ -2024,7 +2024,7 @@ class TestRunMonitor:
             store=_ExplodingDropStore(),
             clock=FakeClock(step=5),
         )
-        mp = MonitorPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
+        mp = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
 
         with pytest.raises(RuntimeError, match="drop boom"):
             mp.run_cycle()
@@ -2045,7 +2045,7 @@ class TestRunMonitor:
             store=_ExplodingPutStore(),
             clock=FakeClock(step=5),
         )
-        mp = MonitorPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
+        mp = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
 
         with pytest.raises(RuntimeError, match="put boom"):
             mp.run_cycle()
@@ -2057,11 +2057,11 @@ class TestRunMonitor:
 def _monitor_pass(
     qbit: FakeQbit,
     record: PendingImport,
-) -> MonitorPass:
+) -> WaitPass:
     """A fresh `MonitorPass` over one record, wired to a scripted qBittorrent."""
 
     mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy(), clock=FakeClock(step=5))
-    return MonitorPass(mgr, [record], kind=WaitKind.MONITOR)
+    return WaitPass(mgr, [record], kind=WaitKind.MONITOR)
 
 
 class TestMonitorFastTelemetry:
@@ -2250,7 +2250,7 @@ class TestImportWaitModeProperty:
         assert services.import_wait_mode is ImportWaitMode.HYBRID
 
 
-def _attach_wait_manager(engine: RunLoop) -> None:
+def _attach_wait_manager(engine: LegLoop) -> None:
     """Attach an `ImportWaitManager` sharing the engine's run state.
 
     The wait/poll machinery lives on the manager now, so a finalize/snapshot test
@@ -2358,7 +2358,7 @@ def _finalize_engine(
     supports_monitor: bool = True,
     check_result: WaitResult | None = None,
     monitor_result: WaitResult | None = None,
-) -> RunLoop:
+) -> LegLoop:
     """A bare engine whose every run-tail step appends a marker to `calls`.
 
     The reporter, cache store, and wait manager are typed recorders (a
@@ -2373,7 +2373,7 @@ def _finalize_engine(
 
     ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
     return make_bare_instance(
-        RunLoop,
+        LegLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(
@@ -2658,7 +2658,7 @@ class TestMonitorAbsorbsPlacements:
             store=_ExplodingPutStore(),
             clock=FakeClock(step=5),
         )
-        mp = MonitorPass(mgr, [_unmapped_record()], kind=WaitKind.MONITOR)
+        mp = WaitPass(mgr, [_unmapped_record()], kind=WaitKind.MONITOR)
 
         mp.run_cycle()  # must not raise
 
@@ -3820,7 +3820,7 @@ class TestCleanupHealVerification:
 
         mgr._cleanup.heal_flagged()
 
-        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.DEADLINE]
+        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.FINAL]
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert mgr._records.rows() == {}
@@ -3960,7 +3960,7 @@ class TestCleanupHealVerification:
 
         mgr._cleanup.heal_flagged()
 
-        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.DEADLINE]
+        assert [c.attempt for c in strategy.import_calls] == [AttemptKind.FINAL]
         assert mgr._records.rows() == {}
 
 
@@ -4116,7 +4116,7 @@ def make_add_engine(
     qbit: object = CLIENT_SENTINEL,
     dry_run: bool = False,
     **config_overrides: object,
-) -> tuple[RunLoop, GrabPipeline]:
+) -> tuple[LegLoop, GrabPipeline]:
     """A bare `RunLoop` + a `GrabPipeline` + an attached `ImportWaitManager`.
 
     The produce side lives on `GrabPipeline` (held by the services hub in
@@ -4131,7 +4131,7 @@ def make_add_engine(
     """
 
     engine = make_bare_instance(
-        RunLoop,
+        LegLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(**config_overrides),

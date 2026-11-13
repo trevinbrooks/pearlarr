@@ -21,13 +21,13 @@ from .mappings import ExternalIds, MappingMode, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
 from .progress import ProgressSink
 from .releases import season_episode_key
-from .run_services import RunDeps, RunServices
+from .run_services import LegDeps, LegServices
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
 from .tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, SeriesOrderFacts, SeriesOrdering
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
-# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (RunDeps.build).
+# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (LegDeps.build).
 # Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
 # proxy) saturates around ~10-12 concurrent, so larger values don't help.
 SONARR_FETCH_WORKERS = 12
@@ -116,7 +116,7 @@ class SonarrEpisodes:
     The TVDB orders come off `deps.skyhook`, read once per series per run.
     """
 
-    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: RunServices) -> None:
+    def __init__(self, deps: LegDeps, sonarr: AbstractSonarrClient, services: LegServices) -> None:
         """Bind the shared collaborators the episode logic reads.
 
         Args:
@@ -286,7 +286,7 @@ class SonarrEpisodes:
             al_ids = run.get_anilist_ids(ExternalIds.of_series(item), log_ignored=False)
             if not al_ids:
                 continue
-            if not any(run.al_id_needs_scan(aid) for aid in al_ids):
+            if not any(run.title_needs_check(aid) for aid in al_ids):
                 continue
             seen.add(item.id)
             series_ids.append(item.id)
@@ -411,14 +411,14 @@ class SonarrEpisodes:
             if mapping.source is MappingSource.ANIBRIDGE:
                 # Degraded AniBridge entry (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
-                # Skip. process_al_id surfaces NO_EPISODES + the AniBridge warning.
+                # Skip. check_title surfaces NO_EPISODES + the AniBridge warning.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
             if not tvdb_mappings:
                 # AniBridge attached no usable per-season ranges, so nothing resolves.
-                # Return empty. process_al_id surfaces the visible NO_EPISODES skip.
+                # Return empty. check_title surfaces the visible NO_EPISODES skip.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 

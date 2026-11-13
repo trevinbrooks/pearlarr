@@ -43,10 +43,10 @@ from .events import (
     GrabFailed,
     ItemStarted,
     LedgerRow,
+    LegFinished,
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
-    RunFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -119,7 +119,7 @@ class BreadcrumbFold:
                 self._push(ScopeKind.BOOT_STEP, label, scope)
             case BootStepFinished(scope=scope):
                 self._pop_through(scope)
-            case RunStarted() | CycleStarted() | RunFinished():
+            case RunStarted() | CycleStarted() | LegFinished():
                 self._close_at(1)  # unwind to root (all levels)
             case ScanStarted(arr=arr):
                 self._push(ScopeKind.RUN, str(arr))

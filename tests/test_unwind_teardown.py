@@ -35,10 +35,10 @@ from pearlarr.bootstrap import run_arrs
 from pearlarr.cache import CacheSchemaError
 from pearlarr.config import AppConfig, Arr, ArrTarget
 from pearlarr.mappings import MappingResolver, MappingSources
-from pearlarr.output import Diagnostic, FileLogSink, RunFinished, Severity, install_bridge, install_hub
+from pearlarr.output import Diagnostic, FileLogSink, LegFinished, Severity, install_bridge, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import resolve_paths
-from pearlarr.run_services import RunDeps
+from pearlarr.run_services import LegDeps
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config
@@ -84,7 +84,7 @@ def _failing_build(exc: Exception) -> object:
         app_config: AppConfig,
         web: httpx.Client,
         boot: BootFlow,
-    ) -> RunDeps:
+    ) -> LegDeps:
         del arr, cache, logger, mappings, app_config, web, boot
         raise exc
 
@@ -119,7 +119,7 @@ def _run_failing_leg(
 
     _write_config()
     monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
-    monkeypatch.setattr(RunDeps, "build", _failing_build(exc))
+    monkeypatch.setattr(LegDeps, "build", _failing_build(exc))
 
     recording = RecordingHub()
     install_hub(recording.hub)
@@ -153,9 +153,9 @@ class TestUnwindEmitsRunFinished:
         assert completed is False
         # Exactly one close for the leg - the run tail never ran, so this is
         # bootstrap's defensive emit and nothing doubled it.
-        assert recording.of_type(RunFinished) == [RunFinished(arr=Arr.SONARR)]
+        assert recording.of_type(LegFinished) == [LegFinished(arr=Arr.SONARR)]
         error_at, error = _leg_fatal_error(recording)
-        assert recording.events.index(RunFinished(arr=Arr.SONARR)) < error_at
+        assert recording.events.index(LegFinished(arr=Arr.SONARR)) < error_at
         # The clean (no-traceback) arm's Diagnostic: the message, nothing captured.
         assert error.message == _SCHEMA_ERROR
         assert error.trace is None
@@ -171,9 +171,9 @@ class TestUnwindEmitsRunFinished:
         completed, recording = _run_failing_leg(monkeypatch, app_logger, RuntimeError("boom"))
 
         assert completed is False
-        assert recording.of_type(RunFinished) == [RunFinished(arr=Arr.SONARR)]
+        assert recording.of_type(LegFinished) == [LegFinished(arr=Arr.SONARR)]
         error_at, error = _leg_fatal_error(recording)
-        assert recording.events.index(RunFinished(arr=Arr.SONARR)) < error_at
+        assert recording.events.index(LegFinished(arr=Arr.SONARR)) < error_at
         assert "Unexpected error during Sonarr run" in error.message
         assert error.trace is not None  # the exc_info arm carries its traceback
 
@@ -188,24 +188,24 @@ class _StubDeps:
 class _FakeRunServices:
     """The per-id hub bootstrap builds. Never driven, since `RunLoop` is faked."""
 
-    def __init__(self, deps: RunDeps, arr: Arr) -> None:
+    def __init__(self, deps: LegDeps, arr: Arr) -> None:
         del deps, arr
 
 
 class _FakeSonarrSync:
     """The strategy handed to `run_sync`. The faked loop never consults it."""
 
-    def __init__(self, deps: RunDeps, services: _FakeRunServices) -> None:
+    def __init__(self, deps: LegDeps, services: _FakeRunServices) -> None:
         del deps, services
 
 
 class _FakeRunLoop:
     """A run loop whose `run_sync` returns without emitting the tail's RunFinished."""
 
-    def __init__(self, deps: RunDeps, services: _FakeRunServices) -> None:
+    def __init__(self, deps: LegDeps, services: _FakeRunServices) -> None:
         del deps, services
 
-    def run_sync(
+    def run_leg(
         self,
         strategy: _FakeSonarrSync,
         *,
@@ -250,10 +250,10 @@ def _run_completing_leg(
 
     _write_config()
     monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
-    monkeypatch.setattr(RunDeps, "build", _completing_build())
-    monkeypatch.setattr("pearlarr.run_services.RunServices", _FakeRunServices)
-    monkeypatch.setattr("pearlarr.run_loop.RunLoop", _FakeRunLoop)
-    monkeypatch.setattr("pearlarr.seadex_sonarr.SonarrSync", _FakeSonarrSync)
+    monkeypatch.setattr(LegDeps, "build", _completing_build())
+    monkeypatch.setattr("pearlarr.run_services.LegServices", _FakeRunServices)
+    monkeypatch.setattr("pearlarr.run_loop.LegLoop", _FakeRunLoop)
+    monkeypatch.setattr("pearlarr.seadex_sonarr.SonarrStrategy", _FakeSonarrSync)
 
     recording = RecordingHub()
     install_hub(recording.hub)
@@ -278,4 +278,4 @@ class TestCompletedLegSingleClose:
         # The unwind emit fires only on a dying leg. A normal return leaves the close
         # to the run tail (faked to a no-op here). The real tail's emit is pinned in
         # test_import_wait.TestFinalizeRunOrdering, so zero here proves nothing doubled.
-        assert recording.of_type(RunFinished) == []
+        assert recording.of_type(LegFinished) == []

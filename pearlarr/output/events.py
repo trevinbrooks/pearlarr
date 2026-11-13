@@ -384,7 +384,7 @@ class NeedsActionFact:
 
 
 @dataclass(frozen=True, slots=True)
-class RunTally:
+class LegTally:
     """`RunStats` frozen at summary time."""
 
     checked: int
@@ -403,7 +403,7 @@ class RunTally:
     held_by_cap: int
 
     @classmethod
-    def from_stats(cls, stats: RunStats) -> RunTally:
+    def from_stats(cls, stats: RunStats) -> LegTally:
         return cls(
             checked=stats.checked,
             added=tuple(
@@ -435,14 +435,14 @@ class RunTally:
 
 
 @dataclass(frozen=True, slots=True)
-class RunSummary:
+class LegSummary:
     """The whole end-of-run scoreboard as one value."""
 
     arr: Arr
     dry_run_note: str | None
     """The dry-run note, None on a real run."""
     added_count: int
-    tally: RunTally
+    tally: LegTally
     wait_mode_on: bool
     warnings: int
     errors: int
@@ -458,7 +458,7 @@ class RunSummary:
 class RunSummaryReady:
     """The end-of-run summary is ready."""
 
-    summary: RunSummary
+    summary: LegSummary
 
 
 # --- wait pass ------------------------------------------------------------------
@@ -627,7 +627,7 @@ class WaitFinished:
 
 
 @dataclass(frozen=True, slots=True)
-class RunFinished:
+class LegFinished:
     """The run-close boundary."""
 
     arr: Arr
@@ -785,7 +785,7 @@ type Event = (
     | WaitProgress
     | TorrentGraduated
     | WaitFinished
-    | RunFinished
+    | LegFinished
     | Diagnostic
     | PathsShown
     | StarterConfigWritten
@@ -849,7 +849,7 @@ def severity_of(event: Event) -> Severity:
             | WaitStarted()
             | WaitProgress()
             | WaitFinished()
-            | RunFinished()
+            | LegFinished()
             | PathsShown()
             | StarterConfigWritten()
             | ConfigValidated()

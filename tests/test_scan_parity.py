@@ -39,13 +39,13 @@ from pearlarr.output import (
     GrabStatus,
     ItemStarted,
     LedgerRow,
+    LegSummary,
+    LegTally,
     NeedsActionCause,
     RecommendedGroup,
     ReleaseName,
     ReleaseSkipped,
-    RunSummary,
     RunSummaryReady,
-    RunTally,
     ScanStarted,
     ScopeClosed,
     ScopeOpened,
@@ -497,11 +497,11 @@ def _rich_stats() -> RunStats:
 
 
 SUMMARY_RICH = RunSummaryReady(
-    summary=RunSummary(
+    summary=LegSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=2,
-        tally=RunTally.from_stats(_rich_stats()),
+        tally=LegTally.from_stats(_rich_stats()),
         wait_mode_on=True,
         warnings=2,
         errors=1,
@@ -586,11 +586,11 @@ def _dry_stats() -> RunStats:
 
 
 SUMMARY_DRY_HAS_CLIENT = RunSummaryReady(
-    summary=RunSummary(
+    summary=LegSummary(
         arr=Arr.SONARR,
         dry_run_note="nothing grabbed",
         added_count=1,
-        tally=RunTally.from_stats(_dry_stats()),
+        tally=LegTally.from_stats(_dry_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -653,11 +653,11 @@ def _preview_stats() -> RunStats:
 
 
 SUMMARY_DRY_NO_CLIENT = RunSummaryReady(
-    summary=RunSummary(
+    summary=LegSummary(
         arr=Arr.RADARR,
         dry_run_note="qBittorrent not configured; nothing grabbed",
         added_count=1,
-        tally=RunTally.from_stats(_preview_stats()),
+        tally=LegTally.from_stats(_preview_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -692,11 +692,11 @@ SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
 
 
 SUMMARY_MINIMAL = RunSummaryReady(
-    summary=RunSummary(
+    summary=LegSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=RunTally.from_stats(RunStats()),
+        tally=LegTally.from_stats(RunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -740,11 +740,11 @@ def _wait_off_stats() -> RunStats:
 
 
 SUMMARY_WAIT_OFF = RunSummaryReady(
-    summary=RunSummary(
+    summary=LegSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=RunTally.from_stats(_wait_off_stats()),
+        tally=LegTally.from_stats(_wait_off_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
