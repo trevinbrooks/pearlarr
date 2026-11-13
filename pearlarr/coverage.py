@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 
 from .arr_models import SonarrEpisode
-from .releases import EpisodeRecord
+from .releases import ReleaseEpisode
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
@@ -32,7 +32,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     return ", ".join(f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}" for start, end in runs)
 
 
-def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, str]] | None:
+def format_episode_coverage(episodes: list[ReleaseEpisode]) -> list[tuple[str, str]] | None:
     """Summarize per-season Sonarr episode coverage over a list of EpisodeRecord, whatever the source.
 
     The records may come from a torrent's `url_item` episodes or be built from
@@ -67,7 +67,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
     ]
 
 
-def coverage_string(episodes: list[EpisodeRecord]) -> str:
+def coverage_string(episodes: list[ReleaseEpisode]) -> str:
     """One-line season/episode coverage, e.g. "S04 E01-E12" or "S00 E10, S02 E01-E12".
 
     Returns "" when there's no parsed episode info (e.g., a Radarr movie), so
@@ -83,7 +83,7 @@ def coverage_string(episodes: list[EpisodeRecord]) -> str:
 def episodes_from_ep_list(
     ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
-) -> list[EpisodeRecord]:
+) -> list[ReleaseEpisode]:
     """Convert a Sonarr ep_list into `EpisodeRecord` coverage records.
 
     Sonarr episodes carry "seasonNumber"/"episodeNumber". The coverage helpers
@@ -91,12 +91,12 @@ def episodes_from_ep_list(
     episodes (no file on disk), to summarize what is still needed.
     """
 
-    episodes: list[EpisodeRecord] = []
+    episodes: list[ReleaseEpisode] = []
     for ep in ep_list or []:
         if missing_only and ep.episode_file_id != 0:
             continue
         episodes.append(
-            EpisodeRecord(
+            ReleaseEpisode(
                 season=ep.season_number,
                 episode=ep.episode_number,
             ),

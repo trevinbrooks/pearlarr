@@ -59,10 +59,10 @@ class SkyHookReply(ApiModel):
 
         if not isinstance(data, dict):
             return data
-        record = cast("dict[str, Any]", data)
-        raw = record.get("episodes")
+        body = cast("dict[str, Any]", data)
+        raw = body.get("episodes")
         rows: list[SkyHookEpisode] | None = [] if raw is None else validate_all_or_none(SkyHookEpisode, raw)
-        return {**record, "episodes": rows or (), "rows_failed": rows is None}
+        return {**body, "episodes": rows or (), "rows_failed": rows is None}
 
     @field_validator("season_types", mode="before")
     @classmethod

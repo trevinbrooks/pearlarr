@@ -63,13 +63,13 @@ class TestKometaPath:
 
         assert resolved.ignored == {}
         assert list(mappings) == [100]
-        entry = mappings[100]
-        assert isinstance(entry, TitleMapping)
-        assert entry.mode is MappingKind.SEASON_OFFSET
-        assert entry.tvdb_mappings is None
-        assert (entry.anilist_id, entry.tvdb_season, entry.tvdb_epoffset) == (100, 2, 3)
-        assert entry.imdb_id == "tt100"
-        assert entry.anidb_id == 50
+        mapping = mappings[100]
+        assert isinstance(mapping, TitleMapping)
+        assert mapping.mode is MappingKind.SEASON_OFFSET
+        assert mapping.tvdb_mappings is None
+        assert (mapping.anilist_id, mapping.tvdb_season, mapping.tvdb_epoffset) == (100, 2, 3)
+        assert mapping.imdb_id == "tt100"
+        assert mapping.anidb_id == 50
 
     def test_absent_keys_fall_back_to_the_old_get_defaults(self) -> None:
         resolver = _resolver(
@@ -78,15 +78,15 @@ class TestKometaPath:
 
         mappings = resolver.resolve(ExternalIds(tvdb=201)).kept
 
-        entry = mappings[101]
+        mapping = mappings[101]
         # Exactly the former mapping.get("tvdb_season", -1) / ("tvdb_epoffset", 0)
-        assert entry.tvdb_season == -1
-        assert entry.tvdb_epoffset == 0
-        assert entry.tvdb_mappings is None
-        assert entry.tmdb_movie_id is None
-        assert entry.imdb_id is None
-        assert entry.anidb_id is None
-        assert entry.mode is MappingKind.SEASON_OFFSET
+        assert mapping.tvdb_season == -1
+        assert mapping.tvdb_epoffset == 0
+        assert mapping.tvdb_mappings is None
+        assert mapping.tmdb_movie_id is None
+        assert mapping.imdb_id is None
+        assert mapping.anidb_id is None
+        assert mapping.mode is MappingKind.SEASON_OFFSET
 
 
 class TestAniBridgePath:
@@ -105,14 +105,14 @@ class TestAniBridgePath:
 
         mappings = resolver.resolve(ExternalIds(tvdb=74796)).kept
 
-        entry = mappings[269]
-        assert entry.mode is MappingKind.EPISODE_RANGES
-        assert entry.tvdb_mappings == {2: [(1, 21)]}
-        assert entry.anilist_id == 269
-        assert entry.anidb_id == 1234
+        mapping = mappings[269]
+        assert mapping.mode is MappingKind.EPISODE_RANGES
+        assert mapping.tvdb_mappings == {2: [(1, 21)]}
+        assert mapping.anilist_id == 269
+        assert mapping.anidb_id == 1234
         # AniBridge entries carry no flat season/offset -> the dataclass defaults.
-        assert entry.tvdb_season == -1
-        assert entry.tvdb_epoffset == 0
+        assert mapping.tvdb_season == -1
+        assert mapping.tvdb_epoffset == 0
 
 
 class TestSpecialAliasing:
@@ -123,13 +123,13 @@ class TestSpecialAliasing:
 
     def test_the_aliases_are_a_read_only_copy_of_the_producers_dict(self) -> None:
         aliases = {13: 12}
-        entry = TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
+        mapping = TitleMapping(anilist_id=1, special_aliasing=SpecialAliasing(900, aliases))
 
         aliases[14] = 13
 
-        assert entry.special_aliasing is not None
-        assert entry.special_aliasing == SpecialAliasing(900, {13: 12})
-        assert isinstance(entry.special_aliasing.aliases, MappingProxyType)
+        assert mapping.special_aliasing is not None
+        assert mapping.special_aliasing == SpecialAliasing(900, {13: 12})
+        assert isinstance(mapping.special_aliasing.aliases, MappingProxyType)
 
     def test_tvdb_lookup_attaches_the_paired_specials(self) -> None:
         graph: AniBridgeGraph = {
@@ -159,9 +159,9 @@ class TestModeDiscriminant:
 
 def test_entry_is_frozen() -> None:
     # Immutability is what makes sharing entries across the resolver's memo safe.
-    entry = TitleMapping(anilist_id=1)
+    mapping = TitleMapping(anilist_id=1)
     # Attribute name kept in a var so ruff's B010 (constant setattr) doesn't fire
     # and the type checker doesn't flag a static frozen-field assignment.
     field = "tvdb_season"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        setattr(entry, field, 5)
+        setattr(mapping, field, 5)

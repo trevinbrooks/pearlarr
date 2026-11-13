@@ -196,14 +196,14 @@ class SeadexReleaseFilter:
         doesn't already have a matching download (see reduce_overlapping_downloads)
         """
 
-        for release_group_item in seadex_release_groups.values():
-            urls = release_group_item.releases
+        for group_releases in seadex_release_groups.values():
+            urls = group_releases.releases
             # The gate is a public URL's existence, not the cover's truthiness:
             # an empty-fileset public url covers (cross-seed) while folding nothing.
             if not any(u.is_public for u in urls.values()):
                 continue
             group_public_cover = file_size_cover(u.file_sizes for u in urls.values() if u.is_public)
-            release_group_item.releases = {
+            group_releases.releases = {
                 url: u for url, u in urls.items() if u.is_public or not Counter(u.file_sizes) <= group_public_cover
             }
 

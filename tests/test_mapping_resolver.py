@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# Drives module-private resolver internals under test (_entry_from_raw, m._parse_*, resolver._(maybe_)download*).
+# Drives module-private resolver internals under test (_mapping_from_raw, m._parse_*, resolver._(maybe_)download*).
 """Parity + edge tests for the SQL-backed `MappingResolver` / `AniBridge`.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
@@ -45,14 +45,14 @@ from pearlarr.arr_run_state import ArrRunState
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsMap,
-    AnimeIdsRecord,
+    AnimeIdsRawMapping,
     ExternalIds,
     MappingKind,
     MappingResolver,
     MappingSource,
     MappingSources,
     TitleMapping,
-    _entry_from_raw,
+    _mapping_from_raw,
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
@@ -466,7 +466,7 @@ class TestSpecialAliases:
             store.close()
 
         assert _aliases_of(graph, 500, 1) == {9: 5}
-        assert ["special_aliasing" in entry for entry in by_imdb] == [False, False]
+        assert ["special_aliasing" in mapping for mapping in by_imdb] == [False, False]
 
     def test_a_reversed_piece_pairs_nothing(self) -> None:
         # If `5-4` were read as empty, `7,8` would line up with the two-number source and pair wrongly.
@@ -503,7 +503,7 @@ AMAP: AnimeIdsMap = {
 def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, TitleMapping]:
     """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
 
-    index: dict[str, dict[object, list[AnimeIdsRecord]]] = {
+    index: dict[str, dict[object, list[AnimeIdsRawMapping]]] = {
         "tvdb_id": {},
         "tmdb_movie_id": {},
         "imdb_id": {},
@@ -522,7 +522,7 @@ def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, TitleMapping
         for rec in index[field].get(value, []):
             aid = rec["anilist_id"]
             if aid not in result:
-                result[aid] = _entry_from_raw(aid, rec)
+                result[aid] = _mapping_from_raw(aid, rec)
 
     if ids.tvdb is not None:
         merge("tvdb_id", ids.tvdb)
@@ -582,9 +582,9 @@ class TestAnimeIdsParity:
             ),
         )
         try:
-            entry = resolver.mappings_from_anime_ids(ExternalIds(tvdb=5000))[500]
-            assert entry.tvdb_season == -1
-            assert entry.tvdb_epoffset == 0
+            mapping = resolver.mappings_from_anime_ids(ExternalIds(tvdb=5000))[500]
+            assert mapping.tvdb_season == -1
+            assert mapping.tvdb_epoffset == 0
         finally:
             resolver.close()
 
@@ -712,9 +712,9 @@ class TestVu1DegradedAniBridge:
         )
         try:
             mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
-            entry = mappings[400]
-            assert entry.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
-            assert entry.tvdb_season == 2  # the precise season is no longer shadowed
+            mapping = mappings[400]
+            assert mapping.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
+            assert mapping.tvdb_season == 2  # the precise season is no longer shadowed
         finally:
             resolver.close()
 
@@ -738,9 +738,9 @@ class TestVu1DegradedAniBridge:
         )
         try:
             mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
-            entry = mappings[600]
-            assert entry.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
-            assert entry.tvdb_season == 0  # season 0 preserved -> the special is still selectable
+            mapping = mappings[600]
+            assert mapping.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
+            assert mapping.tvdb_season == 0  # season 0 preserved -> the special is still selectable
         finally:
             resolver.close()
 

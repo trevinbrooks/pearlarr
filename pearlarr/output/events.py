@@ -205,7 +205,7 @@ class ItemStarted:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryHeader:
+class TitleHeader:
     """One entry block's head."""
 
     state: TitleState
@@ -290,7 +290,7 @@ class GrabStatus(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class RecommendedGroup:
+class GroupLabel:
     """A recommended release group with its SeaDex tags."""
 
     name: str
@@ -322,7 +322,7 @@ class GrabAction:
     """The whole per-title action block as one atomic fact."""
 
     status: GrabStatus
-    groups: tuple[RecommendedGroup, ...]
+    groups: tuple[GroupLabel, ...]
     added: tuple[ReleaseLabel, ...]
     in_qbit: tuple[ReleaseLabel, ...]
     waiting_to_import: bool = False
@@ -617,10 +617,10 @@ class WaitFinished:
     """The wait pass closed, with its tally."""
 
     imported: int
-    deferred: int
+    left: int
     failed: int
     elapsed_s: float
-    pending: int
+    in_progress: int
     """Rows the one-cycle check left for the next run on purpose."""
     kind: WaitKind
     scope: ScopeId | None = None
@@ -772,7 +772,7 @@ type Event = (
     | BootReady
     | ScanStarted
     | ItemStarted
-    | EntryHeader
+    | TitleHeader
     | TitleDetail
     | TitleRow
     | ReleaseSkipped
@@ -840,7 +840,7 @@ def severity_of(event: Event) -> Severity:
             | BootReady()
             | ScanStarted()
             | ItemStarted()
-            | EntryHeader()
+            | TitleHeader()
             | TitleRow()
             | GrabAction()
             | CapReached()

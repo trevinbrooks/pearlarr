@@ -38,7 +38,6 @@ from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
     CapReached,
     Diagnostic,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
@@ -48,6 +47,7 @@ from pearlarr.output import (
     ScanStarted,
     Severity,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     install_hub,
 )
@@ -75,7 +75,7 @@ def strip_ansi(text: str) -> str:
 SCAN_EVENT_TYPES = (
     ScanStarted,
     ItemStarted,
-    EntryHeader,
+    TitleHeader,
     TitleDetail,
     TitleRow,
     ReleaseSkipped,
@@ -662,7 +662,7 @@ class ScriptedEpisodes:
 
         return self._counts.get(al_id)
 
-    def entries_unread(self, al_ids: Iterable[int]) -> bool:
+    def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
         """Whether any of the entries is one of the `unread_entries`."""
 
         return not self._unread_entries.isdisjoint(al_ids)

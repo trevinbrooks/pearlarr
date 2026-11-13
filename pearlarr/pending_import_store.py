@@ -6,7 +6,7 @@ from typing import Any
 from .arr_run_state import ArrRunState
 from .cache import AbstractCacheStore
 from .config import Arr
-from .pending_import import OwnedAtGrab, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
+from .pending_import import OwnedAtGrab, PendingImport, TitleClaim, is_awaiting_cleanup, load_pending_imports
 from .wait_types import AttemptResult
 
 
@@ -36,17 +36,17 @@ class PendingImportStore:
     def rows(self) -> dict[str, dict[str, Any]]:
         """Every stored row, raw."""
 
-        return self._store.get_pending(self._ctx.arr)
+        return self._store.get_pending_import_rows(self._ctx.arr)
 
     def rows_for_series(self, series_id: int) -> dict[str, dict[str, Any]]:
         """The raw rows with a claim on `series_id` (the store's own filter, not a full-table read)."""
 
-        return self._store.get_pending_for_series(self._ctx.arr, series_id)
+        return self._store.get_pending_import_rows_for_series(self._ctx.arr, series_id)
 
     def imports_for_series(self, series_id: int, guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
         """The records claiming `series_id`, keyed by infohash, rehydrated under the guards the caller already read."""
 
-        return hydrate_pending(self.rows_for_series(series_id), guards)
+        return load_pending_imports(self.rows_for_series(series_id), guards)
 
     def flagged(self) -> dict[str, dict[str, Any]]:
         """The cleanup-flagged rows, raw (the heal pass's working set)."""
@@ -59,12 +59,12 @@ class PendingImportStore:
         fresh = self.fresh_keys()
         return {key: raw for key, raw in self.rows().items() if key not in fresh and not is_awaiting_cleanup(raw)}
 
-    def hydrate(self, rows: Mapping[str, dict[str, Any]]) -> dict[str, PendingImport]:
+    def load(self, rows: Mapping[str, dict[str, Any]]) -> dict[str, PendingImport]:
         """Rehydrate `rows`, each claim fed its entry's guard row (an empty `rows` skips the guard read)."""
 
         if not rows:
             return {}
-        return hydrate_pending(rows, self.guards())
+        return load_pending_imports(rows, self.guards())
 
     def guards(self) -> dict[int, OwnedAtGrab]:
         """The arr's guard rows for the entries with live records (one read, shared by a poll's hydrations)."""
@@ -74,46 +74,46 @@ class PendingImportStore:
     def active_imports(self) -> dict[str, PendingImport]:
         """The `active` rows rehydrated: the carried-over working set of the end-of-run passes."""
 
-        return self.hydrate(self.active_rows())
+        return self.load(self.active_rows())
 
-    def stored_records(self, hashes: Iterable[str]) -> dict[str, PendingImport]:
+    def stored_pending_imports(self, hashes: Iterable[str]) -> dict[str, PendingImport]:
         """The store-resident records among `hashes`, rehydrated under one guards read."""
 
         rows = {
             infohash: raw
             for infohash in dict.fromkeys(hashes)
-            if (raw := self._store.get_pending_record(self._ctx.arr, infohash)) is not None
+            if (raw := self._store.get_pending_import_row(self._ctx.arr, infohash)) is not None
         }
-        return self.hydrate(rows)
+        return self.load(rows)
 
-    def insert_fresh(self, record: PendingImport, claim: TitleClaim) -> None:
+    def insert_fresh(self, pending: PendingImport, claim: TitleClaim) -> None:
         """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `added`)."""
 
-        self._put(record)
+        self._put(pending)
         self._put_guards(claim)
-        self._ctx.grabbed_this_run[record.infohash] = record
+        self._ctx.grabbed_this_run[pending.infohash] = pending
 
-    def save_with_claim(self, record: PendingImport, claim: TitleClaim) -> None:
+    def save_with_claim(self, pending: PendingImport, claim: TitleClaim) -> None:
         """`save` plus `claim`'s guard row: the write of a grab whose claim joins or refreshes a stored record."""
 
-        self.save(record)
+        self.save(pending)
         self._put_guards(claim)
 
-    def save(self, record: PendingImport) -> None:
+    def save(self, pending: PendingImport) -> None:
         """Persist ONE record (no guard row), refreshing any run-list copy but NEVER inserting one.
 
         A run-list upsert would silently convert a reacquire or accretion into a fresh
         grab, skewing the carried-over tally and the heal's recount.
         """
 
-        self._put(record)
-        if record.infohash in self._ctx.grabbed_this_run:
-            self._ctx.grabbed_this_run[record.infohash] = record
+        self._put(pending)
+        if pending.infohash in self._ctx.grabbed_this_run:
+            self._ctx.grabbed_this_run[pending.infohash] = pending
 
-    def _put(self, record: PendingImport) -> None:
+    def _put(self, pending: PendingImport) -> None:
         """The record's row write."""
 
-        self._store.put_pending(self._ctx.arr, record.infohash, record.to_json())
+        self._store.put_pending_import_row(self._ctx.arr, pending.infohash, pending.to_json())
 
     def _put_guards(self, claim: TitleClaim) -> None:
         """The claim's guard row (Sonarr only: Radarr's import reads no guards).
@@ -125,33 +125,33 @@ class PendingImportStore:
         if self._ctx.arr is Arr.SONARR:
             self._store.put_guards(self._ctx.arr, claim.al_id, claim.guards)
 
-    def save_history_placements(self, record: PendingImport, probe: AttemptResult) -> PendingImport:
+    def save_history_placements(self, pending: PendingImport, probe: AttemptResult) -> PendingImport:
         """Persist the files a poll's Sonarr history placed onto the record and return the healed copy.
 
         Writes only when the poll added something: the record hands itself back on a no-op.
         """
 
-        healed = record.with_placements(probe.placements)
-        if healed is record:
-            return record
+        healed = pending.with_placements(probe.placements)
+        if healed is pending:
+            return pending
         self.save(healed)
         return healed
 
     def drop(self, infohash: str) -> None:
         """Remove one torrent's record from the store and the run list."""
 
-        self._store.drop_pending(self._ctx.arr, infohash)
+        self._store.drop_pending_import_row(self._ctx.arr, infohash)
         self._ctx.grabbed_this_run.pop(infohash, None)
 
-    def drop_unimported(self, record: PendingImport) -> None:
+    def drop_unimported(self, pending: PendingImport) -> None:
         """Remove the record of a torrent that left qBittorrent unimported, and have the next run check its titles.
 
         A title is cached as done once its torrent is added, so each claiming title's stamp is cleared. The check
         grabs the release again when the arr still lacks it.
         """
 
-        self.drop(record.infohash)
-        for claim in record.claims:
+        self.drop(pending.infohash)
+        for claim in pending.claims:
             self._store.uncache_title(self._ctx.arr, claim.al_id)
 
     def other_arr_holds(self, infohash: str) -> bool:

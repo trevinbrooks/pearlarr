@@ -26,7 +26,6 @@ from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
     ArrRunFinished,
-    EntryHeader,
     Event,
     GrabAction,
     NeedsActionCause,
@@ -36,6 +35,7 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     SeverityCounter,
+    TitleHeader,
 )
 from pearlarr.reporter import RunReporter
 from pearlarr.torrent_service import AddStatus, GrabResult
@@ -124,7 +124,7 @@ class TestStatsCounters:
         # A stored name short-circuits the AniList lookup (no network)
         reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
         ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_cached_entry(ctx, 1)
+        reporter.log_cached_title(ctx, 1)
         assert ctx.stats.unchanged == 1
 
     def test_no_sd_entry_increments_and_caches_title(self) -> None:
@@ -147,7 +147,7 @@ class TestStatsCounters:
         client = ScriptedAniListClient()
         reporter = _make_reporter(store, client=client)
         ctx = ArrRunState(arr=Arr.SONARR)
-        reporter.log_cached_entry(ctx, 1)
+        reporter.log_cached_title(ctx, 1)
         assert ctx.stats.unchanged == 1
         assert client.query_calls == [1]
 
@@ -190,7 +190,7 @@ class TestStatsCounters:
         reporter, events = _record(store, client=client)
         ctx = ArrRunState(arr=Arr.SONARR)
         ctx.arr_title = "Series"
-        reporter.log_cached_entry(ctx, 1)
+        reporter.log_cached_title(ctx, 1)
 
         assert client.query_calls == [1]
         assert any("Series" in m for m in _event_messages(events))
@@ -203,9 +203,9 @@ class TestActiveTitle:
         ctx = ArrRunState(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
         _make_reporter().open_title_block(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
-        assert ctx.per_title.current_title == "Steins;Gate"
-        assert ctx.per_title.current_url == "https://releases.moe/9"
-        assert ctx.per_title.current_coverage == "S01 E01-E24"
+        assert ctx.per_title.title_name == "Steins;Gate"
+        assert ctx.per_title.entry_url == "https://releases.moe/9"
+        assert ctx.per_title.entry_coverage == "S01 E01-E24"
 
 
 class TestEntryHeaderAlId:
@@ -214,8 +214,8 @@ class TestEntryHeaderAlId:
     Garbage in either header-opening path passed the whole suite, so pin it on both.
     """
 
-    def _header(self, events: list[Event]) -> EntryHeader:
-        return next(e for e in events if isinstance(e, EntryHeader))
+    def _header(self, events: list[Event]) -> TitleHeader:
+        return next(e for e in events if isinstance(e, TitleHeader))
 
     def test_log_al_title_carries_the_seadex_entrys_anilist_id(self) -> None:
         reporter, events = _record()
@@ -227,7 +227,7 @@ class TestEntryHeaderAlId:
         store = FakeCacheStore()
         store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
-        reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 4242)
+        reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 4242)
         assert self._header(events).al_id == 4242
 
 
@@ -244,7 +244,7 @@ class TestCloseBoundaries:
 
         reporter.scan_finished(Arr.SONARR)
 
-        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed, ScanFinished]
+        assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed, ScanFinished]
 
     def test_run_finished_without_an_open_entry_emits_only_the_boundary(self) -> None:
         reporter, events = _record()
@@ -277,14 +277,14 @@ class TestCompleteBlocksSelfClose:
 
     def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record(_seeded_store(name="Cached", coverage="S01", url="u"))
-        reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 1)
-        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
+        reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 1)
+        assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed]
 
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
         pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
-        reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
-        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
+        reporter.log_pending_import(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
+        assert [type(e) for e in events] == [ScopeOpened, TitleHeader, ScopeClosed]
 
 
 class TestRunSummary:
@@ -394,9 +394,9 @@ class TestPendingSnapshot:
         ctx = ArrRunState(arr=Arr.SONARR)
         pending = pending_import(title="My Show", window_coverage="S01 E01-E13", url="https://releases.moe/1")
 
-        reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
+        reporter.log_pending_import(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
 
-        assert any(isinstance(e, EntryHeader) for e in events)
+        assert any(isinstance(e, TitleHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
         assert ctx.stats.imported == 0
         assert ctx.stats.queued == 0
@@ -406,7 +406,7 @@ class TestPendingSnapshot:
         reporter, events = _record()
         pending = pending_import(title="Gone")
 
-        reporter.log_pending_snapshot(PendingImportState.GONE, pending, pending.claims[0].series_id)
+        reporter.log_pending_import(PendingImportState.GONE, pending, pending.claims[0].series_id)
 
         assert events == []
 
@@ -425,9 +425,9 @@ class TestPendingSnapshot:
             ),
         )
 
-        reporter.log_pending_snapshot(PendingImportState.DOWNLOADED, pending, 8)
+        reporter.log_pending_import(PendingImportState.DOWNLOADED, pending, 8)
 
-        header = next(e for e in events if isinstance(e, EntryHeader))
+        header = next(e for e in events if isinstance(e, TitleHeader))
         assert header.title == pending.display_label
         assert "Show & Other" in header.title
         assert (header.coverage, header.url) == ("S02 E01", "https://releases.moe/2")

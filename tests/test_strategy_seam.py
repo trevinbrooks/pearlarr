@@ -67,7 +67,7 @@ from pearlarr.placement_types import FetchedListings, TorrentListing, episode_in
 from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, EpisodeRecord, GrabHold, OrderOnlyKey, SeadexDict
+from pearlarr.releases import EpisodeKey, GrabHold, OrderOnlyKey, ReleaseEpisode, SeadexDict
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.sonarr_state import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
@@ -192,8 +192,8 @@ class _FakeRunServices(ArrRunServices):
     ) -> None:
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
-        self._records = PendingImportStore(self.cache_store)
-        self._records.bind_arr_run(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
+        self._pending_imports = PendingImportStore(self.cache_store)
+        self._pending_imports.bind_arr_run(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._ignored = ignored or {}
         self._prologue_entry = prologue_entry
@@ -220,8 +220,8 @@ class _FakeRunServices(ArrRunServices):
 
     @property
     @override
-    def records(self) -> PendingImportStore:
-        return self._records
+    def pending_imports(self) -> PendingImportStore:
+        return self._pending_imports
 
     @override
     def title_needs_check(self, al_id: int) -> bool:
@@ -1259,14 +1259,14 @@ class TestImportCompletedQueueState:
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
             cache_store=store,
         )
-        store.put_pending(Arr.SONARR, pending.infohash, pending.to_json())
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat)
 
         mgr._cleanup.heal_flagged()
 
         assert len(sonarr.execute_calls) == 1
-        assert mgr._records.rows()[pending.infohash].get("awaiting_cleanup") is False
-        assert mgr._ctx.pending_states[pending.infohash] is PendingImportState.DOWNLOADED
+        assert mgr._pending_imports.rows()[pending.infohash].get("awaiting_cleanup") is False
+        assert mgr._ctx.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
         assert any("no longer present" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_store_persisted_guard_row_protects_through_the_snapshot_seam(self) -> None:
@@ -1286,7 +1286,7 @@ class TestImportCompletedQueueState:
             cache_store=store,
         )
         (claim,) = pending.claims
-        store.put_pending(Arr.SONARR, pending.infohash, pending.to_json())
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         store.put_guards(Arr.SONARR, claim.al_id, claim.guards)
         mgr = make_import_wait_manager(
             qbit=_CompletedQbit("/d"),
@@ -1301,8 +1301,8 @@ class TestImportCompletedQueueState:
         # finished record leaves the store. The IMPORTED classification pins that
         # arm (a MISSING drop would also empty the store).
         assert sonarr.candidate_calls == []
-        assert store.get_pending(Arr.SONARR) == {}
-        assert mgr._ctx.pending_states[pending.infohash] is PendingImportState.IMPORTED
+        assert store.get_pending_import_rows(Arr.SONARR) == {}
+        assert mgr._ctx.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
 
     def test_import_blocked_steps_in_with_our_mapping(self) -> None:
         # Sonarr can't auto-import (importBlocked) -> our authoritative manual
@@ -2005,9 +2005,9 @@ class _CountingStore(FakeCacheStore):
         return super().get_guards(arr)
 
     @override
-    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+    def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
         self.get_pending_record_calls += 1
-        return super().get_pending_record(arr, infohash)
+        return super().get_pending_import_row(arr, infohash)
 
 
 def _two_series_record(
@@ -2342,7 +2342,7 @@ class TestRadarrImportCompletedHistory:
         store = FakeCacheStore()
         if age_days is not None:
             stamp = stamp_of(datetime.now() - timedelta(days=age_days))
-            store.put_pending(Arr.RADARR, "h", pending_import(infohash="h", added_at=stamp).to_json())
+            store.put_pending_import_row(Arr.RADARR, "h", pending_import(infohash="h", added_at=stamp).to_json())
         strat = make_radarr_sync(cache_store=store)
         back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=_HISTORY_SKEW_HOURS)
 
@@ -2356,8 +2356,8 @@ class TestRadarrImportCompletedHistory:
         older = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS - 10))
         newer = stamp_of(datetime.now() - timedelta(days=1))
         store = FakeCacheStore()
-        store.put_pending(Arr.RADARR, "new", pending_import(infohash="new", added_at=newer).to_json())
-        store.put_pending(Arr.RADARR, "old", pending_import(infohash="old", added_at=older).to_json())
+        store.put_pending_import_row(Arr.RADARR, "new", pending_import(infohash="new", added_at=newer).to_json())
+        store.put_pending_import_row(Arr.RADARR, "old", pending_import(infohash="old", added_at=older).to_json())
         strat = make_radarr_sync(cache_store=store)
 
         start = strat._history_query_start()
@@ -2496,7 +2496,7 @@ class TestSonarrProcessAlIdSeeds:
             file_episode_map={_SEED_FILES[0]: [101]},
             seadex_files=list(_SEED_FILES),
         )
-        store.put_pending(Arr.SONARR, "h1", resident.to_json())
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
 
         run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, episodes=_seed_episodes(sonarr))
@@ -2507,13 +2507,13 @@ class TestSonarrProcessAlIdSeeds:
         assert seed.file_map == {normalize_name(_SEED_FILES[1]): (102,)}
         assert seed.claim.al_id == 5
         assert seed.claim.ordered_episode_ids == (102,)
-        record = seed.record_at(_STAMP, fresh=False)
-        assert claim_al_ids(record) == (22, 5)
-        assert dict(record.file_episode_map) == {
+        pending = seed.pending_import_at(_STAMP, fresh=False)
+        assert claim_al_ids(pending) == (22, 5)
+        assert dict(pending.file_episode_map) == {
             normalize_name(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
         }
         # The planner judges the url by the whole map's episodes inside this entry.
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
         assert req.input_missing_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
@@ -2695,7 +2695,7 @@ class TestSonarrProcessAlIdSeeds:
         assert req.pending_seeds == NO_SEEDS
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
-        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [EpisodeRecord(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
 
 
 class TestPlacementDebugLine:
@@ -2760,7 +2760,7 @@ class TestSonarrProcessAlIdMetadataUnread:
         # Series 8's record already holds the torrent entry 5 lists, so the grab places it under that record too.
         store = FakeCacheStore()
         resident = pending_import(infohash="h1", al_id=22, series_id=8, seadex_files=list(_SEED_FILES))
-        store.put_pending(Arr.SONARR, "h1", resident.to_json())
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = _seed_episodes(
             FakeSonarrClient(episodes=[_EP1, _EP2]), unread_series=unread_series, unread_entries=unread_entries
         )
@@ -2854,29 +2854,29 @@ class TestRadarrProcessAlIdSeeds:
         assert seed.facts.seadex_files == ()
         assert seed.claim.ordered_episode_ids == ()
         assert seed.claim.window_coverage is None
-        record = seed.record_at(_STAMP, fresh=True)
+        pending = seed.pending_import_at(_STAMP, fresh=True)
         # display_label renders sensibly from these (title · group).
-        assert record.display_label == f"A Movie{SEP}NAN0"
-        assert record.file_map_episode_ids() == []
-        assert record.added_at == _STAMP
+        assert pending.display_label == f"A Movie{SEP}NAN0"
+        assert pending.file_map_episode_ids() == []
+        assert pending.added_at == _STAMP
 
     def test_seed_carries_the_stored_record(self) -> None:
         # A torrent another Radarr entry already holds: the seed accretes this entry's claim onto it.
         store = FakeCacheStore()
         resident = pending_import(infohash="h1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
-        store.put_pending(Arr.RADARR, "h1", resident.to_json())
+        store.put_pending_import_row(Arr.RADARR, "h1", resident.to_json())
 
         run = self._run_process(ImportWaitMode.BLOCKING, store=store)
 
         (req,) = run.grab_requests
         (seed,) = req.pending_seeds.values()
         assert seed.pending_import == resident
-        assert claim_al_ids(seed.record_at(_STAMP, fresh=False)) == (9, 42)
+        assert claim_al_ids(seed.pending_import_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_a_marked_url_seeds_onto_its_cross_seeds_record(self) -> None:
         store = FakeCacheStore()
         resident = pending_import(infohash="c1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
-        store.put_pending(Arr.RADARR, "c1", resident.to_json())
+        store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
 
         run = self._run_process(ImportWaitMode.BLOCKING, store=store, cross_seed="c1")
 
@@ -3195,10 +3195,10 @@ class TestHeldBackFiles:
 
     def test_a_record_stored_without_hand_import_files_keeps_its_unplaced_file_pending(self) -> None:
         strat, sonarr = self._strat()
-        record = self._record()
-        raw = record.to_json()
+        pending = self._record()
+        raw = pending.to_json()
         del raw["hand_import_files"]
-        stored = PendingImport.from_json(raw, guards={claim.al_id: claim.guards for claim in record.claims})
+        stored = PendingImport.from_json(raw, guards={claim.al_id: claim.guards for claim in pending.claims})
 
         probe = strat.import_completed(stored, "/d", AttemptKind.ORDINARY)
 
@@ -4160,7 +4160,7 @@ class TestRadarrProcessAlIdSeam:
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.arr_title == "Item Title"
-        assert req.entry_title == "Movie Title"
+        assert req.title_name == "Movie Title"
         # The SeaDex entry rides the request whole (the notifier reads its
         # url/notes/comparisons), so pin identity, not a copied field.
         assert req.entry is entry

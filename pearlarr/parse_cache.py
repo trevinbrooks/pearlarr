@@ -61,7 +61,7 @@ class ParseFreshness(NamedTuple):
         )
 
 
-class SonarrParseRecord(TypedDict):
+class ParseCacheRow(TypedDict):
     """One persisted Sonarr `/parse` cache record, keyed by filename."""
 
     fetched_at: str
@@ -85,14 +85,14 @@ def parse_to_json(info: ParsedFileInfo) -> dict[str, Json]:
     return info.model_dump(mode="json")
 
 
-def parse_from_json(record: Mapping[str, object]) -> ParsedFileInfo | None:
+def parse_from_json(row: Mapping[str, object]) -> ParsedFileInfo | None:
     """Rebuild a record's parse (the inverse of `to_parse_record`), or None when the row has no readable parse.
 
     A parse whose values don't validate is a miss and re-fetches. A missing key validates to its default, so the
     version gate is the field check in `_parse_is_fresh`, which every read passes first.
     """
 
-    raw = record.get("parse")
+    raw = row.get("parse")
     if not is_json_obj(raw):
         return None
     try:
@@ -105,7 +105,7 @@ _PARSE_FIELDS = frozenset(ParsedFileInfo.model_fields)
 """The keys `to_parse_record` writes: a row missing one was written before that field existed."""
 
 
-def _parse_is_fresh(record: Mapping[str, object], *, window: ParseFreshness) -> bool:
+def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> bool:
     """True if a persisted parse record is still usable.
 
     A legacy row is stale: one with no whole parse, or whose parse lacks a field of `ParsedFileInfo`, which an
@@ -115,13 +115,13 @@ def _parse_is_fresh(record: Mapping[str, object], *, window: ParseFreshness) -> 
     `window.series_fp`) and within the short `window.unmatched_cutoff` backstop, so a newly-added series self-heals.
     """
 
-    parse = record.get("parse")
+    parse = row.get("parse")
     if not is_json_obj(parse) or not parse.keys() >= _PARSE_FIELDS:
         return False
-    stamped = cast("dict[str, Any]", record)
-    if "series_fp" not in record:
+    stamped = cast("dict[str, Any]", row)
+    if "series_fp" not in row:
         return stamp_is_fresh(stamped, window.matched_cutoff)
-    return record["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.unmatched_cutoff)
+    return row["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.unmatched_cutoff)
 
 
 class ParseCacheRows:
@@ -137,21 +137,21 @@ class ParseCacheRows:
     def is_fresh(self, filename: str, *, window: ParseFreshness) -> bool:
         """Whether a fresh record exists, by stamp alone (the warm pass needs no model)."""
 
-        record = self._store.get_sonarr_parse(filename)
-        return record is not None and _parse_is_fresh(record, window=window)
+        row = self._store.get_sonarr_parse(filename)
+        return row is not None and _parse_is_fresh(row, window=window)
 
     def read(self, filename: str, *, window: ParseFreshness) -> ParsedFileInfo | None:
         """A fresh, readable record's parse, else None (stale, legacy, malformed, or absent)."""
 
-        record = self._store.get_sonarr_parse(filename)
-        if record is None or not _parse_is_fresh(record, window=window):
+        row = self._store.get_sonarr_parse(filename)
+        if row is None or not _parse_is_fresh(row, window=window):
             return None
-        return parse_from_json(record)
+        return parse_from_json(row)
 
     def write(self, filename: str, info: ParsedFileInfo, *, window: ParseFreshness) -> None:
         """Upsert one parse. An UNMATCHED parse (no matched pairs) is pinned to the series fingerprint."""
 
-        record: SonarrParseRecord = {"fetched_at": window.now_str, "parse": parse_to_json(info)}
+        row: ParseCacheRow = {"fetched_at": window.now_str, "parse": parse_to_json(info)}
         if not info.matched_episodes:
-            record["series_fp"] = window.series_hash
-        self._store.put_sonarr_parse(filename, cast("dict[str, Any]", record))
+            row["series_fp"] = window.series_hash
+        self._store.put_sonarr_parse(filename, cast("dict[str, Any]", row))

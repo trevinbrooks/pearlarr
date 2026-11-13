@@ -11,7 +11,7 @@ from .tvdb_orders import order_display_name
 
 
 @dataclass
-class EpisodeRecord:
+class ReleaseEpisode:
     """One parsed `{season, episode, size}` record for a SeaDex file."""
 
     season: int | None = None
@@ -116,7 +116,7 @@ class Release:
     """A public alternative added because the preferred release is private-only."""
     is_upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
-    episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
+    episodes: list[ReleaseEpisode] = field(default_factory=list[ReleaseEpisode])
     skip_reason: GrabHold | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
     hold_counts: ElsewhereCounts = NO_ELSEWHERE
@@ -159,7 +159,7 @@ class GroupReleases:
 
     releases: dict[str, Release] = field(default_factory=dict[str, Release])
     tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
-    all_episodes: list[EpisodeRecord] | None = None
+    all_episodes: list[ReleaseEpisode] | None = None
     """`None` until the episode parser has run, distinct from an empty list (it ran and found nothing)."""
 
 
@@ -185,8 +185,8 @@ def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
 
     return [
         PlannedGrab(srg, url, release, release.qbit_hash)
-        for srg, srg_item in seadex_dict.items()
-        for url, release in srg_item.releases.items()
+        for srg, group_releases in seadex_dict.items()
+        for url, release in group_releases.releases.items()
         if release.to_grab and release.qbit_hash
     ]
 

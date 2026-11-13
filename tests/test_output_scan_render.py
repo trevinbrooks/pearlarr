@@ -19,11 +19,10 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     Accent,
     Diagnostic,
-    EntryHeader,
     GrabAction,
     GrabStatus,
+    GroupLabel,
     ItemStarted,
-    RecommendedGroup,
     RichRenderer,
     ScanFinished,
     ScanStarted,
@@ -34,6 +33,7 @@ from pearlarr.output import (
     Severity,
     StyledValue,
     TitleDetail,
+    TitleHeader,
     TitleRow,
 )
 from pearlarr.output.console_lines import ConsoleLine
@@ -42,13 +42,13 @@ from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import (
     accent_style,
     cap_reached_lines,
-    entry_detail_lines,
-    entry_header_lines,
     grab_action_lines,
     item_started_lines,
     ledger_row_lines,
     run_summary_lines,
     scan_started_lines,
+    title_detail_lines,
+    title_header_lines,
 )
 
 from .fakes import strip_ansi
@@ -164,11 +164,11 @@ class TestBuilders:
             (PENDING_DOWNLOADED, PENDING_DOWNLOADED_LINES),
             (PENDING_IMPORTED, PENDING_IMPORTED_LINES),
         ):
-            assert _as_lines(entry_header_lines(event)) == expected
+            assert _as_lines(title_header_lines(event)) == expected
 
     def test_incomplete_tail_rides_the_files_row_when_url_absent(self) -> None:
-        event = EntryHeader(state=TitleState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
-        last = entry_header_lines(event)[-1]
+        event = TitleHeader(state=TitleState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
+        last = title_header_lines(event)[-1]
         assert last.message == "    files     S01 E01-E28"
         assert isinstance(last.payload, KeyValue)
         assert last.payload.tail == "(marked incomplete on SeaDex)"
@@ -176,15 +176,15 @@ class TestBuilders:
     def test_entry_details(self) -> None:
         composed = (
             _as_lines(ledger_row_lines(OUTAGE_ROW))
-            + _as_lines(entry_detail_lines(OUTAGE_ANILIST_DETAIL))
-            + _as_lines(entry_detail_lines(OUTAGE_STATUS_DETAIL))
+            + _as_lines(title_detail_lines(OUTAGE_ANILIST_DETAIL))
+            + _as_lines(title_detail_lines(OUTAGE_STATUS_DETAIL))
         )
         assert composed == OUTAGE_LINES
         resolved = _as_lines(ledger_row_lines(NO_ENTRY_RESOLVED_ROW)) + _as_lines(
-            entry_detail_lines(NO_ENTRY_RESOLVED_DETAIL),
+            title_detail_lines(NO_ENTRY_RESOLVED_DETAIL),
         )
         assert resolved == NO_ENTRY_RESOLVED_LINES
-        assert _as_lines(entry_detail_lines(NO_RELEASES_DETAIL)) == NO_RELEASES_LINES
+        assert _as_lines(title_detail_lines(NO_RELEASES_DETAIL)) == NO_RELEASES_LINES
 
     def test_entry_detail_carries_its_severity_and_tail(self) -> None:
         event = TitleDetail(
@@ -193,7 +193,7 @@ class TestBuilders:
             severity=Severity.WARNING,
             tail="(re-checked next run)",
         )
-        (line,) = entry_detail_lines(event)
+        (line,) = title_detail_lines(event)
         assert line.level == logging.WARNING
         assert line.message == "    status    size mismatch"
         assert line.payload == KeyValue(
@@ -221,7 +221,7 @@ class TestBuilders:
         # join order. The rendered form is pinned here.
         event = GrabAction(
             status=GrabStatus.ADDING,
-            groups=(RecommendedGroup(name="GroupA", tags=("HDR", "Dual Audio")),),
+            groups=(GroupLabel(name="GroupA", tags=("HDR", "Dual Audio")),),
             added=(),
             in_qbit=(),
         )

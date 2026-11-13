@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from .listing_fold import EntryListing, fold_listings
+from .listing_fold import ListedTitle, fold_listings
 from .mappings import ResolvedMappings
 from .pending_import import TitleNames, TitleWindow
 from .placement_types import FetchedListings
@@ -59,11 +59,11 @@ class SeriesListings:
         An entry whose episode list comes back empty keeps a window with no ids.
         """
 
-        listed: list[EntryListing] = []
-        for al_id, mapping in resolved.every_entry.items():
-            record = self._seadex.entry(al_id)
-            if isinstance(record, SeaDexMiss):
-                if record is SeaDexMiss.UNREACHABLE:
+        listed: list[ListedTitle] = []
+        for al_id, mapping in resolved.kept_and_ignored.items():
+            entry = self._seadex.entry(al_id)
+            if isinstance(entry, SeaDexMiss):
+                if entry is SeaDexMiss.UNREACHABLE:
                     return None
                 continue
             try:
@@ -82,5 +82,5 @@ class SeriesListings:
                     episode_count=self._episodes.episode_count(al_id),
                 )
             )
-            listed.append(EntryListing(record, window, mapping.special_aliasing))
+            listed.append(ListedTitle(entry, window, mapping.special_aliasing))
         return fold_listings(listed, self._ignore_tags)

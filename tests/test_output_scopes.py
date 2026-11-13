@@ -16,7 +16,6 @@ from pearlarr.output import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
@@ -33,6 +32,7 @@ from pearlarr.output import (
     SkipReason,
     StyledValue,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     WaitFinished,
     WaitKind,
@@ -177,10 +177,10 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
 def test_entry_opens_with_its_header_stamped() -> None:
     factory, recorder, _ = _factory()
 
-    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
+    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
 
     opened = recorder.of_type(ScopeOpened)
-    headers = recorder.of_type(EntryHeader)
+    headers = recorder.of_type(TitleHeader)
     assert [o.label for o in opened] == ["Frieren"]
     assert headers[0].scope == entry.scope_id
     assert headers[0].al_id == 154587
@@ -189,7 +189,7 @@ def test_entry_opens_with_its_header_stamped() -> None:
 
 def test_entry_post_stamps_the_scope_id() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
+    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
     entry.post(ReleaseSkipped(group="Okay-Subs", tracker="AB", reason=SkipReason.PRIVATE_ONLY))
 
@@ -199,7 +199,7 @@ def test_entry_post_stamps_the_scope_id() -> None:
 
 def test_entry_close_emits_scope_closed_once() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
+    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
 
     entry.close()
     entry.close()
@@ -209,7 +209,7 @@ def test_entry_close_emits_scope_closed_once() -> None:
 
 def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="Frieren"))
+    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren"))
     entry.close()
 
     entry.post(
@@ -234,7 +234,7 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
 
 def test_every_late_fact_kind_describes_itself() -> None:
     factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=TitleState.CHECKING, title="T"))
+    entry = factory.title(TitleHeader(state=TitleState.CHECKING, title="T"))
     entry.close()
 
     entry.post(TitleRow(state=TitleState.IGNORED, label="AniList #1"))
@@ -279,11 +279,11 @@ def test_wait_finish_emits_tally_then_closes() -> None:
     factory, recorder, _ = _factory()
     wait = factory.wait(total=4, pulse_s=300.0, kind=WaitKind.MONITOR)
 
-    wait.finish(WaitFinished(imported=3, deferred=1, failed=0, elapsed_s=730.0, pending=0, kind=WaitKind.MONITOR))
+    wait.finish(WaitFinished(imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.MONITOR))
 
     (finished,) = recorder.of_type(WaitFinished)
     assert finished == WaitFinished(
-        imported=3, deferred=1, failed=0, elapsed_s=730.0, pending=0, kind=WaitKind.MONITOR, scope=wait.scope_id
+        imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.MONITOR, scope=wait.scope_id
     )
     assert isinstance(recorder.events[-1], ScopeClosed)
 
@@ -295,7 +295,7 @@ def test_late_wait_emissions_demote() -> None:
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=1.0))
     wait.graduated(RowFinished(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
-    wait.finish(WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR))
+    wait.finish(WaitFinished(imported=0, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR))
 
     assert len(recorder.of_type(WaitProgress)) == 0
     assert len(recorder.of_type(RowFinished)) == 0

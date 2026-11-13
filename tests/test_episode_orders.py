@@ -148,8 +148,8 @@ def test_a_stored_records_series_is_fetched_while_imports_are_waited_on(
     mode: ImportWaitMode, fetched: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Nothing in the scan needs series 2, but grab and import read the record's series anyway.
-    record = pending_import(infohash="h", series_id=2)
-    cache = FakeCacheStore(pending={str(Arr.SONARR): {record.infohash: record.to_json()}})
+    pending = pending_import(infohash="h", series_id=2)
+    cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     strat = _sync(monkeypatch, [_series(2, 60)], cache)
     strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=mode))
 

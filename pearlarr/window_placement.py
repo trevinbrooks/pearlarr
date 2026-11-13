@@ -103,11 +103,11 @@ def ordered_windows(
     listed = {window.al_id: window for window in listing.windows}
     imported = set[int]()
     for claim in claims:
-        entry = listed.get(claim.al_id)
+        listed_window = listed.get(claim.al_id)
         chosen[claim.al_id] = (
             claim.window
-            if entry is None
-            else replace(claim.window, ignored=entry.ignored, episode_count=entry.episode_count)
+            if listed_window is None
+            else replace(claim.window, ignored=listed_window.ignored, episode_count=listed_window.episode_count)
         )
         imported.add(claim.al_id)
     chosen[own.al_id] = own
@@ -183,7 +183,7 @@ class WindowedFile:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryView:
+class TitleView:
     """What the windows made of a torrent's files, as one entry and its record see it."""
 
     assignment: BatchPlacements
@@ -206,7 +206,7 @@ class EntryView:
     the only one imported). A file a window held for a re-ask isn't among them, since no window has read it yet."""
 
 
-NOTHING_PLACED = EntryView(BatchPlacements(()), misnumbered=False, hand_claim=None, outside=frozenset())
+NOTHING_PLACED = TitleView(BatchPlacements(()), misnumbered=False, hand_claim=None, outside=frozenset())
 """The view of a url whose windows placed nothing: no file left to place, or nothing to place it against."""
 
 
@@ -264,7 +264,7 @@ class WindowedAssignment:
             return False
         return not any(window.names[file.name].reads_inside for window in self.facts)
 
-    def seen_by(self, own_at: int, imports: Collection[int]) -> EntryView:
+    def seen_by(self, own_at: int, imports: Collection[int]) -> TitleView:
         """What the windows made of the files, as the entry whose window is at `own_at` sees them.
 
         `imports` are the positions whose files the entry's record imports (`WindowOrder.imports`).
@@ -276,7 +276,7 @@ class WindowedAssignment:
             for file in self.files
             if file.per_window[own_at].verdict in _HAND_CLAIMS and file.merged.verdict in _HAND_CLAIMS
         }
-        return EntryView(
+        return TitleView(
             BatchPlacements(
                 tuple(
                     Placement(file.name, (), elsewhere) if file.listed_elsewhere(imports) else file.merged

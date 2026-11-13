@@ -34,7 +34,7 @@ from pearlarr.arr_models import (
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.cache import (
-    _ENTRY_COLUMNS,
+    _CACHED_TITLE_COLUMNS,
     AbstractCacheStore,
     CachedTitle,
     CachedTitleUpdate,
@@ -82,7 +82,7 @@ from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotices
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.releases import EpisodeKey, EpisodeRecord, GroupReleases, OrderOnlyKey, Release, SeadexDict
+from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, Release, ReleaseEpisode, SeadexDict
 from pearlarr.reporter import RunReporter
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
@@ -177,7 +177,7 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
 
 # The entry columns `update_cached_title` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
-_FAKE_ENTRY_FIELDS: tuple[str, ...] = _ENTRY_COLUMNS
+_FAKE_ENTRY_FIELDS: tuple[str, ...] = _CACHED_TITLE_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
@@ -185,8 +185,8 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
 
     cutoff_str = cutoff.strftime(STAMP_FORMAT)
     stale: list[K] = []
-    for cache_key, record in store.items():
-        stamp = record.get("fetched_at")
+    for cache_key, row in store.items():
+        stamp = row.get("fetched_at")
         if not isinstance(stamp, str) or stamp < cutoff_str:
             stale.append(cache_key)
     for cache_key in stale:
@@ -324,24 +324,24 @@ class FakeCacheStore(AbstractCacheStore):
     def uncache_title(self, arr: Arr, al_id: int) -> None:
         """Drop the entry's stored timestamp. No row, no effect."""
 
-        entry = self._entries.get((str(arr), al_id))
-        if entry is not None:
-            entry.pop("updated_at", None)
+        cached = self._entries.get((str(arr), al_id))
+        if cached is not None:
+            cached.pop("updated_at", None)
 
     @override
-    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None:
+    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
         """The entry as a `CachedEntry`, or None."""
 
-        entry = self._entries.get((str(arr), al_id))
-        if entry is None:
+        cached = self._entries.get((str(arr), al_id))
+        if cached is None:
             return None
         return CachedTitle(
-            updated_at=entry.get("updated_at"),
-            name=entry.get("name"),
-            url=entry.get("url"),
-            coverage=entry.get("coverage"),
-            fallback_satisfied=bool(entry.get("fallback_satisfied", False)),
-            season_type=entry.get("season_type"),
+            updated_at=cached.get("updated_at"),
+            name=cached.get("name"),
+            url=cached.get("url"),
+            coverage=cached.get("coverage"),
+            fallback_satisfied=bool(cached.get("fallback_satisfied", False)),
+            season_type=cached.get("season_type"),
         )
 
     # -- AniList meta (TTL-swept) --
@@ -354,8 +354,8 @@ class FakeCacheStore(AbstractCacheStore):
         return deepcopy(self._anilist_meta.get(al_id))
 
     @override
-    def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
-        self._anilist_meta[al_id] = deepcopy(record)
+    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None:
+        self._anilist_meta[al_id] = deepcopy(row)
 
     @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
@@ -367,8 +367,8 @@ class FakeCacheStore(AbstractCacheStore):
         return deepcopy(self._sonarr_parse.get(filename))
 
     @override
-    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
-        self._sonarr_parse[filename] = deepcopy(record)
+    def put_sonarr_parse(self, filename: str, row: dict[str, Any]) -> None:
+        self._sonarr_parse[filename] = deepcopy(row)
 
     @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
@@ -376,15 +376,15 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- pending imports --
     @override
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
+    def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]:
         return {key: deepcopy(rec) for key, rec in self._pending.get(str(arr), {}).items()}
 
     @override
-    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+    def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
         return deepcopy(self._pending.get(str(arr), {}).get(infohash))
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+    def get_pending_import_rows_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
         """Fresh deep-copied snapshot of the records with a claim on the series (mirrors the `json_each` read)."""
 
         return {
@@ -394,12 +394,12 @@ class FakeCacheStore(AbstractCacheStore):
         }
 
     @override
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
+    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
         # Stored as the real store's JSON column reads it back (tuples come back as lists).
-        self._pending.setdefault(str(arr), {})[infohash] = json.loads(json.dumps(record))
+        self._pending.setdefault(str(arr), {})[infohash] = json.loads(json.dumps(row))
 
     @override
-    def drop_pending(self, arr: Arr, infohash: str) -> None:
+    def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
         self._pending.get(str(arr), {}).pop(infohash, None)
 
     @override
@@ -430,8 +430,8 @@ class FakeCacheStore(AbstractCacheStore):
         return None if stored is None else CachedOrders.from_json(json.loads(json.dumps(stored.to_json())))
 
     @override
-    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None:
-        self._tvdb_orders[tvdb_id] = record
+    def put_tvdb_orders(self, tvdb_id: int, row: CachedOrders) -> None:
+        self._tvdb_orders[tvdb_id] = row
 
     # -- history checkpoints --
     @override
@@ -904,7 +904,7 @@ def grab_request(**overrides: Any) -> GrabRequest:
     defaults: dict[str, Any] = {
         "al_id": 1,
         "arr_title": "Show",
-        "entry_title": "Show",
+        "title_name": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
         "seadex_dict": {},
         "update": {},
@@ -935,11 +935,11 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_ctx": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
     defaults.update(overrides)
-    if "_records" not in defaults:
+    if "_pending_imports" not in defaults:
         # The record seam binds the FINAL store + ctx, exactly as the real ctor + bind_arr_run do.
-        records = PendingImportStore(defaults["cache_store"])
-        records.bind_arr_run(defaults["_ctx"])
-        defaults["_records"] = records
+        pending_imports = PendingImportStore(defaults["cache_store"])
+        pending_imports.bind_arr_run(defaults["_ctx"])
+        defaults["_pending_imports"] = pending_imports
     return make_bare_instance(GrabPipeline, **defaults)
 
 
@@ -977,8 +977,8 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
         raise TypeError(msg)
 
-    records = PendingImportStore(cache_store)
-    records.bind_arr_run(ctx)
+    pending_imports = PendingImportStore(cache_store)
+    pending_imports.bind_arr_run(ctx)
     probes = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
     cleanup = make_bare_instance(
         PostImportCleanup,
@@ -987,7 +987,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         _qbit=qbit,
         _clock=clock,
         _logger=logger,
-        _records=records,
+        _pending_imports=pending_imports,
         _probes=probes,
     )
     mgr = make_bare_instance(
@@ -996,7 +996,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
         clock=clock,
         logger=logger,
         _reporter=reporter,
-        _records=records,
+        _pending_imports=pending_imports,
         probes=probes,
         _cleanup=cleanup,
     )
@@ -1030,7 +1030,7 @@ def url_item(
     download: bool = False,
     is_fallback: bool = False,
     upgrade: bool = False,
-    episodes: list[EpisodeRecord] | None = None,
+    episodes: list[ReleaseEpisode] | None = None,
 ) -> Release:
     """One SeaDex URL record, matching `get_seadex_dict`'s `url_item` shape."""
 
@@ -1059,7 +1059,7 @@ def rg_group(
     urls: dict[str, Release],
     *,
     tags: frozenset[Tag] | None = None,
-    all_episodes: list[EpisodeRecord] | None = None,
+    all_episodes: list[ReleaseEpisode] | None = None,
 ) -> GroupReleases:
     """`all_episodes` is tri-state: `None` skips parsing, `[]` is unparsed, populated is the coverage frozenset."""
 
@@ -1200,14 +1200,14 @@ def torrent_evidence(
 
 
 def known_torrent(
-    record: PendingImport | None = None,
+    pending: PendingImport | None = None,
     *,
     indexes: Mapping[int, EpisodeIndex] | None = None,
     evidence: FetchedSeadex = UNLISTED,
 ) -> KnownTorrent:
     """A `KnownTorrent`, by default a new torrent that nothing lists, with no series read."""
 
-    return KnownTorrent(record, indexes or {}, evidence)
+    return KnownTorrent(pending, indexes or {}, evidence)
 
 
 def seed_scope(
@@ -1595,7 +1595,7 @@ def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
     return make_bare_instance(SonarrParseCache, **attrs)
 
 
-def claim_al_ids(record: PendingImport) -> tuple[int, ...]:
+def claim_al_ids(pending: PendingImport) -> tuple[int, ...]:
     """The record's claiming entries, claim order."""
 
-    return tuple(claim.al_id for claim in record.claims)
+    return tuple(claim.al_id for claim in pending.claims)

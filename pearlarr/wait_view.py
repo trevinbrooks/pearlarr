@@ -175,10 +175,10 @@ class HubWaitView(WaitView):
             scope.finish(
                 WaitFinished(
                     imported=self._tally[OutcomeKind.IMPORTED],
-                    deferred=self._tally[OutcomeKind.LEFT],
+                    left=self._tally[OutcomeKind.LEFT],
                     failed=self._tally[OutcomeKind.FAILED],
                     elapsed_s=self._last_elapsed,
-                    pending=self._tally[OutcomeKind.IN_PROGRESS],
+                    in_progress=self._tally[OutcomeKind.IN_PROGRESS],
                     kind=self._kind,
                 ),
             )

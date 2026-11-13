@@ -47,7 +47,7 @@ class Title:
         return self.name != unresolved_label(self.al_id)
 
 
-def resolve_entry_title(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
+def title_from_names(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
     """The title ladder: the first AniList title, else the arr item's own title, else the id form."""
 
     names = TitleNames(arr_title, tuple(title for title in anilist_titles if title))
@@ -158,11 +158,11 @@ class PerTitleState:
     metadata_unread: bool = False
     """An entry of the series was looked up without its AniList record, or a series was read without its TVDB
     orders, so the title stays uncached and re-checks. Nothing for the user to do."""
-    current_title: str | None = None
+    title_name: str | None = None
     """Title of the entry currently being processed, so grabs and the summary can attribute what they grab."""
-    current_url: str | None = None
+    entry_url: str | None = None
     """SeaDex URL of the entry currently being processed, so grabs and the summary can link what they grab."""
-    current_coverage: str | None = None
+    entry_coverage: str | None = None
     """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
 
     def add_held(self, hold: GrabHold, groups: Sequence[str]) -> None:
@@ -206,7 +206,7 @@ class ArrRunState:
     reacquired_keys: set[str] = field(default_factory=set[str])
     """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
     but counted by the tally. Never also a `pending_imports` record."""
-    pending_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
+    pending_import_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
     """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
     `added`."""
     pause_owed: bool = False

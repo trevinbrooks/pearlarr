@@ -37,7 +37,7 @@ from .events import (
 )
 from .scan_lines import kv_line
 from ..coverage import coverage_string
-from ..releases import EpisodeKey, EpisodeRecord
+from ..releases import EpisodeKey, ReleaseEpisode
 from ..tvdb_orders import order_display_name
 from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
@@ -65,7 +65,7 @@ _ROW_KEY_WIDTH = DETAIL_KEY_WIDTH + 2
 def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
     """Episode keys in a row label's notation, as "S04 E01, E05-E08"."""
 
-    return coverage_string([EpisodeRecord(season=key.season, episode=key.episode) for key in keys])
+    return coverage_string([ReleaseEpisode(season=key.season, episode=key.episode) for key in keys])
 
 
 def _order_only_reason(held: LeftForHandImport) -> str:
@@ -217,13 +217,13 @@ def wait_graduation_lines(event: RowFinished, features: ConsoleFeatures) -> list
 def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
     """The closing wait summary. `[]` when nothing graduated."""
 
-    if event.imported == 0 and event.pending == 0 and event.deferred == 0 and event.failed == 0:
+    if event.imported == 0 and event.in_progress == 0 and event.left == 0 and event.failed == 0:
         return []
     parts = [f"{event.imported} imported"]
-    if event.pending:
-        parts.append(f"{event.pending} pending")
-    if event.deferred:
-        parts.append(f"{event.deferred} left")
+    if event.in_progress:
+        parts.append(f"{event.in_progress} pending")
+    if event.left:
+        parts.append(f"{event.left} left")
     if event.failed:
         parts.append(f"{event.failed} failed")
     parts.append(long_duration(event.elapsed_s))

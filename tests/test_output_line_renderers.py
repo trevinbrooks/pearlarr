@@ -47,12 +47,12 @@ from pearlarr.output import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryHeader,
     Event,
     FileLogRenderer,
     GrabAction,
     GrabFailed,
     GrabStatus,
+    GroupLabel,
     ItemStarted,
     JsonRenderer,
     NeedsActionCause,
@@ -61,7 +61,6 @@ from pearlarr.output import (
     Phase,
     PlacedBy,
     PlainRenderer,
-    RecommendedGroup,
     ReleaseLabel,
     ReleaseSkipped,
     RowFinished,
@@ -78,6 +77,7 @@ from pearlarr.output import (
     StarterConfigWritten,
     StyledValue,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     TorrentView,
     WaitFinished,
@@ -203,7 +203,7 @@ def test_scan_and_item_lines() -> None:
 
 
 def test_entry_header_line_reads_the_full_breadcrumb() -> None:
-    header = EntryHeader(
+    header = TitleHeader(
         state=TitleState.CHECKING,
         title="Frieren: Beyond Journey's End",
         al_id=154587,
@@ -223,7 +223,7 @@ def test_entry_header_line_reads_the_full_breadcrumb() -> None:
 def test_grab_action_line_joins_groups_and_names_sink_side() -> None:
     action = GrabAction(
         status=GrabStatus.ADDING,
-        groups=(RecommendedGroup("SubsPlease", ("dual audio",)), RecommendedGroup("Kowo")),
+        groups=(GroupLabel("SubsPlease", ("dual audio",)), GroupLabel("Kowo")),
         added=(ReleaseLabel("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
         in_qbit=(ReleaseLabel("", "Kowo"),),
         scope=_ENTRY,
@@ -555,7 +555,7 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
     events: list[Event] = [
         RunStarted(version="v1.0.0", data_dir="/data"),
         *_entry_context(),
-        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
@@ -855,7 +855,7 @@ def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
 def test_file_sink_writes_utf8(tmp_path: Path) -> None:
     sink = FileLogRenderer(str(tmp_path))
     sink.handle(
-        EntryHeader(state=TitleState.CHECKING, title="Pokémon — ポケモン", scope=None),
+        TitleHeader(state=TitleState.CHECKING, title="Pokémon — ポケモン", scope=None),
         _EPOCH,
     )
     sink.close()
@@ -912,7 +912,7 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
         _wait_progress(0.0),
         _wait_progress(300.0),
         _wait_progress(650.0),
-        WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=700.0, pending=0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitFinished(imported=1, left=0, failed=0, elapsed_s=700.0, in_progress=0, kind=WaitKind.MONITOR, scope=_WAIT),
     ]
     line_sink, stream = _line_sink()
     file_sink = FileLogRenderer(str(tmp_path))
@@ -1120,7 +1120,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
 def test_json_scoped_events_carry_their_breadcrumb_path() -> None:
     events: list[Event] = [
         *_entry_context(),
-        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
     ]
     payloads = _json_lines(events)
     header = payloads[-1]
@@ -1154,7 +1154,7 @@ def _exemplars() -> list[Event]:
         BootReady(elapsed_s=7.0),
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="T"),
-        EntryHeader(state=TitleState.CHECKING, title="T"),
+        TitleHeader(state=TitleState.CHECKING, title="T"),
         TitleDetail(label="status", value=StyledValue("no suitable releases")),
         TitleRow(state=TitleState.IGNORED, label="AniList #1"),
         ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY),
@@ -1166,7 +1166,7 @@ def _exemplars() -> list[Event]:
         WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         RowFinished(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
-        WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR),
+        WaitFinished(imported=1, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR),
         ArrRunFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
         PathsShown(

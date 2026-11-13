@@ -198,7 +198,7 @@ class AnimeIdRow(NamedTuple):
     anidb_id: int | None
 
 
-class AniBridgeEntryRow(NamedTuple):
+class AniBridgeMappingRow(NamedTuple):
     """One `anibridge_entry` row: the computed `_consumer_entry` picks.
 
     A typed record (not a positional `tuple[object, ...]`) shared by the producer
@@ -245,7 +245,7 @@ class AniBridgeAliasRow(NamedTuple):
 class AniBridgeRows(NamedTuple):
     """The anibridge row tables one graph flattens to (`AniBridge.to_rows`)."""
 
-    entries: list[AniBridgeEntryRow]
+    entries: list[AniBridgeMappingRow]
     xrefs: list[AniBridgeXrefRow]
     ranges: list[AniBridgeRangeRow]
     aliases: list[AniBridgeAliasRow]
@@ -484,7 +484,7 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_entries_for(self, id_kind: str, external_id: int | str) -> list[AniBridgeEntryRow]:
+    def anibridge_mappings_for(self, id_kind: str, external_id: int | str) -> list[AniBridgeMappingRow]:
         """Every `AniBridgeEntryRow` mapped to `ext_id` on `axis`.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
@@ -499,7 +499,7 @@ class MappingStore:
             "WHERE x.axis = ? AND x.ext_id = ?",
             (id_kind, external_id),
         ).fetchall()
-        return [AniBridgeEntryRow(*row) for row in rows]
+        return [AniBridgeMappingRow(*row) for row in rows]
 
     def anibridge_ranges_for(
         self,

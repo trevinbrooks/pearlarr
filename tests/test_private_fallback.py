@@ -23,7 +23,7 @@ from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.output import ReleaseSkipped, Severity, SkipReason, TitleDetail, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
-from pearlarr.releases import EpisodeRecord, SeadexDict
+from pearlarr.releases import ReleaseEpisode, SeadexDict
 
 from .builders import (
     AddStatus,
@@ -77,11 +77,11 @@ def _entry_private_pick_plus_public_alt() -> EntryRecord:
     return make_entry_record(anilist_id=11, torrents=(priv, fall))
 
 
-def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[EpisodeRecord]]) -> None:
+def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[ReleaseEpisode]]) -> None:
     """Mirror `attach_placements`: per-url episodes + the group union."""
 
     for group_releases in sd.values():
-        all_eps: list[EpisodeRecord] = []
+        all_eps: list[ReleaseEpisode] = []
         group_releases.all_episodes = all_eps
         for url, item in group_releases.releases.items():
             eps = list(mapping.get(url, []))
@@ -125,7 +125,7 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> Gr
     return GrabRequest(
         al_id=al_id,
         arr_title="Show",
-        entry_title="Show",
+        title_name="Show",
         entry=entry,
         seadex_dict=seadex_dict,
         update={"name": "Show", "updated_at": entry.updated_at},
@@ -154,8 +154,8 @@ class TestUpgradePendingHoldsForOwnedStale:
         _fill_episodes(
             sd,
             {
-                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
@@ -174,7 +174,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         # so it resurfaces every run until the copy is updated or deleted.
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
-        assert cache.get_entry(Arr.SONARR, 11) is None
+        assert cache.get_cached_title(Arr.SONARR, 11) is None
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
         assert [n.reason for n in ctx.stats.needs_action] == [STALE_ROW_REASON]
 
@@ -226,8 +226,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         _fill_episodes(
             sd,
             {
-                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
         # Sonarr holds Priv's release at the MATCHING SeaDex size.
@@ -246,7 +246,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
-        cached = cache.get_entry(Arr.SONARR, 11)
+        cached = cache.get_cached_title(Arr.SONARR, 11)
         assert cached_as_done(cached, entry) is True
         assert cached is not None
         # The owned PREFERRED private pick satisfied the title, not the idle
@@ -280,7 +280,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe.grab_and_cache(_grab_request(22, plan.seadex_dict, entry))
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
-        cached = cache.get_entry(Arr.RADARR, 22)
+        cached = cache.get_cached_title(Arr.RADARR, 22)
         assert cached_as_done(cached, entry) is True
         assert cached is not None
         assert cached.fallback_satisfied is False
@@ -301,7 +301,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
         assert set(sd) == {"Priv"}  # warn mode adds no fallback
 
-        _fill_episodes(sd, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
+        _fill_episodes(sd, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
@@ -314,7 +314,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
 
-        assert cache.get_entry(Arr.SONARR, 11) is None
+        assert cache.get_cached_title(Arr.SONARR, 11) is None
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
 
 
@@ -371,9 +371,9 @@ class TestFilterDownloadsNoticeSeam:
         _fill_episodes(
             sd,
             {
-                self.PRIVA_URL: [EpisodeRecord(season=1, episode=1, size=999)],
-                self.PRIVB_URL: [EpisodeRecord(season=2, episode=1, size=777)],
-                self.PUBA_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                self.PRIVA_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
+                self.PRIVB_URL: [ReleaseEpisode(season=2, episode=1, size=777)],
+                self.PUBA_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
         # S01E01 is held at a stale size (upgrade pending). S02E01 is missing.
@@ -462,14 +462,14 @@ class TestMixedGroupKeeperPreference:
         _fill_episodes(
             sd,
             {
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    EpisodeRecord(season=1, episode=1, size=999),
-                    EpisodeRecord(season=2, episode=1, size=999),
+                    ReleaseEpisode(season=1, episode=1, size=999),
+                    ReleaseEpisode(season=2, episode=1, size=999),
                 ],
                 self.H_URL: [
-                    EpisodeRecord(season=1, episode=1, size=777),
-                    EpisodeRecord(season=2, episode=1, size=777),
+                    ReleaseEpisode(season=1, episode=1, size=777),
+                    ReleaseEpisode(season=2, episode=1, size=777),
                 ],
             },
         )
@@ -496,7 +496,7 @@ class TestMixedGroupKeeperPreference:
         pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, entry))
         assert torrents.calls == [self.H_HASH]
         assert ctx.stats.needs_action == []
-        assert cached_as_done(cache.get_entry(Arr.SONARR, 55), entry) is True
+        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 55), entry) is True
 
     def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
         # No fully-addable group exists: the keeper degrades to the mixed group,
@@ -517,10 +517,10 @@ class TestMixedGroupKeeperPreference:
         _fill_episodes(
             sd,
             {
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    EpisodeRecord(season=1, episode=1, size=999),
-                    EpisodeRecord(season=2, episode=1, size=999),
+                    ReleaseEpisode(season=1, episode=1, size=999),
+                    ReleaseEpisode(season=2, episode=1, size=999),
                 ],
             },
         )
@@ -545,7 +545,7 @@ class TestMixedGroupKeeperPreference:
         assert ctx.per_title.private_only_skipped is True
         assert ctx.per_title.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
-        assert cached_as_done(cache.get_entry(Arr.SONARR, 56), entry) is True
+        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 56), entry) is True
 
 
 class TestSurvivingPrivateCoverage:
@@ -592,10 +592,10 @@ class TestSurvivingPrivateCoverage:
             sd,
             {
                 PRIV_URL: [
-                    EpisodeRecord(season=1, episode=1, size=999),
-                    EpisodeRecord(season=2, episode=1, size=999),
+                    ReleaseEpisode(season=1, episode=1, size=999),
+                    ReleaseEpisode(season=2, episode=1, size=999),
                 ],
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
 
@@ -623,7 +623,7 @@ class TestSurvivingPrivateCoverage:
         # A non-interactive fallback hold blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
         # in every run's summary until a covering public release lands.
-        assert cached_as_done(cache.get_entry(Arr.SONARR, 33), entry) is False
+        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 33), entry) is False
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
@@ -674,8 +674,8 @@ class TestPromotionGeneralization:
         _fill_episodes(
             sd,
             {
-                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
@@ -703,7 +703,7 @@ class TestPromotionGeneralization:
         assert torrents.calls == [PUB_HASH]
         assert ctx.stats.needs_action == []
         # Nothing is held, so the fallback-hold uncache must not fire.
-        cached = cache.get_entry(Arr.SONARR, 66)
+        cached = cache.get_cached_title(Arr.SONARR, 66)
         assert cached_as_done(cached, entry) is True
         assert cached is not None
         # A promoted PREFERRED public group is not a fallback: no marker.
@@ -782,14 +782,14 @@ class TestPromotionGeneralization:
         _fill_episodes(
             sd,
             {
-                self.M_PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                self.M_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    EpisodeRecord(season=1, episode=1, size=999),
-                    EpisodeRecord(season=2, episode=1, size=999),
+                    ReleaseEpisode(season=1, episode=1, size=999),
+                    ReleaseEpisode(season=2, episode=1, size=999),
                 ],
                 self.F_URL: [
-                    EpisodeRecord(season=1, episode=1, size=777),
-                    EpisodeRecord(season=2, episode=1, size=777),
+                    ReleaseEpisode(season=1, episode=1, size=777),
+                    ReleaseEpisode(season=2, episode=1, size=777),
                 ],
             },
         )
@@ -879,15 +879,15 @@ class TestEqualUnionMixedGroups:
             _fill_episodes(
                 sd,
                 {
-                    self.A_PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                    self.A_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
                     self.A_PRIV_URL: [
-                        EpisodeRecord(season=1, episode=1, size=999),
-                        EpisodeRecord(season=2, episode=1, size=999),
+                        ReleaseEpisode(season=1, episode=1, size=999),
+                        ReleaseEpisode(season=2, episode=1, size=999),
                     ],
-                    self.B_PUB_URL: [EpisodeRecord(season=2, episode=1, size=556)],
+                    self.B_PUB_URL: [ReleaseEpisode(season=2, episode=1, size=556)],
                     self.B_PRIV_URL: [
-                        EpisodeRecord(season=1, episode=1, size=998),
-                        EpisodeRecord(season=2, episode=1, size=998),
+                        ReleaseEpisode(season=1, episode=1, size=998),
+                        ReleaseEpisode(season=2, episode=1, size=998),
                     ],
                 },
             )
@@ -919,13 +919,13 @@ class TestEqualUnionMixedGroups:
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events
             assert ctx.per_title.private_only_skipped is True
-            assert cached_as_done(cache.get_entry(Arr.SONARR, al_id), entry) is True
+            assert cached_as_done(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
 
 
 class _CachedEntryReporter:
     """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
-    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
         del ctx, al_id
 
 
@@ -954,8 +954,8 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _fill_episodes(
             sd,
             {
-                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
-                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
         plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1)])
@@ -971,7 +971,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         )
         pipe._anilist.al_cache.update({11: {}})
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
-        cached = cache.get_entry(Arr.SONARR, 11)
+        cached = cache.get_cached_title(Arr.SONARR, 11)
         assert cached is not None
         assert cached.fallback_satisfied is True
 
@@ -1011,7 +1011,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         )
         sd_warn = warn_filt.build(entry)
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
-        _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
+        _fill_episodes(sd_warn, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
             warn_plan = warn_filt.filter_downloads(sd_warn, ArrFiles(tagged={"Fall": (555,)}), ep_list)
@@ -1021,7 +1021,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)
         warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, entry))
         assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
-        persisted = cache.get_entry(Arr.SONARR, 11)
+        persisted = cache.get_cached_title(Arr.SONARR, 11)
         assert persisted is not None
         assert persisted.fallback_satisfied is True  # the hold left the marker alone
 

@@ -106,9 +106,9 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
     strat = SonarrStrategy(deps, services, sonarr_client=FakeSonarrClient())
 
     assert strat._parse.cache_store is deps.cache_store
-    assert strat._reconciler._records is services.records
+    assert strat._reconciler._pending_imports is services.pending_imports
     # The seam's store is private, and this identity is the invariant the comment above names.
-    assert services.records._store is deps.cache_store
+    assert services.pending_imports._store is deps.cache_store
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:

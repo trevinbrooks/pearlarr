@@ -171,9 +171,9 @@ class TestCacheRoundTrip:
         # The restored db still holds the original entry.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))
         try:
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.name == "X"
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.name == "X"
         finally:
             store.close()
 
@@ -379,9 +379,9 @@ class TestMissingFilesAreReportedNotRaised:
 
         store = CacheStore.open_readonly(str(tmp_path / "cache.backup.db"))
         try:
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.name == "X"
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.name == "X"
         finally:
             store.close()
 

@@ -58,7 +58,7 @@ class _RecordingReporter:
     def __init__(self) -> None:
         self.cached: list[int] = []
 
-    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
         del ctx
         self.cached.append(al_id)
 
@@ -185,7 +185,7 @@ class TestCachedEntrySkip:
 
         assert cache.updates == case.updates
         assert client.query_calls == case.queries
-        persisted = cache.get_entry(Arr.SONARR, 7)
+        persisted = cache.get_cached_title(Arr.SONARR, 7)
         assert persisted is not None
         assert persisted.name == case.name
 
@@ -233,7 +233,7 @@ class TestCachedEntrySkip:
             _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
             _filter=_CtxBind(),
             _grab_pipeline=_CtxBind(),
-            _records=_CtxBind(),
+            _pending_imports=_CtxBind(),
         )
         run.mark_dirty([7])
         run.bind_arr_run(run.ctx)
@@ -264,7 +264,7 @@ class TestACheckedTitleLosesItsStamp:
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.per_title.current_title = "Show"
+        pipeline._ctx.per_title.title_name = "Show"
         run = self._run(cache, _grab_pipeline=pipeline, _ctx=pipeline._ctx)
         run.mark_dirty([7])
         return run
@@ -289,9 +289,9 @@ class TestACheckedTitleLosesItsStamp:
 
         assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
 
-        entry = cache.get_entry(Arr.SONARR, 7)
-        assert entry is not None
-        assert entry.updated_at is None
+        cached = cache.get_cached_title(Arr.SONARR, 7)
+        assert cached is not None
+        assert cached.updated_at is None
 
     def test_a_skipped_title_keeps_its_stamp(self) -> None:
         cache = FakeCacheStore()
@@ -371,9 +371,9 @@ class TestFallbackSatisfiedResurfacing:
         cache = self._cache(marker=True)
         run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
         run.report_no_releases(7, {"name": "Title"})
-        entry = cache.get_entry(Arr.SONARR, 7)
-        assert entry is not None
-        assert entry.fallback_satisfied is False
+        cached = cache.get_cached_title(Arr.SONARR, 7)
+        assert cached is not None
+        assert cached.fallback_satisfied is False
 
 
 class _CtxBind:
@@ -419,7 +419,7 @@ class TestNoReleasesSkip:
 
         run.report_no_releases(7, {"name": "Title", "url": "u"})
 
-        persisted = cache.get_entry(Arr.SONARR, 7)
+        persisted = cache.get_cached_title(Arr.SONARR, 7)
         assert persisted is not None
         assert (persisted.name, persisted.url) == ("Title", "u")
         assert len(reporter.no_releases_ctxs) == 1
@@ -431,7 +431,7 @@ class TestNoReleasesSkip:
 
         run.report_no_releases(7, {"name": "Title", "url": "u"}, metadata_unread=True)
 
-        assert cache.get_entry(Arr.SONARR, 7) is None
+        assert cache.get_cached_title(Arr.SONARR, 7) is None
         assert len(reporter.no_releases_ctxs) == 1
 
 

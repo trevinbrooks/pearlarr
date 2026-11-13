@@ -599,7 +599,7 @@ class TitleNameWords:
 
     series_words: frozenset[str]
     """The series title's words: an episode title names a file past them."""
-    entry_words: frozenset[str]
+    all_name_words: frozenset[str]
     """The series and AniList titles' words: an extras word among them is a title word, not an extra."""
     titles: tuple[tuple[str, ...], ...]
     """Each title's words (`_title_words`), with and without its bracketed part, longest first: a name opening
@@ -624,7 +624,7 @@ class TitleNameWords:
         )
         return cls(
             series_words=series,
-            entry_words=series.union(*(_word_set(title) for title in names.anilist)),
+            all_name_words=series.union(*(_word_set(title) for title in names.anilist)),
             titles=tuple(sorted(titles, key=len, reverse=True)),
             numbers=frozenset(int(word) for title in every for word in _raw_words(_ascii(title)) if word.isdigit()),
         )
@@ -903,11 +903,11 @@ class Naming:
             for leftover in self.leftovers
         )
 
-    def names_another(self, pick: int, among: Iterable[int]) -> bool:
+    def names_another(self, chosen: int, among: Iterable[int]) -> bool:
         """Whether a title names candidates among `among` best and not `pick`. Refuses the pick, never promotes."""
 
         winners = self.best_among(among)
-        return bool(winners) and pick not in winners
+        return bool(winners) and chosen not in winners
 
 
 def sole_title_match(candidates: Sequence[str], names: TitleNames) -> int | None:

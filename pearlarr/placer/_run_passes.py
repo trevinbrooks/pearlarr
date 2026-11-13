@@ -428,23 +428,23 @@ def pass_release_run(state: PlacerState) -> None:
     naming = Naming.of([run.prefix for run in fit.runs], state.scope.title_names)
     # Several candidates turn the count-based passes off, even when a tie-break picks one.
     state.pairing_off |= len(candidates) > 1
-    pick = _sole_candidate(candidates, open_positions, naming)
-    if pick is None:
+    chosen = _sole_candidate(candidates, open_positions, naming)
+    if chosen is None:
         return
-    run = pick.run
+    run = chosen.run
     if run.prefix in state.size_contradicted_prefixes:
         return
     if not state.all_parses_known:
         state.set_aside_each(run.all_versions, PlacementVerdict.WAITING_ON_PARSE)
         return
-    covers = pick.tier is _FitKind.WHOLE_SEASON
+    covers = chosen.tier is _FitKind.WHOLE_SEASON
     refused = (
         fit.refused(run)
         or (covers and fit.covering_refused())
         or run in disputed
         or any(file.numbers_disagree_by_position for file in run.members)
-        or pick.evidence.vetoes
-        or (naming is not None and naming.names_another(pick.position, open_positions))
+        or chosen.evidence.vetoes
+        or (naming is not None and naming.names_another(chosen.position, open_positions))
     )
     if refused:
         state.pairing_off = True

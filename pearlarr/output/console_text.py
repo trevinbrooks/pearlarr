@@ -95,14 +95,14 @@ INDENT = "  "
 STATE_WIDTH = 11
 
 # Column the entry title starts at, measured from the end of its indent prefix.
-ENTRY_LABEL_OFFSET = STATE_WIDTH + 1
+TITLE_LABEL_OFFSET = STATE_WIDTH + 1
 
 # Detail-line keys sit in the indent gutter so the value lands at the title column, less the space kv adds.
 DETAIL_INDENT = 2
-DETAIL_KEY_WIDTH = (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
+DETAIL_KEY_WIDTH = (len(INDENT) + TITLE_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
 
 
-def entry_string(state: TitleState, label: str) -> str:
+def title_row_string(state: TitleState, label: str) -> str:
     """Format an entry-ledger body: "<state> <label>", state padded to STATE_WIDTH."""
 
     return f"{state.ljust(STATE_WIDTH)} {label}"

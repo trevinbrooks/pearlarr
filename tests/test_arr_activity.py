@@ -217,7 +217,7 @@ class TestScan:
     def test_own_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
         # An own pending grab is seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
         cache = FakeCacheStore()
-        cache.put_pending(arr, "beef01", {"infohash": "beef01"})
+        cache.put_pending_import_row(arr, "beef01", {"infohash": "beef01"})
         monitor = ArrActivityMonitor(arr, cache, make_logger())
         fetch = _Fetch(
             [
@@ -231,7 +231,7 @@ class TestScan:
     def test_committed_own_grab_import_is_not_touched_again(self) -> None:
         # The committed cursor dedups the overlap's replay, so the next run re-checks nothing.
         monitor, cache = _monitor()
-        cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
+        cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
         records = [_rec(1, item_id=2, download_id="BEEF01")]
 
         assert monitor.scan(_Fetch(records), now=_NOW).touched == frozenset({2})
@@ -344,7 +344,7 @@ class TestRunLoopActivityWiring:
 
     def test_own_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
         cache = FakeCacheStore()
-        cache.put_pending(Arr.SONARR, "beef01", {"infohash": "beef01"})
+        cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
         engine = _engine(_FinalizeRecorder(), logger, cache_store=cache)
         strategy = self._strategy(history=[_rec(1, item_id=3, download_id="BEEF01")])
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())

@@ -520,14 +520,14 @@ def _place_single(state: PlacerState, open_files: Sequence[TorrentFile], ep_id: 
 
     unnumbered = [file for file in open_files if _reads_no_number(state, file)]
     if len(open_files) == 1 and unnumbered:
-        pick, verdict = 0, PlacementVerdict.SINGLE
+        chosen, verdict = 0, PlacementVerdict.SINGLE
     elif state.all_parses_known:
         stems = [file.name_read.stem.text for file in unnumbered]
-        pick, verdict = sole_title_match(stems, state.scope.title_names), PlacementVerdict.TITLE_NAME
+        chosen, verdict = sole_title_match(stems, state.scope.title_names), PlacementVerdict.TITLE_NAME
     else:
         return
-    if pick is not None and not unnumbered[pick].runner_up((ep_id,)):
-        state.place(unnumbered[pick], (ep_id,), verdict)
+    if chosen is not None and not unnumbered[chosen].runner_up((ep_id,)):
+        state.place(unnumbered[chosen], (ep_id,), verdict)
 
 
 def _reads_no_number(state: PlacerState, file: TorrentFile) -> bool:

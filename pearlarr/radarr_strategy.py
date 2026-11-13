@@ -192,7 +192,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
         if run.import_wait_mode is not ImportWaitMode.OFF:
             flagged = releases_to_grab(seadex_dict)
-            stored = run.records.stored_records(f.qbit_hash for f in flagged)
+            stored = run.pending_imports.stored_pending_imports(f.qbit_hash for f in flagged)
             facts = TitleFacts(
                 al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
@@ -202,7 +202,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
-                entry_title=title.name,
+                title_name=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 update=update,
@@ -281,7 +281,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         floor = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS)
         stamps = [
             moment.astimezone(UTC)
-            for raw in self._services.records.rows().values()
+            for raw in self._services.pending_imports.rows().values()
             if (moment := parse_stamp_aware(added_at_of(raw))) is not None
         ]
         oldest = max(min(stamps, default=floor), floor)

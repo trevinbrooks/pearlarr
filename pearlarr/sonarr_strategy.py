@@ -158,7 +158,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
         # executor. The import_completed / check_title hooks delegate to it.
-        self._reconciler = ImportReconciler(self._services.records, self._episodes, self._executor)
+        self._reconciler = ImportReconciler(self._services.pending_imports, self._episodes, self._executor)
 
     # --- ArrStrategy hooks ------------------------------------------------------
 
@@ -221,8 +221,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         series_ids = self._episodes.needs_scan_ids(items)
         if self._services.import_wait_mode is not ImportWaitMode.OFF:
-            records = self._services.records
-            series_ids.extend(sid for record in records.hydrate(records.rows()).values() for sid in record.series_ids)
+            pending_imports = self._services.pending_imports
+            series_ids.extend(
+                sid for pending in pending_imports.load(pending_imports.rows()).values() for sid in pending.series_ids
+            )
         return self._episodes.prefetch_orders(series_ids, progress=progress)
 
     @override
@@ -334,7 +336,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the entry whose window gave the coverage counts.
-            run.report_no_releases(al_id, update, metadata_unread=self._episodes.entries_unread([al_id]))
+            run.report_no_releases(al_id, update, metadata_unread=self._episodes.any_air_dates_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -344,8 +346,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # leftover. The series maps are the whole-series lists (a per-run cache hit each).
         waits_on_imports = run.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
-        stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
-        series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
+        stored: dict[str, PendingImport] = (
+            run.pending_imports.stored_pending_imports(hashes) if waits_on_imports else {}
+        )
+        series_ids = {sonarr_series_id, *(sid for pending in stored.values() for sid in pending.series_ids)}
         indexes = self._series_indexes(series_ids)
         resolved = self._services.mappings_with_ignored(ExternalIds.of_series(item))
         listings = self._listings.read(sonarr_series_id, resolved)
@@ -413,7 +417,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             GrabRequest(
                 al_id=al_id,
                 arr_title=item.title,
-                entry_title=title.name,
+                title_name=title.name,
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 update=update,
@@ -423,7 +427,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 input_missing_groups=placed.input_missing_groups(seadex_dict),
                 # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
                 metadata_unread=(
-                    self._episodes.entries_unread(resolved.every_entry) or self._episodes.orders_unread(series_ids)
+                    self._episodes.any_air_dates_unread(resolved.kept_and_ignored)
+                    or self._episodes.orders_unread(series_ids)
                 ),
             ),
         )
@@ -466,7 +471,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             hold = "" if placement.hold is None else f" (not grabbed: {placement.hold})"
             note_read_failed = not placement.inputs_read and placement.hold is not GrabHold.INPUT_UNREAD
             self.logger.debug(
-                f"{url}: placed {_coverage.coverage_string(list(placement.records)) or 'nothing'}"
+                f"{url}: placed {_coverage.coverage_string(list(placement.episodes)) or 'nothing'}"
                 f"{' (a read failed)' if note_read_failed else ''}{hold}"
                 f"{f'; set aside: {aside}' if aside else ''}"
                 f"{f'; left for a hand import: {by_hand}' if by_hand else ''}"

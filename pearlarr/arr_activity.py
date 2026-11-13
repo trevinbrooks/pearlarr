@@ -91,7 +91,7 @@ class ArrActivityMonitor:
         self._arr = arr
         self._cache_store = cache_store
         self._logger = logger
-        self._pending_checkpoint: HistoryCheckpoint | None = None
+        self._staged_checkpoint: HistoryCheckpoint | None = None
 
     def scan(
         self,
@@ -131,7 +131,7 @@ class ArrActivityMonitor:
             # An empty date would collapse the next window to the overlap. Keep
             # the old cursor and let the id dedup absorb the re-delivery.
             if newest.date:
-                self._pending_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
+                self._staged_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
         if window.rescan_all or not fresh:
             return ActivityRead(touched=frozenset(), rescan_all=window.rescan_all)
 
@@ -160,9 +160,9 @@ class ArrActivityMonitor:
     def stage_checkpoint(self) -> None:
         """Stage the advanced checkpoint, if the scan produced one."""
 
-        if self._pending_checkpoint is None:
+        if self._staged_checkpoint is None:
             return
-        self._cache_store.put_history_checkpoint(self._arr, self._pending_checkpoint)
+        self._cache_store.put_history_checkpoint(self._arr, self._staged_checkpoint)
 
 
 def _is_file_change(record: HistoryRecord) -> bool:

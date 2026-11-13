@@ -346,10 +346,10 @@ def _place_bare_runs(state: PlacerState) -> None:
     open_runs = [run for run in runs if any(_skipped(member) for member in run.members)]
     if not open_runs:
         return
-    pick = sole_title_match([run.prefix for run in open_runs], state.scope.title_names)
-    if pick is None:
+    chosen = sole_title_match([run.prefix for run in open_runs], state.scope.title_names)
+    if chosen is None:
         return
-    run = open_runs[pick]
+    run = open_runs[chosen]
     if len(run.members) <= len(state.scope.real_ids):
         return
     fits = [fit for name in state.index.orders if (fit := _bare_fit(state, name, run)) is not None]

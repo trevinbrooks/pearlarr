@@ -27,7 +27,6 @@ from pearlarr.output import (
     CacheStatsReported,
     CapturedTrace,
     Diagnostic,
-    EntryHeader,
     Event,
     ItemStarted,
     JsonRenderer,
@@ -37,6 +36,7 @@ from pearlarr.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    TitleHeader,
 )
 from pearlarr.output.events import TitleState
 
@@ -95,7 +95,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         ScanStarted(arr=Arr.SONARR, total=182),
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
         ScopeOpened(scope=_ENTRY, label="Frieren"),
-        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
+        TitleHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
         CacheStatsReported(
             entries=1,
             anilist_meta=1,
