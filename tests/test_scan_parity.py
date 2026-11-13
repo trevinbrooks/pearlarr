@@ -25,7 +25,7 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.arr_run_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunState, ArrRunStats
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.output import (
@@ -36,11 +36,13 @@ from pearlarr.output import (
     CapReached,
     Event,
     GrabAction,
+    GrabbedRow,
     GrabFailed,
     GrabStatus,
     GroupLabel,
     ItemStarted,
     NeedsActionCause,
+    NeedsActionRow,
     ReleaseLabel,
     ReleaseSkipped,
     ScanStarted,

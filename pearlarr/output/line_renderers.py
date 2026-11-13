@@ -34,12 +34,12 @@ from .events import (
     EffectiveConfigShown,
     Event,
     GrabAction,
-    GrabFact,
+    GrabbedRow,
     GrabFailed,
     GrabStatus,
     ItemStarted,
     JsonValue,
-    NeedsActionFact,
+    NeedsActionRow,
     NextRunScheduled,
     PathsShown,
     PearlarrStarted,
@@ -335,7 +335,7 @@ def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _fields_needs_action(row: NeedsActionFact) -> tuple[Field, ...]:
+def _fields_needs_action(row: NeedsActionRow) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", row.title or "(unknown title)")]
     if row.coverage:
         fields.append(Field("files", row.coverage))
@@ -347,7 +347,7 @@ def _fields_needs_action(row: NeedsActionFact) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _fields_added(row: GrabFact) -> tuple[Field, ...]:
+def _fields_added(row: GrabbedRow) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", row.title or "(unknown title)")]
     if row.coverage:
         fields.append(Field("files", row.coverage))

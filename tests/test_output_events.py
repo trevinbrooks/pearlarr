@@ -11,7 +11,7 @@ from typing import Final
 
 import pytest
 
-from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunStats
 from pearlarr.config import Arr
 from pearlarr.output import (
     Accent,
@@ -20,11 +20,11 @@ from pearlarr.output import (
     ArrRunTally,
     BootStepFinished,
     Diagnostic,
-    GrabFact,
+    GrabbedRow,
     GrabFailed,
     ItemStarted,
     NeedsActionCause,
-    NeedsActionFact,
+    NeedsActionRow,
     PlacedBy,
     ReleaseSkipped,
     RowFinished,
@@ -190,25 +190,16 @@ def test_run_tally_freezes_run_stats_whole() -> None:
 
     tally = ArrRunTally.from_stats(stats)
 
-    grab_fact = GrabFact(title="T", coverage="S01", url="u", name="n", group="G")
-    needs_fact = NeedsActionFact(
-        title="T2",
-        coverage=None,
-        group="G2",
-        url=None,
-        reason="private tracker",
-        cause=NeedsActionCause.PRIVATE_ONLY,
-    )
     assert tally == ArrRunTally(
         checked=182,
-        added=(grab_fact,),
+        added=(grab,),
         up_to_date=161,
         unchanged=14,
         no_seadex_entry=3,
         seadex_unreachable=4,
         no_releases=5,
         no_mappings=2,
-        needs_action=(needs_fact,),
+        needs_action=(needs,),
         unmonitored=6,
         downloading=1,
         downloaded=2,
@@ -217,7 +208,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     )
     # Frozen tuples of owned facts: later stats mutation can't reach into the tally.
     stats.added.append(grab)
-    assert tally.added == (grab_fact,)
+    assert tally.added == (grab,)
 
 
 # Fields allowed to differ between ArrRunStats and ArrRunTally - deliberately empty.
