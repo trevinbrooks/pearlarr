@@ -94,13 +94,17 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source, the e
 
 | Term | Meaning |
 | --- | --- |
-| entry | A SeaDex entry for one AniList ID. |
+| title | One anime as AniList lists it, known by its AniList ID. A series is often several titles: each season, the specials, a movie. |
+| entry | What SeaDex holds for one title: its notes and its releases. |
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
 | import | The arr (or Pearlarr's manual import) moving finished files into the library. |
-| window | The episodes of one entry, on its Sonarr series, that a torrent's files are placed against. |
-| listing | Every entry SeaDex lists a torrent on, each with its window, plus the special aliases that can place a misnumbered specials pack. A torrent is placed under every window its listing and its claims name, season windows first, then specials windows. |
-| claim | An entry's stake in a pending import: the entry grabbed the torrent, and its window's files import onto its episodes. A file a listed entry with no claim places is that entry's, never imported for another. |
+| pending import | A torrent Pearlarr added whose files Sonarr hasn't imported yet. |
+| window | The episodes of one title in its Sonarr series. A torrent's files are placed against one window at a time. |
+| listing | Every title SeaDex lists a torrent under. Its files are placed against each of those titles' windows in turn, regular seasons before specials. |
+| claim | One title's part of a pending import: which episodes are that title's, so the files placed on them import for it. |
+| numbered sequence | A torrent's files whose names are the same up to their number, in number order (`Show - 01`, `Show - 02`). Where two versions share a number, the higher version is in the sequence. |
+| verdict | What the placer decided for one file under one window: the episodes it goes on and how they were found, or why it goes on none. A verdict is final when no other window can change it, and provisional otherwise. |
 | run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |
