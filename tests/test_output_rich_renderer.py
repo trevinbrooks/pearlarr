@@ -1,14 +1,14 @@
 # pyright: strict
-"""Tests for the rich console surface's diagnostic path (`output.rich_renderer`).
+"""Tests for the rich renderer's diagnostic path (`output.rich_renderer`).
 
-Pin ambient placement against the cockpit scopes (boot-ledger indent while the
-boot section is open, wait indent while the wait region is open, item indent
+Pin ambient position against the live regions' scopes (boot step line indent while the
+boot scope is open, wait indent while the wait region is open, item indent
 while an item is being worked, column 0 under RUN alone), the unwind close that empties
-the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
+the open scopes for an arr-run-fatal error, the S4 floors (third-party WARNING floor
 unless DEBUG, first-party INFO renders dim), the `file_only` and
 no-rich-console no-ops, trace rendering without locals, markup literalness,
-the begin_cycle fold reset, and the durable loop lines (NextRunScheduled, the
-ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent arm is pinned in
+the begin_run open-scopes reset, and the durable loop lines (NextRunScheduled, the
+ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent case is pinned in
 `test_output_scan_render`.
 """
 
@@ -69,7 +69,7 @@ def _warning(message: str, origin: str = LOG_NAME) -> Diagnostic:
 
 
 class TestPlacement:
-    """Ambient indent tracks the open scope: boot-ledger and wait indents, column 0 otherwise, reset on `begin_run`."""
+    """Ambient indent tracks the open scope: boot step and wait indents, column 0 otherwise, reset on `begin_run`."""
 
     def test_open_boot_section_indents_to_the_ledger(self) -> None:
         renderer, stream = _renderer()
@@ -95,7 +95,7 @@ class TestPlacement:
     def test_mid_scan_indents_under_an_open_item(self) -> None:
         """ITEM is an indented context: import-flow diagnostics join the listing.
 
-        The folder-fallback lines fire between a series' entry blocks. They
+        The folder-fallback lines fire between a series' title blocks. They
         indent with the listing instead of breaking it at the run margin.
         """
 
@@ -134,12 +134,12 @@ class TestPlacement:
 
 
 class TestUnwindPlacement:
-    """The other half of bootstrap's unwind emit: RunFinished clears the frontier.
+    """The other half of bootstrap's unwind emit: ArrRunFinished clears the open scopes.
 
-    `bootstrap` emits RunFinished from an inner finally, before its except arms
-    log the leg-fatal error (`test_unwind_teardown` pins that ordering). These
+    `bootstrap` emits ArrRunFinished from an inner finally, before its except handlers
+    log the arr-run-fatal error (`test_unwind_teardown` pins that ordering). These
     pin what the ordering BUYS - the error lands at column 0, whatever frame the
-    leg died in - and the regression it closes.
+    arr run died in - and the regression it closes.
     """
 
     def test_run_finished_clears_a_mid_scan_entry_to_column_zero(self) -> None:
@@ -154,7 +154,7 @@ class TestUnwindPlacement:
             _warning("Sonarr run failed"),
         )
 
-        # ArrRunFinished renders nothing itself. It just empties the frontier.
+        # ArrRunFinished renders nothing itself. It just empties the open scopes.
         assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
@@ -172,7 +172,7 @@ class TestUnwindPlacement:
         assert _lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
 
     def test_run_finished_also_clears_an_open_boot_section(self) -> None:
-        # A leg that dies inside ArrRunDeps.build never opens a scan: the boot section
+        # An arr run that dies inside ArrRunDeps.build never opens a scan: the boot scope
         # is depth-1 too, so the same close evicts it and the error lands at column 0.
         renderer, stream = _renderer()
 
@@ -186,8 +186,8 @@ class TestUnwindPlacement:
         assert _lines(stream) == ["⚠ cache.db was written by a newer Pearlarr"]
 
     def test_a_repeat_run_finished_is_a_no_op(self) -> None:
-        # A repeat close must not disturb an already-empty frontier (defense in
-        # depth, production emits it once per leg).
+        # A repeat close must not disturb an already-empty scope path (defense in
+        # depth, production emits it once per arr run).
         renderer, stream = _renderer()
 
         _feed(
@@ -265,7 +265,7 @@ class TestNoOps:
         assert stream.getvalue() == ""
 
     def test_without_a_rich_console_the_renderer_no_ops(self) -> None:
-        """plain/json mode: the FileLogSink/text seats still carry the record."""
+        """plain/json mode: the FileLogRenderer/text renderers still carry the record."""
 
         renderer = RichRenderer(lambda: None)
 
@@ -273,7 +273,7 @@ class TestNoOps:
 
 
 class TestDurableLoopLines:
-    """The scheduled-loop footer arm + the typed release-fact lines."""
+    """The scheduled-loop footer branch + the typed release-fact lines."""
 
     # A Thursday, aware (the producer's contract) - the footer shows wall time.
     _AT = datetime(2026, 1, 1, 23, 5, tzinfo=timezone(timedelta(hours=-5)))
@@ -295,7 +295,7 @@ class TestDurableLoopLines:
         assert stream.getvalue() == ""
 
     def test_release_skipped_and_grab_failed_render_on_the_scan_surface(self) -> None:
-        # No longer the pass arm: the flipped producers' events draw the same
+        # No longer the pass case: the flipped producers' events draw the same
         # detail rows the raw warnings did (bytes pinned in test_scan_parity).
         renderer, stream = _renderer()
 
@@ -353,7 +353,7 @@ class TestRendering:
         assert _lines(stream) == ["✖ broke", "‼ dead"]
 
     def test_an_ascii_console_falls_back_to_the_badge_words(self) -> None:
-        """The caps probe drives the badge: no unicode -> the legacy padded words."""
+        """The feature detection drives the badge: no unicode -> the legacy padded words."""
 
         stream = AsciiStringIO()
         # legacy_windows pinned so the ASCII encoding alone drives the fallback.

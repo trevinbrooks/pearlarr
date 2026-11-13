@@ -1,5 +1,5 @@
 # pyright: strict
-"""Canary-secret redaction: the SECURITY.md guarantee, driven surface by surface.
+"""Canary-secret redaction: the SECURITY.md guarantee, driven output by output.
 
 A config whose every secret field holds a unique canary string is pushed
 through `config show`, `config validate`, a full (network-blocked) run's
@@ -128,13 +128,13 @@ class TestCliSurfaces:
 
     def test_failed_run_json_stream_is_canary_free(self) -> None:
         # The JSON event stream is a documented machine interface, so it gets
-        # its own leg of the same failed-run sweep.
+        # its own part of the same failed-run sweep.
         _write_canary_config(log_format="json")
         with respx.mock(assert_all_called=False) as router:
             router.route().mock(side_effect=httpx.ConnectError("blocked by test"))
             result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
-        assert '"event":' in result.output  # the JSON surface actually rendered
+        assert '"event":' in result.output  # the JSON renderer actually rendered
         _assert_clean(result.output)
 
 

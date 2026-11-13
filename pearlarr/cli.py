@@ -78,7 +78,7 @@ if TYPE_CHECKING:
 # imported lazily inside the functions that use them, NOT at module load, so the
 # CLI starts and prints its title without paying ~150ms+ for libraries a `--help`
 # or a config/cache subcommand never touches. `ImportWaitMode` stays eager: it
-# rides a typer command signature, which typer resolves at invocation.
+# appears in a typer command signature, which typer resolves at invocation.
 
 
 def _exit_on_failure(result: object, **_: object) -> None:
@@ -172,7 +172,7 @@ def _refused_by_active_run(acquired: bool, data_dir: str, *, what: str = "the ca
 def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
     """Open cache.db read-only for a diagnostic command, closing it afterwards.
 
-    Read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine) so
+    Read-only (no descriptor rewrite, no WAL switch, no fail-open quarantine) so
     the diagnostic reflects the file as-is. A corrupt/not-a-database file raises
     `sqlite3.DatabaseError` from the first read, for the command to report.
     The caller checks the file exists first (`_echo_missing`).
@@ -246,7 +246,7 @@ def main(
 
     _trust_os_certificates()
 
-    # The flag is sugar over PEARLARR_DATA_DIR: fold it into the env so every
+    # The flag is sugar over PEARLARR_DATA_DIR: merge it into the env so every
     # command's resolve_paths() sees it (commands are also called directly in tests,
     # so the env - not ctx.obj - is the single override channel). Flag wins over a
     # pre-set env because it overwrites here, before any subcommand resolves.
@@ -329,9 +329,9 @@ def _peek_config(config_path: str) -> AppConfig | None:
 def _configured_format(config_path: str) -> LogFormat:
     """The configured `advanced.log_format` peek, still possibly "auto".
 
-    Folds to "auto" when the config is missing or unreadable - the real load
-    owns reporting those. `_run_format` folds "auto" to a concrete
-    format via `resolve_console_format` (the one fold home).
+    Falls back to "auto" when the config is missing or unreadable - the real load
+    owns reporting those. `_run_format` converts "auto" to a concrete
+    format via `resolve_console_format` (the one place it is converted).
     """
 
     peeked = _peek_config(config_path)
@@ -339,11 +339,11 @@ def _configured_format(config_path: str) -> LogFormat:
 
 
 def _run_format(config_path: str) -> LogFormat:
-    """The cycle's console format, "auto" folded once (`resolve_console_format`).
+    """The run's console format, "auto" converted once (`resolve_console_format`).
 
-    Both run commands call this once per cycle and feed the SAME resolved value
+    Both run commands call this once per run and feed the SAME resolved value
     to `setup_logger` AND `hub.begin_run`, so the handler graph and the
-    hub's console seat can never disagree within a cycle.
+    hub's console renderer can never disagree within a run.
     """
 
     return resolve_console_format(_configured_format(config_path))
@@ -352,7 +352,7 @@ def _run_format(config_path: str) -> LogFormat:
 def _exit_data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
     """Report an unwritable data directory as one actionable stderr line, exit 1.
 
-    These failures strike before any output surface exists (`ensure_data_dir`
+    These failures strike before any renderer exists (`ensure_data_dir`
     and `_install_output_hub`'s log-dir makedirs run first), so the report
     goes straight to stderr - never a traceback.
     """
@@ -375,14 +375,14 @@ def _prepare_data_dir(paths: AppPaths) -> None:
 
 
 def _console_renderer(console_format: LogFormat, detected_features: DetectedFeatures) -> Renderer:
-    """The hub's console seat for a cycle's RESOLVED format.
+    """The hub's console renderer for a run's RESOLVED format.
 
-    rich gets the cockpit renderer (boot/scan/wait regions over the shared
-    Console). Plain and json get the matching stdout text seat.
+    rich gets the RichRenderer (boot/scan/wait regions over the shared
+    Console). Plain and json get the matching stdout text renderer.
     """
 
     # "auto" is unreachable from production (cli resolves pre-begin_run).
-    # folded defensively for programmatic callers.
+    # converted defensively for programmatic callers.
     console_format = resolve_console_format(console_format)
     if console_format == "rich":
         return RichRenderer(detected_features=detected_features)
@@ -392,19 +392,19 @@ def _console_renderer(console_format: LogFormat, detected_features: DetectedFeat
 
 
 def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
-    """Build + install the per-process OutputHub. Its sinks own file/plain/json.
+    """Build + install the per-process OutputHub. Its renderers own file/plain/json.
 
-    The FileLogSink is deliberately the first stable sink (`_subs[0]`):
+    The FileLogRenderer is deliberately the first stable renderer (`_subs[0]`):
     file-before-console dispatch, so a blocked tty can never starve the file.
     Installed BEFORE `setup_logger` - required, so a record fired from inside
     it (the invalid-level complaint) reaches the hub instead of
     `logging.lastResort`. `install_hub` closes any previously installed hub
-    (a repeat `run single` in-process must not leak an open FileLogSink).
+    (a repeat `run single` in-process must not leak an open FileLogRenderer).
     The probe is the pre-run writability check: it must reach the log FILE
     itself (a root-owned Pearlarr.log fails open, not makedirs), so an
     unwritable file aborts here at startup instead of silently failing open
-    at the sink.
-    The FileLogSink is also returned directly (alongside the hub) so a caller
+    in the renderer.
+    The FileLogRenderer is also returned directly (alongside the hub) so a caller
     can drive `apply_retention_days` once the config that names the retention
     window is read - `run_arrs` is the sole reader, config-load being the
     only moment retention is known.
@@ -415,8 +415,8 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
         file_log_renderer.probe()
     except OSError as e:
         _exit_data_dir_unwritable(paths.data_dir, e)
-    # ONE caps cache shared across console-seat swaps: the seat and its
-    # boot/wait regions must branch on the same probe.
+    # ONE DetectedFeatures shared across console renderer swaps: the renderer and its
+    # boot/wait regions must branch on the same detected features.
     detected_features = DetectedFeatures()
     hub = OutputHub(
         [file_log_renderer],
@@ -428,7 +428,7 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
 
 
 def _schedule_hours(config_path: str) -> float:
-    """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
+    """Hours between scheduled runs: SCHEDULE_TIME env (deprecated) > config > 6.
 
     A valid positive finite SCHEDULE_TIME still wins (with a deprecation
     warning). An invalid one is reported with the value actually used instead.
@@ -492,27 +492,27 @@ def run_scheduled(
     hub, file_log_renderer = _install_output_hub(paths)
 
     for run_number in itertools.count(1):
-        # The config's console format is re-resolved each cycle (like the
+        # The config's console format is re-resolved each run (like the
         # cadence below), so a config edit takes effect without a restart.
         console_format = _run_format(paths.config_file)
         logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
-        # The config level lands mid-cycle via apply_log_level -> hub.set_level.
+        # The config level lands mid-run via apply_log_level -> hub.set_level.
         hub.begin_run(console_format=console_format, level=logger.level)
-        # Post-begin_run, so the boundary lands in the fresh cycle's file.
+        # Post-begin_run, so the boundary lands in the fresh run's file.
         emit_to_hub(ScheduledRunStarted(number=run_number))
 
-        # Re-read the cadence each cycle so a config edit takes effect without a
+        # Re-read the cadence each run so a config edit takes effect without a
         # restart.
         schedule_time = _schedule_hours(paths.config_file)
 
         # Build the shared config + id-mapping resolver once and run every
-        # configured arr (one config read + one download/parse per cycle, reused
+        # configured arr (one config read + one download/parse per run, reused
         # by both). On an invalid-config/source failure bootstrap.run_arrs logs
-        # the cause and the cycle is skipped, so it's retried next pass rather
+        # the cause and the run is skipped, so it's retried next run rather
         # than crashing. A MISSING config instead exits 1 (typer.Exit from
         # bootstrap.load_shared_config) - retrying can't fill the template in.
         # No ad-hoc preamble here: the branded title (logged by run_arrs) leads
-        # each cycle, so the scheduled path reads the same as a single run.
+        # each run, so the scheduled path reads the same as a single run.
         bootstrap.run_arrs(
             [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             paths=paths,
@@ -573,8 +573,8 @@ def run_single(
             Implies a Sonarr run.
         dry_run: If set, simulate the run without grabbing torrents, writing
             the cache, or sending notifications.
-        import_wait_mode: Override the configured wait-for-completion + Sonarr
-            manual-import mode (off/deferred/blocking/hybrid) for this run. When
+        import_wait_mode: Override the configured wait-for-completion + auto
+            import wait mode (off/deferred/blocking/hybrid) for this run. When
             unset the config's `imports.wait_mode` wins.
         log_level: Override the configured `advanced.log_level` for this run
             (cli > config > INFO).
@@ -638,7 +638,7 @@ def config_init(
     wipe out a filled-in configuration.
     """
 
-    # Install the cli surface first so every emit below renders through it. The
+    # Install the subcommand hub first so every emit below renders through it. The
     # data-dir failures deliberately stay on the pre-hub stderr path (they also
     # fire pre-hub on the run path, where a hub_error would drop silently).
     with subcommand_hub(json_output):

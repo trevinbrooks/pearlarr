@@ -57,7 +57,7 @@ SERIES = (
 
 @dataclass(frozen=True)
 class EpFileSpec:
-    """The varying bits of an on-disk episodeFile payload."""
+    """The varying bits of an episodeFile payload."""
 
     name: str
     group: str
@@ -147,7 +147,7 @@ def ep_file(sid: int, n: int, spec: EpFileSpec) -> dict[str, Json]:
 
 
 def bebop_episodes() -> list[Json]:
-    """The JySzE Bluray set (SeaDex's best) already on disk.
+    """The JySzE Bluray set (SeaDex's best) already in Sonarr.
 
     Uses the REAL per-file sizes from the live SeaDex file list - the ownership
     check compares sizes, so fabricated ones read as an outdated copy and
@@ -179,12 +179,12 @@ def main() -> None:
     template = series_template()
     write_fixture("series_demo.json", [series_row(template, spec) for spec in SERIES])
 
-    # Frieren: 28 monitored episodes, nothing on disk.
+    # Frieren: 28 monitored episodes, no files.
     write_fixture("episodes_301_frieren.json", [episode(301, n, None) for n in range(1, 29)])
 
     write_fixture("episodes_302_bebop.json", bebop_episodes())
 
-    # FMAB: full Erai-raws WEB 720p set - outdated next to the SeaDex pick.
+    # FMAB: full Erai-raws WEB 720p set - outdated next to the SeaDex release.
     fmab = [
         episode(
             303,

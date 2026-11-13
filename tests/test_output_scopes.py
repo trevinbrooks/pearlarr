@@ -1,8 +1,8 @@
 # pyright: strict
 """Tests for the scope handles (`output.scopes`).
 
-Pin the handle lifecycles (step timing/outcomes, entry header-at-open, wait
-open/close ordering), ScopeId stamping, and the runtime-total stale-handle
+Pin the handle lifecycles (step timing/outcomes, title header-at-open, wait
+open/close ordering), ScopeId tagging, and the runtime-total closed-handle
 demotion: a late emission becomes an attributed Diagnostic (placed_by=HANDLE),
 never a raise and never a mispositioned structured event.
 """
@@ -83,7 +83,7 @@ def test_two_default_factories_never_mint_colliding_serials() -> None:
     a = first.step("one").scope_id
     b = second.step("two").scope_id
 
-    assert a.serial != b.serial  # both ride the process-wide minter
+    assert a.serial != b.serial  # both use the process-wide minter
 
 
 # --- StepScope --------------------------------------------------------------------
@@ -306,5 +306,5 @@ def test_late_wait_emissions_demote() -> None:
 
 
 # (There is no Diagnostics handle: hub_note/hub_warn/hub_error are the
-# position-free one-liner surface. The hub's once_key dedup mechanism is
+# position-free one-liners. The hub's once_key dedup mechanism is
 # pinned in test_output_hub.)

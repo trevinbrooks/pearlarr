@@ -3,11 +3,11 @@
 
 Replay is a generic envelope formatter with no per-event knowledge, so these
 pin a golden round-trip (real `JsonRenderer` output fed back through replay
-reproduces the `ts LEVEL [bracket] message k=v` grammar, with path > component >
-origin > event bracket precedence and an appended traceback). They also cover
+reproduces the `ts LEVEL [where] message k=v` grammar, with path > component >
+origin > event precedence in [where] and an appended traceback). They also cover
 tolerance of an unknown newer event, the old-capture fallback when `component`
 is absent, docker-style interleaved non-event lines counted and skipped, and a
-foreign `schema_version` warned once. The failure arms (no events / unreadable
+foreign `schema_version` warned once. The failure cases (no events / unreadable
 file) return False and exit 1.
 """
 
@@ -111,7 +111,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
 
     assert result is True
     assert err == ""  # schema 1, nothing skipped
-    # component bracket for the process banner and the cli command event.
+    # the component as [where] for the process banner and the cli command event.
     assert f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data" in out
     assert (
         f"{_TS} INFO [cli] cache stats entries=1 anilist_meta=1 "
@@ -119,7 +119,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
     ) in out
     # path wins over component for a scoped event.
     assert f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking title=Frieren" in out
-    # the diagnostic's bracket is its origin/component, and the traceback appends verbatim.
+    # the diagnostic's [where] is its origin/component, and the traceback appends verbatim.
     assert f"{_TS} ERROR [anilist] boom" in out
     assert "ValueError: request failed" in out
 
@@ -142,7 +142,7 @@ def test_an_unknown_future_event_renders_best_effort(
 
     assert result is True
     assert err == ""
-    # No per-event knowledge: bracket is the component, the new field rides the tail.
+    # No per-event knowledge: [where] is the component, the new field goes in the tail.
     assert out == [f"{_FIXED_TS} INFO [future_mod] the future is here shiny=yes"]
 
 
@@ -150,7 +150,7 @@ def test_a_pre_component_capture_falls_back_to_origin_then_event(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Old captures predate `component`: origin, then the event name, seed the bracket.
+    # Old captures predate `component`: origin, then the event name, supply the [where].
     with_origin = _envelope(
         schema_version=1,
         time=_FIXED_TIME,

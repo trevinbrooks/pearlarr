@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the shared breadcrumb fold (`output.scope_path`).
+"""Tests for the shared scope path reduction (`output.scope_path`).
 
 Pin the fixed transition table: explicit opens/closes, the boundary events'
 deterministic close-deeper behavior, unwind close-all, idempotent defensive
@@ -99,7 +99,7 @@ def test_boot_step_events_open_and_close_the_step_node() -> None:
             elapsed_s=0.1,
         ),
     )
-    # Between steps the BOOT node still spans the gap (B2: the motivating warnings).
+    # Between steps the BOOT scope still spans the gap (B2: the motivating warnings).
     assert open_scopes.path_text() == "boot"
 
 
@@ -123,7 +123,7 @@ def test_entry_path_reads_run_item_entry() -> None:
     assert open_scopes.during() == "Frieren: Beyond Journey's End"
 
 
-# --- boundary events close strictly-deeper nodes deterministically --------------------
+# --- boundary events close strictly-deeper scopes deterministically -------------------
 
 
 def test_scan_started_closes_the_boot_section() -> None:
@@ -255,7 +255,7 @@ def test_reset_clears_all_open_nodes() -> None:
 
 
 def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
-    """`KIND_DEPTH` and `ScopeKind` are hand-maintained twins the fold keys on.
+    """`KIND_DEPTH` and `ScopeKind` are hand-maintained twins the reduction keys on.
 
     `_push`/`_close_at` do `KIND_DEPTH[kind]`: a new kind missing a depth would
     KeyError, and a stray key would rot unnoticed.
@@ -265,7 +265,7 @@ def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
 
 
 def test_wait_region_depth_deliberately_equals_item_depth() -> None:
-    """The P5 pin: production wait is run-level, running post-summary once item/entry nodes have closed.
+    """The P5 pin: production wait is run-level, running post-summary once item/title scopes have closed.
 
     It is mutually exclusive with an item and shares its depth. Revisit only if a
     per-item wait ever appears.

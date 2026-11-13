@@ -1,4 +1,4 @@
-"""Pearlarr's output architecture: producers emit frozen events, the hub's sinks own every surface."""
+"""Pearlarr's output architecture: producers emit frozen events, the hub's renderers own all output."""
 
 from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
 from .events import (

@@ -2,13 +2,13 @@
 # reportPrivateUsage is off for the skip-set pins alone: _TEXT_SKIP/_JSON_SKIP are
 # deliberately private tables, imported to pin their exact membership (as is the
 # rotation stamp format, _BACKUP_STAMP_FORMAT).
-"""Tests for the shared text grammar + text sinks (`output.line_renderers`).
+"""Tests for the shared text grammar + text renderers (`output.line_renderers`).
 
 Golden-pin the `ts LEVEL [path] message k=v` grammar (the file-log contract),
-the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
+the quoting/escape rules, scope path labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
-the throttled "still waiting" pulse, dated-backup rotation + retention pruning +
-append-after-close, fold-in-finally, and the one-object-per-event json shape
+the throttled "still waiting" progress line, dated-backup rotation + retention pruning +
+append-after-close, the open scopes advancing in a finally, and the one-object-per-event json shape
 (stable key order, offset-bearing time).
 """
 
@@ -106,13 +106,13 @@ _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 
 
 def _format(event: Event, *events_before: Event) -> str | None:
-    """The REAL plain sink's rendering of one event (None = wrote nothing).
+    """The REAL plain renderer's rendering of one event (None = wrote nothing).
 
     Goldens pin the shipping `PlainRenderer` path - not a parallel formatter -
     so an assembly change in `_GrammarRenderer._render` moves these bytes. Context
-    events render+fold first (their output is discarded via the stream mark).
+    events render and advance the open scopes first (their output is discarded via the stream mark).
     The DEBUG threshold admits every line, matching the old unthresholded
-    `format_line`. The trailing newline is the sink's write framing, not part
+    `format_line`. The trailing newline is the renderer's write framing, not part
     of the line.
     """
 
@@ -173,9 +173,9 @@ def test_boot_step_finished_line_keeps_the_step_path() -> None:
 
 
 def test_warned_boot_step_stays_info_with_the_warn_on_the_outcome_field() -> None:
-    # Level stays INFO for every outcome (echo/ledger parity, a WARNING severity
+    # Level stays INFO for every outcome (echo/boot step line parity, a WARNING severity
     # would double-count next to the caller's own logged warning) - the deferred
-    # state rides outcome=warned.
+    # state goes in outcome=warned.
     finished = BootStepFinished(
         scope=_STEP,
         label="Refreshing mappings",
@@ -297,7 +297,7 @@ def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
 
 
 def test_unmatched_graduation_line_names_the_files() -> None:
-    # The names ride the structured line as one joined string, the run-event field policy, only on this outcome.
+    # The names go on the structured line as one joined string, the run-event field policy, only on this outcome.
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
         label="Demo Batch",
@@ -483,7 +483,7 @@ def test_summary_renders_one_head_line_plus_one_line_per_record() -> None:
     )
 
 
-# --- sinks: thresholds, routing, parity, rotation --------------------------------------
+# --- renderers: thresholds, routing, parity, rotation ----------------------------------
 
 
 def _plain_renderer() -> tuple[PlainRenderer, io.StringIO]:
@@ -496,7 +496,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
     renderer.set_level(logging.WARNING)
 
     for event in _open_title_scope_events():
-        renderer.handle(event, _EPOCH)  # all INFO: filtered, but the fold must still advance
+        renderer.handle(event, _EPOCH)  # all INFO: filtered, but the open scopes must still advance
     renderer.handle(Diagnostic(severity=Severity.WARNING, message="late warning", origin="anilist"), _EPOCH)
     renderer.close()
 
@@ -508,7 +508,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
 
 def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
     # P6: severity_of(RowFinished) is category-based, so a FAILED
-    # graduation (ERROR) survives a raised file level while a success drops.
+    # outcome line (ERROR) survives a raised file level while a success drops.
     renderer = FileLogRenderer(str(tmp_path))
     renderer.set_level(logging.WARNING)
 
@@ -579,7 +579,7 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
     # divergence is the file_only carve-out.
     events: list[Event] = [
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
-        *_open_title_scope_events(),  # INFO scan events: dropped by both surfaces
+        *_open_title_scope_events(),  # INFO scan events: dropped by both renderers
         Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True),
     ]
     plain_renderer, stream = _plain_renderer()
@@ -669,7 +669,7 @@ def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
 
 
 def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
-    # Only begin_run arms rotation - construction must not, or a record in the
+    # Only begin_run enables rotation - construction must not, or a record in the
     # install→begin_run window would rotate twice and strand a one-line backup.
     log = tmp_path / "Pearlarr.log"
     log.write_text("previous run\n", encoding="utf-8")
@@ -802,7 +802,7 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
     renderer.handle(PearlarrStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
     renderer.close()
 
-    assert stuck.exists()  # left behind, but the write - and the cycle's log - survived
+    assert stuck.exists()  # left behind, but the write - and the run's log - survived
     assert "two" in log.read_text(encoding="utf-8")
 
 
@@ -876,7 +876,7 @@ def test_wait_progress_stays_silent_below_the_pulse_cadence() -> None:
     assert "hidden" not in before  # DEBUG below the default INFO floor
 
 
-# --- the throttled "still waiting" pulse ---------------------------------------------
+# --- the throttled "still waiting" progress line -------------------------------------
 
 
 def _wait_progress(elapsed: float) -> WaitProgress:
@@ -889,13 +889,13 @@ def _wait_progress(elapsed: float) -> WaitProgress:
 
 
 def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
-    # The anti-hang heartbeat: cadence is pure event content (progress_line_s/elapsed_s,
-    # never wall clock), and the start snapshot never pulses.
+    # The anti-hang progress line: cadence is pure event content (progress_line_s/elapsed_s,
+    # never wall clock), and the start snapshot never prints one.
     plain_renderer, stream = _plain_renderer()
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     for event in (*context, WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT)):
         plain_renderer.handle(event, _EPOCH)
-    plain_renderer.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never pulses
+    plain_renderer.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never prints one
     plain_renderer.handle(_wait_progress(299.0), _EPOCH)  # within the interval
     before = stream.getvalue()
 
@@ -924,13 +924,13 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() == content
-    assert content.count("still waiting") == 2  # 300 and 650 pulse, the start snapshot never does
+    assert content.count("still waiting") == 2  # 300 and 650 print one, the start snapshot never does
 
 
 def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
     plain_renderer, stream = _plain_renderer()
     plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
-    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot never pulses
+    plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot prints nothing
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due
 
     plain_renderer.handle(
@@ -948,12 +948,12 @@ def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
     plain_renderer.begin_run()
 
     plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)
-    plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)  # disarmed: not even a late fire
+    plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)  # inactive: not even a late fire
     assert "still waiting" not in stream.getvalue()
 
 
 def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
-    # Line-granular admission applies to the pulse like any INFO line. The
+    # Line-granular admission applies to the progress line like any INFO line. The
     # throttle state advances regardless of level (the ProgressLineThrottle contract).
     plain_renderer, stream = _plain_renderer()
     plain_renderer.set_level(logging.WARNING)
@@ -963,14 +963,14 @@ def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() ->
     assert stream.getvalue() == ""
 
     plain_renderer.set_level(logging.INFO)
-    plain_renderer.handle(_wait_progress(400.0), _EPOCH)  # the dropped pulse still re-armed at 600
+    plain_renderer.handle(_wait_progress(400.0), _EPOCH)  # the dropped progress line still reset the cadence to 600
     assert stream.getvalue() == ""
     plain_renderer.handle(_wait_progress(600.0), _EPOCH)
     assert "still waiting" in stream.getvalue()
 
 
 class _ExplodingStream(io.StringIO):
-    """A stream whose write raises while armed (the render-bug stand-in)."""
+    """A stream whose write raises while `armed` is set (the render-bug stand-in)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -991,14 +991,14 @@ def test_the_fold_advances_even_when_the_write_blows_up() -> None:
         renderer.handle(scan, _EPOCH)
     with pytest.raises(RuntimeError):
         renderer.handle(item, _EPOCH)
-    renderer.handle(opened, _EPOCH)  # no text form: folds without writing
+    renderer.handle(opened, _EPOCH)  # no text form: advances the open scopes without writing
 
     stream.armed = False
     renderer.handle(Diagnostic(severity=Severity.WARNING, message="late", origin="app"), _EPOCH)
     assert stream.getvalue() == (f'{_TS} WARNING [app] late during="Frieren: Beyond Journey\'s End" placed=frontier\n')
 
 
-# --- the json surface -------------------------------------------------------------------
+# --- the json renderer ------------------------------------------------------------------
 
 
 def _json_lines(events: list[Event]) -> list[dict[str, Json]]:
@@ -1203,7 +1203,7 @@ def _exemplars() -> list[Event]:
 
 
 def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None:
-    """Bracket labels carry external titles (Arr/AniList).
+    """Scope path labels carry external titles (Arr/AniList).
 
     A smuggled newline is escaped exactly like the message, so the one-line
     grammar holds (a rendered traceback stays the sole multi-line form).
@@ -1278,8 +1278,8 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     assert not collisions, f"json envelope collisions: {collisions}"
 
 
-# Events with no format_line form: pure boundaries + per-event-fact-less ephemera
-# (WaitProgress's text form is the grammar sinks' throttled pulse, tested above),
+# Events with no text-line form: pure boundaries + per-event-fact-less ephemera
+# (WaitProgress's text form is the grammar renderers' throttled progress line, tested above),
 # plus the effective-config document (its config object has no logfmt line form).
 _TEXT_SILENT = {
     ScopeOpened,

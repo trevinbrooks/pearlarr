@@ -21,7 +21,7 @@ Pins the behaviors the commands must guarantee:
 * `config init` never overwrites a filled-in config.yml without `--force`.
 * `run single` with no selection flag runs every *configured* arr (scheduled-mode
   symmetry). An explicit flag for an unconfigured arr refuses cleanly, an implicit
-  selection skips it with a dim ledger note - except a half-configured arr (url
+  selection skips it with a dim note in the boot step lines - except a half-configured arr (url
   without api_key), whose skip warns by name (`configured_arrs`).
 * The inspection commands (`config validate` / `config show`) never write the
   starter template, and `show` masks secret-named values (plus the free-form
@@ -118,11 +118,11 @@ def _starter_text() -> str:
 
 
 def _build_cache(tmp_path: Path) -> None:
-    """Write a real on-disk `cache.db` under `tmp_path` holding one entry.
+    """Write a real on-disk `cache.db` under `tmp_path` holding one cached title.
 
-    Uses the normal load -> stage -> `save(preview=False)` path, which promotes
+    Uses the normal load -> stage -> `save(dry_run=False)` path, which promotes
     the in-memory db to the file, so the fixture matches a cache a real run leaves
-    behind (entry `(SONARR, 7)` with `name="X"`).
+    behind (cached title `(SONARR, 7)` with `name="X"`).
     """
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
@@ -134,7 +134,7 @@ def _build_cache(tmp_path: Path) -> None:
 class TestCacheRoundTrip:
     """`cache_backup`/`cache_restore`/`cache_remove` round-trip and clean up the cache db.
 
-    Backup-then-restore preserves data and clears a stale WAL/SHM sidecar. Remove deletes the db and its sidecars.
+    Backup-then-restore preserves data and clears a leftover WAL/SHM sidecar. Remove deletes the db and its sidecars.
     """
 
     def test_backup_then_restore_preserves_data(
@@ -151,7 +151,7 @@ class TestCacheRoundTrip:
         # Success is confirmed out loud (on stdout), not silently.
         assert f"Backed up cache to {tmp_path / 'cache.backup.db'}" in capsys.readouterr().out
 
-        # A stale WAL left next to cache.db must not shadow the restored snapshot.
+        # A leftover WAL next to cache.db must not shadow the restored snapshot.
         # restore clears the sidecars before swapping the copy into place.
         (tmp_path / "cache.db-wal").write_text("stale")
 
@@ -161,13 +161,13 @@ class TestCacheRoundTrip:
         # restored again) and no temp file is left behind.
         assert (tmp_path / "cache.backup.db").exists()
         assert not (tmp_path / "cache.db.tmp").exists()
-        assert not (tmp_path / "cache.db-wal").exists()  # stale sidecar cleared
+        assert not (tmp_path / "cache.db-wal").exists()  # leftover sidecar cleared
 
         # Restore is repeatable off the surviving backup.
         assert cache_restore() is True
         capsys.readouterr()  # drain the second success echo (keeps it off the terminal under -s)
 
-        # The restored db still holds the original entry.
+        # The restored db still holds the original cached title.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))
         try:
             cached = store.get_cached_title(Arr.SONARR, 7)
@@ -304,7 +304,7 @@ class TestActiveRunGuard:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
-        # A mid-run snapshot would capture half-committed cycle state. Backup
+        # A mid-run snapshot would capture half-committed run state. Backup
         # refuses like restore/remove and writes nothing.
         with single_instance_lock(str(tmp_path)):
             assert cache_backup() is False
@@ -451,7 +451,7 @@ class TestRunSingleSelection:
     `run_arrs` is faked out, so these pin only the selection wiring: which
     `(arr, item_id)` pairs are requested and whether the request counts as
     explicit (an explicit request for an unconfigured arr must refuse rather
-    than skip - that arm is pinned on `configured_arrs` below).
+    than skip - that branch is pinned on `configured_arrs` below).
     """
 
     @pytest.fixture
@@ -507,8 +507,8 @@ class TestConfiguredArrs:
         )
         assert kept == [(Arr.SONARR, None)]
         # The note is a first-party INFO Diagnostic on the hub: a Sonarr-only
-        # setup is normal, not an error. The message is FLAT (the rich console
-        # indents it via placement inside the open boot section). The arr name
+        # setup is normal, not an error. The message is FLAT (the live console
+        # indents it by its position inside the open boot scope). The arr name
         # is capitalized prose, not a lowercase config key.
         (skip,) = recording.of_type(Diagnostic)
         assert skip.severity is Severity.INFO
@@ -598,7 +598,7 @@ def _write_runnable_config() -> None:
 
 
 class TestRunFailuresAreCleanAndNonzero:
-    """Every failed run leg returns False (exit 1) with a one-liner, not a traceback."""
+    """Every failed arr run returns False (exit 1) with a one-liner, not a traceback."""
 
     @pytest.mark.parametrize(
         ("error", "expected"),
@@ -615,7 +615,7 @@ class TestRunFailuresAreCleanAndNonzero:
             pytest.param(
                 "contract",
                 # The library answered but validated to nothing: the one-line
-                # contract arm, never the traceback arm.
+                # contract handler, never the traceback handler.
                 "Sonarr run failed - none of the 3 SonarrSeries records validated",
                 id="arr-contract",
             ),
@@ -1066,7 +1066,7 @@ class _SignalRecorder:
 class _RunStampingRenderer(Renderer):
     """Records each hub event alongside how many `begin_run` calls preceded it.
 
-    Makes post-begin ordering assertable (CycleStarted lands in the fresh cycle).
+    Makes post-begin ordering assertable (ScheduledRunStarted lands in the fresh run).
     """
 
     writes_file_only: ClassVar[bool] = False
@@ -1111,7 +1111,7 @@ class TestLogFormatWiring:
 
     The renderers themselves are pinned in test_log_format.py. These pin that
     the run commands resolve the config format and thread `console_format`
-    through (scheduled mode re-resolves each cycle, before the logger is
+    through (scheduled mode re-resolves each run, before the logger is
     rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
     (advisor #17: an invalid-level complaint fired inside it must reach the
     hub, never logging.lastResort).
@@ -1155,7 +1155,7 @@ class TestLogFormatWiring:
 
 
 class TestConsoleFormat:
-    """`_console_format`: a silent pre-logger peek folding every failure to "auto"."""
+    """`_configured_format`: a silent pre-logger peek reducing every failure to "auto"."""
 
     def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
         missing = tmp_path / "config.yml"
@@ -1181,7 +1181,7 @@ class TestConsoleFormat:
 
 
 class TestResolvedFormat:
-    """`_run_format` is the one "auto" fold.
+    """`_run_format` is the one "auto" conversion.
 
     The same resolved value feeds `setup_logger` and `hub.begin_run`, so the two can never disagree.
     """
@@ -1201,7 +1201,7 @@ class TestResolvedFormat:
 
 
 def _drive_representative(hub: OutputHub) -> None:
-    """Boot facts, scan lines, both diagnostic classes, a graduation, a summary."""
+    """Boot facts, scan lines, both diagnostic classes, a finished row, a summary."""
 
     hub.emit(PearlarrStarted(version="v9.9.9", data_dir="/data"))
     hub.emit(ScanStarted(arr=Arr.SONARR, total=1))
@@ -1213,7 +1213,7 @@ def _drive_representative(hub: OutputHub) -> None:
 
 
 class TestHubSeats:
-    """The REAL cli seat factory, pinned end-to-end.
+    """The REAL cli console renderer factory, pinned end-to-end.
 
     Plain stdout is the file's bytes minus exactly the file_only lines. json is
     event-per-line.
@@ -1248,7 +1248,7 @@ class TestHubSeats:
 
         stdout_lines = stream.getvalue().splitlines()
         file_lines = (tmp_path / "logs" / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
-        assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR graduation
+        assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR outcome line
         assert [line for line in file_lines if "forensic note" not in line] == stdout_lines
         assert sum("forensic note" in line for line in file_lines) == 1  # the sole carve-out
 
@@ -1279,8 +1279,8 @@ class TestMissingConfigExitsNonzero:
     """A virgin data dir: exit 1 with the starter template written, never a silent retry.
 
     Driven end-to-end through CliRunner: the `typer.Exit` raised inside
-    `load_shared_config`'s FileNotFoundError arm must escape `run_arrs`'
-    finallys (boot view, web client, run lock all release) and reach typer as
+    `load_shared_config`'s FileNotFoundError handler must escape `run_arrs`'
+    finallys (boot region, web client, run lock all release) and reach typer as
     exit code 1 - pinning the whole propagation path, not just the helper.
     """
 
@@ -1291,7 +1291,7 @@ class TestMissingConfigExitsNonzero:
         config = Path(resolve_paths().config_file)
         assert config.read_text(encoding="utf-8") == _starter_text()
         assert "starter template was written" in result.output
-        # This arm exits now. The skip-and-retry wording belongs to the others.
+        # This handler exits now. The skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
 
 
@@ -1305,7 +1305,7 @@ class TestUnknownTrackerWarning:
     @staticmethod
     def _load(tmp_path: Path, body: str) -> AppConfig | None:
         config = tmp_path / "config.yml"
-        # Current-schema stamp + 0600: keep the old-schema and loose-permissions
+        # Current-schema version + 0600: keep the old-schema and loose-permissions
         # warnings out of the recorded stream (this class is about trackers).
         config.write_text(f"config_version: {CONFIG_VERSION}\n{body}", encoding="utf-8")
         config.chmod(0o600)
@@ -1336,14 +1336,14 @@ class TestUnknownTrackerWarning:
 
 
 class TestUnexpectedConfigErrorSkips:
-    """`load_shared_config`'s last-resort arm: ERROR with traceback, then skip."""
+    """`load_shared_config`'s last-resort handler: ERROR with traceback, then skip."""
 
     def test_unexpected_load_error_reports_and_skips(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # No file content reaches this arm (undecodable bytes are a YAMLError,
+        # No file content reaches this handler (undecodable bytes are a YAMLError,
         # bad keys a ValidationError), so the "impossible" failure is injected.
         def boom(path: str) -> AppConfig:
             raise RuntimeError(f"config loader broke on {path}")
@@ -1374,8 +1374,8 @@ _OLD_SCHEMA_CONFIG = "seadex:\n  private_releases: allow\nsonarr:\n  url: http:/
 class TestConfigAutoMigrate:
     """An old-schema config is rewritten in place after the load, backup first.
 
-    The console gets one terse line either way; the functional detail (what was
-    folded) rides a file_only diagnostic to the log. A file that cannot be
+    The console gets one terse line either way. The functional detail (what was
+    converted) goes to the log as a file_only diagnostic. A file that cannot be
     rewritten falls back to the in-memory migration behind a short warning, and
     a dry run never writes at all.
     """
@@ -1418,8 +1418,8 @@ class TestConfigAutoMigrate:
         (detail,) = [d for d in recording.of_type(Diagnostic) if d.file_only]
         assert detail.severity is Severity.INFO
         assert detail.message.startswith(f"Config schema v0 -> v{CONFIG_VERSION}: ")
-        assert "'allow'" in detail.message  # the private_releases fold
-        assert "wait_mode" in detail.message  # the note-only default flip rides along
+        assert "'allow'" in detail.message  # the private_releases conversion
+        assert "wait_mode" in detail.message  # the note-only default flip comes along
 
     def test_a_raised_log_level_drops_the_details_promise(self, tmp_path: Path) -> None:
         # At --log-level warning the INFO detail line never reaches the file
@@ -1477,8 +1477,8 @@ class TestConfigAutoMigrate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # str(ValidationError) spans multiple lines; the file log's line
-        # grammar folds the bad keys onto one.
+        # str(ValidationError) spans multiple lines. The file log's line
+        # grammar merges the bad keys onto one.
         recording = install_recording_hub()
         config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
         loaded = self._load(config)
@@ -1566,7 +1566,7 @@ class TestUnwritableDataDir:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The Docker shape: dir writable, Pearlarr.log left root-owned by a prior
-        # run. The install-time probe must abort cleanly, not strike the sink.
+        # run. The install-time probe must abort cleanly, not strike the renderer.
         data_dir = tmp_path / "data"
         log = data_dir / "logs" / "Pearlarr.log"
         log.parent.mkdir(parents=True)
@@ -1608,9 +1608,9 @@ class TestUnwritableDataDir:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # Arm order in load_shared_config matters twice: FileNotFoundError
-        # (exit 1) must not swallow this OSError, and the OSError arm must
-        # catch it before the traceback arm. Skip + retry, never exit.
+        # Handler order in load_shared_config matters twice: FileNotFoundError
+        # (exit 1) must not swallow this OSError, and the OSError handler must
+        # catch it before the traceback handler. Skip + retry, never exit.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         config = Path(paths.config_file)
@@ -1632,7 +1632,7 @@ class TestDataDirLine:
 
     def test_run_single_logs_the_resolved_data_dir(self) -> None:
         # Virgin data dir: the run exits 1 writing the template, but the
-        # run_started line (plain seat, structured grammar) carries the
+        # run_started line (plain renderer, structured grammar) carries the
         # data_dir fact FIRST, before the config read fails.
         result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
@@ -1641,7 +1641,7 @@ class TestDataDirLine:
 
 
 class TestScheduledLifecycle:
-    """The run commands' lifecycle: config handling, the SIGTERM handler both install, cycle events, the help text."""
+    """The run commands' lifecycle: config handling, the SIGTERM handler both install, run events, the help text."""
 
     @staticmethod
     def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1729,7 +1729,7 @@ class TestScheduledLifecycle:
         logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The knob must reach the sink with the CONFIGURED value, not a default.
+        # The knob must reach the file log renderer with the CONFIGURED value, not a default.
         install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
@@ -1773,7 +1773,7 @@ class TestScheduledLifecycle:
         assert recorder.registered == [(signal.SIGTERM, signal.SIG_IGN)]
 
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
+        # Post-begin (rotation): the boundary must land in the FRESH run's file.
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
@@ -1786,7 +1786,7 @@ class TestScheduledLifecycle:
         assert [(e.number, runs_begun) for e, runs_begun in started] == [(1, 1)]
 
     def test_next_run_scheduled_is_emitted_with_the_cadence_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # After a completed cycle the loop states the next run as a typed event
+        # After a completed run the loop states the next run as a typed event
         # (default cadence: 6h out on a missing config), then sleeps.
         monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())

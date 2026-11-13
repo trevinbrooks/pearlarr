@@ -1,4 +1,4 @@
-"""The rich console's wait cockpit region: one self-animating `rich.Live` frame plus durable ledger lines."""
+"""The live console's wait region: one self-animating `rich.Live` frame plus durable outcome lines."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class _FrameAnchor:
 
 @dataclass(frozen=True, slots=True)
 class _TableLayout:
-    """The width-derived column plan for the cockpit table."""
+    """The width-derived column plan for the wait region table."""
 
     bar_width: int
     show_speed: bool
@@ -93,10 +93,10 @@ class _LiveFrame:
 
 @final
 class WaitRegion(LiveRegion):
-    """The wait cockpit: the animated in-flight table plus its durable scrollback lines."""
+    """The wait region: the animated in-flight table plus its durable scrollback lines."""
 
     # The frame snapshot the refresh thread reads: features and layout are set once at Live start. Seeded by
-    # _reset_frame, so __init__ and the per-pass/per-cycle resets can never drift apart.
+    # _reset_frame, so __init__ and the per-pass/per-run resets can never drift apart.
     _features: ConsoleFeatures
     _layout: _TableLayout
     _anchor: _FrameAnchor | None
@@ -114,7 +114,7 @@ class WaitRegion(LiveRegion):
         super().__init__(console_source, detected_features, level_source=level_source)
         self._time_source = time_source
         self._throttle = ProgressLineThrottle()
-        # _reset_frame's teardown probe reads this.
+        # _reset_frame's teardown check reads this.
         self._live_frame = None
         self._reset_frame()
 
@@ -126,7 +126,7 @@ class WaitRegion(LiveRegion):
         features = self._detected_features.for_console(console)
         match event:
             case WaitStarted():
-                # Back-to-back passes swap the frontier node in one step, so scope_closed never fires.
+                # Back-to-back passes swap the open wait scope in one step, so scope_closed never fires.
                 # Do NOT start the Live here: it starts on the first live snapshot.
                 self._reset_frame()
                 self._kind = event.kind
@@ -160,7 +160,7 @@ class WaitRegion(LiveRegion):
         # Atomic swap: one assignment, so the refresh thread never reads a torn anchor.
         self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
-            # The refresh thread reads these and the anchor, never the caps cache or the console.
+            # The refresh thread reads these and the anchor, never the detected features or the console.
             self._features = features
             self._layout = _TableLayout.for_width(features.width)
             self._spinner = Spinner(spinner_name(features), style="yellow")
@@ -187,10 +187,10 @@ class WaitRegion(LiveRegion):
             self._report_contained("wait frame render failed", failure)
 
     def _reset_frame(self) -> None:
-        """Drop any stale live slot + frame snapshot (per pass and per cycle)."""
+        """Drop any leftover live slot + frame snapshot (per pass and per run)."""
 
         self._stop_live()
-        # The frame's lifetime is the Live slot's: a dangling one keeps _collect_frame_failure polling stale state.
+        # The frame's lifetime is the Live slot's: a dangling one keeps _collect_frame_failure polling old state.
         self._live_frame = None
         self._anchor = None
         self._features = detect_features(None)
@@ -212,7 +212,7 @@ class WaitRegion(LiveRegion):
     def _advance(snapshot: WaitSnapshot, offset: float) -> WaitSnapshot:
         """The snapshot with its in-flight elapsed clocks rolled forward by `offset`.
 
-        A terminal row's `phase_elapsed_s` stays frozen, and is the ledger line's wait clock.
+        A finished row's `phase_elapsed_s` stays frozen, and is the outcome line's wait clock.
         """
 
         if offset <= 0.0:
@@ -229,7 +229,7 @@ class WaitRegion(LiveRegion):
         parts: list[Text | Table | Padding] = [self._header(model)]
         body = self._body(model)
         if body is not None:
-            # The grid starts at column 0, so pad it: the rows share the header/overflow/ledger left edge.
+            # The grid starts at column 0, so pad it: the rows share the header/overflow/outcome line left edge.
             parts.append(Padding(body, (0, 0, 0, len(INDENT))))
         if model.overflow:
             parts.append(self._truncate(Text(indent_string(model.overflow), style="grey50")))

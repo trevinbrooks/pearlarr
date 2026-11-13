@@ -2,7 +2,7 @@
 """Tests for the output-event vocabulary (`output.events`).
 
 Pin the value model (frozen, equality-comparable facts), the severity mapping
-that drives counts and sink floors, and the single RunStats -> RunTally
+that drives counts and renderer floors, and the single ArrRunStats -> ArrRunTally
 conversion site (S10: never two hand-maintained field lists).
 """
 

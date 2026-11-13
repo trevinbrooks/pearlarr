@@ -1,9 +1,9 @@
 # pyright: strict
-"""Tests for the shared caps cache (`console_features.DetectedFeatures`).
+"""Tests for the shared feature cache (`console_features.DetectedFeatures`).
 
-One CapsCache instance is shared by the console seat's regions (boot + wait),
-so a mid-boot resize can never flip one surface's slow-heads-up decision only:
-these pin the identity-keyed hit, the re-probe on a new console, and the cycle
+One DetectedFeatures instance is shared by the console renderer's regions (boot + wait),
+so a mid-boot resize can never flip one region's slow-heads-up decision only:
+these pin the identity-keyed hit, the fresh detection on a new console, and the run
 reset.
 """
 
@@ -25,7 +25,7 @@ def test_same_console_identity_returns_the_cached_probe() -> None:
     first = cache.for_console(console)
 
     # detect_features builds a fresh value per call, so an `is` hit proves
-    # the second lookup never re-probed.
+    # the second lookup never detected again.
     assert cache.for_console(console) is first
 
 
@@ -36,7 +36,7 @@ def test_a_new_console_identity_reprobes_and_replaces() -> None:
     narrow = cache.for_console(_console(width=20))
 
     assert narrow.width == 20
-    assert not narrow.can_redraw  # below MIN_LIVE_WIDTH: the fresh probe was used
+    assert not narrow.can_redraw  # below MIN_LIVE_WIDTH: the fresh detection was used
 
 
 def test_reset_drops_the_cached_probe() -> None:
@@ -45,7 +45,7 @@ def test_reset_drops_the_cached_probe() -> None:
     first = cache.for_console(console)
 
     cache.reset()
-    cache.reset()  # idempotent: both seats reset at cycle start
+    cache.reset()  # idempotent: both regions reset at run start
 
     assert cache.for_console(console) is not first
 

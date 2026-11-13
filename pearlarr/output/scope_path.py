@@ -1,15 +1,15 @@
-"""The shared pure fold of scope/boundary events into the open-node path.
+"""The shared pure reduction of scope/boundary events to the open scope path.
 
-One implementation, instantiated per surface: the rich renderer's instance is the
-sole placement authority. Text-sink instances derive labels only - the
-`[path]` breadcrumb for handle-carried ScopeIds and the advisory `during=` tail
+One implementation, instantiated per renderer: the rich renderer's instance is the
+sole position authority. Text renderer instances derive labels only - the
+`[path]` scope path for handle-carried ScopeIds and the advisory `during=` tail
 for diagnostics - never position, never layout.
 
-The fold is replay-deterministic: the same event stream always yields the same
+`OpenScopes` is replay-deterministic: the same event stream always yields the same
 state. The fixed transition table IS `KIND_DEPTH` plus the `match` in
-`OpenScopes.apply` - boundary events close strictly-deeper nodes, never
+`OpenScopes.apply` - boundary events close strictly-deeper scopes, never
 heuristic inference. A close on an unknown/already-closed id is a no-op, so
-defensive closes (the unwind teardown, the doubled run-close) are idempotent.
+defensive closes (the unwind teardown, the doubled arr run close) are idempotent.
 """
 
 from __future__ import annotations
@@ -73,42 +73,42 @@ KIND_DEPTH: Final[Mapping[ScopeKind, int]] = {
     ScopeKind.ENTRY: 3,
 }
 
-# Fixed path segments for section-like kinds. Other kinds render their label.
+# Fixed path segments for the boot, title and wait scope kinds. Other kinds render their label.
 SEGMENT_WORD: Final[Mapping[ScopeKind, str]] = {
     ScopeKind.BOOT_SECTION: "boot",
     ScopeKind.ENTRY: "entry",
     ScopeKind.WAIT_REGION: "wait",
 }
 
-# Path separator for the text sinks' [path] breadcrumb.
+# Path separator for the text renderers' [path] scope path.
 PATH_SEP: Final = " › "
 
 
 @dataclass(frozen=True, slots=True)
 class OpenScope:
-    """One open frontier node."""
+    """One open scope."""
 
     kind: ScopeKind
     label: str
     scope: ScopeId | None
-    """`None` for boundary-opened RUN/ITEM nodes."""
+    """`None` for boundary-opened RUN/ITEM scopes."""
 
 
 def _segment(open_scope: OpenScope) -> str:
-    """A node's path segment: fixed words for section kinds, the label otherwise."""
+    """A scope's path segment: fixed words for the `SEGMENT_WORD` kinds, the label otherwise."""
 
     return SEGMENT_WORD.get(open_scope.kind, open_scope.label)
 
 
 @final
 class OpenScopes:
-    """The open-path state, folded purely from the event stream (one per surface)."""
+    """The open scope path state, built purely from the event stream (one per renderer)."""
 
     def __init__(self) -> None:
         self._stack: list[OpenScope] = []
 
     def apply(self, event: Event) -> None:
-        """Advance the fold by one event, per the fixed transition table above."""
+        """Advance the open scopes by one event, per the fixed transition table above."""
 
         match event:
             case ScopeOpened(scope=scope, label=label):
@@ -126,9 +126,9 @@ class OpenScopes:
             case ItemStarted(index=index, total=total, title=title):
                 self._push(ScopeKind.ITEM, f"[{index}/{total}] {title}")
             case ScanFinished() | ArrRunSummaryReady():
-                self._close_at(2)  # close item/wait/entry, keep the run
+                self._close_at(2)  # close item/wait/title, keep the arr run
             case WaitStarted():
-                self._close_at(3)  # close the entry before the wait pass
+                self._close_at(3)  # close the title before the wait pass
             case (
                 NextRunScheduled()
                 | BootStepProgressed()
@@ -165,20 +165,20 @@ class OpenScopes:
             case _:
                 assert_never(event)
 
-    # -- read APIs (the only surface: labels/during only, never placement) ---------
+    # -- read APIs (the only interface: labels/during only, never position) --------
 
     def scopes(self) -> tuple[OpenScope, ...]:
-        """The open nodes, root to top."""
+        """The open scopes, root to top."""
 
         return tuple(self._stack)
 
     def path_text(self) -> str:
-        """The full PATH_SEP-joined breadcrumb, e.g. "sonarr" then "[3/182] Frieren" then "entry"."""
+        """The full PATH_SEP-joined scope path, e.g. "sonarr" then "[3/182] Title" then "entry"."""
 
         return PATH_SEP.join(_segment(open_scope) for open_scope in self._stack)
 
     def path_for(self, scope: ScopeId) -> str | None:
-        """The breadcrumb down to the named open scope, or None when it isn't open."""
+        """The scope path down to the named open scope, or None when it isn't open."""
 
         for i, open_scope in enumerate(self._stack):
             if open_scope.scope == scope:
@@ -186,12 +186,12 @@ class OpenScopes:
         return None
 
     def during(self) -> str | None:
-        """The top node's label - the advisory `during=` tail for diagnostics."""
+        """The top scope's label - the advisory `during=` tail for diagnostics."""
 
         return self._stack[-1].label if self._stack else None
 
     def reset(self) -> None:
-        """Clear all open nodes (begin_cycle)."""
+        """Clear all open scopes (begin_run)."""
 
         self._stack.clear()
 

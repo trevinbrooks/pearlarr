@@ -117,7 +117,7 @@ def flatten(text: str) -> str:
 
 
 def strip_ticks(text: str) -> str:
-    """Drop backticks for plain-text surfaces (YAML comments are not markdown)."""
+    """Drop backticks for plain-text outputs (YAML comments are not markdown)."""
 
     return text.replace("`", "")
 
@@ -156,7 +156,7 @@ def enum_member_docs(enum_cls: type[Enum]) -> dict[str, str]:
 
 
 def _unwrap_annotation(annotation: object) -> object:
-    """Resolve PEP 695 aliases and strip `| None` when one real arm remains."""
+    """Resolve PEP 695 aliases and strip `| None` when one real member remains."""
 
     ann = getattr(annotation, "__value__", annotation)
     if get_origin(ann) is UnionType:
@@ -512,8 +512,8 @@ class CommandDoc:
     subcommands: tuple[tuple[str, str], ...]
 
 
-# Exit codes are wire facts of the click/typer stack plus our own exits, verified empirically.
-# No runtime surface enumerates them, so they are authored here.
+# Exit codes are wire facts of the click/typer stack plus pearlarr's own exits, verified empirically.
+# No runtime interface enumerates them, so they are authored here.
 EXIT_CODE_ROWS = (
     ("0", "Success. A run stopped with SIGTERM also exits 0 (a clean stop)."),
     ("1", "Failure: invalid or missing configuration, a refused selection, a failed run, or a failed command."),
@@ -669,7 +669,7 @@ _WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT_REGION, serial=3)
 
 
 # What each wire event means, keyed by its serialized name. The catalog build fails when an on-wire
-# event has no entry here or an entry goes stale, so a new event type cannot ship undocumented.
+# event has no entry here or an entry is out of date, so a new event type cannot ship undocumented.
 EVENT_DESCRIPTIONS: dict[str, str] = {
     "run_started": "The process banner: the installed version and the resolved data directory. "
     "The first event of every invocation.",
@@ -787,7 +787,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         elapsed_s=63.4,
         tip=ev.NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
     )
-    # The cli command facts ride a subcommand's --json stream, never a run's. They sit at the tail
+    # The cli command facts go out on a subcommand's --json stream, never a run's. They sit at the tail
     # of the catalog for completeness, one specimen per member.
     data_dir = "/home/user/.local/share/pearlarr"
     redacted_config: ev.JsonObj = {"sonarr": {"url": "http://sonarr:8989", "api_key": "REDACTED"}}
@@ -917,7 +917,7 @@ class EventSpecimen:
 
 
 def build_event_catalog() -> tuple[EventSpecimen, ...]:
-    """Run the specimen stream through the real JSON sink, one specimen per event name."""
+    """Run the specimen stream through the real JSON renderer, one specimen per event name."""
 
     stream = _specimen_stream()
     members = {member.__name__ for member in cast("tuple[type[object], ...]", get_args(ev.Event.__value__))}

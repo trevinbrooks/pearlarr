@@ -12,7 +12,7 @@ from rich.traceback import Trace, Traceback
 @final
 @dataclass(frozen=True, slots=True)
 class CapturedTrace:
-    """A traceback extracted once from a live exception. Holding it never pins frames.
+    """A traceback extracted once from a live exception. Keeping it never pins frames.
 
     `show_locals=False` at extraction means frame locals (API keys, webhook URLs)
     are never copied out of the frames - the secrets guarantee is structural.
@@ -21,7 +21,7 @@ class CapturedTrace:
     rich_trace: Trace
     """The bounded rich Trace consumed by the console renderer (Traceback)."""
     plain: str
-    """The full plain-text traceback for the file sink (stdlib format, no locals)."""
+    """The full plain-text traceback for the file log renderer (stdlib format, no locals)."""
 
     MAX_FRAMES: ClassVar[int] = 10
     """Frames kept per stack at capture (outermost + innermost halves, rich-style elide)."""

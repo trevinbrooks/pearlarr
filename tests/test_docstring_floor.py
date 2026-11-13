@@ -3,7 +3,7 @@
 
 Ruff gates docstring presence for modules, packages, and classes repo-wide,
 but deliberately not for functions and methods (D102/D103 off - leaf presence
-gates manufacture ceremony). `fakes.py` and `builders.py` are the exception:
+gates manufacture boilerplate). `fakes.py` and `builders.py` are the exception:
 they are the suite's shared vocabulary, so every public callable in them is
 documented. `@override` methods are exempt - their contract lives on the
 abstract hook they implement.

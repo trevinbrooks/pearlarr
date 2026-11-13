@@ -4,8 +4,8 @@ Maintainer tooling behind `scripts/demo/record.sh`, which regenerates
 `docs/assets/demo_run.gif`. Nothing here ships in the package.
 
 Timeline: the run grabs Frieren (PMR) and FMAB (McBalls). Frieren completes first,
-Sonarr reports it importBlocked -> Pearlarr steps in with a manual import. FMAB
-completes later and Sonarr "imports" it itself (importPending, then files land
+Sonarr reports it importBlocked -> Pearlarr auto imports it. FMAB
+completes later and Sonarr "imports" it itself (importPending, then files appear
 progressively).
 """
 
@@ -41,7 +41,7 @@ FMAB_DL_S = 21.0
 QUEUE_LAG_S = 1.0
 FMAB_PENDING_S = 6.0
 CMD_RUN_S = 2.0
-IMPORT_FILE_S = 0.09  # per-file landing cadence once an import starts
+IMPORT_FILE_S = 0.09  # per-file import cadence once an import starts
 
 JP_EN: Json = [{"id": 8, "name": "Japanese"}, {"id": 1, "name": "English"}]
 
@@ -93,7 +93,7 @@ class Role:
     infohash: str
     view_id: str
     files: tuple[MediaFile, ...]
-    import_files: dict[int, MediaFile]  # episode number -> the file that lands for it
+    import_files: dict[int, MediaFile]  # episode number -> the file imported for it
 
     @property
     def size(self) -> int:
@@ -138,7 +138,7 @@ def build_role(
 
 
 class MockState:
-    """Mutable cross-thread state: what was added when, plus the manual-import command."""
+    """Mutable cross-thread state: what was added when, plus the ManualImport command."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -227,7 +227,7 @@ def complete_at(role: Role) -> float | None:
 
 
 def import_started_at(role: Role) -> float | None:
-    """When this role's files begin landing in Sonarr (None = not yet)."""
+    """When this role's files begin appearing in Sonarr (None = not yet)."""
 
     done = complete_at(role)
     if done is None or now() < done:
@@ -259,8 +259,8 @@ def episodes_response(series_key: str) -> Json:
     out: list[Json] = []
     for ep in base:
         n = int_field(ep, "episodeNumber")
-        # Landed episodes get the NEW file even when one already exists - the
-        # upgrade path (FMAB) replaces files, and the landing check must see it.
+        # Imported episodes get the NEW file even when one already exists - the
+        # upgrade path (FMAB) replaces files, and the import check must see it.
         if n not in imported_set:
             out.append(ep)
             continue
@@ -412,7 +412,7 @@ class SonarrHandler(QuietHandler):
         elif route == "/api/v3/language":
             self._send_json([])
         elif route == "/api/v3/remotepathmapping":
-            # No mappings: the folder-scan fallback's once-per-run fetch must
+            # No mappings: the folder-read fallback's once-per-run fetch must
             # never warn in an offline run.
             self._send_json([])
         elif route == "/api/v3/downloadclient":

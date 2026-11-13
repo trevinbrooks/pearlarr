@@ -31,7 +31,7 @@ class ConsoleLine:
 
 
 def render_console_lines(console: Console, lines: Iterable[ConsoleLine], level: int) -> None:
-    """Render legacy lines on the shared console: a line prints iff its level clears `level`."""
+    """Render console lines on the shared console: a line prints iff its level clears `level`."""
 
     for line in lines:
         if line.level < level:

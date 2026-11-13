@@ -2,10 +2,10 @@
 # pyright: reportPrivateUsage=false
 """Tests for the OutputHub (`output.hub`).
 
-Pin the dispatch contract (every surface, emit order), per-event containment
-with N strikes + per-cycle re-arm (never process-latching), the once= dedup
-store, SeverityCounts mark/counts_since, set_level fan-out, the console
-renderer swap on a format change at begin_cycle, and the combiner: renderers
+Pin the dispatch contract (every renderer, emit order), per-event containment
+with N strikes + per-run reset (never process-latching), the once= dedup
+store, SeverityCounter mark/counts_since, set_level fan-out, the console
+renderer swap on a format change at begin_run, and the combiner: renderers
 run without the hub lock, concurrent emits hand off to the active drainer, and
 lifecycle calls wait out an in-flight drain.
 """
@@ -80,9 +80,9 @@ class _InterruptingRenderer(_FailingRenderer):
 
 
 class _FailOnMarkerRenderer(_FailingRenderer):
-    """Raises on the marker event (RunStarted) only.
+    """Raises on the marker event (PearlarrStarted) only.
 
-    Renders leg-boundary events (RunFinished) cleanly, so a leg close between
+    Renders arr run boundary events (ArrRunFinished) cleanly, so an arr run's close between
     failures neither strikes nor resets the strike count.
     """
 
@@ -129,7 +129,7 @@ class _EmittingRenderer(Renderer):
 
 
 class _DoubleEmittingRenderer(_EmittingRenderer):
-    """Emits two follow-ups from inside handle of the first event (FIFO probe)."""
+    """Emits two follow-ups from inside handle of the first event (the FIFO check)."""
 
     @override
     def handle(self, event: Event, when: float) -> None:
@@ -140,7 +140,7 @@ class _DoubleEmittingRenderer(_EmittingRenderer):
 
 
 class _LockProbeRenderer(Renderer):
-    """`handle()` probes the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
+    """`handle()` checks the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
 
     writes_file_only: ClassVar[bool] = False
 
@@ -221,7 +221,7 @@ class _GatedRenderer(Renderer):
 
 
 class _InterruptOnceRenderer(Renderer):
-    """Raises KeyboardInterrupt on the first handle only (the baton-recovery probe)."""
+    """Raises KeyboardInterrupt on the first handle only (the drain-lock recovery check)."""
 
     writes_file_only: ClassVar[bool] = False
 
@@ -248,10 +248,10 @@ class _InterruptOnceRenderer(Renderer):
 
 
 class _ReArmableGate(Renderer):
-    """Blocks inside `handle` once per armed episode until released.
+    """Blocks inside `handle` once per active episode until released.
 
-    `arm()` re-arms it for the next episode - the overflow-note-per-episode
-    reset probe.
+    `arm()` restarts it for the next episode - the overflow-note-per-episode
+    reset check.
     """
 
     writes_file_only: ClassVar[bool] = False
@@ -309,7 +309,7 @@ def test_null_renderer_satisfies_the_protocol() -> None:
 
 
 class _FileishRecorder(Renderer):
-    """A recording survivor that claims the file_only surface (a FileLogSink stand-in)."""
+    """A recording survivor that claims to be the file renderer (a FileLogRenderer stand-in)."""
 
     writes_file_only: ClassVar[bool] = True
 
@@ -334,7 +334,7 @@ class _FileishRecorder(Renderer):
 
 
 class _FailingFileish(_FailingRenderer):
-    """A failing renderer that IS the file surface (the dying-log-file shape)."""
+    """A failing renderer that IS the file renderer (the dying-log-file shape)."""
 
     writes_file_only: ClassVar[bool] = True
 
@@ -372,7 +372,7 @@ class _EmitThenInterrupt(Renderer):
     """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
 
     This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
-    exit line. The repeat raise models a hostile arm on the flush's
+    exit line. The repeat raise models a hostile renderer on the flush's
     best-effort re-dispatch).
     """
 
@@ -415,7 +415,7 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
     assert survivor.events[0] == _EVENT
     note = survivor.events[1]
     assert isinstance(note, Diagnostic)
-    assert note.file_only  # a file surface survives: forensic, not console spam
+    assert note.file_only  # a file renderer survives: forensic, not console spam
     assert note.severity is Severity.WARNING
     assert note.origin == "output.hub"
     assert "_FailingRenderer failed on PearlarrStarted" in note.message
@@ -425,7 +425,7 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
 def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() -> None:
     """A run must never silently lose its whole log file.
 
-    When the casualty IS the file surface, the containment note goes visible
+    When the casualty IS the file renderer, the containment note goes visible
     at ERROR and counts.
     """
 
@@ -453,32 +453,32 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
 
     hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
-    assert flaky.calls == STRIKE_LIMIT + 1  # re-armed, not process-latched
+    assert flaky.calls == STRIKE_LIMIT + 1  # reset, not process-latched
 
 
 def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() -> None:
-    """A leg close (RunFinished) is not a cycle turnover.
+    """An arr run's close (ArrRunFinished) is not a run turnover.
 
-    Strikes are a per-cycle budget: they accumulate across the RunFinished leg
+    Strikes are a per-run budget: they accumulate across the ArrRunFinished
     boundary, so the Nth strike quarantines regardless of the boundary, and
-    only `begin_run` re-arms.
+    only `begin_run` resets them.
     """
 
     flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
     sub = hub._subs[0]
 
-    # Leg 1: one strike short of the limit - still armed across the leg boundary.
+    # Arr run 1: one strike short of the limit - still active across the arr run boundary.
     for _ in range(STRIKE_LIMIT - 1):
         hub.emit(_EVENT)
     assert sub.strikes == STRIKE_LIMIT - 1
 
-    # The leg boundary renders cleanly: it neither strikes nor resets the count.
+    # The arr run boundary renders cleanly: it neither strikes nor resets the count.
     hub.emit(ArrRunFinished(arr=Arr.SONARR))
     assert sub.strikes == STRIKE_LIMIT - 1
     assert flaky.closes == 0
 
-    # Leg 2: the carried-over count makes the next failure the Nth strike, so the
+    # Arr run 2: the carried-over count makes the next failure the Nth strike, so the
     # crossing (quarantine + close) fires across the boundary - never reset by it.
     hub.emit(_EVENT)
     assert sub.strikes == STRIKE_LIMIT
@@ -489,7 +489,7 @@ def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() 
     assert flaky.calls == calls_at_quarantine
     assert flaky.closes == 1
 
-    # Only a cycle turnover re-arms the seat - the leg boundary never did.
+    # Only a run turnover resets the renderer - the arr run boundary never did.
     hub.begin_run(console_format="plain", level=logging.INFO)
     assert sub.strikes == 0
     hub.emit(_EVENT)
@@ -515,7 +515,7 @@ def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
     hub.begin_run(console_format="plain", level=logging.INFO)
     for _ in range(STRIKE_LIMIT):
         hub.emit(_EVENT)
-    assert flaky.closes == 2  # re-armed, then a fresh strike-out closes again
+    assert flaky.closes == 2  # reset, then a fresh strike-out closes again
 
 
 def test_a_raising_close_never_escapes_the_quarantine_crossing() -> None:
@@ -593,7 +593,7 @@ def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> 
     """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown debug) must not start a nested drain.
 
     Starting one against a half-mutated subscriber list is unsafe. The
-    lifecycle body holds the baton and drains the stragglers after.
+    lifecycle body holds the drain lock and drains the stragglers after.
     """
 
     emitter = _LifecycleEmitter()
@@ -627,7 +627,7 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     drainer.start()
     assert gated.entered.wait(timeout=30.0)
 
-    # B's emit returns immediately without dispatching: A still owns the baton.
+    # B's emit returns immediately without dispatching: A still owns the drain lock.
     hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
     assert [name for name, _ in gated.handled] == ["PearlarrStarted"]
 
@@ -648,8 +648,8 @@ def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
 
     # Crash fidelity, both halves: the IN-FLIGHT event's fan-out completes on the
     # unwind path (the survivor gets the PearlarrStarted the interrupt cut short -
-    # even though the hostile arm re-raises on the best-effort re-dispatch), and
-    # the QUEUED marker (a SIGTERM handler's exit line) flushes before the baton
+    # even though the hostile renderer re-raises on the best-effort re-dispatch), and
+    # the QUEUED marker (a SIGTERM handler's exit line) flushes before the drain lock
     # is released.
     assert len(survivor.of_type(PearlarrStarted)) == 1
     assert [d.message for d in survivor.of_type(Diagnostic)] == ["exit marker"]
@@ -662,17 +662,17 @@ def test_a_propagating_interrupt_never_strands_the_baton() -> None:
 
     with pytest.raises(KeyboardInterrupt):
         hub.emit(_EVENT)
-    assert hub._drainer is None  # the finally released the baton
+    assert hub._drainer is None  # the finally released the drain lock
 
     follow = Diagnostic(severity=Severity.INFO, message="after")
-    hub.emit(follow)  # a fresh emit claims the baton and dispatches
+    hub.emit(follow)  # a fresh emit claims the drain lock and dispatches
     assert follow in survivor.events
 
 
 def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An interrupt landing before _drain runs must leave no stale baton behind.
+    """An interrupt landing before _drain runs must leave no leftover drain lock behind.
 
-    Emit only checks-and-calls. The baton is taken inside _drain's try. With the
+    Emit only checks-and-calls. The drain lock is taken inside _drain's try. With the
     old take-in-emit shape this KI left _drainer set forever and the follow-up
     emit dispatched nothing (the silent-dark-hub wedge).
     """
@@ -688,14 +688,14 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: 
         hub.emit(_EVENT)
     monkeypatch.undo()
 
-    assert hub._drainer is None  # nothing to strand: the baton was never taken
+    assert hub._drainer is None  # nothing to strand: the drain lock was never taken
     follow = Diagnostic(severity=Severity.INFO, message="after")
     hub.emit(follow)  # drains the stranded event AND the new one, in order
     assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
 
 
 def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
-    """The take race's loser returns without dispatching or touching the owner's baton."""
+    """The take race's loser returns without dispatching or touching the owner's drain lock."""
 
     survivor = RecordingRenderer()
     hub = OutputHub([survivor])
@@ -707,8 +707,8 @@ def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
     hub._drain()
 
     assert survivor.events == []  # the loser dispatched nothing
-    assert hub._drainer is other  # and left the owner's baton alone
-    with hub._lock:  # hand the baton back so the follow-up emit can drain
+    assert hub._drainer is other  # and left the owner's drain lock alone
+    with hub._lock:  # hand the drain lock back so the follow-up emit can drain
         hub._drainer = None
     hub.emit(Diagnostic(severity=Severity.INFO, message="after"))
     assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
@@ -766,8 +766,8 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
 def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
     """D1: at the cap, only diagnostics shed.
 
-    A fold input (RunFinished) is appended even past the cap, so the
-    breadcrumb frontier can never be corrupted.
+    An open-scopes input (ArrRunFinished) is appended even past the cap, so the
+    open scopes can never be corrupted.
     """
 
     cap = 3
@@ -799,7 +799,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
 ) -> None:
     """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with one note per episode.
 
-    The note re-arms once a drain empties the queue.
+    The note resets once a drain empties the queue.
     """
 
     cap = 3
@@ -826,7 +826,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     assert f"q{cap - 1}" in messages  # everything under the cap still renders
     assert "dropped-1" not in messages and "dropped-2" not in messages
     assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
-    assert hub._overflowing is False  # the drain emptied the queue and re-armed the note
+    assert hub._overflowing is False  # the drain emptied the queue and reset the note
 
     run_overflow_episode()
     messages = [d.message for d in observer.of_type(Diagnostic)]
@@ -909,7 +909,7 @@ def test_hub_tallies_every_emitted_event() -> None:
 
 
 def test_file_only_diagnostics_are_never_counted() -> None:
-    # Counts = what a visible surface could show. file_only forensics stay out.
+    # Counts = what a visible renderer could show. file_only forensics stay out.
     recording = RecordingHub()
     mark = recording.hub.counts.mark()
 
@@ -928,7 +928,7 @@ def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> Non
 
     since = hub.counts.counts_since(mark)
     assert since.warning == 1  # counted at enqueue, though nothing rendered it
-    assert since.errors == 2  # with no file surface left, both notes escalate visible
+    assert since.errors == 2  # with no file renderer left, both notes escalate visible
 
 
 # --- levels + lifecycle -------------------------------------------------------------
@@ -986,7 +986,7 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
     hub.emit(_EVENT)
     hub.emit(_EVENT)
 
-    # One clock read per emit: cross-sink timestamps can never disagree.
+    # One clock read per emit: cross-renderer timestamps can never disagree.
     assert first.whens == [100.0, 200.0]
     assert second.whens == [100.0, 200.0]
 
@@ -995,7 +995,7 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
 
 
 def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: pytest.CaptureFixture[str]) -> None:
-    """This covers the install→`begin_run` window and a quarantined seat.
+    """This covers the install→`begin_run` window and a quarantined console renderer.
 
     A visible WARNING+ diagnostic must still reach a human, via stderr.
     """
@@ -1040,7 +1040,7 @@ def test_console_render_active_is_true_for_an_armed_seat() -> None:
 
 
 def test_console_render_active_is_false_once_the_seat_strikes_out() -> None:
-    # The quarantine fallback: a struck-out console seat hands the badge class
+    # The quarantine fallback: a struck-out console renderer hands the badge class
     # back to the legacy handler, so warnings can never vanish.
     hub = OutputHub([], console=_FailingRenderer(), strike_limit=1)
 
@@ -1074,7 +1074,7 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
     assert rich_console.events == [_EVENT]
     assert rich_console.closed  # the replaced console is torn down
     assert plain_console.events == [_EVENT]
-    assert stable_renderer.events == [_EVENT, _EVENT]  # the stable sink saw both
+    assert stable_renderer.events == [_EVENT, _EVENT]  # the stable renderer saw both
 
 
 def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> None:
@@ -1088,18 +1088,18 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
     hub.emit(_EVENT)
 
     assert not console.closed
-    assert _EVENT in console.events  # the old seat keeps rendering
+    assert _EVENT in console.events  # the old console renderer keeps rendering
     notes = [e for e in renderer.events if isinstance(e, Diagnostic)]
     assert notes[0].file_only
     assert "console factory failed" in notes[0].message
     assert "keeping the current console" in notes[0].message
 
 
-# --- the process registry (install/uninstall) + the cli seat order --------------------
+# --- the process registry (install/uninstall) + the cli renderer order ----------------
 
 
 def test_cli_hub_seats_the_file_sink_first() -> None:
-    # The file-before-console dispatch pin: _subs[0] is the first-declared sink
+    # The file-before-console dispatch pin: _subs[0] is the first-declared renderer
     # (the reader convention above), and cli declares FileLogRenderer first.
     hub, _ = _install_output_hub(resolve_paths())
     try:
@@ -1197,7 +1197,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
 
 def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> None:
-    """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's baton.
+    """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's drain lock.
 
     The re-entrant event still dispatches AFTER the in-flight one.
     """
@@ -1238,7 +1238,7 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
     hub.emit(_EVENT)
 
     # Order preserved: the in-flight PearlarrStarted completes its fan-out before the
-    # re-entrant diagnostic dispatches. Nothing double-dispatches. Baton released.
+    # re-entrant diagnostic dispatches. Nothing double-dispatches. Drain lock released.
     assert [type(e).__name__ for e in recorder.events] == ["PearlarrStarted", "Diagnostic"]
     assert hub._drainer is None
 
@@ -1258,7 +1258,7 @@ def test_a_broken_stderr_never_raises_through_emit() -> None:
             raise BrokenPipeError
 
     hub = OutputHub([], console_factory=lambda console_format: NullRenderer())
-    # No begin_run: the console seat is unarmed, so the fallback path fires.
+    # No begin_run: the console renderer is inactive, so the fallback path fires.
     import sys
 
     original = sys.stderr
@@ -1272,7 +1272,7 @@ def test_a_broken_stderr_never_raises_through_emit() -> None:
 
 
 def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> None:
-    """`close()` closes the file sinks LAST.
+    """`close()` closes the file renderers LAST.
 
     A diagnostic emitted from another renderer's close path (a contained
     teardown failure) still reaches the file.
@@ -1340,7 +1340,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
 
 
 def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:
-    """The swap-time `set_level` died (`begin_run`'s tail applies the cycle level to every sub).
+    """The swap-time `set_level` died (`begin_run`'s tail applies the run level to every sub).
 
     One bug must cost the fresh console ONE strike, not two.
     """

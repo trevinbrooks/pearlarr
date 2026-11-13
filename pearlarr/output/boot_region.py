@@ -1,12 +1,12 @@
-"""The rich console's boot cockpit region, event-driven.
+"""The live console's boot region, event-driven.
 
 `BootRegion` is driven by `rich_renderer.RichRenderer`'s exhaustive match and
-owns the banner, the single live spinner + download bar, the graduation of
-finished steps to durable scrollback lines, and the capstone. On a
+owns the banner, the single live spinner + download bar, the turning of
+finished steps into durable scrollback lines, and the ready line. On a
 live-capable console the spinner shows liveness (`BootStepSlow` is ignored). A
-non-live rich console degrades - no Live, a one-time heads-up line per slow
-step. Under plain/json there is no rich console and every event no-ops (the
-hub's text sinks carry those surfaces).
+live console that can't redraw degrades - no Live, a one-time heads-up line per slow
+step. Under plain/json there is no live console and every event no-ops (the
+hub's text renderers carry that output).
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from .live_region import LiveRegion
 from ..console_features import ConsoleFeatures, DetectedFeatures, block_bar, make_live, spinner_name
 from ..log import print_literal
 
-# Width of the live download bar (mapping refresh). Only the live cockpit draws
-# it, so it doesn't need to scale with the terminal like the wait cockpit's does.
+# Width of the live download bar (mapping refresh). Only the live boot region draws
+# it, so it doesn't need to scale with the terminal like the wait region's does.
 _BAR_WIDTH = 16
 
 type BootEvent = PearlarrStarted | BootStepStarted | BootStepProgressed | BootStepSlow | BootStepFinished | BootReady
@@ -51,7 +51,7 @@ def step_seconds(seconds: float) -> str:
     return long_duration(seconds)
 
 
-# --- the shared ledger-line grammar (console scrollback == file/plain echo) --------
+# --- the shared boot step line grammar (console scrollback == file/plain echo) -----
 
 
 def banner_title(version: str) -> str:
@@ -67,19 +67,19 @@ def data_dir_line(data_dir: str) -> str:
 
 
 def _ellipsis(features: ConsoleFeatures) -> str:
-    """The working-dots suffix, degraded per console caps."""
+    """The working-dots suffix, degraded per console features."""
 
     return "…" if features.can_unicode else "..."
 
 
 def slow_line(label: str, features: ConsoleFeatures) -> str:
-    """The one-time slow-step heads-up, ellipsis degraded per console caps."""
+    """The one-time slow-step heads-up, ellipsis degraded per console features."""
 
     return indent_string(f"{label}{_ellipsis(features)}")
 
 
 def step_finished_line(event: BootStepFinished, features: ConsoleFeatures) -> str:
-    """A finished step's durable ledger line: glyph + label · detail · elapsed."""
+    """A finished step's durable boot step line: glyph + label · detail · elapsed."""
 
     glyph = event.outcome.glyph_for(use_unicode=features.can_unicode)
     text = event.label
@@ -90,21 +90,21 @@ def step_finished_line(event: BootStepFinished, features: ConsoleFeatures) -> st
 
 
 def ready_line(elapsed_s: float) -> str:
-    """The boot capstone line."""
+    """The boot ready line."""
 
     return indent_string(f"ready in {step_seconds(elapsed_s)}")
 
 
 @final
 class BootRegion(LiveRegion):
-    """The boot cockpit: the live spinner plus its durable step ledger.
+    """The boot region: the live spinner plus its durable boot step lines.
 
-    Durable lines (banner, graduations, heads-up, capstone) print the moment
+    Durable lines (banner, finished steps, heads-up, ready line) print the moment
     their event arrives - they reflow ABOVE the transient spinner via the shared
     Console lock, exactly like the diagnostic lines. The spinner is torn down by
-    `scope_closed` when the renderer's fold evicts the boot-section node
-    (whatever event evicted it - and defensively by `begin_run`/`close`),
-    so scan output never lands under a stale live region.
+    `scope_closed` when the renderer's open scopes close the boot scope
+    (whatever event closed it - and defensively by `begin_run`/`close`),
+    so scan output never lands under a leftover live region.
     """
 
     def __init__(
@@ -132,8 +132,8 @@ class BootRegion(LiveRegion):
                 if self._spinner is not None:
                     self._spinner.update(text=self._frame_text(features, fraction, detail))
             case BootStepSlow(label=label):
-                # Live consoles show liveness via the spinner. The heads-up is
-                # the non-live rich console's degraded liveness signal.
+                # Consoles that can redraw show liveness via the spinner. The heads-up is
+                # the degraded liveness signal of a live console that can't redraw.
                 if not features.can_redraw and self._admits_durable():
                     self._print(console, Text(slow_line(label, features)))
             case BootStepFinished():
@@ -141,8 +141,8 @@ class BootRegion(LiveRegion):
                     style = event.outcome.style if features.can_color else ""
                     self._print(console, Text(step_finished_line(event, features), style=style))
             case BootReady(elapsed_s=elapsed_s):
-                # Teardown order: the spinner is torn down before the capstone
-                # prints (scope_closed stays the teardown for capstone-less ends).
+                # Teardown order: the spinner is torn down before the ready line
+                # prints (scope_closed stays the teardown for ends with no ready line).
                 self._stop_live()
                 if self._admits_durable():
                     self._print(console, Text(ready_line(elapsed_s), style="grey50" if features.can_color else ""))
@@ -155,10 +155,10 @@ class BootRegion(LiveRegion):
         self._label = ""
 
     def _admits_durable(self) -> bool:
-        """Level parity with the logger-driven ledger: INFO lines need level <= INFO.
+        """Level parity with the logger-driven boot step lines: INFO lines need level <= INFO.
 
         Deliberately NOT the diagnostics' `diagnostic_threshold` gate: at a
-        configured WARNING the boot ledger vanishes, matching the file log.
+        configured WARNING the boot step lines vanish, matching the file log.
         """
 
         return self._level_source() <= logging.INFO

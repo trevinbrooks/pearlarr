@@ -1,14 +1,14 @@
 # pyright: strict
-"""Tests for the logging bridge (`output.bridge`) + the real-seat wiring.
+"""Tests for the logging bridge (`output.bridge`) + the real-renderer wiring.
 
 Pin the adoption table (WARNING+ visible. Sub-WARNING below the configured
 level never constructed, either party. First-party at-level sub-WARNING
-visible on every seat - the rich handler stands down while a bridge is
+visible on every renderer - the rich handler stands down while a bridge is
 installed. Third-party at-level sub-WARNING file_only unless
 configured DEBUG), the root-logger gate `setup_logger` opens for the bridge,
 construct-never-mutate (caplog safety), warnings capture,
 idempotent install surviving `setup_logger` rebuilds, the per-thread
-reentrancy downgrade, and the full-stack seams over the REAL sinks: one console
+reentrancy downgrade, and the full stack over the REAL renderers: one console
 render + one structured file line per record. The motivating scenario - a
 plain WARNING fired between boot steps - is pinned end-to-end through the real
 boot flow, bridge, hub and renderer.
@@ -88,7 +88,7 @@ class TestAdoption:
     ) -> None:
         """An INFO straggler at INFO config (the bridged hub's default) adopts visible.
 
-        The bridge is the record's only console route on every seat, so
+        The bridge is the record's only console route on every renderer, so
         at-level visibility is uniform - the old rich/plain split is gone.
         """
 
@@ -102,9 +102,9 @@ class TestAdoption:
     def test_first_party_sub_threshold_records_are_never_constructed(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """P3: at INFO config, DEBUG chatter is dropped whole - like the third-party arm.
+        """P3: at INFO config, DEBUG chatter is dropped whole - like the third-party branch.
 
-        No surface would keep a below-level record (the file sink thresholds
+        No renderer would keep a below-level record (the file log renderer thresholds
         at the same configured level), so a file_only Diagnostic is not built.
         """
 
@@ -135,10 +135,10 @@ class TestAdoption:
         ]
 
     def test_first_party_sub_warning_visible_at_debug_config_under_rich(self, app_logger: logging.Logger) -> None:
-        """A rich seat is no exception: `RichConsoleHandler` stands down while a bridge is installed.
+        """The live console is no exception: `RichConsoleHandler` stands down while a bridge is installed.
 
         The bridge-adopted Diagnostic is the record's only console route, and
-        the renderer's frontier owns its placement (no producer-baked indent).
+        the renderer's open scopes own its position (no producer-baked indent).
         """
 
         recorder = RecordingRenderer()
@@ -267,7 +267,7 @@ class TestAdoption:
     def test_reentrant_records_downgrade_to_file_only(self, app_logger: logging.Logger) -> None:
         """A record fired from inside hub dispatch (renderer/SIGTERM logging) is adopted file-only.
 
-        No frontier placement happens mid-fold.
+        No position from the open scopes is taken mid-reduction.
         """
 
         recorder = RecordingRenderer()
@@ -289,7 +289,7 @@ class TestAdoption:
 
         A renderer logging while a DIRECT producer emit (reporter/`hub_note`
         - the majority path) drives dispatch is adopted file-only too. The
-        hub's own baton read decides, not bridge-private state that only its
+        hub's own drain-lock read decides, not bridge-private state that only its
         own emits used to set.
         """
 
@@ -427,7 +427,7 @@ class TestInstall:
             uninstall_bridge()
 
     def test_setup_logger_rebuilds_preserve_the_bridge(self, app_logger: logging.Logger) -> None:
-        """Scheduled mode re-runs `setup_logger` per cycle.
+        """Scheduled mode re-runs `setup_logger` per run.
 
         The bridge must survive the handler teardown with its identity
         intact (installed once, S3).
@@ -471,7 +471,7 @@ class TestOriginHelpers:
         assert attributed_message(theirs) == "httpx: m"
 
 
-# --- the full-stack seams: once on console, once in the structured file ----------------
+# --- the full stack: once on console, once in the structured file ----------------------
 
 
 def _console_text(stream: TtyStringIO) -> str:
@@ -491,7 +491,7 @@ def _production_stack(
 
     The hub (`FileLogRenderer` first) and bridge install BEFORE `setup_logger`
     builds the rich console over a fake TTY. `apply_log_level` then lands the
-    level on every surface, as bootstrap does.
+    level on every renderer, as bootstrap does.
     """
 
     stream = TtyStringIO()
@@ -524,7 +524,7 @@ def full_stack(
 
 
 class TestFullStackSeams:
-    """Pins the full-stack seams over the real sinks: one console render and one file line per record."""
+    """Pins the full stack over the real renderers: one console render and one file line per record."""
 
     def test_first_party_warning_renders_once_on_console_once_in_file(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
@@ -543,7 +543,7 @@ class TestFullStackSeams:
     def test_first_party_info_reaches_the_file_and_the_console_once_each(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
-        """An unmigrated INFO one-liner renders once per surface, both via the hub.
+        """An unmigrated INFO one-liner renders once per renderer, both via the hub.
 
         The raw handler stands down (no double render). The hub renderer places
         the line and the `FileLogRenderer` keeps it.
@@ -562,7 +562,7 @@ class TestFullStackSeams:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """DEBUG chatter at DEBUG config on the rich seat - the route this migration built.
+        """DEBUG chatter at DEBUG config on the live console - the route this migration built.
 
         The raw handler stands down, the bridge adopts visible, the renderer
         places the line, and the file keeps its grammar twin - once each.
@@ -609,7 +609,7 @@ class TestFullStackSeams:
     ) -> None:
         """THE motivating scenario: a chmod-style warning fires after a boot step closes.
 
-        It lands under the boot ledger, not at column 0.
+        It lands under the boot step lines, not at column 0.
         """
 
         logger, stream, _log_file = full_stack
@@ -636,7 +636,7 @@ class TestFullStackSeams:
         """Two `setup_logger` + `begin_run` rounds simulate scheduled mode.
 
         The bridge stays singly-installed and the renderer resolves the
-        CURRENT cycle's console.
+        CURRENT run's console.
         """
 
         del app_logger
