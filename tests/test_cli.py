@@ -94,10 +94,10 @@ from pearlarr.output import (
     NextRunScheduled,
     OutputHub,
     Renderer,
+    RowFinished,
     RunStarted,
     ScanStarted,
     Severity,
-    TorrentGraduated,
     current_hub,
     install_hub,
 )
@@ -1207,7 +1207,7 @@ def _drive_representative(hub: OutputHub) -> None:
     hub.emit(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", origin="output.hub", file_only=True))
-    hub.emit(TorrentGraduated(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60.0))
+    hub.emit(RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60.0))
     hub.emit(SUMMARY_MINIMAL)
 
 

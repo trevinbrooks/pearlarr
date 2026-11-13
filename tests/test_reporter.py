@@ -39,7 +39,7 @@ from pearlarr.output import (
 )
 from pearlarr.reporter import RunReporter
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
-from pearlarr.wait_types import ImportWaitMode, PendingState
+from pearlarr.wait_types import ImportWaitMode, PendingImportState
 
 from .builders import (
     FakeCacheStore,
@@ -283,7 +283,7 @@ class TestCompleteBlocksSelfClose:
     def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
         reporter, events = _record()
         pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
-        reporter.log_pending_snapshot(PendingState.IMPORTED, pending, pending.claims[0].series_id)
+        reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
         assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
 
@@ -394,7 +394,7 @@ class TestPendingSnapshot:
         ctx = RunContext(arr=Arr.SONARR)
         pending = pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1")
 
-        reporter.log_pending_snapshot(PendingState.IMPORTED, pending, pending.claims[0].series_id)
+        reporter.log_pending_snapshot(PendingImportState.IMPORTED, pending, pending.claims[0].series_id)
 
         assert any(isinstance(e, EntryHeader) for e in events)
         # The reporter never touches the counters - the engine owns drop/count.
@@ -406,7 +406,7 @@ class TestPendingSnapshot:
         reporter, events = _record()
         pending = pending_import(title="Gone")
 
-        reporter.log_pending_snapshot(PendingState.MISSING, pending, pending.claims[0].series_id)
+        reporter.log_pending_snapshot(PendingImportState.GONE, pending, pending.claims[0].series_id)
 
         assert events == []
 
@@ -421,7 +421,7 @@ class TestPendingSnapshot:
             ),
         )
 
-        reporter.log_pending_snapshot(PendingState.DOWNLOADED, pending, 8)
+        reporter.log_pending_snapshot(PendingImportState.DOWNLOADED, pending, 8)
 
         header = next(e for e in events if isinstance(e, EntryHeader))
         assert header.title == pending.display_label

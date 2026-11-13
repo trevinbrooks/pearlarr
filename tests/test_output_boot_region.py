@@ -47,7 +47,7 @@ from pearlarr.output.boot_region import (
     ready_line,
     slow_line,
 )
-from pearlarr.wait_types import OutcomeCategory
+from pearlarr.wait_types import OutcomeKind
 
 from .builders import SEP
 from .fakes import strip_ansi
@@ -74,7 +74,7 @@ def _finished(
     label: str,
     serial: int = 1,
     *,
-    outcome: OutcomeCategory = OutcomeCategory.SUCCESS,
+    outcome: OutcomeKind = OutcomeKind.IMPORTED,
     detail: str | None = None,
     elapsed_s: float = 0.61,
 ) -> BootStepFinished:
@@ -112,11 +112,11 @@ def test_graduation_line_unicode_and_ascii_glyphs() -> None:
     assert graduation_line(event, _UNICODE_CAPS) == f"  ✔ Reading config{SEP}config.yml{SEP}0.61s"
     assert graduation_line(event, _ASCII_CAPS) == f"  ok Reading config{SEP}config.yml{SEP}0.61s"
 
-    warned = _finished("Connecting to qBittorrent", outcome=OutcomeCategory.DEFERRED, elapsed_s=0.05)
+    warned = _finished("Connecting to qBittorrent", outcome=OutcomeKind.LEFT, elapsed_s=0.05)
     assert graduation_line(warned, _UNICODE_CAPS) == f"  ⚠ Connecting to qBittorrent{SEP}0.05s"
     assert graduation_line(warned, _ASCII_CAPS) == f"  ~ Connecting to qBittorrent{SEP}0.05s"
 
-    failed = _finished("Opening cache", outcome=OutcomeCategory.FAILED, elapsed_s=0.01)
+    failed = _finished("Opening cache", outcome=OutcomeKind.FAILED, elapsed_s=0.01)
     assert graduation_line(failed, _UNICODE_CAPS) == f"  ✖ Opening cache{SEP}0.01s"
     assert graduation_line(failed, _ASCII_CAPS) == f"  x Opening cache{SEP}0.01s"
 
@@ -160,7 +160,7 @@ class TestBootRegion:
             _finished(
                 "Connecting to qBittorrent",
                 serial=2,
-                outcome=OutcomeCategory.DEFERRED,
+                outcome=OutcomeKind.LEFT,
                 detail="not configured - preview mode",
                 elapsed_s=0.05,
             ),

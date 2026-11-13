@@ -26,12 +26,12 @@ from pearlarr.output import (
     LegFinished,
     Phase,
     RichRenderer,
+    RowFinished,
     ScopeClosed,
     ScopeId,
     ScopeKind,
     ScopeOpened,
     Severity,
-    TorrentGraduated,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -109,7 +109,7 @@ class TestWaitCockpitLifecycle:
             renderer,
             WaitStarted(total=2, pulse_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show A"), elapsed=0),
-            TorrentGraduated(label="Show A", outcome=Outcome.IMPORTED, files=8, waited_s=300),
+            RowFinished(label="Show A", outcome=Outcome.IMPORTED, files=8, waited_s=300),
         )
         live = renderer._wait._live
         assert live is not None and live.is_started  # the cockpit is still active
@@ -185,7 +185,7 @@ class TestNonLiveDigest:
             WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
             _progress(_dl("Show"), elapsed=300),
-            TorrentGraduated(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
+            RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
             WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60, pending=0, kind=WaitKind.MONITOR),
         )
         assert _plain(stream).strip() == ""
@@ -201,7 +201,7 @@ class TestNonLiveDigest:
         _feed(
             renderer,
             WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
-            TorrentGraduated(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
+            RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
         )
         out = _plain(stream)
         assert "errored" in out and "Show" in out
@@ -280,7 +280,7 @@ class TestFrontierTeardown:
 
         _feed(
             renderer,
-            TorrentGraduated(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
+            RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
             WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60, pending=0, kind=WaitKind.MONITOR),
         )
         assert renderer._wait._live is None
@@ -295,7 +295,7 @@ class TestFrontierTeardown:
             renderer,
             WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
-            TorrentGraduated(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=1),
+            RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=1),
             WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1, pending=0, kind=WaitKind.MONITOR),
         )
         assert renderer._wait._live is None

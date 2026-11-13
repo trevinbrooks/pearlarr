@@ -11,7 +11,7 @@ from .config import Arr
 from .output import CountsMark, SeverityCounts
 from .pending_import import PendingImport, TitleNames
 from .releases import GrabHold
-from .wait_types import ImportWaitMode, PendingState
+from .wait_types import ImportWaitMode, PendingImportState
 
 if TYPE_CHECKING:
     # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.
@@ -206,7 +206,7 @@ class RunContext:
     reacquired_keys: set[str] = field(default_factory=set[str])
     """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
     but counted by the tally. Never also a `pending_imports` record."""
-    pending_states: dict[str, PendingState] = field(default_factory=dict[str, PendingState])
+    pending_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
     """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays
     `added`."""
     pause_owed: bool = False

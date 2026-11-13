@@ -18,7 +18,7 @@ import pytest
 from pearlarr.console_caps import Capabilities, detect_capabilities
 from pearlarr.output import (
     Phase,
-    TorrentGraduated,
+    RowFinished,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -39,13 +39,13 @@ from pearlarr.output.wait_lines import (
     wait_tally_lines,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
-from pearlarr.wait_types import NO_HELD_BACK, HeldBack, HeldFile, Outcome
+from pearlarr.wait_types import NO_HELD_BACK, HeldFile, LeftForHandImport, Outcome
 
 from .builders import SEP, held_files, order_only_held_back
 
 
 def _term(label: str, outcome: Outcome) -> TorrentView:
-    return TorrentView(key=label, label=label, phase=Phase.TERMINAL, outcome=outcome)
+    return TorrentView(key=label, label=label, phase=Phase.FINISHED, outcome=outcome)
 
 
 def _grad(
@@ -54,9 +54,9 @@ def _grad(
     *,
     files: int | None = None,
     waited: float = 0.0,
-    left_for_hand_import: HeldBack = NO_HELD_BACK,
-) -> TorrentGraduated:
-    return TorrentGraduated(
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
+) -> RowFinished:
+    return RowFinished(
         label=label, outcome=outcome, files=files, waited_s=waited, left_for_hand_import=left_for_hand_import
     )
 
@@ -343,7 +343,7 @@ def test_compact_eta_covers_every_magnitude() -> None:
 def test_phase_rank_covers_every_non_terminal_phase() -> None:
     # Drift pin: a new Phase member must be placed in the cockpit ordering - and
     # in the overflow/pulse tallies that hand-list the same non-terminal trio.
-    assert set(_PHASE_RANK) | {Phase.TERMINAL} == set(Phase)
+    assert set(_PHASE_RANK) | {Phase.FINISHED} == set(Phase)
 
 
 # --- graduation ledger coda ------------------------------------------------------
@@ -390,7 +390,7 @@ def test_graduation_tail_counts_held_back_files_and_names_the_action() -> None:
 
 
 _SEVERAL = order_only_held_back(
-    missing=(EpisodeKey(4, 1), EpisodeKey(4, 2)), not_recommended=(EpisodeKey(4, 5), EpisodeKey(4, 6))
+    missing=(EpisodeKey(4, 1), EpisodeKey(4, 2)), untrusted=(EpisodeKey(4, 5), EpisodeKey(4, 6))
 )
 
 
@@ -404,7 +404,7 @@ _SEVERAL = order_only_held_back(
             id="one missing",
         ),
         pytest.param(
-            order_only_held_back(missing=(), not_recommended=(EpisodeKey(4, 1),)),
+            order_only_held_back(missing=(), untrusted=(EpisodeKey(4, 1),)),
             "S04 E01 has a file that isn't from a recommended release",
             "S04 E01 has a file in Sonarr, but it isn't from a recommended release.",
             id="one holding another file",
@@ -418,14 +418,16 @@ _SEVERAL = order_only_held_back(
         ),
     ],
 )
-def test_an_order_only_record_leads_with_its_unfilled_episodes(held: HeldBack, coda: str, lead: str) -> None:
+def test_an_order_only_record_leads_with_its_unfilled_episodes(held: LeftForHandImport, coda: str, lead: str) -> None:
     assert graduation_tail(_grad("A", Outcome.PARTIAL, left_for_hand_import=held)) == coda
     assert held_back_sentences(held)[0] == lead
 
 
 def test_a_lone_order_only_file_reads_in_the_singular() -> None:
     name = "[grp] Show Ending S1 - 01 [ABCD1234].mkv"
-    held = HeldBack(files=(HeldFile(name, OrderOnlyKey("dvd", EpisodeKey(7, 1))),), missing=(EpisodeKey(4, 1),))
+    held = LeftForHandImport(
+        files=(HeldFile(name, OrderOnlyKey("dvd", EpisodeKey(7, 1))),), missing=(EpisodeKey(4, 1),)
+    )
     assert held_back_sentences(held)[1] == (
         "This pack is numbered by the DVD order, and 1 of its files is one of the DVD episodes "
         "that aren't in Sonarr's list, so Pearlarr can't tell where it belongs"
@@ -433,7 +435,7 @@ def test_a_lone_order_only_file_reads_in_the_singular() -> None:
 
 
 def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
-    held = HeldBack(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
+    held = LeftForHandImport(files=order_only_held_back().files[:1], missing=(EpisodeKey(4, 1),))
     lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
     assert [line.message for line in lines[1:3]] == [
         "    reason      this pack is numbered by the DVD order, and 1 of its files is one of the DVD",
@@ -446,7 +448,7 @@ def test_files_keyed_by_two_orders_name_both_orders() -> None:
         HeldFile("a.mkv", OrderOnlyKey("dvd", EpisodeKey(7, 1))),
         HeldFile("b.mkv", OrderOnlyKey("altdvd", EpisodeKey(3, 1))),
     )
-    reason = held_back_sentences(HeldBack(files=files, missing=(EpisodeKey(4, 1),)))[1]
+    reason = held_back_sentences(LeftForHandImport(files=files, missing=(EpisodeKey(4, 1),)))[1]
     assert reason.startswith("This pack is numbered by the DVD and alternate DVD orders, and 2 of its files are")
 
 
@@ -476,7 +478,9 @@ def test_a_held_back_row_names_five_files_and_counts_the_rest() -> None:
 
 
 def test_a_mixed_record_keeps_its_count_and_keys_the_order_only_file() -> None:
-    held = HeldBack(files=(order_only_held_back().files[0], HeldFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv")))
+    held = LeftForHandImport(
+        files=(order_only_held_back().files[0], HeldFile("[grp] Show Ending S1 - 05 [ABCD1234].mkv"))
+    )
     lines = wait_graduation_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=held), detect_capabilities(None))
     assert [line.message for line in lines] == [
         f"  ~ partial     A  (2 files held back{SEP}import by hand in Sonarr)",

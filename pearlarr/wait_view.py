@@ -11,8 +11,8 @@ from typing import NamedTuple, final, override
 from .console_caps import console_of, detect_capabilities
 from .output import (
     Phase,
+    RowFinished,
     ScopeFactory,
-    TorrentGraduated,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -20,7 +20,7 @@ from .output import (
     WaitSnapshot,
     emit_to_hub,
 )
-from .wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
+from .wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +31,7 @@ class WaitOutcomeRow:
     outcome: Outcome
     carried_over: bool = False
     """Whether the record predates this run. A fresh grab tallies as `added`, never `imported`."""
-    left_for_hand_import: HeldBack = NO_HELD_BACK
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK
     """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
 
 
@@ -52,27 +52,27 @@ class WaitResult:
     def imported(self) -> int:
         """Count of imported (SUCCESS) torrents."""
 
-        return self._count(OutcomeCategory.SUCCESS)
+        return self._count(OutcomeKind.IMPORTED)
 
     @property
     def carried_over_imported(self) -> int:
         """Count of carried-over imported torrents, the run tally's `imported` bucket."""
 
-        return sum(1 for row in self.rows if row.carried_over and row.outcome.category is OutcomeCategory.SUCCESS)
+        return sum(1 for row in self.rows if row.carried_over and row.outcome.category is OutcomeKind.IMPORTED)
 
     @property
     def left(self) -> int:
         """Count of deferred (left pending) torrents."""
 
-        return self._count(OutcomeCategory.DEFERRED)
+        return self._count(OutcomeKind.LEFT)
 
     @property
     def failed(self) -> int:
         """Count of failed torrents."""
 
-        return self._count(OutcomeCategory.FAILED)
+        return self._count(OutcomeKind.FAILED)
 
-    def _count(self, category: OutcomeCategory) -> int:
+    def _count(self, category: OutcomeKind) -> int:
         return sum(1 for row in self.rows if row.outcome.category is category)
 
 
@@ -89,7 +89,7 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduati
     return [
         Graduation(torrent, torrent.outcome)
         for torrent in snapshot.torrents
-        if torrent.phase is Phase.TERMINAL and torrent.outcome is not None and torrent.key not in seen
+        if torrent.phase is Phase.FINISHED and torrent.outcome is not None and torrent.key not in seen
     ]
 
 
@@ -128,7 +128,7 @@ class HubWaitView(WaitView):
         self._factory = ScopeFactory(emit_to_hub)
         self._scope: WaitScope | None = None
         self._seen: set[str] = set()
-        self._tally: Counter[OutcomeCategory] = Counter()
+        self._tally: Counter[OutcomeKind] = Counter()
         self._last_elapsed = 0.0
         self._closed = False
 
@@ -147,7 +147,7 @@ class HubWaitView(WaitView):
                 self._seen.add(view.key)
                 self._tally[outcome.category] += 1
                 scope.graduated(
-                    TorrentGraduated(
+                    RowFinished(
                         label=view.label,
                         outcome=outcome,
                         files=view.import_total,
@@ -174,11 +174,11 @@ class HubWaitView(WaitView):
             # A zero-tally pass still finishes: the builders render [] for the empty tally, so the file stays silent.
             scope.finish(
                 WaitFinished(
-                    imported=self._tally[OutcomeCategory.SUCCESS],
-                    deferred=self._tally[OutcomeCategory.DEFERRED],
-                    failed=self._tally[OutcomeCategory.FAILED],
+                    imported=self._tally[OutcomeKind.IMPORTED],
+                    deferred=self._tally[OutcomeKind.LEFT],
+                    failed=self._tally[OutcomeKind.FAILED],
                     elapsed_s=self._last_elapsed,
-                    pending=self._tally[OutcomeCategory.PENDING],
+                    pending=self._tally[OutcomeKind.IN_PROGRESS],
                     kind=self._kind,
                 ),
             )

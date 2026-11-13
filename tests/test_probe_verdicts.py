@@ -12,7 +12,7 @@ from pearlarr.probe_verdicts import (
     ContentPaths,
     DownloadMatch,
     HistoryImport,
-    QueueVerdict,
+    QueueState,
     classify_commands,
     classify_download_history,
     classify_queue,
@@ -23,7 +23,7 @@ from pearlarr.probe_verdicts import (
     rescanned_since_add,
     sonarr_restarted,
 )
-from pearlarr.wait_types import Deferral
+from pearlarr.wait_types import PauseReason
 
 from .builders import PENDING_ADDED, PENDING_STAMP, entry_claim, pending_import, queue_record
 
@@ -32,52 +32,52 @@ class TestClassifyQueue:
     """`classify_queue` buckets queue records (state + pending status) into one verdict."""
 
     def test_empty_is_not_in_queue(self) -> None:
-        assert classify_queue([]) is QueueVerdict.NOT_IN_QUEUE
+        assert classify_queue([]) is QueueState.NOT_IN_QUEUE
 
     def test_import_blocked_steps_in(self) -> None:
-        assert classify_queue([queue_record("A", "importBlocked")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "importBlocked")]) is QueueState.STEP_IN
 
     def test_failed_steps_in(self) -> None:
-        assert classify_queue([queue_record("A", "failed")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "failed")]) is QueueState.STEP_IN
 
     def test_clean_pending_is_pending_clean(self) -> None:
-        assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueVerdict.PENDING_CLEAN
+        assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueState.PENDING_CLEAN
 
     def test_statusless_pending_is_pending_clean(self) -> None:
         # No reported status folds to clean: only an explicit warning/error flag
         # routes a pending record away from the defer-to-Sonarr path.
-        assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueVerdict.PENDING_CLEAN
+        assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueState.PENDING_CLEAN
 
     def test_flagged_pending_steps_in(self) -> None:
         # warning/error on importPending = Sonarr's own import attempt failed and
         # it won't reliably retry (observed live: flagged-pending torrents sat
         # 10+ minutes untouched) - so waiting only burns the readiness deadline.
-        assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueVerdict.STEP_IN
-        assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueState.STEP_IN
 
     def test_downloading_waits(self) -> None:
-        assert classify_queue([queue_record("A", "downloading")]) is QueueVerdict.WAIT
+        assert classify_queue([queue_record("A", "downloading")]) is QueueState.WAIT
 
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
         # record is blocked. A later poll re-evaluates once the import settles.
         records = [queue_record("A", "importing"), queue_record("A", "importBlocked")]
-        assert classify_queue(records) is QueueVerdict.IMPORTING
+        assert classify_queue(records) is QueueState.IMPORTING
 
     def test_importing_outranks_a_clean_pending_sibling(self) -> None:
         # The copy itself is Sonarr's wait (credited), and it outranks every other reading.
         records = [queue_record("A", "importPending", status="ok"), queue_record("A", "importing")]
-        assert classify_queue(records) is QueueVerdict.IMPORTING
+        assert classify_queue(records) is QueueState.IMPORTING
 
     def test_downloading_beats_blocked_as_a_plain_wait(self) -> None:
         # In motion but not copying: Sonarr's view lags the finished torrent, so
         # the wait is the record's own (uncredited).
         records = [queue_record("A", "downloading"), queue_record("A", "importBlocked")]
-        assert classify_queue(records) is QueueVerdict.WAIT
+        assert classify_queue(records) is QueueState.WAIT
 
     def test_case_insensitive(self) -> None:
-        assert classify_queue([queue_record("A", "IMPORTBLOCKED")]) is QueueVerdict.STEP_IN
-        assert classify_queue([queue_record("A", "importPending", status="WARNING")]) is QueueVerdict.STEP_IN
+        assert classify_queue([queue_record("A", "IMPORTBLOCKED")]) is QueueState.STEP_IN
+        assert classify_queue([queue_record("A", "importPending", status="WARNING")]) is QueueState.STEP_IN
 
 
 def _command(
@@ -195,11 +195,11 @@ class TestClassifyCommands:
 
 
 _BLOCK_WAITS = {
-    CommandBlock.AUTO_IMPORT: (True, Deferral.IMPORT),
-    CommandBlock.IN_FLIGHT_IMPORT: (False, Deferral.IMPORT),
-    CommandBlock.DISK_COMMAND: (False, Deferral.BUSY),
-    CommandBlock.DISK_COMMAND_CHANGED: (False, Deferral.BUSY),
-    CommandBlock.SONARR_RESTARTED: (False, Deferral.NONE),
+    CommandBlock.AUTO_IMPORT: (True, PauseReason.IMPORT),
+    CommandBlock.IN_FLIGHT_IMPORT: (False, PauseReason.IMPORT),
+    CommandBlock.DISK_COMMAND: (False, PauseReason.BUSY),
+    CommandBlock.DISK_COMMAND_CHANGED: (False, PauseReason.BUSY),
+    CommandBlock.SONARR_RESTARTED: (False, PauseReason.NONE),
 }
 
 

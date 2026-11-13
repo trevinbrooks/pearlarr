@@ -47,6 +47,7 @@ from .events import (
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
+    RowFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -55,7 +56,6 @@ from .events import (
     ScopeOpened,
     Severity,
     StarterConfigWritten,
-    TorrentGraduated,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -133,7 +133,7 @@ class CliTextRenderer(Renderer):
                 | RunSummaryReady()
                 | WaitStarted()
                 | WaitProgress()
-                | TorrentGraduated()
+                | RowFinished()
                 | WaitFinished()
                 | LegFinished()
             ):

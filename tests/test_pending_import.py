@@ -12,8 +12,8 @@ from pearlarr.file_paths import normalize_basename
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     GuardFacts,
-    OwnedEpisode,
     PendingImport,
+    SizeMatchedEpisode,
     TitleClaim,
     TitleNames,
     TitleWindow,
@@ -312,14 +312,14 @@ class TestPendingImportClaims:
                 entry_claim(
                     al_id=1,
                     guards=GuardFacts(
-                        entry_groups=("A", "B"), stale_groups=("S",), owned_episodes=(OwnedEpisode(11, 700),)
+                        entry_groups=("A", "B"), stale_groups=("S",), owned_episodes=(SizeMatchedEpisode(11, 700),)
                     ),
                 ),
                 entry_claim(
                     al_id=2,
                     series_id=8,
                     guards=GuardFacts(
-                        entry_groups=("Z",), stale_groups=("Y",), owned_episodes=(OwnedEpisode(11, 999),)
+                        entry_groups=("Z",), stale_groups=("Y",), owned_episodes=(SizeMatchedEpisode(11, 999),)
                     ),
                 ),
                 entry_claim(
@@ -327,7 +327,7 @@ class TestPendingImportClaims:
                     guards=GuardFacts(
                         entry_groups=("B", "C"),
                         stale_groups=("S", "T"),
-                        owned_episodes=(OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
+                        owned_episodes=(SizeMatchedEpisode(11, 710), SizeMatchedEpisode(12, 720)),
                     ),
                 ),
             ),
@@ -338,7 +338,7 @@ class TestPendingImportClaims:
         assert merged == GuardFacts(
             entry_groups=("A", "B", "C"),
             stale_groups=("S", "T"),
-            owned_episodes=(OwnedEpisode(11, 700), OwnedEpisode(11, 710), OwnedEpisode(12, 720)),
+            owned_episodes=(SizeMatchedEpisode(11, 700), SizeMatchedEpisode(11, 710), SizeMatchedEpisode(12, 720)),
         )
         assert merged.owned_sizes == {11: 710, 12: 720}
         assert pending.guards_for(9) == GuardFacts()
@@ -352,7 +352,7 @@ class TestPendingImportClaims:
             ),
         )
 
-        assert pending.resolved_ids() == [3, 1, 2]
+        assert pending.window_episode_ids() == [3, 1, 2]
 
     def test_resolved_ids_fall_back_to_the_seeds_sorted_when_every_claim_is_unscoped(self) -> None:
         # The map's ids alone, a stray zero dropped: the specials shape with no window to scope against.
@@ -361,8 +361,8 @@ class TestPendingImportClaims:
             claims=(entry_claim(al_id=1), entry_claim(al_id=2, series_id=8)),
         )
 
-        assert pending.resolved_ids() == [5, 7]
-        assert pending_import(file_episode_map={}).resolved_ids() == []
+        assert pending.window_episode_ids() == [5, 7]
+        assert pending_import(file_episode_map={}).window_episode_ids() == []
 
     def test_with_claim_appends_a_new_entry(self) -> None:
         pending = pending_import()
@@ -456,7 +456,7 @@ def _guarded_claim() -> TitleClaim:
         names=TitleNames("Some Show", ("Some Show", "Aru Show")),
         preowned_episode_ids=[11],
         slice_coverage="S02 E01-E02",
-        guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(OwnedEpisode(11, 700),)),
+        guards=GuardFacts(entry_groups=("Era-Raws", "OtherPick"), owned_episodes=(SizeMatchedEpisode(11, 700),)),
     )
 
 

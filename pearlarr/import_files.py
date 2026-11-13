@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .arr_models import ManualImportCandidate, QualityModel
-from .episode_state import TargetStatuses
+from .episode_state import EpisodeStatuses
 from .file_paths import normalized_leaf, path_leaf
 from .pending_import import FileEpisodeMap, PendingImport
 from .video_files import is_video_candidate
@@ -75,7 +75,7 @@ def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, Ca
 
 
 @dataclass(frozen=True, slots=True)
-class DiskLeftover:
+class UnplacedInFolder:
     """One poll's video files on disk that the import's map lacks. The import reports them and never places one."""
 
     names: tuple[str, ...]
@@ -111,7 +111,7 @@ class DiskLeftover:
 
 def disk_leftover(
     pending: PendingImport, candidates_by_basename: Mapping[str, CandidateFile], mapped: FileEpisodeMap
-) -> DiskLeftover:
+) -> UnplacedInFolder:
     """The video files among `candidates_by_basename` that `mapped` lacks, split by what `pending` says of them."""
 
     video = {
@@ -124,7 +124,7 @@ def disk_leftover(
     excluded = set(pending.excluded_files)
     reported = tuple(name for name in names if name not in excluded)
     hand_import = set(pending.hand_import_files)
-    return DiskLeftover(names, reported, tuple(name for name in reported if name in hand_import))
+    return UnplacedInFolder(names, reported, tuple(name for name in reported if name in hand_import))
 
 
 class ImportAction(StrEnum):
@@ -173,7 +173,7 @@ class ImportDecision:
 def plan_import_files(
     authoritative_map: FileEpisodeMap,
     candidates_by_basename: Mapping[str, CandidateFile],
-    statuses: TargetStatuses,
+    statuses: EpisodeStatuses,
 ) -> list[ImportDecision]:
     """Decide, for each file in OUR map (never the candidates), whether to import it and onto which episodes.
 

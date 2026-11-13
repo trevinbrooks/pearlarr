@@ -394,7 +394,7 @@ class _RunFit:
             if not window_set.isdisjoint(reading.either_ids or ()):
                 return True
             # A runner-up's claim on the window lost before the run was asked: it refuses nothing.
-            if not reading.trusted or file.runner_up(reading.ids):
+            if not reading.usable or file.runner_up(reading.ids):
                 continue
             if reading.ids and window_set.issuperset(reading.ids):
                 return True

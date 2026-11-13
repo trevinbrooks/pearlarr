@@ -47,6 +47,7 @@ from .events import (
     NextRunScheduled,
     PathsShown,
     ReleaseSkipped,
+    RowFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -56,7 +57,6 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     StarterConfigWritten,
-    TorrentGraduated,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -142,7 +142,7 @@ class BreadcrumbFold:
                 | GrabAction()
                 | CapReached()
                 | WaitProgress()
-                | TorrentGraduated()
+                | RowFinished()
                 | WaitFinished()
                 | Diagnostic()
             ):

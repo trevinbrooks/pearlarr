@@ -6,7 +6,7 @@ from .arr_models import ArrItem, HistoryRecord
 from .mappings import TitleMapping
 from .pending_import import PendingImport
 from .progress import ProgressSink
-from .wait_types import AttemptKind, EffectStatus, ImportProbe, ImportProgress
+from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress
 
 
 class ImportCompleter(ABC):
@@ -18,7 +18,7 @@ class ImportCompleter(ABC):
         pending: PendingImport,
         content_path: str,
         attempt: AttemptKind,
-    ) -> ImportProbe:
+    ) -> AttemptResult:
         """Reconcile one completed download with the arr (one poll).
 
         A manual import assigns with *our* file->episode mapping, never the arr's title parse.

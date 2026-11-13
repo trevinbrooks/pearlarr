@@ -12,7 +12,7 @@ from .output import hub_error, hub_note, hub_warn
 from .output.console_text import arr_item_noun, count_noun
 from .protocols import ArrStrategy, ImportCompleter
 from .run_services import LegDeps, LegServices
-from .wait_types import ImportWaitMode, PendingState
+from .wait_types import ImportWaitMode, PendingImportState
 from .wait_view import (
     WaitResult,
 )
@@ -302,7 +302,7 @@ class LegLoop:
                 # This owns the tally's `imported` bump: the snapshot's verified imports land in
                 # `pending_states`, the passes report theirs on their carried-over result rows.
                 self._ctx.stats.imported += sum(
-                    1 for state in self._ctx.pending_states.values() if state is PendingState.IMPORTED
+                    1 for state in self._ctx.pending_states.values() if state is PendingImportState.IMPORTED
                 )
                 self._wait_manager.tally_carried_over_into_stats()
 

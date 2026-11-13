@@ -7,7 +7,7 @@ from typing import Self
 
 from .arr_models import ParsedFileInfo
 from .coverage import coverage_string, episodes_from_ep_list
-from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GroupVotes
+from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
 from .file_paths import normalized_leaf
 from .numberings import NumberingStep
 from .pairs import unambiguous
@@ -16,11 +16,11 @@ from .pending_import import (
     NO_SIZES_BY_NAME,
     FileEpisodeMap,
     GuardFacts,
-    OwnGroup,
     PendingImport,
     TitleClaim,
     TitleNames,
     TitleWindow,
+    TorrentGroup,
     joined_map,
     sizes_by_episode,
 )
@@ -572,10 +572,10 @@ class SeedRelease:
     """The url's files placed at grab time (`place_release`)."""
 
     @property
-    def own_group(self) -> OwnGroup:
+    def own_group(self) -> TorrentGroup:
         """The release's group at its listing's sizes, the trust policy's last vote."""
 
-        return OwnGroup(self.release_group, tuple(self.release.size))
+        return TorrentGroup(self.release_group, tuple(self.release.size))
 
     @property
     def facts(self) -> TorrentFacts:
@@ -670,11 +670,11 @@ def build_entry_claim(release: SeedRelease, scope: GrabbingTitle, entry: TitleFa
     # Targets that already hold a recommended file at grab time were never this torrent's to insert:
     # classify them against the claim's own trust slice (no sibling votes yet) so the wait's inserted
     # counts start at 0. A replaced claim keeps its first preowned ids (`PendingImport.with_claim`).
-    grab_snapshot = EpisodeSnapshot.guarded(index, entry.guards, GroupVotes(release.own_group))
+    grab_snapshot = EpisodeSnapshot.guarded(index, entry.guards, GrabbedGroups(release.own_group))
     preowned = tuple(
         ep_id
         for ep_id, status in grab_snapshot.statuses(sorted(claimed), release.placed.intended_sizes).by_id.items()
-        if status is EpisodeFileStatus.RECOMMENDED
+        if status is EpisodeFileStatus.TRUSTED
     )
     slice_coverage = coverage_string(episodes_from_ep_list(slice_eps)) or None
     window = scope.window

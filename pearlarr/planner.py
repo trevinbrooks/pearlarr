@@ -19,7 +19,7 @@ from .arr_models import ArrFiles, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .output import Severity
 from .pairs import unambiguous
-from .pending_import import GuardFacts, OwnedEpisode
+from .pending_import import GuardFacts, SizeMatchedEpisode
 from .releases import (
     EpisodeKey,
     EpisodeRecord,
@@ -624,7 +624,7 @@ class DownloadPlanner:
                 # inherit the exact files the grab decision just called ours -
                 # and can re-verify them by size before honoring the claim.
                 owned_episodes=tuple(
-                    OwnedEpisode(eid, identity.size)
+                    SizeMatchedEpisode(eid, identity.size)
                     for key, identity in identities.items()
                     if identity.by_size and identity.size and (eid := sonarr_by_key[key].id)
                 ),

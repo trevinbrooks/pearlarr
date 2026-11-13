@@ -21,10 +21,10 @@ from pearlarr.log import RichConsoleHandler
 from pearlarr.output import (
     Event,
     Phase,
+    RowFinished,
     ScopeClosed,
     ScopeKind,
     ScopeOpened,
-    TorrentGraduated,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -35,7 +35,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.console_text import STATE_WIDTH
 from pearlarr.output.recording import RecordingHub
-from pearlarr.wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
+from pearlarr.wait_types import NO_HELD_BACK, LeftForHandImport, Outcome, OutcomeKind
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view
 
 from .builders import held_files
@@ -74,12 +74,12 @@ def _terminal(
     *,
     files: int | None = None,
     elapsed: float = 0.0,
-    left_for_hand_import: HeldBack = NO_HELD_BACK,
+    left_for_hand_import: LeftForHandImport = NO_HELD_BACK,
 ) -> TorrentView:
     return TorrentView(
         key=key,
         label=label,
-        phase=Phase.TERMINAL,
+        phase=Phase.FINISHED,
         outcome=outcome,
         import_done=files,
         import_total=files,
@@ -189,15 +189,15 @@ class TestHubWaitViewNarration:
         view.update(WaitSnapshot((done, _terminal("h2", "B", Outcome.DOWNLOAD_TIMED_OUT)), elapsed_s=500))
 
         (opened,) = recording.of_type(ScopeOpened)
-        assert recording.of_type(TorrentGraduated) == [
-            TorrentGraduated(
+        assert recording.of_type(RowFinished) == [
+            RowFinished(
                 label="Bocchi the Rock!",
                 outcome=Outcome.IMPORTED,
                 files=12,  # = import_total
                 waited_s=192.0,  # = phase_elapsed_s
                 scope=opened.scope,
             ),
-            TorrentGraduated(
+            RowFinished(
                 label="B",
                 outcome=Outcome.DOWNLOAD_TIMED_OUT,
                 files=None,
@@ -213,7 +213,7 @@ class TestHubWaitViewNarration:
 
         self._view().update(WaitSnapshot((row,), elapsed_s=15))
 
-        (graduated,) = recording.of_type(TorrentGraduated)
+        (graduated,) = recording.of_type(RowFinished)
         assert graduated.left_for_hand_import.names == ("a.mkv", "b.mkv")
         assert graduated.outcome is Outcome.UNMATCHED
 
@@ -226,7 +226,7 @@ class TestHubWaitViewNarration:
 
         self._view().update(WaitSnapshot((_terminal("h1", "A", Outcome.IMPORTED),), elapsed_s=10))
 
-        assert [type(e) for e in recording.events] == [ScopeOpened, WaitStarted, TorrentGraduated, WaitProgress]
+        assert [type(e) for e in recording.events] == [ScopeOpened, WaitStarted, RowFinished, WaitProgress]
 
     def test_close_finishes_with_the_tally_then_closes_the_scope(self) -> None:
         recording = RecordingHub()
@@ -430,4 +430,4 @@ def test_outcome_dropped_is_exactly_imported_and_missing() -> None:
 def test_outcome_glyph_falls_back_to_ascii() -> None:
     assert Outcome.IMPORTED.glyph(use_unicode=True) == "✔"
     assert Outcome.IMPORTED.glyph(use_unicode=False) == "ok"
-    assert Outcome.IMPORTED.category is OutcomeCategory.SUCCESS
+    assert Outcome.IMPORTED.category is OutcomeKind.IMPORTED

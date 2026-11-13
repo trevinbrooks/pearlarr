@@ -52,7 +52,7 @@ from pearlarr.output import JsonRenderer
 from pearlarr.output import events as ev
 from pearlarr.output.events import EntryState
 from pearlarr.paths import PROJECT_URL
-from pearlarr.wait_types import Outcome, OutcomeCategory
+from pearlarr.wait_types import Outcome, OutcomeKind
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_SOURCE = "pearlarr/config.py"
@@ -799,7 +799,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.BootStepFinished(
             scope=_BOOT_SCOPE,
             label="Connecting to Sonarr",
-            outcome=OutcomeCategory.SUCCESS,
+            outcome=OutcomeKind.IMPORTED,
             detail="42 series",
             elapsed_s=1.2,
         ),
@@ -855,7 +855,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ScopeOpened(scope=_WAIT_SCOPE, label="wait"),
         ev.WaitStarted(total=1, pulse_s=300.0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE),
         ev.WaitProgress(snapshot=ev.WaitSnapshot(torrents=(), elapsed_s=30.0), scope=_WAIT_SCOPE),
-        ev.TorrentGraduated(
+        ev.RowFinished(
             label="[SubsPlease] Sousou no Frieren",
             outcome=Outcome.IMPORTED,
             files=28,

@@ -36,7 +36,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.run_services import LegDeps
-from pearlarr.wait_types import OutcomeCategory
+from pearlarr.wait_types import OutcomeKind
 
 from .builders import make_bare_instance, make_config
 from .fakes import FakeClock
@@ -114,7 +114,7 @@ def test_step_graduates_with_detail_and_timing() -> None:
     assert finished == BootStepFinished(
         scope=started.scope,
         label="Fetching Sonarr library",
-        outcome=OutcomeCategory.SUCCESS,
+        outcome=OutcomeKind.IMPORTED,
         detail="42 series",
         elapsed_s=1.2,
     )
@@ -129,7 +129,7 @@ def test_step_failure_graduates_failed_and_reraises() -> None:
     flow.close()
 
     (finished,) = recording.of_type(BootStepFinished)
-    assert finished.outcome is OutcomeCategory.FAILED
+    assert finished.outcome is OutcomeKind.FAILED
     assert recording.of_type(BootReady) == []  # no false "ready" after a failure
 
 
@@ -199,7 +199,7 @@ def test_deferred_warn_still_allows_the_capstone() -> None:
     flow.end_section()
 
     (finished,) = recording.of_type(BootStepFinished)
-    assert finished.outcome is OutcomeCategory.DEFERRED
+    assert finished.outcome is OutcomeKind.LEFT
     assert len(recording.of_type(BootReady)) == 1
 
 
@@ -331,5 +331,5 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
 
     assert deps.qbit is None
     [qbit_step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Connecting to qBittorrent"]
-    assert qbit_step.outcome is OutcomeCategory.DEFERRED
+    assert qbit_step.outcome is OutcomeKind.LEFT
     assert qbit_step.detail == "not configured - preview mode"

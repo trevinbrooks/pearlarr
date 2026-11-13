@@ -50,6 +50,7 @@ from .events import (
     PlacedBy,
     ReleaseName,
     ReleaseSkipped,
+    RowFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -60,7 +61,6 @@ from .events import (
     Severity,
     SkipReason,
     StarterConfigWritten,
-    TorrentGraduated,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -69,7 +69,7 @@ from .events import (
 from .hub import Renderer
 from .wait_lines import PulseThrottle, held_back_names, held_back_sentences
 from ..log import LOG_NAME
-from ..wait_types import OutcomeCategory
+from ..wait_types import OutcomeKind
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
 
@@ -170,10 +170,10 @@ class _Fact:
     component: str = ""
 
 
-def _boot_outcome_word(category: OutcomeCategory) -> str:
-    if category is OutcomeCategory.FAILED:
+def _boot_outcome_word(category: OutcomeKind) -> str:
+    if category is OutcomeKind.FAILED:
         return "failed"
-    if category is OutcomeCategory.DEFERRED:
+    if category is OutcomeKind.LEFT:
         return "warned"
     return "ok"
 
@@ -254,7 +254,7 @@ def _fields_grab_action(event: GrabAction) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _fields_graduated(event: TorrentGraduated) -> tuple[Field, ...]:
+def _fields_graduated(event: RowFinished) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
@@ -290,7 +290,7 @@ def _pulse_fact(event: WaitProgress) -> _Fact:
     fields = (
         Field("downloading", counts[Phase.DOWNLOADING]),
         Field("importing", counts[Phase.IMPORTING]),
-        Field("queued", counts[Phase.QUEUED]),
+        Field("queued", counts[Phase.AWAITING_FIRST_POLL]),
         Field("elapsed_s", event.snapshot.elapsed_s),
     )
     return _Fact("wait_pulse", Severity.INFO, "still waiting", fields, event.scope, "wait")
@@ -466,7 +466,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
             return _Fact("run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
         case WaitStarted(scope=scope, kind=kind):
             return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
-        case TorrentGraduated(scope=scope, outcome=outcome):
+        case RowFinished(scope=scope, outcome=outcome):
             return _Fact("torrent_graduated", severity, outcome.word, _fields_graduated(event), scope, "wait")
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")

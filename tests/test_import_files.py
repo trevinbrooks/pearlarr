@@ -4,7 +4,7 @@
 from typing import ClassVar
 
 from pearlarr.episode_state import EpisodeFileStatus
-from pearlarr.import_files import CandidateFile, DiskLeftover, candidate_files, disk_leftover, plan_import_files
+from pearlarr.import_files import CandidateFile, UnplacedInFolder, candidate_files, disk_leftover, plan_import_files
 
 from .builders import manual_candidate, pending_import, target_statuses
 
@@ -32,7 +32,7 @@ class TestPlanImportFiles:
         cands = {"a.mkv": _candidate("a.mkv"), "b.mkv": _candidate("b.mkv")}
         # episode 12 already holds a recommended file -> only 11 needs import.
         decisions = plan_import_files(
-            amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.RECOMMENDED})
+            amap, cands, target_statuses({11: EpisodeFileStatus.ABSENT, 12: EpisodeFileStatus.TRUSTED})
         )
         by_base = {d.basename: d for d in decisions}
         assert by_base["a.mkv"].action == "import"
@@ -79,13 +79,13 @@ class TestPlanImportFiles:
         # `already` (never overwrite).
         amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
-        decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.RECOMMENDED}))
+        decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.TRUSTED}))
         assert decisions[0].action == "already"
 
     def test_not_needed_without_rejection_is_skip_done(self) -> None:
         amap = {"i.mkv": (12,)}
         cands = {"i.mkv": _candidate("i.mkv")}
-        decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.RECOMMENDED}))
+        decisions = plan_import_files(amap, cands, target_statuses({12: EpisodeFileStatus.TRUSTED}))
         assert decisions[0].action == "skip_done"
 
 
@@ -99,30 +99,28 @@ class TestOwnCopyAlongside:
     _CANDIDATES: ClassVar[dict[str, CandidateFile]] = {"range.mkv": _candidate("range.mkv")}
 
     def test_an_episode_holding_our_own_copy_is_posted_with_the_needing_one(self) -> None:
-        statuses = target_statuses({21: EpisodeFileStatus.RECOMMENDED, 22: EpisodeFileStatus.ABSENT}, frozenset({21}))
+        statuses = target_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.ABSENT}, frozenset({21}))
 
         [decision] = plan_import_files(self._MAP, self._CANDIDATES, statuses)
 
         assert (decision.action, decision.episode_ids) == ("import", (21, 22))
 
     def test_another_releases_recommended_file_is_left_alone(self) -> None:
-        statuses = target_statuses({21: EpisodeFileStatus.RECOMMENDED, 22: EpisodeFileStatus.ABSENT})
+        statuses = target_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.ABSENT})
 
         [decision] = plan_import_files(self._MAP, self._CANDIDATES, statuses)
 
         assert (decision.action, decision.episode_ids) == ("import", (22,))
 
     def test_our_own_copies_alone_never_trigger_an_import(self) -> None:
-        statuses = target_statuses(
-            {21: EpisodeFileStatus.RECOMMENDED, 22: EpisodeFileStatus.RECOMMENDED}, frozenset({21, 22})
-        )
+        statuses = target_statuses({21: EpisodeFileStatus.TRUSTED, 22: EpisodeFileStatus.TRUSTED}, frozenset({21, 22}))
 
         [decision] = plan_import_files(self._MAP, self._CANDIDATES, statuses)
 
         assert decision.action == "skip_done"
 
     def test_our_copy_on_an_episode_the_file_isnt_placed_on_stays_put(self) -> None:
-        statuses = target_statuses({21: EpisodeFileStatus.ABSENT, 23: EpisodeFileStatus.RECOMMENDED}, frozenset({23}))
+        statuses = target_statuses({21: EpisodeFileStatus.ABSENT, 23: EpisodeFileStatus.TRUSTED}, frozenset({23}))
 
         [decision] = plan_import_files({"one.mkv": (21,)}, {"one.mkv": _candidate("one.mkv")}, statuses)
 
@@ -146,7 +144,7 @@ class TestDiskLeftover:
 
         leftover = disk_leftover(pending, scan, {"mapped.mkv": (101,)})
 
-        assert leftover == DiskLeftover(
+        assert leftover == UnplacedInFolder(
             names=("a.mkv", "b.mkv", "c.mkv", "extra.mkv"),
             reported=("a.mkv", "c.mkv", "extra.mkv"),
             hand_import_files=("c.mkv",),

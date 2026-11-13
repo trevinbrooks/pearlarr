@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
+from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, TrustedGroups, trusted_groups
 from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_placement import (
     EntryPlacements,
@@ -25,7 +25,7 @@ from pearlarr.grab_placement import (
     build_pending_seeds,
 )
 from pearlarr.parse_records import parse_to_json
-from pearlarr.pending_import import GuardFacts, OwnedEpisode, PendingImport, TitleNames
+from pearlarr.pending_import import GuardFacts, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
 from pearlarr.releases import EpisodeRecord, SeadexDict
 from pearlarr.seadex_sonarr import SonarrStrategy
@@ -102,10 +102,10 @@ def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: Tit
     return seed_scope(episode_index(ep_list), episode_index(series), names=names or TitleNames())
 
 
-def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustPolicy:
+def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustedGroups:
     """The trust policy of `own`'s one claim: its plan's guards, the record's own group, the series' siblings."""
 
-    return trusted_groups(own.claims[0].guards, GroupVotes(own.own_group, [s.own_group for s in siblings]))
+    return trusted_groups(own.claims[0].guards, GrabbedGroups(own.own_group, [s.own_group for s in siblings]))
 
 
 class TestBuildPendingSeeds:
@@ -282,7 +282,7 @@ class TestBuildPendingSeeds:
             _strat(parses, ep_list),
             seadex_dict,
             entry=entry_facts(
-                guards=GuardFacts(owned_episodes=(OwnedEpisode(101, 1000),)),
+                guards=GuardFacts(owned_episodes=(SizeMatchedEpisode(101, 1000),)),
             ),
         )
 
@@ -321,7 +321,7 @@ class TestBuildPendingSeeds:
         assert seed.claim.slice_coverage == "S01 E01-E02"
         # The targets are the map's per-file ids alone, so the old cross-file
         # union bug (a whole season stamped onto one file) is out.
-        assert _record(seed).target_ids() == [101, 102]
+        assert _record(seed).file_map_episode_ids() == [101, 102]
 
     def test_empty_entry_seeds_nothing_and_excludes_nothing(self) -> None:
         # An entry that resolved no episodes has no scope to place into. An empty
@@ -924,4 +924,4 @@ class TestTrustedGroups:
         seed = strat._reconciler._read_seed(own, [101])
 
         assert seed is not None
-        assert seed.statuses.by_id == {101: EpisodeFileStatus.RECOMMENDED}
+        assert seed.statuses.by_id == {101: EpisodeFileStatus.TRUSTED}

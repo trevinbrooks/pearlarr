@@ -357,7 +357,7 @@ def _pass_size_match(state: PlacerState) -> None:
         if ep_id is None or ep_id not in state.scope.index.by_id:
             continue
         reading = file.reading
-        if (reading.trusted and reading.ids == (ep_id,)) or file.contradicts((ep_id,)):
+        if (reading.usable and reading.ids == (ep_id,)) or file.contradicts((ep_id,)):
             continue
         if not state.scope.admits(ep_id):
             state.leave_unplaced(file, PlacementVerdict.OUTSIDE_WINDOW)

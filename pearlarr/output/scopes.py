@@ -27,12 +27,12 @@ from .events import (
     LedgerRow,
     PlacedBy,
     ReleaseSkipped,
+    RowFinished,
     ScopeClosed,
     ScopeId,
     ScopeKind,
     ScopeOpened,
     Severity,
-    TorrentGraduated,
     WaitFinished,
     WaitKind,
     WaitProgress,
@@ -43,7 +43,7 @@ from .events import (
 )
 from .hub import SeverityCounts
 from .runtime import emit_to_hub
-from ..wait_types import OutcomeCategory
+from ..wait_types import OutcomeKind
 
 type Emit = Callable[[Event], None]
 
@@ -145,7 +145,7 @@ class StepScope(_ScopeBase):
         super().__init__(emit, label, scope)
         self._clock = clock
         self._started = clock()
-        self._category = OutcomeCategory.SUCCESS
+        self._category = OutcomeKind.IMPORTED
         self._detail: str | None = None
         self._slow_sent = False
         emit(BootStepStarted(scope=scope, label=label))
@@ -177,7 +177,7 @@ class StepScope(_ScopeBase):
         if not self._open:
             self._late(f"warn: {text or ''}", Severity.WARNING)
             return
-        self._category = OutcomeCategory.DEFERRED
+        self._category = OutcomeKind.LEFT
         if text is not None:
             self._detail = text
 
@@ -187,7 +187,7 @@ class StepScope(_ScopeBase):
         if not self._open:
             return
         self._open = False
-        outcome = OutcomeCategory.FAILED if failed else self._category
+        outcome = OutcomeKind.FAILED if failed else self._category
         self._emit(
             BootStepFinished(
                 scope=self._scope,
@@ -255,7 +255,7 @@ class WaitScope(_ScopeBase):
             return
         self._emit(WaitProgress(snapshot=snapshot, scope=self._scope))
 
-    def graduated(self, graduation: TorrentGraduated) -> None:
+    def graduated(self, graduation: RowFinished) -> None:
         if not self._open:
             self._late(f"{graduation.outcome.word} {graduation.label}", severity_of(graduation))
             return

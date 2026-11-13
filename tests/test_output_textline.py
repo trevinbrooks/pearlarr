@@ -66,6 +66,7 @@ from pearlarr.output import (
     RecommendedGroup,
     ReleaseName,
     ReleaseSkipped,
+    RowFinished,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -78,7 +79,6 @@ from pearlarr.output import (
     SkipReason,
     StarterConfigWritten,
     StyledValue,
-    TorrentGraduated,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -91,7 +91,7 @@ from pearlarr.output.events import EntryState
 from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.releases import ElsewhereCounts
-from pearlarr.wait_types import Outcome, OutcomeCategory
+from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .builders import held_files, order_only_held_back
 
@@ -159,7 +159,7 @@ def test_boot_step_finished_line_keeps_the_step_path() -> None:
     finished = BootStepFinished(
         scope=_STEP,
         label="Reading config",
-        outcome=OutcomeCategory.SUCCESS,
+        outcome=OutcomeKind.IMPORTED,
         detail=None,
         elapsed_s=0.02,
     )
@@ -178,7 +178,7 @@ def test_warned_boot_step_stays_info_with_the_warn_on_the_outcome_field() -> Non
     finished = BootStepFinished(
         scope=_STEP,
         label="Refreshing mappings",
-        outcome=OutcomeCategory.DEFERRED,
+        outcome=OutcomeKind.LEFT,
         detail="SeaDex unreachable",
         elapsed_s=3.5,
     )
@@ -283,7 +283,7 @@ def test_wait_start_lines_word_and_stamp_the_pass_kind(kind: WaitKind, words: st
 
 def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = TorrentGraduated(
+    graduated = RowFinished(
         label="Sousou no Frieren",
         outcome=Outcome.DOWNLOAD_TIMED_OUT,
         files=None,
@@ -298,7 +298,7 @@ def test_graduation_lines_ride_the_wait_breadcrumb() -> None:
 def test_unmatched_graduation_line_names_the_files() -> None:
     # The names ride the structured line as one joined string, the run-event field policy, only on this outcome.
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = TorrentGraduated(
+    graduated = RowFinished(
         label="Demo Batch",
         outcome=Outcome.UNMATCHED,
         files=None,
@@ -313,7 +313,7 @@ def test_unmatched_graduation_line_names_the_files() -> None:
 
 def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = TorrentGraduated(
+    graduated = RowFinished(
         label="Demo Batch",
         outcome=Outcome.PARTIAL,
         files=None,
@@ -328,7 +328,7 @@ def test_partial_graduation_line_names_the_files_left_for_a_hand_import() -> Non
 
 def test_order_only_graduation_line_says_why_and_keys_each_file() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    graduated = TorrentGraduated(
+    graduated = RowFinished(
         label="Demo Batch",
         outcome=Outcome.PARTIAL,
         files=None,
@@ -506,13 +506,13 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
 
 
 def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
-    # P6: severity_of(TorrentGraduated) is category-based, so a FAILED
+    # P6: severity_of(RowFinished) is category-based, so a FAILED
     # graduation (ERROR) survives a raised file level while a success drops.
     sink = FileLogSink(str(tmp_path))
     sink.set_level(logging.WARNING)
 
-    sink.handle(TorrentGraduated(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
-    sink.handle(TorrentGraduated(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
+    sink.handle(RowFinished(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
+    sink.handle(RowFinished(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
     sink.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
@@ -882,7 +882,7 @@ def _wait_progress(elapsed: float) -> WaitProgress:
     torrents = (
         TorrentView(key="a", label="A", phase=Phase.DOWNLOADING, fraction=0.5),
         TorrentView(key="b", label="B", phase=Phase.IMPORTING),
-        TorrentView(key="c", label="C", phase=Phase.QUEUED),
+        TorrentView(key="c", label="C", phase=Phase.AWAITING_FIRST_POLL),
     )
     return WaitProgress(snapshot=WaitSnapshot(torrents=torrents, elapsed_s=elapsed), scope=_WAIT)
 
@@ -1147,7 +1147,7 @@ def _exemplars() -> list[Event]:
         BootStepFinished(
             scope=_STEP,
             label="Reading config",
-            outcome=OutcomeCategory.SUCCESS,
+            outcome=OutcomeKind.IMPORTED,
             detail=None,
             elapsed_s=0.1,
         ),
@@ -1165,7 +1165,7 @@ def _exemplars() -> list[Event]:
         _summary_ready(),
         WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
-        TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
+        RowFinished(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0, pending=0, kind=WaitKind.MONITOR),
         LegFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),

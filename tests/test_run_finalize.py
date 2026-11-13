@@ -39,7 +39,7 @@ from pearlarr.run_loop import LegLoop
 from pearlarr.run_services import LegServices
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
-from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeCategory
+from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeKind
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
@@ -546,13 +546,13 @@ class TestBootNotes:
         step = self._step(self._run(logger, seadex=seadex), "Fetching SeaDex entries")
 
         assert step.detail == "unreachable"
-        assert step.outcome is OutcomeCategory.DEFERRED  # graduates as a warning
+        assert step.outcome is OutcomeKind.LEFT  # graduates as a warning
 
     def test_healthy_seadex_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
         step = self._step(self._run(logger), "Fetching SeaDex entries")
 
         assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
-        assert step.outcome is OutcomeCategory.SUCCESS
+        assert step.outcome is OutcomeKind.IMPORTED
 
     def test_anilist_outage_notes_unavailable_not_a_count(self, logger: logging.Logger) -> None:
         client = ScriptedAniListClient(failing=frozenset({1}))
@@ -560,13 +560,13 @@ class TestBootNotes:
         step = self._step(self._run(logger, client=client), "Fetching AniList metadata")
 
         assert step.detail == "unavailable"
-        assert step.outcome is OutcomeCategory.DEFERRED
+        assert step.outcome is OutcomeKind.LEFT
 
     def test_healthy_anilist_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
         step = self._step(self._run(logger, client=ScriptedAniListClient()), "Fetching AniList metadata")
 
         assert step.detail == "1 entry"  # the one mapped id needed fetching
-        assert step.outcome is OutcomeCategory.SUCCESS
+        assert step.outcome is OutcomeKind.IMPORTED
 
 
 class TestScanItemContext:

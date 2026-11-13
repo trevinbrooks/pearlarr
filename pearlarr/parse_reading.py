@@ -65,7 +65,7 @@ class ParsedEpisodes:
         return bool(self.ids) and not self.from_matched and self.sonarr_agrees
 
     @property
-    def trusted(self) -> bool:
+    def usable(self) -> bool:
         """A complete reading that was not rejected."""
 
         return self.complete and not self.rejected
@@ -74,13 +74,13 @@ class ParsedEpisodes:
     def wholly_outside(self) -> bool:
         """A trusted reading wholly outside the scope: the file belongs to another slice."""
 
-        return self.trusted and not self.in_window
+        return self.usable and not self.in_window
 
     @property
     def exact_ids(self) -> tuple[int, ...]:
         """The ids the exact pass places the file on: a trusted reading wholly inside the scope. Else ()."""
 
-        return self.in_window if self.trusted and self.in_window == self.ids else ()
+        return self.in_window if self.usable and self.in_window == self.ids else ()
 
     @property
     def rank(self) -> tuple[bool, bool]:
