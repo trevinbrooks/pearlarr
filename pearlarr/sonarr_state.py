@@ -7,7 +7,7 @@ from enum import Enum, auto
 from typing import NamedTuple
 
 from .arr_models import CommandResource, HistoryPage, QueueRecord
-from .file_paths import normalized_leaf, to_forward_slashes
+from .file_paths import file_name, normalize_name, to_forward_slashes
 from .pending_import import PendingImport
 from .stamps import parse_stamp_aware
 from .wait_types import AttemptResult, PauseReason
@@ -401,7 +401,7 @@ def placements_from_history(imports: Sequence[HistoryImport], pending: PendingIm
     wanted = pending.unplaced_names()
     grouped: dict[str, set[int]] = {}
     for row in imports:
-        name = normalized_leaf(row.path)
+        name = normalize_name(file_name(row.path))
         if name not in wanted:
             continue
         if not any(c.series_id == row.series_id and c.admits(row.episode_id) for c in pending.claims):

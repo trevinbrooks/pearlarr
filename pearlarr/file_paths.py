@@ -92,9 +92,3 @@ def file_name(name: str) -> str:
     # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a leaf whose second
     # character is a colon (`K: Return of Kings - 01.mkv`) as a drive and cuts those two characters off.
     return posixpath.basename(to_forward_slashes(name).rstrip("/"))
-
-
-def normalized_leaf(name: str) -> str:
-    """Fold a listing path or on-disk path to its normalized leaf (`path_leaf`, then `normalize_basename`)."""
-
-    return normalize_name(file_name(name))

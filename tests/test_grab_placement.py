@@ -8,7 +8,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
-from pearlarr.file_paths import normalize_name, normalized_leaf
+from pearlarr.file_paths import file_name, normalize_name
 from pearlarr.grab_placement import (
     EntryPlacements,
     FetchedSeadex,
@@ -160,7 +160,9 @@ class TestPlaceRelease:
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == tuple(ReleaseEpisode(1, n, 10 * n) for n in range(1, 5))
-        assert placement.placements.placed == {normalized_leaf(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
+        assert placement.placements.placed == {
+            normalize_name(file_name(name)): (100 + n,) for n, name in enumerate(_RUN, 1)
+        }
         assert placement.covered_ids == {101, 102, 103, 104}
         assert placement.inputs_read
         assert placement.pending_import is None

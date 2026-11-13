@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from .arr_models import ManualImportCandidate, QualityModel
 from .episode_state import EpisodeStatuses
-from .file_paths import file_name, normalized_leaf
+from .file_paths import file_name, normalize_name
 from .pending_import import FileEpisodeMap, PendingImport
 from .video_files import is_video_candidate
 
@@ -63,7 +63,7 @@ def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, Ca
         path = candidate.path
         if not path:
             continue
-        base = normalized_leaf(path)
+        base = normalize_name(file_name(path))
         by_name[base] = CandidateFile(
             normalized_name=base,
             path=path,
@@ -116,7 +116,9 @@ def unplaced_in_folder(
 
     video = {name for name, candidate in candidates_by_name.items() if is_video_candidate(file_name(candidate.path))}
     # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
-    listed = dict.fromkeys(name for name in (normalized_leaf(f) for f in pending.seadex_files) if name in video)
+    listed = dict.fromkeys(
+        name for name in (normalize_name(file_name(f)) for f in pending.seadex_files) if name in video
+    )
     ordered = [*listed, *(name for name in candidates_by_name if name in video and name not in listed)]
     names = tuple(name for name in ordered if name not in file_map)
     excluded = set(pending.excluded_files)
