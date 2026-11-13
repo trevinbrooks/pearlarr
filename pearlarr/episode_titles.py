@@ -218,7 +218,7 @@ class EpisodeTitles:
             return None
         return equal
 
-    def keyed_by(self, read: NameParts, resolved: Collection[int]) -> frozenset[int]:
+    def episodes_numbered_by(self, parts: NameParts, resolved: Collection[int]) -> frozenset[int]:
         """The episodes a name's numbers are a key for: Sonarr's read of it (`resolved`), and the keys it writes.
 
         "Show 2 - 05" and "Show.2.05" are keys for S02E05 (`written_keys`). "Show No. 8 - 05" counts as a key for
@@ -226,7 +226,7 @@ class EpisodeTitles:
         spells a key.
         """
 
-        written = (self.id_by_key.get(key) for key in written_keys(read))
+        written = (self.id_by_key.get(key) for key in written_keys(parts))
         return frozenset((*resolved, *(ep_id for ep_id in written if ep_id is not None)))
 
     def near_matches(self, ep_id: int, words: tuple[str, ...]) -> bool:

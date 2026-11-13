@@ -9,16 +9,16 @@ from .arr_models import HistoryRecord, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
 from .config import Arr
-from .grab_pipeline import NO_SEEDS, GrabRequest
+from .grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from .grab_placement import (
     EntryPlacements,
     PendingImportUpdate,
     SizeOverName,
     TitleFacts,
     TorrentFetches,
-    build_pending_seeds,
+    build_pending_import_updates,
     entry_hashes,
-    identity_overrides,
+    size_over_name_files,
 )
 from .mappings import ExternalIds, MappingSource, TitleMapping
 from .output import hub_warn
@@ -77,7 +77,7 @@ def _override_line(url: str, override: SizeOverName) -> str:
     label = override.by_size.label
     return (
         f"{url}: {override.name} goes on {label} because its size matches SeaDex's {label} release "
-        f"(its name reads as {override.read_as})"
+        f"(its name reads as {override.parsed_as})"
     )
 
 
@@ -353,18 +353,18 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         indexes = self._series_indexes(series_ids)
         resolved = self._services.mappings_with_ignored(ExternalIds.of_series(item))
         listings = self._listings.read(sonarr_series_id, resolved)
-        scope = GrabbingTitle(
+        grabbing_title = GrabbingTitle(
             al_id=al_id,
             series_id=sonarr_series_id,
             title_index=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
             series_index=indexes.get(sonarr_series_id, episode_index([])),
-            names=title.names,
+            title_names=title.names,
             episode_count=self._episodes.episode_count(al_id),
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
             aired_order=self._episodes.aired_order(sonarr_series_id),
         )
         placed = EntryPlacements.place(
-            scope,
+            grabbing_title,
             self._parse.parsed_files(seadex_dict, series_hash=self._episodes.series_hash),
             TorrentFetches(stored, indexes, listings).known(seadex_dict),
         )
@@ -398,9 +398,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # (download + hash), carrying our own (basename -> Sonarr episode ids) map so the later manual import never
         # trusts Sonarr's blind parse. Gated on the engine's RESOLVED mode (cli > config), not the raw config, so
         # a CLI override agrees with the engine's persist/reconcile/blocking gates.
-        pending_seeds: Mapping[str, PendingImportUpdate] = NO_SEEDS
+        pending_seeds: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
         if waits_on_imports:
-            pending_seeds = build_pending_seeds(
+            pending_seeds = build_pending_import_updates(
                 seadex_dict,
                 placed,
                 TitleFacts(
@@ -423,7 +423,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 update=update,
                 replaced_groups=sonarr_releases.groups(),
                 coverage=coverage,
-                pending_seeds=pending_seeds,
+                pending_import_updates=pending_seeds,
                 input_unread_groups=placed.input_unread_groups(seadex_dict),
                 # Every entry of the series: the placement reads the window of each one SeaDex has a record for.
                 metadata_unread=(
@@ -450,7 +450,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         """
 
         for planned in releases_to_grab(seadex_dict):
-            if overrides := identity_overrides(placed.by_url[planned.url], placed.scope.series_index):
+            if overrides := size_over_name_files(placed.by_url[planned.url], placed.grabbing_title.series_index):
                 first, *rest = overrides
                 more = f" ({count_noun(len(rest), 'more file')} in the debug log)" if rest else ""
                 hub_warn(f"{_override_line(planned.url, first)}{more}")
@@ -465,7 +465,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 continue
             # The hold and the failed read explain an empty coverage on a listed release. A url held on the read
             # names it once, in its hold.
-            assignment = placement.assignment
+            assignment = placement.placements
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
             not_grabbed_note = "" if placement.skip_reason is None else f" (not grabbed: {placement.skip_reason})"

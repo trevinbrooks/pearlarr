@@ -59,7 +59,7 @@ class WindowOrder:
     imports: frozenset[int]
     """The positions whose files the record imports: the grabbing entry's and every claimed entry's."""
 
-    own_at: int
+    grabbing_window_at: int
     """The position of the grabbing entry's window."""
 
     other_ids: frozenset[int] = field(init=False, repr=False, compare=False)
@@ -67,7 +67,10 @@ class WindowOrder:
 
     def __post_init__(self) -> None:
         other_ids = frozenset(
-            ep_id for at, window in enumerate(self.windows) if at != self.own_at for ep_id in window.ordered_episode_ids
+            ep_id
+            for at, window in enumerate(self.windows)
+            if at != self.grabbing_window_at
+            for ep_id in window.ordered_episode_ids
         )
         object.__setattr__(self, "other_ids", other_ids)
 
@@ -75,7 +78,7 @@ class WindowOrder:
 def ordered_windows(
     listing: TorrentListing,
     claims: Iterable[TitleClaim],
-    own: TitleWindow,
+    grabbing_window: TitleWindow,
     indexes: Mapping[int, EpisodeIndex],
 ) -> WindowOrder | None:
     """Every window a torrent is placed under, one per AniList id, in placement order.
@@ -94,7 +97,7 @@ def ordered_windows(
     """
 
     # A claim's window takes its entry's slot from the listed one, since the record's import is judged against its
-    # claims, and `own` takes it from both, since this grab replaces its claim. A claim whose entry the listing
+    # claims, and `grabbing_window` takes it from both, since this grab replaces its claim. A claim whose entry the listing
     # doesn't name keeps its window, and an entry listed and never claimed gets its listed window. The ignored flag
     # and the episode count are the listing's for every window: facts about the entry at the read, which a claim
     # doesn't hold. They're read off every listed window, so an entry whose listed window came back empty still
@@ -110,8 +113,8 @@ def ordered_windows(
             else replace(claim.window, ignored=listed_window.ignored, episode_count=listed_window.episode_count)
         )
         imported.add(claim.al_id)
-    chosen[own.al_id] = own
-    imported.add(own.al_id)
+    chosen[grabbing_window.al_id] = grabbing_window
+    imported.add(grabbing_window.al_id)
     if any(window.series_id not in indexes for window in chosen.values()):
         return None
     windows = tuple(
@@ -127,7 +130,7 @@ def ordered_windows(
     return WindowOrder(
         windows=windows,
         imports=frozenset(at for at, window in enumerate(windows) if window.al_id in imported),
-        own_at=windows.index(own),
+        grabbing_window_at=windows.index(grabbing_window),
     )
 
 
@@ -135,7 +138,7 @@ def ordered_windows(
 class WindowFacts:
     """One window's scope, with what the passes read off each name of the torrent under it (`PlacerResult.facts`)."""
 
-    scope: PlacementTarget
+    target: PlacementTarget
     names: Mapping[str, NameFacts]
     """Every name of the torrent, seeded and gone names included."""
 
@@ -168,7 +171,7 @@ class WindowedFile:
 
         return any(self.per_window[at].verdict.involves for at in positions)
 
-    def listed_elsewhere(self, positions: Collection[int]) -> bool:
+    def is_another_titles(self, positions: Collection[int]) -> bool:
         """Whether the file is a title's outside the windows at `positions`.
 
         It is when a window outside them placed it, or when it's left for a hand import and no window among them was
@@ -186,7 +189,7 @@ class WindowedFile:
 class TitleView:
     """What the windows made of a torrent's files, as one entry and its record see it."""
 
-    assignment: BatchPlacements
+    placements: BatchPlacements
     """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
 
     A file is another title's when a window the record doesn't import placed it, or when it's left for a hand import
@@ -195,23 +198,23 @@ class TitleView:
     own row."""
     misnumbered: bool
     """Whether a file the entry's own window was party to (`PlacementVerdict.party`) ended up `MISNUMBERED`."""
-    hand_claim: PlacementVerdict | None
+    hand_import_verdict: PlacementVerdict | None
     """The hand-import claim a file of the entry's own window still carries after the merge, else None.
 
     The claims are `_HAND_CLAIMS`: refuted by its title, or read by another TVDB order outside the window. The
     window made one for the file and no window placed or refused it. A title's refusal comes first when both kinds
     are left."""
-    outside: frozenset[str]
+    another_titles: frozenset[str]
     """The files that are another title's for the entry's own window alone (`assignment`'s rule, with that window
     the only one imported). A file a window held for a re-ask isn't among them, since no window has read it yet."""
 
 
-NOTHING_PLACED = TitleView(BatchPlacements(()), misnumbered=False, hand_claim=None, outside=frozenset())
+NOTHING_PLACED = TitleView(BatchPlacements(()), misnumbered=False, hand_import_verdict=None, another_titles=frozenset())
 """The view of a url whose windows placed nothing: no file left to place, or nothing to place it against."""
 
 
 @dataclass(frozen=True, slots=True)
-class WindowedAssignment:
+class WindowedPlacements:
     """A torrent placed under its windows: one record per file, and what each window read off the names."""
 
     files: tuple[WindowedFile, ...]
@@ -220,7 +223,7 @@ class WindowedAssignment:
     """Each window's scope, as `place_across_windows` was handed it, and what the passes read off every name under it,
     in window order."""
 
-    def with_proposals(self, batch: PlacementBatch, reading: NumberingProposals) -> Self:
+    def with_proposals(self, batch: PlacementBatch, proposals: NumberingProposals) -> Self:
         """The assignment with each gap the reader proposed ids for filled, in batch order.
 
         A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`PlacementVerdict.party`) and no
@@ -230,16 +233,18 @@ class WindowedAssignment:
         and a name titled under it as an episode outside them is left (the title veto the zips apply).
         """
 
-        if not reading.ids:
+        if not proposals.ids:
             return self
         used = {ep_id for ids in batch.file_map.values() for ep_id in ids}
         used.update(ep_id for file in self.files for ep_id in file.merged.ids)
         files = list(self.files)
         for index, file in enumerate(self.files):
-            ids = reading.ids.get(file.name)
+            ids = proposals.ids.get(file.name)
             if ids is None or not self._gap(file) or not used.isdisjoint(ids):
                 continue
-            position = next((at for at, window in enumerate(self.facts) if window.scope.real_ids.issuperset(ids)), None)
+            position = next(
+                (at for at, window in enumerate(self.facts) if window.target.real_ids.issuperset(ids)), None
+            )
             if position is None:
                 continue
             episode_by_title = self.facts[position].names[file.name].episode_by_title
@@ -262,9 +267,9 @@ class WindowedAssignment:
             return False
         if any(placement.verdict.involves for placement in file.per_window):
             return False
-        return not any(window.names[file.name].reads_inside for window in self.facts)
+        return not any(window.names[file.name].parses_inside_window for window in self.facts)
 
-    def seen_by(self, own_at: int, imports: Collection[int]) -> TitleView:
+    def seen_by(self, grabbing_window_at: int, imports: Collection[int]) -> TitleView:
         """What the windows made of the files, as the entry whose window is at `own_at` sees them.
 
         `imports` are the positions whose files the entry's record imports (`WindowOrder.imports`).
@@ -274,24 +279,26 @@ class WindowedAssignment:
         hand_claims = {
             file.merged.verdict
             for file in self.files
-            if file.per_window[own_at].verdict in _HAND_CLAIMS and file.merged.verdict in _HAND_CLAIMS
+            if file.per_window[grabbing_window_at].verdict in _HAND_IMPORT_VERDICTS
+            and file.merged.verdict in _HAND_IMPORT_VERDICTS
         }
         return TitleView(
             BatchPlacements(
                 tuple(
-                    Placement(file.name, (), another_titles) if file.listed_elsewhere(imports) else file.merged
+                    Placement(file.name, (), another_titles) if file.is_another_titles(imports) else file.merged
                     for file in self.files
                 )
             ),
             misnumbered=any(
-                file.merged.verdict is PlacementVerdict.MISNUMBERED and file.involves((own_at,)) for file in self.files
+                file.merged.verdict is PlacementVerdict.MISNUMBERED and file.involves((grabbing_window_at,))
+                for file in self.files
             ),
-            hand_claim=max(hand_claims, key=lambda verdict: verdict.rank, default=None),
-            outside=frozenset(file.name for file in self.files if file.listed_elsewhere((own_at,))),
+            hand_import_verdict=max(hand_claims, key=lambda verdict: verdict.rank, default=None),
+            another_titles=frozenset(file.name for file in self.files if file.is_another_titles((grabbing_window_at,))),
         )
 
 
-_HAND_CLAIMS = frozenset({PlacementVerdict.TITLE_REFUTED, PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW})
+_HAND_IMPORT_VERDICTS = frozenset({PlacementVerdict.TITLE_REFUTED, PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW})
 """Two of the three hand-import claims: refuted by its run's titles, or read by another TVDB order outside the
 window. Another window may still place such a file, one claimed for another order only on the episodes that order
 reads it onto. `ORDER_ONLY`, the third, is left out."""
@@ -308,7 +315,7 @@ class _FileMerge:
     """The verdicts the merge weighs: `per_window`, less a placement off the episodes in `read_onto`."""
     decided_at: int | None = None
     """The position of the first window that placed or refused the file."""
-    read_onto: tuple[int, ...] | None = None
+    other_order_episodes: tuple[int, ...] | None = None
     """The episodes the first `OTHER_ORDER_ELSEWHERE` claim read the file onto (`Placement.read_onto`). A later window
     places it only there."""
 
@@ -319,10 +326,10 @@ class _FileMerge:
         at = len(self.per_window)
         self.per_window.append(placement)
         verdict = placement.verdict
-        if verdict.placed and self.read_onto not in (None, placement.ids):
+        if verdict.placed and self.other_order_episodes not in (None, placement.ids):
             return
-        if verdict is PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW and self.read_onto is None:
-            self.read_onto = placement.read_onto
+        if verdict is PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW and self.other_order_episodes is None:
+            self.other_order_episodes = placement.other_order_episodes
         self.weighed.append(placement)
         # A refusal decides the file too, so no later window can place it by its numbers.
         if self.decided_at is None and verdict.final:
@@ -341,7 +348,7 @@ class _FileMerge:
         (`PlacementVerdict.claim_rank`).
         """
 
-        if _disputed(self.weighed):
+        if _alias_and_numbers_disagree(self.weighed):
             merged = Placement(self.name, (), PlacementVerdict.MISNUMBERED)
         elif self.decided_at is not None:
             merged = self.per_window[self.decided_at]
@@ -352,7 +359,7 @@ class _FileMerge:
         return WindowedFile(merged, tuple(self.per_window), self.decided_at)
 
 
-def _disputed(judged: Collection[Placement]) -> bool:
+def _alias_and_numbers_disagree(judged: Collection[Placement]) -> bool:
     """Whether the aliases claimed the file under one window while another placed it on other ids by its numbers.
 
     A placement by numbers agrees only with an `ALTERNATE` on the same ids, since an `ALIASED_ELSEWHERE` has none.
@@ -385,7 +392,7 @@ def targets_of(
     )
 
 
-def place_across_windows(batch: PlacementBatch, windows: Sequence[PlacementTarget]) -> WindowedAssignment:
+def place_across_windows(batch: PlacementBatch, windows: Sequence[PlacementTarget]) -> WindowedPlacements:
     """The batch placed under each window in turn, verdicts merged.
 
     Each window is handed the files earlier windows placed (`TargetScope.after`): their ids are used where the
@@ -401,6 +408,6 @@ def place_across_windows(batch: PlacementBatch, windows: Sequence[PlacementTarge
         earlier = {file.name: ids for file in files if (ids := file.placed_on)}
         result = place_batch(batch, window.after(earlier))
         facts.append(WindowFacts(window, result.facts))
-        for file, placement in zip(files, result.assignment.placements, strict=True):
+        for file, placement in zip(files, result.placements.placements, strict=True):
             file.take(placement)
-    return WindowedAssignment(tuple(file.over_windows() for file in files), tuple(facts))
+    return WindowedPlacements(tuple(file.over_windows() for file in files), tuple(facts))

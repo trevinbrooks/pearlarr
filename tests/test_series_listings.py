@@ -96,7 +96,7 @@ class TestRead:
         assert read.listing(_H1) == torrent_listing(_window(1, 501, 502), _window(2, 503))
         assert read.listing(_H2) == torrent_listing(_window(2, 503), _window(3, 504))
         # Entries 2 and 3 list lone files (sized 2 and 3) under one-episode windows. Entry 1's window holds two.
-        assert read.identities == {2: 503, 3: 504}
+        assert read.episode_by_size == {2: 503, 3: 504}
         assert episodes.calls == [(7, 1), (7, 2), (7, 3)]
 
     def test_each_window_carries_its_entrys_anilist_episode_count(self) -> None:
@@ -182,7 +182,7 @@ class TestRead:
 
         assert read is not None
         assert (read.listing(_H1), read.listing(_H2)) == (None, torrent_listing(_window(2, 503)))
-        assert read.identities is None
+        assert read.episode_by_size is None
 
     def test_an_ambiguous_mapping_lists_nothing(self) -> None:
         # The entry's own run already errors on it: its window is no part of the listing, which stays read.
@@ -196,7 +196,7 @@ class TestRead:
             torrent_listing(_window(2, 503)),
             torrent_listing(_window(2, 503)),
         )
-        assert read.identities == {2: 503}
+        assert read.episode_by_size == {2: 503}
 
     def test_a_zero_id_episode_is_no_window_id(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1)})

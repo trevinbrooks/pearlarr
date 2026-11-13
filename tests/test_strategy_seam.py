@@ -48,7 +48,7 @@ from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, ImportSnapshot, trusted_groups
 from pearlarr.file_paths import normalize_name
-from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
+from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
@@ -354,11 +354,11 @@ class _ScriptedListings:
     def __init__(
         self,
         listed: Mapping[str, TorrentListing] | None = None,
-        identities: Mapping[int, int] | None = None,
+        episode_by_size: Mapping[int, int] | None = None,
         *,
         outage: bool = False,
     ) -> None:
-        self._read = None if outage else FetchedListings(listed or {}, identities or {})
+        self._read = None if outage else FetchedListings(listed or {}, episode_by_size or {})
         self.reads: list[tuple[int, ResolvedMappings]] = []
 
     def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
@@ -2502,12 +2502,12 @@ class TestSonarrProcessAlIdSeeds:
         run = _sonarr_seed_run(ImportWaitMode.BLOCKING, store=store, episodes=_seed_episodes(sonarr))
 
         (req,) = run.grab_requests
-        (seed,) = req.pending_seeds.values()
-        assert seed.pending_import == resident
-        assert seed.file_map == {normalize_name(_SEED_FILES[1]): (102,)}
-        assert seed.claim.al_id == 5
-        assert seed.claim.ordered_episode_ids == (102,)
-        pending = seed.pending_import_at(_STAMP, fresh=False)
+        (update,) = req.pending_import_updates.values()
+        assert update.pending_import == resident
+        assert update.file_map == {normalize_name(_SEED_FILES[1]): (102,)}
+        assert update.claim.al_id == 5
+        assert update.claim.ordered_episode_ids == (102,)
+        pending = update.pending_import_at(_STAMP, fresh=False)
         assert claim_al_ids(pending) == (22, 5)
         assert dict(pending.file_episode_map) == {
             normalize_name(name): (ep,) for name, ep in zip(_SEED_FILES, (101, 102), strict=True)
@@ -2550,7 +2550,7 @@ class TestSonarrProcessAlIdSeeds:
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.MISNUMBERED
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == []
-        assert req.pending_seeds["h1"].file_map == {}
+        assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ()
 
     def test_a_file_placed_by_size_over_its_name_warns_once_per_url(self) -> None:
@@ -2562,11 +2562,11 @@ class TestSonarrProcessAlIdSeeds:
         )
         recording = install_recording_hub()
 
-        run = _entry_run(files, specials, _ScriptedListings(identities={1000: 502, 2000: 501}))
+        run = _entry_run(files, specials, _ScriptedListings(episode_by_size={1000: 502, 2000: 501}))
 
         (req,) = run.grab_requests
-        seed = req.pending_seeds["h1"]
-        assert seed.file_map == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
+        update = req.pending_import_updates["h1"]
+        assert update.file_map == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
                 f"{_SEED_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
@@ -2596,7 +2596,7 @@ class TestSonarrProcessAlIdSeeds:
         run = _entry_run(files, specials, _ScriptedListings(), episode_count=episode_count)
 
         (req,) = run.grab_requests
-        assert req.pending_seeds["h1"].file_map == placed
+        assert req.pending_import_updates["h1"].file_map == placed
 
     def test_an_unread_listing_places_nothing_and_holds_the_url(self) -> None:
         # SeaDex is down, so the windows the torrent runs under and the size identities are both unknown. Nothing
@@ -2609,7 +2609,7 @@ class TestSonarrProcessAlIdSeeds:
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.INPUT_UNREAD
-        assert req.pending_seeds["h1"].file_map == {}
+        assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ("NAN0",)
 
     def test_the_listing_read_gets_the_ignored_entries_too(self) -> None:
@@ -2680,9 +2680,9 @@ class TestSonarrProcessAlIdSeeds:
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, TitleMapping(anilist_id=6))
 
         (req,) = run.grab_requests
-        seed = req.pending_seeds["h1"]
-        assert seed.file_map == {}
-        assert seed.excluded == tuple(normalize_name(name) for name in _SEED_FILES)
+        update = req.pending_import_updates["h1"]
+        assert update.file_map == {}
+        assert update.excluded == tuple(normalize_name(name) for name in _SEED_FILES)
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].skip_reason is PlacementSkip.PLACED_ELSEWHERE
 
     def test_wait_mode_off_reads_no_record_and_seeds_nothing(self) -> None:
@@ -2692,7 +2692,7 @@ class TestSonarrProcessAlIdSeeds:
         run = _sonarr_seed_run(ImportWaitMode.OFF, store=store, episodes=_seed_episodes(sonarr))
 
         (req,) = run.grab_requests
-        assert req.pending_seeds == NO_SEEDS
+        assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
         assert store.get_pending_record_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
         assert req.seadex_dict["NAN0"].releases[_SEED_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
@@ -2704,11 +2704,13 @@ class TestPlacementDebugLine:
     def test_a_url_held_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
         logger = debug_logger("pearlarr-placement-line")
         strat = make_bare_instance(SonarrStrategy, logger=logger)
-        scope = seed_scope(episode_index([_EP1]), episode_index([_EP1]))
-        placement = place_release([ListedFile("Show - 01.mkv", 1000, None)], scope, new_torrent(scope))
+        grabbing_title = seed_scope(episode_index([_EP1]), episode_index([_EP1]))
+        placement = place_release(
+            [ListedFile("Show - 01.mkv", 1000, None)], grabbing_title, new_torrent(grabbing_title)
+        )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
+            strat._log_placements(EntryPlacements(grabbing_title, {_SEED_URL: placement}))
 
         assert placement.skip_reason is PlacementSkip.INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_SEED_URL}: placed nothing (not grabbed: a read failed)"]
@@ -2721,13 +2723,15 @@ class TestPlacementDebugLine:
         dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
         series = episode_index(season, IndexOrders({"dvd": dvd}, None))
         names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        scope = seed_scope(series, series, names=TitleNames("Show", ("Show Ending",)))
+        grabbing_title = seed_scope(series, series, names=TitleNames("Show", ("Show Ending",)))
         logger = debug_logger("pearlarr-placement-line-orders")
         strat = make_bare_instance(SonarrStrategy, logger=logger)
-        placement = place_release([ListedFile(name, 1000, parsed_info()) for name in names], scope, new_torrent(scope))
+        placement = place_release(
+            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
+        )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(EntryPlacements(scope, {_SEED_URL: placement}))
+            strat._log_placements(EntryPlacements(grabbing_title, {_SEED_URL: placement}))
 
         halves = ", ".join(
             f"{normalize_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})" for n in (1, 2)
@@ -2839,22 +2843,22 @@ class TestRadarrProcessAlIdSeeds:
         run = self._run_process(ImportWaitMode.BLOCKING)
 
         (req,) = run.grab_requests
-        (seed,) = req.pending_seeds.values()
+        (update,) = req.pending_import_updates.values()
         # Carried fields: the real torrent identity + the one claim's anilist display context.
-        assert seed.facts.infohash == "h1"
-        assert seed.facts.release_group == "NAN0"
-        assert seed.claim.al_id == 42
-        assert seed.claim.title == "A Movie"
-        assert seed.claim.url == "https://releases.moe/9"
+        assert update.facts.infohash == "h1"
+        assert update.facts.release_group == "NAN0"
+        assert update.claim.al_id == 42
+        assert update.claim.title == "A Movie"
+        assert update.claim.url == "https://releases.moe/9"
         # A torrent the store does not hold starts a new record.
-        assert seed.pending_import is None
+        assert update.pending_import is None
         # Sonarr-domain fields deliberately stay empty for a Radarr record.
-        assert seed.claim.series_id == 0
-        assert seed.file_map == {}
-        assert seed.facts.seadex_files == ()
-        assert seed.claim.ordered_episode_ids == ()
-        assert seed.claim.window_coverage is None
-        pending = seed.pending_import_at(_STAMP, fresh=True)
+        assert update.claim.series_id == 0
+        assert update.file_map == {}
+        assert update.facts.seadex_files == ()
+        assert update.claim.ordered_episode_ids == ()
+        assert update.claim.window_coverage is None
+        pending = update.pending_import_at(_STAMP, fresh=True)
         # display_label renders sensibly from these (title · group).
         assert pending.display_label == f"A Movie{SEP}NAN0"
         assert pending.file_map_episode_ids() == []
@@ -2869,9 +2873,9 @@ class TestRadarrProcessAlIdSeeds:
         run = self._run_process(ImportWaitMode.BLOCKING, store=store)
 
         (req,) = run.grab_requests
-        (seed,) = req.pending_seeds.values()
-        assert seed.pending_import == resident
-        assert claim_al_ids(seed.pending_import_at(_STAMP, fresh=False)) == (9, 42)
+        (update,) = req.pending_import_updates.values()
+        assert update.pending_import == resident
+        assert claim_al_ids(update.pending_import_at(_STAMP, fresh=False)) == (9, 42)
 
     def test_a_marked_url_seeds_onto_its_cross_seeds_record(self) -> None:
         store = FakeCacheStore()
@@ -2881,9 +2885,9 @@ class TestRadarrProcessAlIdSeeds:
         run = self._run_process(ImportWaitMode.BLOCKING, store=store, cross_seed="c1")
 
         (req,) = run.grab_requests
-        seed = req.pending_seeds["c1"]
-        assert seed.pending_import == resident
-        assert (seed.facts.infohash, seed.facts.cross_seed) == ("c1", True)
+        update = req.pending_import_updates["c1"]
+        assert update.pending_import == resident
+        assert (update.facts.infohash, update.facts.is_cross_seed) == ("c1", True)
 
     def test_no_seeds_when_wait_mode_off(self) -> None:
         store = _CountingStore()
@@ -2891,7 +2895,7 @@ class TestRadarrProcessAlIdSeeds:
         run = self._run_process(ImportWaitMode.OFF, store=store)
 
         (req,) = run.grab_requests
-        assert req.pending_seeds == NO_SEEDS
+        assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
         assert store.get_pending_record_calls == 0
 
 

@@ -21,7 +21,7 @@ _CLOSE_SHARE = 0.2
 
 
 def specials_by_date(
-    mapped: Sequence[SonarrEpisode], series_episodes: Iterable[SonarrEpisode], airing: AniListAiring
+    mapping_episodes: Sequence[SonarrEpisode], series_episodes: Iterable[SonarrEpisode], airing: AniListAiring
 ) -> list[SonarrEpisode] | None:
     """The specials that replace `mapped`, a title's mapped episodes, or None when the mapping stands.
 
@@ -39,10 +39,10 @@ def specials_by_date(
     start, count, duration = airing.start, airing.episodes, airing.duration
     if start is None or not count or not duration:
         return None
-    if not mapped or any(ep.season_number != 0 for ep in mapped):
+    if not mapping_episodes or any(ep.season_number != 0 for ep in mapping_episodes):
         return None
-    aired = sorted(ep.air_date for ep in mapped if ep.air_date is not None)
-    if len(aired) != len(mapped):
+    aired = sorted(ep.air_date for ep in mapping_episodes if ep.air_date is not None)
+    if len(aired) != len(mapping_episodes):
         return None
     end = airing.end or start
     if abs(aired[0] - start) <= _AGREES_WITHIN and abs(aired[-1] - end) <= _AGREES_WITHIN:
@@ -50,7 +50,7 @@ def specials_by_date(
 
     specials = [ep for ep in series_episodes if ep.season_number == 0 and _runtime_close(ep.runtime, duration)]
     between = [ep for ep in specials if _aired_within(ep, start - _PICKED_WITHIN, end + _PICKED_WITHIN)]
-    if len(between) == count and {ep.id for ep in between} != {ep.id for ep in mapped}:
+    if len(between) == count and {ep.id for ep in between} != {ep.id for ep in mapping_episodes}:
         return between
     if count == 2 and start < end:
         firsts = [ep for ep in specials if _aired_within(ep, start - _PICKED_WITHIN, start + _PICKED_WITHIN)]

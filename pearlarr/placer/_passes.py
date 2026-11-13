@@ -109,13 +109,13 @@ from ._orders import pass_other_orders
 from ._run_passes import (
     MIN_TITLE_HITS,
     pass_misnumbered_specials,
-    pass_numbered_run,
-    pass_release_run,
-    pass_reread_season_runs,
+    pass_sequence,
+    pass_sequence_as_matched_season,
+    pass_sequence_over_parse,
 )
 from ._state import NameFacts, NumberedSequence, PlacerState, TorrentFile
 from ..file_names import FileIdentity, natural_key, sole_title_match
-from ..parsed_episodes import glued_counts, numbers_miss_the_series, parse_has_no_number
+from ..parsed_episodes import glued_numbers, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import BatchPlacements, PlacementBatch, PlacementTarget, PlacementVerdict
 from ..releases import EpisodeKey
 
@@ -124,33 +124,33 @@ from ..releases import EpisodeKey
 class PlacerResult:
     """What one `assign_episode_ids` call gives: each file's verdict, and what the passes read off every name."""
 
-    assignment: BatchPlacements
+    placements: BatchPlacements
     """One verdict per name in `PlacementBatch.names`, batch order."""
     facts: Mapping[str, NameFacts]
     """Every name of the torrent, seeded and gone names included, as the names read before the first pass. Read-only
     (`Placer.facts`)."""
 
 
-def place_batch(batch: PlacementBatch, scope: PlacementTarget) -> PlacerResult:
+def place_batch(batch: PlacementBatch, target: PlacementTarget) -> PlacerResult:
     """Place the files of `batch` onto the ids of `scope` by running the passes the module docstring lists, in order.
 
     One file name never overrides the scope. With an empty series map, every verdict that needs the map is
     refused.
     """
 
-    state = PlacerState.start(batch, scope)
+    state = PlacerState.start(batch, target)
     _pass_extras(state)
     _pass_reject_contradicted(state)
     _pass_reject_disagreeing(state)
     _pass_reject_overlaps(state)
-    pass_reread_season_runs(state)
+    pass_sequence_as_matched_season(state)
     pass_misnumbered_specials(state)
     _pass_size_match(state)
-    pass_release_run(state)
+    pass_sequence_over_parse(state)
     _pass_exact(state)
     _pass_episode_title(state)
     _pass_pairing(state)
-    pass_numbered_run(state)
+    pass_sequence(state)
     _pass_classify(state)
     pass_other_orders(state)
     return PlacerResult(BatchPlacements(state.placements()), state.facts)
@@ -181,19 +181,21 @@ def _pass_reject_contradicted(state: PlacerState) -> None:
     """
 
     files = state.non_extras
-    titled = {file for file in files if (ids := file.reading.ids) and file.contradicts(ids)}
-    unconfirmed = {file for file in files if file.reading.ids and state.counted_by_title(file)}
-    refuted = set(titled)
-    for run in state.counted_runs:
-        mates = set(run.all_versions)
+    titled = {file for file in files if (ids := file.parsed_episodes.ids) and file.contradicts(ids)}
+    unconfirmed = {file for file in files if file.parsed_episodes.ids and state.parsed_by_title_number(file)}
+    contradicted = set(titled)
+    for sequence in state.non_extra_sequences:
+        mates = set(sequence.all_versions)
         if titled & mates:
-            refuted |= {file for file in mates if file.reading.in_window and not file.confirms(file.reading.ids)}
-    state.veto_each(refuted | unconfirmed)
-    for file in refuted - titled:
+            contradicted |= {
+                file for file in mates if file.parsed_episodes.in_window and not file.confirms(file.parsed_episodes.ids)
+            }
+    state.reject_each(contradicted | unconfirmed)
+    for file in contradicted - titled:
         file.sequence_contradicted = True
     for file in unconfirmed:
         file.numbers_disagree = True
-    state.pairing_off |= bool(refuted or unconfirmed)
+    state.pairing_off |= bool(contradicted or unconfirmed)
 
 
 def _pass_reject_disagreeing(state: PlacerState) -> None:
@@ -209,30 +211,30 @@ def _pass_reject_disagreeing(state: PlacerState) -> None:
     count-based passes are turned off under every window.
     """
 
-    runs = state.counted_runs
-    candidates = {file: ids for file in state.non_extras if (ids := _disputes(state, file)) is not None}
+    sequences = state.non_extra_sequences
+    candidates = {file: ids for file in state.non_extras if (ids := _numbers_disagree(state, file)) is not None}
     by_position: set[TorrentFile] = set()
-    for run in runs:
-        for file, ids in _positions_disputed(state, run).items():
+    for sequence in sequences:
+        for file, ids in _positions_disagree(state, sequence).items():
             candidates[file] = candidates.get(file, frozenset()) | ids
             by_position.add(file)
-    disputed = {file for file, ids in candidates.items() if any(state.scope.admits(ep_id) for ep_id in ids)}
-    copies = [file for run in runs for file in run.superseded if file in disputed]
+    disagreeing = {file for file, ids in candidates.items() if any(state.target.admits(ep_id) for ep_id in ids)}
+    copies = [file for sequence in sequences for file in sequence.superseded if file in disagreeing]
     # Runner-ups first: a rejected reading wins nothing, and a set-aside copy is out of the running.
-    for file, lost in _runner_ups(state, disputed).items():
+    for file, lost in _next_in_line(state, disagreeing).items():
         file.next_in_line_for = lost
-    state.veto_each(disputed)
+    state.reject_each(disagreeing)
     state.set_aside_each([file for file in copies if file.unjudged], PlacementVerdict.DUPLICATE)
-    for file in disputed.difference(copies):
+    for file in disagreeing.difference(copies):
         file.numbers_disagree = True
-    for file in by_position & disputed:
+    for file in by_position & disagreeing:
         file.numbers_disagree_by_position = True
-    for file in candidates.keys() - disputed:
-        file.numbers_disagree_elsewhere = True
+    for file in candidates.keys() - disagreeing:
+        file.numbers_disagree_outside_window = True
     state.pairing_off |= bool(candidates)
 
 
-def _disputes(state: PlacerState, file: TorrentFile) -> frozenset[int] | None:
+def _numbers_disagree(state: PlacerState, file: TorrentFile) -> frozenset[int] | None:
     """The episodes the name's own counts spread it over: its key's and the other count's. None when they agree.
 
     Only a count that is another episode's absolute number disputes. Beside a spelled-out key or a reading borrowed
@@ -243,42 +245,44 @@ def _disputes(state: PlacerState, file: TorrentFile) -> frozenset[int] | None:
     info = file.parse
     if info is None:
         return None
-    reading = file.reading
-    name_read = file.name_read
+    parsed = file.parsed_episodes
+    name_parts = file.name_parts
     by_absolute = state.index.id_by_absolute
-    resolved = frozenset(reading.ids)
-    if reading.from_matched or not info.episode_numbers or info.season_number is None:
+    resolved = frozenset(parsed.ids)
+    if parsed.from_matched or not info.episode_numbers or info.season_number is None:
         if not resolved:
             return None
-        counts: Iterable[int] = name_read.bracketed_numbers
-    elif name_read.spells_season_episode:
-        counts = name_read.bracketed_numbers
-    elif resolved and not reading.sonarr_agrees:
-        counts = name_read.standalone_numbers
+        counts: Iterable[int] = name_parts.bracketed_numbers
+    elif name_parts.spells_season_episode:
+        counts = name_parts.bracketed_numbers
+    elif resolved and not parsed.sonarr_agrees:
+        counts = name_parts.standalone_numbers
     else:
-        counts = glued_counts(info).intersection(name_read.standalone_numbers)
+        counts = glued_numbers(info).intersection(name_parts.standalone_numbers)
     others = {ep_id for count in counts if (ep_id := by_absolute.get(count)) is not None} - resolved
     return resolved | others if others else None
 
 
-def _runner_ups(state: PlacerState, disputed: set[TorrentFile]) -> dict[TorrentFile, frozenset[int]]:
+def _next_in_line(state: PlacerState, disagreeing: set[TorrentFile]) -> dict[TorrentFile, frozenset[int]]:
     """Each unplaced file's episodes a disputed reading takes first when the exact pass runs on the current readings.
 
     Those files are the runner-ups the refusal must not hand the episodes to.
     """
 
-    winner = {ep_id: file for file, ids in state.exact_picks().items() for ep_id in ids}
+    winner = {ep_id: file for file, ids in state.exact_pass_placements().items() for ep_id in ids}
     runner_ups: dict[TorrentFile, frozenset[int]] = {}
     for file in state.unjudged_files():
         lost = frozenset(
-            ep_id for ep_id in file.reading.exact_ids if (won := winner.get(ep_id)) in disputed and won is not file
+            ep_id
+            for ep_id in file.parsed_episodes.exact_ids
+            if (won := winner.get(ep_id)) in disagreeing and won is not file
         )
         if lost:
             runner_ups[file] = lost
     return runner_ups
 
 
-def _positions_disputed(state: PlacerState, run: NumberedSequence) -> dict[TorrentFile, frozenset[int]]:
+def _positions_disagree(state: PlacerState, sequence: NumberedSequence) -> dict[TorrentFile, frozenset[int]]:
     """The members of a keyed run numbered past its season's end, from the first special the season interleaves on.
 
     Such a run (`1..N+k` for an N-episode season with k interleaved specials) counted the specials or appended
@@ -288,16 +292,18 @@ def _positions_disputed(state: PlacerState, run: NumberedSequence) -> dict[Torre
     numbers.
     """
 
-    seasons = {info.season_number for file in run.members if (info := file.parse) is not None}
+    seasons = {info.season_number for file in sequence.members if (info := file.parse) is not None}
     if len(seasons) != 1 or (season := seasons.pop()) in (None, 0):
         return {}
-    if any((info := file.parse) is None or info.episode_numbers[:1] != (file.name_number,) for file in run.members):
+    if any(
+        (info := file.parse) is None or info.episode_numbers[:1] != (file.name_number,) for file in sequence.members
+    ):
         return {}
-    if not all(file.name_read.spells_season_episode for file in run.members):
+    if not all(file.name_parts.spells_season_episode for file in sequence.members):
         return {}
     count = state.index.season_counts.get(season, 0)
     # A season the map lacks is no season to count against (the keys miss, and the file reads numberless).
-    if not count or max(run.numbers) <= count:
+    if not count or max(sequence.numbers) <= count:
         return {}
     absolute_of, key_by_id = state.index.absolute_of, state.index.key_by_id
     regular = sorted(
@@ -316,8 +322,8 @@ def _positions_disputed(state: PlacerState, run: NumberedSequence) -> dict[Torre
     position = min(interleaved.values()) - first + 1
     spread = frozenset(
         ep_id for ep_id, key in key_by_id.items() if key.season == season and key.episode >= position
-    ) | frozenset(ep_id for ep_id, number in interleaved.items() if number - first + 1 in run.numbers)
-    return {file: spread for file in run.members if file.name_number >= position}
+    ) | frozenset(ep_id for ep_id, number in interleaved.items() if number - first + 1 in sequence.numbers)
+    return {file: spread for file in sequence.members if file.name_number >= position}
 
 
 def _pass_reject_overlaps(state: PlacerState) -> None:
@@ -328,15 +334,15 @@ def _pass_reject_overlaps(state: PlacerState) -> None:
 
     spans_by_ep: defaultdict[int, set[tuple[int, ...]]] = defaultdict(set)
     for file in state.non_extras:
-        if not (reading := file.reading).rejected:
-            for ep_id in reading.ids:
-                spans_by_ep[ep_id].add(reading.ids)
+        if not (parsed := file.parsed_episodes).rejected:
+            for ep_id in parsed.ids:
+                spans_by_ep[ep_id].add(parsed.ids)
     overlapping = [
         file
         for file in state.unjudged_files()
-        if len(ids := file.reading.ids) > 1 and any(len(spans_by_ep[ep_id]) > 1 for ep_id in ids)
+        if len(ids := file.parsed_episodes.ids) > 1 and any(len(spans_by_ep[ep_id]) > 1 for ep_id in ids)
     ]
-    state.veto_each(overlapping)
+    state.reject_each(overlapping)
 
 
 def _pass_size_match(state: PlacerState) -> None:
@@ -354,21 +360,23 @@ def _pass_size_match(state: PlacerState) -> None:
 
     for file in state.unjudged_files():
         ep_id = file.size_match
-        if ep_id is None or ep_id not in state.scope.index.by_id:
+        if ep_id is None or ep_id not in state.target.index.by_id:
             continue
-        reading = file.reading
-        if (reading.usable and reading.ids == (ep_id,)) or file.contradicts((ep_id,)):
+        parsed = file.parsed_episodes
+        if (parsed.usable and parsed.ids == (ep_id,)) or file.contradicts((ep_id,)):
             continue
-        if not state.scope.admits(ep_id):
+        if not state.target.admits(ep_id):
             state.leave_unplaced(file, PlacementVerdict.OUTSIDE_WINDOW)
             continue
         overrides = _numbers_another(state, file, ep_id)
         if overrides:
             # No count-based pass may place the rest, and the release run skips this file's run.
             state.pairing_off = True
-            if (member := file.name_read.member) is not None:
+            if (member := file.name_parts.member) is not None:
                 state.size_contradicted_prefixes.add(member.prefix)
-        state.place_or_skip(file, ep_id, PlacementVerdict.SIZE_OVER_NAME if overrides else PlacementVerdict.SIZE_MATCH)
+        state.place_if_unused(
+            file, ep_id, PlacementVerdict.SIZE_OVER_NAME if overrides else PlacementVerdict.SIZE_MATCH
+        )
 
 
 def _numbers_another(state: PlacerState, file: TorrentFile, ep_id: int) -> bool:
@@ -378,16 +386,16 @@ def _numbers_another(state: PlacerState, file: TorrentFile, ep_id: int) -> bool:
     absolute numbers. A name with no keys also counts its release number, as an episode or an absolute.
     """
 
-    resolved = file.reading.ids
+    resolved = file.parsed_episodes.ids
     if ep_id in resolved:
         return False
     info = file.parse
-    member = file.name_read.member
+    member = file.name_parts.member
     keys: set[EpisodeKey] = set()
     absolutes: set[int] = set()
     if info is not None:
         absolutes.update(info.absolute_episode_numbers)
-        if info.season_number is not None and not numbers_miss_the_series(info, state.scope.id_by_key):
+        if info.season_number is not None and not numbers_miss_the_series(info, state.target.id_by_key):
             keys.update(EpisodeKey(info.season_number, number) for number in info.episode_numbers)
     if not (resolved or keys or absolutes or member):
         return False
@@ -410,7 +418,7 @@ def _pass_exact(state: PlacerState) -> None:
     "- 09v2" beats its "- 09". The loser stays unplaced.
     """
 
-    for file, ids in state.exact_picks().items():
+    for file, ids in state.exact_pass_placements().items():
         state.place(file, ids, PlacementVerdict.EXACT)
 
 
@@ -421,7 +429,7 @@ def _pass_episode_title(state: PlacerState) -> None:
     lists the exceptions). It runs even when the count-based passes are off, and each placement turns them off.
     """
 
-    for file in sorted(state.unjudged_files(), key=lambda f: f.name_read.version, reverse=True):
+    for file in sorted(state.unjudged_files(), key=lambda f: f.name_parts.version, reverse=True):
         if (ep_id := _title_placement(state, file)) is not None:
             state.place(file, (ep_id,), PlacementVerdict.EPISODE_TITLE)
             state.pairing_off = True
@@ -435,12 +443,12 @@ def _title_placement(state: PlacerState, file: TorrentFile) -> int | None:
     """
 
     ep_id = file.episode_by_title
-    if ep_id is None or ep_id in state.used or not state.scope.admits(ep_id) or state.single_parse(file) is None:
+    if ep_id is None or ep_id in state.used or not state.target.admits(ep_id) or state.single_parse(file) is None:
         return None
-    if file.runner_up((ep_id,)) or _outnumbered(state, file, ep_id):
+    if file.next_in_line((ep_id,)) or _outnumbered(state, file, ep_id):
         return None
-    tied = file.reading.either_ids
-    return None if tied is not None and ep_id not in tied else ep_id
+    either_ids = file.parsed_episodes.either_ids
+    return None if either_ids is not None and ep_id not in either_ids else ep_id
 
 
 def _outnumbered(state: PlacerState, file: TorrentFile, ep_id: int) -> bool:
@@ -449,11 +457,11 @@ def _outnumbered(state: PlacerState, file: TorrentFile, ep_id: int) -> bool:
     The count stands when fewer than `MIN_TITLE_HITS` files of the run are titled against their readings.
     """
 
-    for run in state.counted_runs:
-        mates = run.all_versions
+    for sequence in state.non_extra_sequences:
+        mates = sequence.all_versions
         if file in mates:
-            against = sum(mate.contradicts(mate.reading.ids) for mate in mates)
-            reads_it = any(mate is not file and ep_id in mate.reading.ids for mate in mates)
+            against = sum(mate.contradicts(mate.parsed_episodes.ids) for mate in mates)
+            reads_it = any(mate is not file and ep_id in mate.parsed_episodes.ids for mate in mates)
             return against < MIN_TITLE_HITS and reads_it
     return False
 
@@ -463,20 +471,20 @@ def _pass_pairing(state: PlacerState) -> None:
 
     # A file whose trusted reading lies wholly outside the scope belongs to another slice.
     # It takes no open id and does not spoil the count for the other files.
-    open_files = [file for file in state.unjudged_files() if not file.reading.wholly_outside]
-    open_ids = state.open_ids()
-    if not open_files or not open_ids:
+    candidate_files = [file for file in state.unjudged_files() if not file.parsed_episodes.wholly_outside]
+    unused_ids = state.unused_ids()
+    if not candidate_files or not unused_ids:
         return
-    if (order := _absolute_order(state, open_files, open_ids)) is not None:
-        state.pair_in_order(order, open_ids, PlacementVerdict.ABSOLUTE)
-    elif len(open_ids) == 1:
-        _place_single(state, open_files, open_ids[0])
-    elif (order := _natural_order(state, open_files, open_ids)) is not None:
-        state.pair_in_order(order, open_ids, PlacementVerdict.NAME_ORDER)
+    if (order := _absolute_order(state, candidate_files, unused_ids)) is not None:
+        state.pair_in_order(order, unused_ids, PlacementVerdict.ABSOLUTE)
+    elif len(unused_ids) == 1:
+        _place_single(state, candidate_files, unused_ids[0])
+    elif (order := _natural_order(state, candidate_files, unused_ids)) is not None:
+        state.pair_in_order(order, unused_ids, PlacementVerdict.NAME_ORDER)
 
 
 def _absolute_order(
-    state: PlacerState, open_files: Sequence[TorrentFile], open_ids: Sequence[int]
+    state: PlacerState, candidate_files: Sequence[TorrentFile], unused_ids: Sequence[int]
 ) -> list[TorrentFile] | None:
     """The open files in absolute-number order when the absolute zip applies, else None.
 
@@ -487,9 +495,9 @@ def _absolute_order(
     """
 
     abs_by_file: dict[TorrentFile, int] = {}
-    for file in open_files:
+    for file in candidate_files:
         info = file.parse
-        if info is not None and len(info.absolute_episode_numbers) == 1 and not state.counted_by_title(file):
+        if info is not None and len(info.absolute_episode_numbers) == 1 and not state.parsed_by_title_number(file):
             abs_by_file[file] = info.absolute_episode_numbers[0]
     # The shared-absolute check reads every non-extra parse, seeded files included. Repeats inside one parse collapse.
     batch_absolutes = [
@@ -502,14 +510,14 @@ def _absolute_order(
         bool(abs_by_file)
         and not state.pairing_off
         and state.all_parses_known
-        and len(abs_by_file) == len(open_files)  # every open file has one absolute
-        and len(abs_by_file) == len(open_ids)  # as many files as open ids
+        and len(abs_by_file) == len(candidate_files)  # every open file has one absolute
+        and len(abs_by_file) == len(unused_ids)  # as many files as open ids
         and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restarted numbering)
     )
     return sorted(abs_by_file, key=abs_by_file.__getitem__) if applies else None
 
 
-def _place_single(state: PlacerState, open_files: Sequence[TorrentFile], ep_id: int) -> None:
+def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep_id: int) -> None:
     """Fill the one open id: with the only open file if it is numberless, else the numberless file a title names.
 
     Numberless here means the file's parse has no usable episode number (`_reads_no_number`). The only open file
@@ -518,37 +526,37 @@ def _place_single(state: PlacerState, open_files: Sequence[TorrentFile], ep_id: 
     other file takes it in its place.
     """
 
-    unnumbered = [file for file in open_files if _reads_no_number(state, file)]
-    if len(open_files) == 1 and unnumbered:
+    no_parsed_number = [file for file in candidate_files if _has_no_parsed_number(state, file)]
+    if len(candidate_files) == 1 and no_parsed_number:
         chosen, verdict = 0, PlacementVerdict.SINGLE
     elif state.all_parses_known:
-        stems = [file.name_read.stem.text for file in unnumbered]
-        chosen, verdict = sole_title_match(stems, state.scope.title_names), PlacementVerdict.TITLE_NAME
+        stems = [file.name_parts.stem.text for file in no_parsed_number]
+        chosen, verdict = sole_title_match(stems, state.target.title_names), PlacementVerdict.TITLE_NAME
     else:
         return
-    if chosen is not None and not unnumbered[chosen].runner_up((ep_id,)):
-        state.place(unnumbered[chosen], (ep_id,), verdict)
+    if chosen is not None and not no_parsed_number[chosen].next_in_line((ep_id,)):
+        state.place(no_parsed_number[chosen], (ep_id,), verdict)
 
 
-def _reads_no_number(state: PlacerState, file: TorrentFile) -> bool:
+def _has_no_parsed_number(state: PlacerState, file: TorrentFile) -> bool:
     """Whether the file's single-episode parse has no usable number: none at all, or only keys the series lacks.
 
     False for a disputed file (its numbers name episodes, they just disagree), for a tied file, and for a
     titled file (its titled episode is taken or outside the scope).
     """
 
-    if file.numbers_disagree or file.numbers_disagree_elsewhere:
+    if file.numbers_disagree or file.numbers_disagree_outside_window:
         return False
     info = state.single_parse(file)
     if info is None:
         return False
-    if not (parse_has_no_number(info) or numbers_miss_the_series(info, state.scope.id_by_key)):
+    if not (parse_has_no_number(info) or numbers_miss_the_series(info, state.target.id_by_key)):
         return False
-    return file.reading.either_ids is None and file.episode_by_title is None
+    return file.parsed_episodes.either_ids is None and file.episode_by_title is None
 
 
 def _natural_order(
-    state: PlacerState, open_files: Sequence[TorrentFile], open_ids: Sequence[int]
+    state: PlacerState, candidate_files: Sequence[TorrentFile], unused_ids: Sequence[int]
 ) -> list[TorrentFile] | None:
     """The open files in natural name order when the ordered zip applies (the "Special 1..N" shape), else None.
 
@@ -559,15 +567,17 @@ def _natural_order(
 
     # Pristine: the parse map holds the open files and the extras and nothing else, and nothing but an extra
     # has a verdict, so nothing was placed, held, or seeded.
-    open_set = set(open_files)
-    pristine = (
+    unused_set = set(candidate_files)
+    nothing_judged = (
         not state.pairing_off
-        and len(open_files) == len(open_ids)
-        and all(file.in_parse_map == (file in open_set or file.extra) for file in state.files)
-        and state.untouched
-        and all((info := state.single_parse(file)) is not None and parse_has_no_number(info) for file in open_files)
+        and len(candidate_files) == len(unused_ids)
+        and all(file.in_parse_map == (file in unused_set or file.extra) for file in state.files)
+        and state.nothing_judged
+        and all(
+            (info := state.single_parse(file)) is not None and parse_has_no_number(info) for file in candidate_files
+        )
     )
-    return sorted(open_files, key=lambda file: natural_key(file.name)) if pristine else None
+    return sorted(candidate_files, key=lambda file: natural_key(file.name)) if nothing_judged else None
 
 
 _BY_SIZE = frozenset({PlacementVerdict.SIZE_MATCH, PlacementVerdict.SIZE_OVER_NAME})
@@ -581,7 +591,7 @@ class _DuplicateProof:
     proven: frozenset[int]
     """Ids we have a reason to think are held: placed by this call (except by size), or pointed at by a seeded or
     gone file's reading or title."""
-    held_by_file: Mapping[FileIdentity, frozenset[int]]
+    used_by_file: Mapping[FileIdentity, frozenset[int]]
     """The episodes each file's versions hold: placed by this call, or a seeded or gone version titled as one."""
 
 
@@ -597,22 +607,22 @@ def _pass_classify(state: PlacerState) -> None:
     """
 
     proof = _duplicate_proof(state)
-    nothing_left = not state.open_ids()
+    nothing_left = not state.unused_ids()
     for file in state.unjudged_files():
-        reading = file.reading
+        parsed = file.parsed_episodes
         titled = file.episode_by_title
         if file.numbers_disagree:
             # Its own numbers disagree, or its count stands unconfirmed, and no pass placed it: a hand import.
             state.leave_unplaced(file, PlacementVerdict.MISNUMBERED)
-        elif ids := reading.exact_ids:
+        elif ids := parsed.exact_ids:
             # The exact pass skipped it: an episode is taken. A span only partly taken stays SKIPPED.
             proven = all(ep_id in state.used and ep_id in proof.proven for ep_id in ids)
             state.leave_unplaced(file, PlacementVerdict.DUPLICATE if proven else PlacementVerdict.NO_EPISODE_FOUND)
         elif titled is not None and titled in state.used:
             # Titled as a taken episode: a duplicate only when a version of the same file holds it.
-            twin = titled in proof.held_by_file.get(file.identity, ())
+            twin = titled in proof.used_by_file.get(file.identity, ())
             state.leave_unplaced(file, PlacementVerdict.DUPLICATE if twin else PlacementVerdict.NO_EPISODE_FOUND)
-        elif state.map_known and (reading.wholly_outside or _titled_outside(state, file, nothing_left)):
+        elif state.has_episode_index and (parsed.wholly_outside or _titled_outside(state, file, nothing_left)):
             state.leave_unplaced(file, PlacementVerdict.OUTSIDE_WINDOW)
         elif file.sequence_contradicted:
             state.leave_unplaced(file, PlacementVerdict.TITLE_REFUTED)
@@ -628,20 +638,20 @@ def _duplicate_proof(state: PlacerState) -> _DuplicateProof:
 
     by_size: set[int] = set()
     evidenced: set[int] = set()
-    held: defaultdict[FileIdentity, set[int]] = defaultdict(set)
+    used: defaultdict[FileIdentity, set[int]] = defaultdict(set)
     for file in state.files:
         if (placed := file.placement) is not None:
-            held[file.identity].update(placed.ids)
+            used[file.identity].update(placed.ids)
             # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
             if placed.verdict in _BY_SIZE:
                 by_size.update(placed.ids)
         elif not file.to_place:
-            evidenced.update(file.reading.ids)
+            evidenced.update(file.parsed_episodes.ids)
             if (titled := file.episode_by_title) is not None:
                 evidenced.add(titled)
-                held[file.identity].add(titled)
-    proven = (state.used - state.scope.used - by_size) | evidenced
-    return _DuplicateProof(frozenset(proven), {identity: frozenset(ids) for identity, ids in held.items()})
+                used[file.identity].add(titled)
+    proven = (state.used - state.target.used - by_size) | evidenced
+    return _DuplicateProof(frozenset(proven), {identity: frozenset(ids) for identity, ids in used.items()})
 
 
 def _titled_outside(state: PlacerState, file: TorrentFile, nothing_left: bool) -> bool:
@@ -653,8 +663,8 @@ def _titled_outside(state: PlacerState, file: TorrentFile, nothing_left: bool) -
     """
 
     ep_id = file.episode_by_title
-    if ep_id is None or state.scope.admits(ep_id):
+    if ep_id is None or state.target.admits(ep_id):
         return False
-    reading = file.reading
-    held = bool(reading.ids) and state.used.issuperset(reading.ids)
-    return (reading.complete and not reading.in_window) or (reading.rejected and held) or nothing_left
+    parsed = file.parsed_episodes
+    used = bool(parsed.ids) and state.used.issuperset(parsed.ids)
+    return (parsed.complete and not parsed.in_window) or (parsed.rejected and used) or nothing_left

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from .listing_fold import ListedTitle, fold_listings
+from .listing_fold import ListedTitle, build_listings
 from .mappings import ResolvedMappings
 from .pending_import import TitleNames, TitleWindow
 from .placement_types import FetchedListings
@@ -83,4 +83,4 @@ class SeriesListings:
                 )
             )
             listed.append(ListedTitle(entry, window, mapping.special_aliasing))
-        return fold_listings(listed, self._ignore_tags)
+        return build_listings(listed, self._ignore_tags)

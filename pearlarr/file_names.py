@@ -46,9 +46,9 @@ _GROUP_TAG = re.compile(r"^\[([0-9a-z]+(?:[-_.][0-9a-z]+)*)\]", re.IGNORECASE)
 # A trailing "v2" or "v2.1": the minor part says nothing the major does not.
 _TRAILING_VERSION = re.compile(r"v(\d+)(?:\.\d+)?$")
 # The release number, by the first form that fits: the episode of an "S02E01" key (a keyed run is judged by its
-# keys); the " - NN - " segment (`_middle_count`); the episode of a packed "S0101" (a season the series lacks,
-# read as the release's count); a trailing number (`_trailing_count`); the scene-dotted count (`_dotted_count`).
-_KEYED_NUMBER = re.compile(r"^(.*?[Ss]\d{1,2}[Ee])(?P<number>\d{1,3})(?:v(?P<version>\d+))?(?!\d)")
+# keys); the " - NN - " segment (`_middle_name_number`); the episode of a packed "S0101" (a season the series lacks,
+# read as the release's count); a trailing number (`_trailing_name_number`); the scene-dotted count (`_dotted_name_number`).
+_SEASON_EPISODE_NUMBER = re.compile(r"^(.*?[Ss]\d{1,2}[Ee])(?P<number>\d{1,3})(?:v(?P<version>\d+))?(?!\d)")
 # An "Episode" word may lead the number, a "vN" and the absolute in brackets may trail it, and a title follows;
 # "0517" and "1001" count past the thousandth episode. A second such segment is a title's number.
 _MIDDLE_SEGMENT = re.compile(
@@ -67,9 +67,9 @@ _TRAILING_NUMBER = re.compile(
 _ORDINAL_WORD = r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|final|last"
 # An ordinal and its separator, ahead of a "season" word: "2nd ", "Final.".
 _ORDINAL_LEAD = rf"(?:\d{{1,2}}(?:st|[nr]d|th)|{_ORDINAL_WORD})[\s._-]+"
-_SEASON_TAIL = re.compile(rf"(?:^|[^a-z0-9])(?P<ordinal>{_ORDINAL_LEAD})?season[\s._]*$", re.IGNORECASE)
+_SEASON_WORD_AT_END = re.compile(rf"(?:^|[^a-z0-9])(?P<ordinal>{_ORDINAL_LEAD})?season[\s._]*$", re.IGNORECASE)
 # A pack's specials counted as a set beside its episodes: "Show S1", "Show S2", "Show S3" next to "Show - 01"..
-_LONE_S = re.compile(r"^(.*[\s._-][sS])(\d{1,2})$")
+_S_AND_NUMBER = re.compile(r"^(.*[\s._-][sS])(\d{1,2})$")
 # A scene name counts before its quality tail and names codecs, bit depths and volumes after it: the tail starts
 # at the first resolution ("1080p", "1920x1080"), else at the first source word ("BluRay", "WEB-DL", "DVDRip").
 _RESOLUTION = re.compile(r"(?<![a-z0-9])(?:\d{3,4}[pi]|\d{3,4}x\d{3,4})(?![a-z0-9])", re.IGNORECASE)
@@ -78,14 +78,14 @@ _SOURCE_WORD = re.compile(rf"(?<![a-z0-9])(?:{_SOURCE})(?![a-z0-9])", re.IGNOREC
 # A codec's 264-266 behind a lone h or x ("H.264", "Show.X.264").
 _CODEC = r"(?<=[^a-z0-9][hx]\.)26[456]"
 # A four-digit count: behind a zero, or below 1900.
-_LONG_COUNT = r"0\d{3}|1[0-8]\d{2}"
+_FOUR_DIGIT_NUMBER = r"0\d{3}|1[0-8]\d{2}"
 # The scene-dotted count ("Show.101.v4.480p", "Show.1069.1080p"): the head's first three digits between dots, or
 # four behind a zero or below 1900 ("Show.2011.001" counts 1), an optional ".vN" behind it. Another count behind it
 # in the head drops it ("Show.100.01": the 100 is the title's) unless only the first is zero-padded
 # ("Show.007.Day.20.Again"), as does a key anywhere ("Show.101.S03"). A codec's number is neither the count nor
 # one behind it.
 _DOTTED_NUMBER = re.compile(
-    rf"^(.*?[^\s._-])\.(?!{_CODEC}(?=\.|$))(?P<number>{_LONG_COUNT}|\d{{3}})(?:\.v(?P<version>\d+))?(?=\.|$)",
+    rf"^(.*?[^\s._-])\.(?!{_CODEC}(?=\.|$))(?P<number>{_FOUR_DIGIT_NUMBER}|\d{{3}})(?:\.v(?P<version>\d+))?(?=\.|$)",
     re.IGNORECASE,
 )
 # A number a unit follows is a bit depth or a frame rate ("10.bit", "60.fps"), no count and no count's partner.
@@ -94,17 +94,17 @@ _NO_UNIT = r"(?![\s._-]*(?:bits?|fps)(?![a-z0-9]))"
 # four behind a zero or below 1900, an optional "vN", standing alone past the title's own punctuation; not a
 # codec's 26x behind a lone h or x ("Show.X.264"), nor a bit depth or frame rate ("Show.10.bit", "Show.60.fps").
 # Matched on the blanked text, so a number in a bracket is no count.
-_SPAN_COUNT = re.compile(
-    rf"[\W_]+(?:episode |ep\.? )?(?!{_CODEC}(?![a-z0-9]))(?P<number>\d{{2,3}}|{_LONG_COUNT})"
+_NAME_NUMBER = re.compile(
+    rf"[\W_]+(?:episode |ep\.? )?(?!{_CODEC}(?![a-z0-9]))(?P<number>\d{{2,3}}|{_FOUR_DIGIT_NUMBER})"
     rf"(?:[\s._-]?v(?P<version>\d+))?(?![a-z0-9]){_NO_UNIT}",
     re.IGNORECASE,
 )
 # What may follow that count: the stem's end, a bracket, a number ("12.1080p"; `_NUMBER_BEHIND` tells a range's
 # or decimal's partner apart), a spaced dash, an "END" mark, a source word ("Show.009.01.DVDRip") or a quality
-# word ("018.PROPER", "018.Hi10P": `_count_ends`), or release tags running to one of those ("06v2 TV (Dub)",
+# word ("018.PROPER", "018.Hi10P": `_name_number_ends`), or release tags running to one of those ("06v2 TV (Dub)",
 # "12 MULTi [1080p]", "13 Director's Cut [BDRip ...]"). Any other word there makes it an episode title's number
 # ("Show - 20 Years Later", "Show.100.Steps.Home", "Show - 12 Raw Deal").
-_COUNT_END = re.compile(
+_NAME_NUMBER_END = re.compile(
     rf"[\s._-]*(?:$|\d|[\[(])|\s+-\s|[\s._-]+(?:(?-i:END)|{_SOURCE})(?![a-z0-9])|[\s._-]+(?P<word>[^\W_]+)",
     re.IGNORECASE,
 )
@@ -132,11 +132,11 @@ _NUMBER_BEHIND = re.compile(rf"[\s._-]*\d+(?![a-z0-9]){_NO_UNIT}", re.IGNORECASE
 # ("Show - 13 OVA" behind twelve plain files).
 _EXTRA_BEHIND = re.compile(r"[\s._-]+(?:ova|ona|oad)(?![a-z0-9])", re.IGNORECASE)
 # What leads a count behind a title: its separators and an "Episode" word, no part of the run's prefix.
-_COUNT_LEAD = re.compile(r"(?:[\s._-]+(?:episode|ep\.?))?[\s._-]*$", re.IGNORECASE)
+_NAME_NUMBER_LEAD = re.compile(r"(?:[\s._-]+(?:episode|ep\.?))?[\s._-]*$", re.IGNORECASE)
 # A number right behind a label, no dash between ("Season 01"): the label's number.
 _LABEL_NUMBER = re.compile(r"[\s._]*\d")
-_COUNT_BEHIND = re.compile(
-    rf"(?<![a-z0-9])(?!{_CODEC}(?:v\d+)?(?=\.|$))(\d{{2,3}}|{_LONG_COUNT})(?:v\d+)?(?=\.|$)", re.IGNORECASE
+_NAME_NUMBER_BEHIND = re.compile(
+    rf"(?<![a-z0-9])(?!{_CODEC}(?:v\d+)?(?=\.|$))(\d{{2,3}}|{_FOUR_DIGIT_NUMBER})(?:v\d+)?(?=\.|$)", re.IGNORECASE
 )
 _KEY_TOKEN = re.compile(
     r"(?<![a-z0-9])(?:s\d{1,2}(?:[\s._-]*e\d{1,3})?|e\d{2,3}|\d{1,2}x\d{2,3}|season[\s._-]*\d{1,2}"
@@ -145,7 +145,7 @@ _KEY_TOKEN = re.compile(
 )
 # An episode token the name spells out: "S01E05", "S01E05E06", "S01E05v2", "1x05", "01E05", or a bare "E05".
 # A parse with a season and episode but none of these came from a glued number, a year, or a resolution.
-_EXPLICIT_KEY = re.compile(
+_SPELLED_SEASON_EPISODE = re.compile(
     r"(?<![a-z0-9])(?:s\d{1,2}[\s._-]*e\d{1,3}(?:e\d{1,3})*|\d{1,2}e\d{2,3}|e\d{2,3}|\d{1,2}x\d{2,3})(?:v\d+)?"
     r"(?![a-z0-9])",
     re.IGNORECASE,
@@ -153,9 +153,11 @@ _EXPLICIT_KEY = re.compile(
 # A three- or four-digit count standing alone in the stem ("Show.101.v4", "Show - 0517"), and one standing alone
 # inside a bracket anywhere in the name ("S10E01 (0337)"). In the quality tail, a number behind a lone h or x and a
 # dot ("H.264") is a codec's and no count; in the head it counts ("Show.X.264").
-_BARE_NUMBER = re.compile(r"(?<![a-z0-9])(\d{3,4})(?:v\d+)?(?![a-z0-9])", re.IGNORECASE)
-_TAIL_NUMBER = re.compile(r"(?<![a-z0-9])(?<![^a-z0-9][hx]\.)(\d{3,4})(?:v\d+)?(?![a-z0-9])", re.IGNORECASE)
-_TAGGED_NUMBER = re.compile(r"[\[(](\d{3,4})[\])]")
+_STANDALONE_NUMBER = re.compile(r"(?<![a-z0-9])(\d{3,4})(?:v\d+)?(?![a-z0-9])", re.IGNORECASE)
+_STANDALONE_NUMBER_AFTER_QUALITY = re.compile(
+    r"(?<![a-z0-9])(?<![^a-z0-9][hx]\.)(\d{3,4})(?:v\d+)?(?![a-z0-9])", re.IGNORECASE
+)
+_BRACKETED_NUMBER = re.compile(r"[\[(](\d{3,4})[\])]")
 # A word of a title as written: letters and digits of any script, split at anything else.
 _WORD = re.compile(r"[^\W_]+")
 # A word that marks an extra, numbered or not ("PV 01", "NCOP2", "ED1a", "menus"):
@@ -241,9 +243,9 @@ def split_name(name: str) -> NameParts:
         stem,
         member,
         member.words_after_number if member is not None else folded_words(stem.text),
-        spells_season_episode=_EXPLICIT_KEY.search(stem.text) is not None,
-        standalone_numbers=tuple(count.number for count in _bare_counts(stem.text)),
-        bracketed_numbers=tuple(int(found) for found in _TAGGED_NUMBER.findall(name)),
+        spells_season_episode=_SPELLED_SEASON_EPISODE.search(stem.text) is not None,
+        standalone_numbers=tuple(count.number for count in _find_standalone_numbers(stem.text)),
+        bracketed_numbers=tuple(int(found) for found in _BRACKETED_NUMBER.findall(name)),
     )
 
 
@@ -267,23 +269,26 @@ def _group_blanked(text: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class _BareCount:
+class _StandaloneNumber:
     """A count standing alone in the stem, and where it starts."""
 
     start: int
     number: int
 
 
-def _bare_counts(text: str) -> list[_BareCount]:
+def _find_standalone_numbers(text: str) -> list[_StandaloneNumber]:
     """Every count standing alone in the stem, less the group tag's and a codec's number in the quality tail."""
 
     head = _group_blanked(_head_of(text))
     tail = text[len(head) :]
-    counts = [_BareCount(found.start(1), int(found[1])) for found in _BARE_NUMBER.finditer(head)]
-    return counts + [_BareCount(len(head) + found.start(1), int(found[1])) for found in _TAIL_NUMBER.finditer(tail)]
+    counts = [_StandaloneNumber(found.start(1), int(found[1])) for found in _STANDALONE_NUMBER.finditer(head)]
+    return counts + [
+        _StandaloneNumber(len(head) + found.start(1), int(found[1]))
+        for found in _STANDALONE_NUMBER_AFTER_QUALITY.finditer(tail)
+    ]
 
 
-def _middle_count(text: str) -> re.Match[str] | None:
+def _middle_name_number(text: str) -> re.Match[str] | None:
     """The " - NN - " count's match, unless a second such segment makes the first a title's number."""
 
     found = _MIDDLE_NUMBER.match(text)
@@ -292,7 +297,7 @@ def _middle_count(text: str) -> re.Match[str] | None:
     return found
 
 
-def _trailing_count(text: str) -> re.Match[str] | None:
+def _trailing_name_number(text: str) -> re.Match[str] | None:
     """The trailing number's match, unless it names no count.
 
     A plain "Season" leading it makes it a season ("Show - Season 01"), as does an ordinal season's lone digit
@@ -303,13 +308,13 @@ def _trailing_count(text: str) -> re.Match[str] | None:
     found = _TRAILING_NUMBER.match(text)
     if found is None or _JOINED.search(found.group(1)) is not None:
         return None
-    season = _SEASON_TAIL.search(found.group(1))
+    season = _SEASON_WORD_AT_END.search(found.group(1))
     if season is not None and (season.group("ordinal") is None or len(found["number"]) == 1):
         return None
     return found
 
 
-def _dotted_count(text: str) -> re.Match[str] | None:
+def _dotted_name_number(text: str) -> re.Match[str] | None:
     """The scene-dotted count's match: the head's first, other than a codec's number.
 
     None when a key stands anywhere, or when another count follows it in the head unless only the first is padded.
@@ -320,7 +325,7 @@ def _dotted_count(text: str) -> re.Match[str] | None:
     if found is None or _KEY_TOKEN.search(text) is not None:
         return None
     padded = found["number"].startswith("0")
-    for later in _COUNT_BEHIND.finditer(head, found.end()):
+    for later in _NAME_NUMBER_BEHIND.finditer(head, found.end()):
         if not padded or later.group(1).startswith("0"):
             return None
     return found
@@ -342,11 +347,11 @@ def _stem_version(name: str) -> Stem:
 
 
 _NUMBER_FORMS: tuple[Callable[[str], re.Match[str] | None], ...] = (
-    _KEYED_NUMBER.match,
-    _middle_count,
+    _SEASON_EPISODE_NUMBER.match,
+    _middle_name_number,
     _PACKED_NUMBER.match,
-    _trailing_count,
-    _dotted_count,
+    _trailing_name_number,
+    _dotted_name_number,
 )
 
 
@@ -451,13 +456,13 @@ _QUALITY_WORDS = frozenset(
 # tail with one ("Show - 05 Ray of Hope").
 _SECOND_HALVES = frozenset({"ray", "dl"})
 # A count label beside its number says nothing the number does not.
-_COUNT_LABELS = frozenset({"season", "episode", "ep"})
+_NUMBER_LABELS = frozenset({"season", "episode", "ep"})
 
 # The words that count a season, folded to its plain number so "2nd Season",
 # "Season 2", "S2" and "II" agree. Lone "I", "V" and "X" stay words.
 _ORDINAL = re.compile(r"^(\d{1,2})(?:st|[nr]d|th)$")
 _SEASON_TOKEN = re.compile(r"^s(\d{1,2})$")
-_COUNT_WORDS = {
+_NUMBER_WORDS = {
     "first": "1",
     "second": "2",
     "third": "3",
@@ -472,14 +477,14 @@ _COUNT_WORDS = {
 }
 
 
-def _count_word(word: str) -> str | None:
+def _number_word(word: str) -> str | None:
     """The plain number a word counts with ("02", "2nd", "second", "s2", "ii"), else None."""
 
     if word.isdigit():
         return str(int(word))
     if (found := _ORDINAL.match(word) or _SEASON_TOKEN.match(word)) is not None:
         return str(int(found.group(1)))
-    return _COUNT_WORDS.get(word)
+    return _NUMBER_WORDS.get(word)
 
 
 def _ascii(text: str) -> str:
@@ -498,7 +503,7 @@ def _kept(words: Sequence[str]) -> list[bool]:
     """Which words to keep: a count label beside a number says nothing the number does not."""
 
     return [
-        word not in _COUNT_LABELS
+        word not in _NUMBER_LABELS
         or not any(words[near].isdigit() for near in (index - 1, index + 1) if 0 <= near < len(words))
         for index, word in enumerate(words)
     ]
@@ -507,7 +512,7 @@ def _kept(words: Sequence[str]) -> list[bool]:
 def folded_words(text: str) -> tuple[str, ...]:
     """The words of a title or name in order: case and accents folded, brackets dropped, seasons counted plainly."""
 
-    words = [_count_word(word) or word for word in _raw_words(_ascii(_BRACKETED.sub(" ", text)))]
+    words = [_number_word(word) or word for word in _raw_words(_ascii(_BRACKETED.sub(" ", text)))]
     return tuple(compress(words, _kept(words)))
 
 
@@ -527,14 +532,14 @@ def whole_words(text: str) -> tuple[str, ...]:
 
 
 # A bare number closing the text before a name's count, right behind a word: "Show 2 - 05".
-_BARE_SEASON = re.compile(r"(?<=[^\W\d_])[\s.]+(\d{1,2})$")
+_UNLABELED_SEASON = re.compile(r"(?<=[^\W\d_])[\s.]+(\d{1,2})$")
 # A season number beside a zero-padded episode number, however the name sets the two apart: "Show - 2 - 05",
 # "Show.2.05", "Show-2-05", "Show 2nd - 05", "Show 2 Ep 05". Sonarr reads the padded number as the episode. An
 # unpadded pair ("Show - 2 - 1 =") can be an episode title's numbers.
 _PADDED_PAIR = re.compile(r"\b(\d{1,2})(?:st|[nr]d|th)?[\s.-]+(?:(?:ep|episode)[\s.-]*)?(0\d{1,3})\b", re.IGNORECASE)
 
 
-def written_keys(read: NameParts) -> tuple[EpisodeKey, ...]:
+def written_keys(parts: NameParts) -> tuple[EpisodeKey, ...]:
     """The seasons and episodes a name writes in plain numbers, outside any key token like "S02E05".
 
     Each season beside a zero-padded episode, however the name sets the two apart (`_PADDED_PAIR`), and a member's
@@ -542,10 +547,10 @@ def written_keys(read: NameParts) -> tuple[EpisodeKey, ...]:
     the series title's own number: "Show No. 8 - 05" writes S08E05.
     """
 
-    padded = tuple(EpisodeKey(int(season), int(episode)) for season, episode in _PADDED_PAIR.findall(read.stem.text))
-    if read.member is None or (found := _BARE_SEASON.search(_SEASON_TAG.sub(" ", read.member.prefix))) is None:
+    padded = tuple(EpisodeKey(int(season), int(episode)) for season, episode in _PADDED_PAIR.findall(parts.stem.text))
+    if parts.member is None or (found := _UNLABELED_SEASON.search(_SEASON_TAG.sub(" ", parts.member.prefix))) is None:
         return padded
-    return (EpisodeKey(int(found.group(1)), read.member.number), *padded)
+    return (EpisodeKey(int(found.group(1)), parts.member.number), *padded)
 
 
 def _blanked(text: str) -> str:
@@ -578,7 +583,7 @@ def _title_words(text: str) -> tuple[_Word, ...]:
     """
 
     words = [
-        (word if word.isdigit() else _count_word(word) or word, found.start(), found.end())
+        (word if word.isdigit() else _number_word(word) or word, found.start(), found.end())
         for found in _WORD.finditer(text)
         for word in _raw_words(_ascii(found.group()))
         if word != _CONNECTIVE
@@ -682,10 +687,10 @@ class TitleNameWords:
         )
 
 
-def _count_ends(text: str, end: int) -> bool:
+def _name_number_ends(text: str, end: int) -> bool:
     """Whether the count ending at `end` ends there (`_COUNT_END`), past any release tags: no title word follows."""
 
-    while (found := _COUNT_END.match(text, end)) is not None:
+    while (found := _NAME_NUMBER_END.match(text, end)) is not None:
         if found["word"] is None:
             return True
         word = found["word"].lower()
@@ -709,16 +714,16 @@ def _span_member(stem: Stem, found: re.Match[str]) -> NumberedName | None:
 
     text = stem.text
     if (
-        not _count_ends(text, found.end())
+        not _name_number_ends(text, found.end())
         or _KEY_TOKEN.search(text, found.end()) is not None
         or _NUMBER_BEHIND.match(text, found.end()) is not None
         or _EXTRA_BEHIND.match(text, found.end()) is not None
     ):
         return None
-    return _NameNumber.of(found, _COUNT_LEAD.sub("", text[: found.start("number")])).member(stem)
+    return _NameNumber.of(found, _NAME_NUMBER_LEAD.sub("", text[: found.start("number")])).member(stem)
 
 
-def _tails_a_title(text: str, member: NumberedName, end: int) -> bool:
+def _ends_stem_after_title(text: str, member: NumberedName, end: int) -> bool:
     """Whether the member's number ends the stem behind words past the title ("[0802] Show - Squad 66" read 66)."""
 
     trailing = _TRAILING_NUMBER.match(text)
@@ -731,7 +736,7 @@ def _tails_a_title(text: str, member: NumberedName, end: int) -> bool:
     )
 
 
-def _titled(read: NameParts, ground: TitleNameWords) -> NameParts:
+def _titled(parts: NameParts, name_words: TitleNameWords) -> NameParts:
     """The read with the entry's title told apart, when the name opens with one of `TitleGround.titles`.
 
     The title's numbers leave `bare_numbers` for the member's `title_numbers`. A name counted by none of its numbers,
@@ -740,48 +745,48 @@ def _titled(read: NameParts, ground: TitleNameWords) -> NameParts:
     ("Show - 2" under "Show 2"). A number trailing words past the title, in a name counted before it, is no count.
     """
 
-    text = read.stem.text
+    text = parts.stem.text
     blanked = _blanked(text)
-    span = ground.title_span(blanked)
+    span = name_words.title_span(blanked)
     if span is None:
-        return read
+        return parts
     start, end = span
-    counts = _bare_counts(text)
+    counts = _find_standalone_numbers(text)
     before = any(count.start < start for count in counts)
     standalone_numbers = tuple(count.number for count in counts if not start <= count.start < end)
-    found = _SPAN_COUNT.match(blanked, end)
-    counted = None if found is None else _span_member(read.stem, found)
-    member = read.member
+    found = _NAME_NUMBER.match(blanked, end)
+    counted = None if found is None else _span_member(parts.stem, found)
+    member = parts.member
     if member is None:
         member = counted
-    elif len(member.prefix) < end and member.number in ground.numbers:
+    elif len(member.prefix) < end and member.number in name_words.numbers:
         if counted is not None:
             member = counted
         elif _DASH_BEHIND.match(text, len(member.prefix)) is None and _LABEL_LAST.search(member.prefix) is None:
             member = None
-    elif before and _tails_a_title(text, member, end):
+    elif before and _ends_stem_after_title(text, member, end):
         member = None
     if member is None:
-        if found is not None and not _count_ends(text, found.end()):
+        if found is not None and not _name_number_ends(text, found.end()):
             tail = folded_words(text[found.end() :])
             return replace(
-                read,
+                parts,
                 standalone_numbers=standalone_numbers,
                 member=None,
                 title_words=tail,
                 episode_title_number=int(found["number"]),
             )
-        return replace(read, standalone_numbers=standalone_numbers, member=None, title_words=folded_words(text))
+        return replace(parts, standalone_numbers=standalone_numbers, member=None, title_words=folded_words(text))
     numbers = tuple(int(word) for word in _raw_words(_ascii_digits(blanked[start:end])) if word.isdigit())
     return replace(
-        read,
+        parts,
         standalone_numbers=standalone_numbers,
         member=replace(member, title_numbers=numbers),
         title_words=member.words_after_number,
     )
 
 
-def split_names(names: Iterable[str], ground: TitleNameWords) -> dict[str, NameParts]:
+def split_names(names: Iterable[str], name_words: TitleNameWords) -> dict[str, NameParts]:
     """Read a pack's names: each alone, then against the entry's titles (`_titled`), then its lone-S set.
 
     Names ending in "S1", "S2", ... behind one prefix whose numbers count up from 1 are a set of specials
@@ -789,10 +794,10 @@ def split_names(names: Iterable[str], ground: TitleNameWords) -> dict[str, NameP
     "Show S1" alone, or an "S2" repeated over extras, says which season and stays unnumbered.
     """
 
-    reads = {name: _titled(split_name(name), ground) for name in names}
+    reads = {name: _titled(split_name(name), name_words) for name in names}
     sets: dict[str, dict[int, list[str]]] = {}
-    for name, read in reads.items():
-        if read.member is None and (found := _LONE_S.match(read.stem.text)) is not None:
+    for name, parts in reads.items():
+        if parts.member is None and (found := _S_AND_NUMBER.match(parts.stem.text)) is not None:
             sets.setdefault(found.group(1), {}).setdefault(int(found.group(2)), []).append(name)
     for prefix, by_number in sets.items():
         numbers = sorted(by_number)
@@ -814,17 +819,17 @@ def is_quality_word(word: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class _Leftover:
+class _WordsBeyondSeries:
     """An AniList title's words beyond the series title, in title order, and as a set."""
 
     words: tuple[str, ...]
     distinct: frozenset[str]
 
     @classmethod
-    def of(cls, title: str, ground: frozenset[str]) -> Self:
+    def of(cls, title: str, name_words: frozenset[str]) -> Self:
         """The title's words not in `ground`, in title order, and as a set."""
 
-        words = tuple(word for word in folded_words(title) if word not in ground)
+        words = tuple(word for word in folded_words(title) if word not in name_words)
         return cls(words, frozenset(words))
 
     def overlap(self, rest: frozenset[str]) -> float:
@@ -859,21 +864,21 @@ class Naming:
     the subset's own scores, so one naming serves every tie-break and refusal over the same candidates.
     """
 
-    leftovers: tuple[_Leftover, ...]
+    leftovers: tuple[_WordsBeyondSeries, ...]
     scored: tuple[_Scored, ...]
 
     @classmethod
     def of(cls, candidates: Sequence[str], names: TitleNames) -> Self | None:
         """Score the candidates, or None when nothing names them: no ground, no titles, or the series as a title."""
 
-        ground = _word_set(names.series)
-        leftovers = tuple(_Leftover.of(title, ground) for title in names.anilist)
-        if not ground or not leftovers or not all(leftover.distinct for leftover in leftovers):
+        name_words = _word_set(names.series)
+        leftovers = tuple(_WordsBeyondSeries.of(title, name_words) for title in names.anilist)
+        if not name_words or not leftovers or not all(beyond.distinct for beyond in leftovers):
             return None
         scored: list[_Scored] = []
         for candidate in candidates:
-            rest = _word_set(candidate) - ground
-            scored.append(_Scored(rest, max(leftover.overlap(rest) for leftover in leftovers)))
+            rest = _word_set(candidate) - name_words
+            scored.append(_Scored(rest, max(beyond.overlap(rest) for beyond in leftovers)))
         return cls(leftovers, tuple(scored))
 
     def best_among(self, indices: Iterable[int]) -> frozenset[int]:
@@ -899,8 +904,8 @@ class Naming:
 
         winner = self.scored[index]
         return any(
-            leftover.overlap(winner.rest) == winner.score and not leftover.opening_only(winner.rest)
-            for leftover in self.leftovers
+            beyond.overlap(winner.rest) == winner.score and not beyond.opening_only(winner.rest)
+            for beyond in self.leftovers
         )
 
     def names_another(self, chosen: int, among: Iterable[int]) -> bool:

@@ -470,7 +470,7 @@ class SonarrEpisodes:
         return self._picked_by_date(al_id, final_ep_list, ep_list)
 
     def _picked_by_date(
-        self, al_id: int, mapped: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
+        self, al_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
     ) -> list[SonarrEpisode]:
         """The entry's episodes: `mapped`, or the specials of `series_episodes` AniList's dates pick over them.
 
@@ -478,14 +478,14 @@ class SonarrEpisodes:
         """
 
         airing = self._anilist.airing(al_id)
-        picked = specials_by_date(mapped, series_episodes, airing)
+        picked = specials_by_date(mapping_episodes, series_episodes, airing)
         if picked is None:
-            return mapped
+            return mapping_episodes
         if al_id not in self._picks_logged:
             self._picks_logged.add(al_id)
             dates = f"{airing.start}" if airing.end in (None, airing.start) else f"{airing.start} to {airing.end}"
             hub_note(
-                f"AniList {al_id} maps to {_dated(mapped)} but is dated {dates} - using {_dated(picked)}",
+                f"AniList {al_id} maps to {_dated(mapping_episodes)} but is dated {dates} - using {_dated(picked)}",
                 severity=Severity.DEBUG,
             )
         return picked

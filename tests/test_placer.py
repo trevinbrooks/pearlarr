@@ -14,7 +14,7 @@ from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo
 from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import (
     EMPTY_LISTING,
-    NO_IDENTIFIED,
+    NO_SIZE_MATCHES,
     BatchPlacements,
     EpisodeIndex,
     Placement,
@@ -105,17 +105,17 @@ class TestBorrowedPairPlacement:
     def test_a_wide_span_the_name_claims_itself_places_whole(self) -> None:
         # The cap is a BORROW limit. An explicit "E01-E04" range resolving every key inside the
         # set is a complete reading of the name's own claim, so width never refuses it.
-        scope = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
+        target = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed = {"span.mkv": parsed_info(season=1, episodes=(1, 2, 3, 4))}
 
-        assert by_name(place(parsed, scope)) == {"span.mkv": ((11, 12, 13, 14), PlacementVerdict.EXACT)}
+        assert by_name(place(parsed, target)) == {"span.mkv": ((11, 12, 13, 14), PlacementVerdict.EXACT)}
 
     def test_a_borrowed_span_just_over_the_cap_is_refused(self) -> None:
         # Four distinct pairs a NUMBERLESS name only borrowed is the season-pack shape sans flag.
-        scope = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
+        target = PlacementTarget([11, 12, 13, 14], series_index({EpisodeKey(1, e): 10 + e for e in range(1, 5)}))
         parsed = {"pack.mkv": parsed_info(matched=tuple((1, e) for e in range(1, 5)))}
 
-        assert by_name(place(parsed, scope)) == {"pack.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
+        assert by_name(place(parsed, target)) == {"pack.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
     def test_a_triple_span_still_places(self) -> None:
         # The cap boundary: three episodes is still one file's claim.
@@ -592,9 +592,9 @@ class TestRefuseCountedByTitle:
     def test_a_count_its_own_title_nearly_confirms_stands(self) -> None:
         # The name carries episode 3's title a word off ("on" for "of").
         name = "show - 03 Festival on the Night [grp].mkv"
-        scope = _scope(_FIRST_THREE, titles={**_TITLES, 603: "Festival of the Night"})
+        target = _scope(_FIRST_THREE, titles={**_TITLES, 603: "Festival of the Night"})
 
-        placed = by_name(place({name: parsed_info(absolutes=(3,), matched=((1, 3),))}, scope))
+        placed = by_name(place({name: parsed_info(absolutes=(3,), matched=((1, 3),))}, target))
 
         assert placed == {name: ((603,), PlacementVerdict.EXACT)}
 
@@ -1610,8 +1610,8 @@ class TestAssignTitledSingle:
 
     @classmethod
     def _place(cls, parsed: dict[str, ParsedFileInfo | None], *titles: str, series: str = "Show") -> BatchPlacements:
-        scope = PlacementTarget([901], series_index(cls._MAP), title_names=TitleNames(series, titles))
-        return place(parsed, scope)
+        target = PlacementTarget([901], series_index(cls._MAP), title_names=TitleNames(series, titles))
+        return place(parsed, target)
 
     def test_the_leftover_a_title_names_is_the_episode(self) -> None:
         movie, live = "show - the movie [grp].mkv", "show - live [grp].mkv"
@@ -1923,7 +1923,7 @@ class TestAssignReleaseRun:
 
         assert by_name(place(parsed, self._scope())) == self._ran()
 
-    _LONE_S: ClassVar[list[str]] = [f"[grp] Show S{n} (BD 1080p).mkv" for n in (1, 2, 3)]
+    _S_AND_NUMBER_NAMES: ClassVar[list[str]] = [f"[grp] Show S{n} (BD 1080p).mkv" for n in (1, 2, 3)]
 
     @classmethod
     def _beside_the_season(cls, specials: Sequence[str]) -> dict[str, ParsedFileInfo | None]:
@@ -1936,19 +1936,19 @@ class TestAssignReleaseRun:
 
     def test_a_packs_lone_s_set_counts_the_specials_window(self) -> None:
         # Zog42 numbers specials "S1".."S3" beside "- 01".."- 06": the set is the specials' own 1..N.
-        scope = PlacementTarget(self._WINDOW, series_index(self._SEASONED))
-        placed = by_name(place(self._beside_the_season(self._LONE_S), scope))
+        target = PlacementTarget(self._WINDOW, series_index(self._SEASONED))
+        placed = by_name(place(self._beside_the_season(self._S_AND_NUMBER_NAMES), target))
 
-        assert {name: placed[name] for name in self._LONE_S} == {
-            name: ((501 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(self._LONE_S)
+        assert {name: placed[name] for name in self._S_AND_NUMBER_NAMES} == {
+            name: ((501 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(self._S_AND_NUMBER_NAMES)
         }
 
     def test_one_lone_s_beside_the_season_is_a_season_token(self) -> None:
-        scope = PlacementTarget(self._WINDOW, series_index(self._SEASONED))
-        placed = by_name(place(self._beside_the_season(self._LONE_S[:1]), scope))
+        target = PlacementTarget(self._WINDOW, series_index(self._SEASONED))
+        placed = by_name(place(self._beside_the_season(self._S_AND_NUMBER_NAMES[:1]), target))
 
-        assert placed[self._LONE_S[0]][1] is not PlacementVerdict.SEQUENCE_OVER_PARSE
-        assert placed[self._LONE_S[0]][0] == ()
+        assert placed[self._S_AND_NUMBER_NAMES[0]][1] is not PlacementVerdict.SEQUENCE_OVER_PARSE
+        assert placed[self._S_AND_NUMBER_NAMES[0]][0] == ()
 
     _TITLED: ClassVar[list[str]] = [
         f"Wisp.100.Lantern.Keepers.of.the.Moor.{n:02d}.1080p.WEB.H264-grp.mkv" for n in (1, 2, 3)
@@ -1964,9 +1964,9 @@ class TestAssignReleaseRun:
     )
     def test_the_entrys_title_lets_its_numbered_pack_count(self, names: TitleNames) -> None:
         # Sonarr read nothing from the dotted names.
-        scope = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
+        target = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
 
-        assert by_name(place(blind(self._TITLED), scope)) == {
+        assert by_name(place(blind(self._TITLED), target)) == {
             name: ((501 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(self._TITLED)
         }
 
@@ -1974,17 +1974,17 @@ class TestAssignReleaseRun:
     def test_a_count_equal_to_the_titles_season_digit_keeps_the_run(self, names: TitleNames) -> None:
         # A second season's pack counts "- 1".."- 3" unpadded.
         run = [f"[grp] Show - {n} (1080p).mkv" for n in (1, 2, 3)]
-        scope = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
+        target = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
 
-        assert by_name(place(blind(run), scope)) == {
+        assert by_name(place(blind(run), target)) == {
             name: ((501 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(run)
         }
 
     @pytest.mark.parametrize("names", [TitleNames(), TitleNames("Wisp 100"), TitleNames("", ("Wispish 100",))])
     def test_without_the_title_the_numbered_pack_stays_unread(self, names: TitleNames) -> None:
-        scope = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
+        target = PlacementTarget(self._WINDOW, series_index(self._MAP), title_names=names)
 
-        assert PlacementVerdict.SEQUENCE_OVER_PARSE not in verdicts_of(place(blind(self._TITLED), scope))
+        assert PlacementVerdict.SEQUENCE_OVER_PARSE not in verdicts_of(place(blind(self._TITLED), target))
 
     def test_sonarr_counting_by_the_title_does_not_refute_the_pack(self) -> None:
         # Sonarr read the title's 100 as each file's absolute, an episode the series lacks.
@@ -2063,9 +2063,9 @@ class TestAssignReleaseRun:
         self, resolved: list[int], episode_count: int | None
     ) -> None:
         # The title is specials 1, 3 and 6, aired months apart.
-        scope = PlacementTarget(resolved, self._apart(0), episode_count=episode_count)
+        target = PlacementTarget(resolved, self._apart(0), episode_count=episode_count)
 
-        result = place(blind(self._BESIDE_SHORTS), scope)
+        result = place(blind(self._BESIDE_SHORTS), target)
 
         placed = by_name(result)
         assert result.placed == {self._TRIO[0]: (501,), self._TRIO[1]: (503,), self._TRIO[2]: (506,)}
@@ -2091,9 +2091,9 @@ class TestAssignReleaseRun:
         self, episode_count: int
     ) -> None:
         # With a count of four, the title has an episode Sonarr lacks, and nothing says where in its order it falls.
-        scope = PlacementTarget([501, 503, 506], self._apart(0), episode_count=episode_count)
+        target = PlacementTarget([501, 503, 506], self._apart(0), episode_count=episode_count)
 
-        assert place(blind(self._BESIDE_SHORTS), scope).placed == {}
+        assert place(blind(self._BESIDE_SHORTS), target).placed == {}
 
     def test_specials_numbered_apart_take_a_run_keyed_as_its_own_season(self) -> None:
         # The release numbers the title as a first season of its own. Over specials that key doesn't refuse the run.
@@ -2164,11 +2164,11 @@ class TestAssignReleaseRun:
 
     def test_a_run_numbered_as_the_windows_episodes_indexes_it(self) -> None:
         # A split cour's second half counts on from the first: 12..14 over S01E12..E14.
-        scope = PlacementTarget([612, 613, 614], series_index({EpisodeKey(1, n): 600 + n for n in (12, 13, 14)}))
+        target = PlacementTarget([612, 613, 614], series_index({EpisodeKey(1, n): 600 + n for n in (12, 13, 14)}))
         run = [f"sp - {n} [grp].mkv" for n in (12, 13, 14)]
         parsed = blind(run)
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert by_name(result) == {
             name: ((612 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(run)
@@ -2273,11 +2273,11 @@ class TestAssignReleaseRun:
             **{name: parsed_info(absolutes=(i,), matched=((1, i),)) for i, name in enumerate(base, 1)},
             **blind(sequel),
         }
-        scope = PlacementTarget(
+        target = PlacementTarget(
             self._WINDOW, series_index(self._SEASONED), title_names=TitleNames("Show", ("Show Name",))
         )
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert by_name(result) == {
             **{name: ((501 + i,), PlacementVerdict.SEQUENCE_OVER_PARSE) for i, name in enumerate(sequel)},
@@ -2308,11 +2308,11 @@ class TestAssignReleaseRun:
         other = numbered_names("show revival", 3)
         parsed = blind((*picked, *other))
         parsed[picked[1]] = parsed_info(season=1, episodes=(2,))
-        scope = PlacementTarget(
+        target = PlacementTarget(
             [604, 605, 606], series_index(self._SEASONED), title_names=TitleNames("Show", ("Show: Wrath",))
         )
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert result.placed == {}
 
@@ -2408,9 +2408,9 @@ class TestAssignReleaseRun:
         fit = numbered_names("show wrath", 3)
         other = numbered_names("show revival", 4)
         parsed = blind((*fit, *other))
-        scope = PlacementTarget(self._WINDOW, series_index(self._SEASONED), title_names=TitleNames("Show", (title,)))
+        target = PlacementTarget(self._WINDOW, series_index(self._SEASONED), title_names=TitleNames("Show", (title,)))
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert result.placed == ({name: (501 + i,) for i, name in enumerate(fit)} if placed else {})
 
@@ -2420,9 +2420,9 @@ class TestAssignReleaseRun:
         second = numbered_names("show s2", 3)
         third = numbered_names("show s3", 3)
         parsed = blind((*second, *third))
-        scope = PlacementTarget(self._WINDOW, series_index(self._SEASONED), title_names=TitleNames("Show", (title,)))
+        target = PlacementTarget(self._WINDOW, series_index(self._SEASONED), title_names=TitleNames("Show", (title,)))
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert result.placed == {name: (501 + i,) for i, name in enumerate(third)}
 
@@ -2569,11 +2569,11 @@ class TestAssignReleaseRun:
         # the count only speaks for the whole scope.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         parsed = _zip_blocked(blind(run))
-        scope = PlacementTarget(
+        target = PlacementTarget(
             [601, 602, 603, 604, 605, 606], series_index(self._SEASONED), used=frozenset({601, 602, 603})
         )
 
-        result = place(parsed, scope, run)
+        result = place(parsed, target, run)
 
         assert result.placed == {}
 
@@ -2585,9 +2585,9 @@ class TestAssignReleaseRun:
             f"show - {n:02d} [grp].mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in (1, 2, 3)
         }
         parsed = _zip_blocked({**mapped, **blind(run)})
-        scope = PlacementTarget([601, 602, 603, 604, 605, 606], series_index(self._SEASONED))
+        target = PlacementTarget([601, 602, 603, 604, 605, 606], series_index(self._SEASONED))
 
-        result = place(parsed, scope, run, file_map={name: (600 + n,) for n, name in enumerate(mapped, 1)})
+        result = place(parsed, target, run, file_map={name: (600 + n,) for n, name in enumerate(mapped, 1)})
 
         assert result.placed == {}
 
@@ -2610,8 +2610,8 @@ class TestAssignAbsoluteWindow:
             cls._RUN[1]: parsed_info(matched=((1, 2),)),
             cls._RUN[2]: parsed_info(matched=((1, 2),)),
         }
-        scope = PlacementTarget(cls._WINDOW, series_index(cls._MAP, absolutes=carried))
-        return place(_zip_blocked(parsed) if blocked else parsed, scope, cls._RUN)
+        target = PlacementTarget(cls._WINDOW, series_index(cls._MAP, absolutes=carried))
+        return place(_zip_blocked(parsed) if blocked else parsed, target, cls._RUN)
 
     def test_the_run_follows_the_absolute_order_across_seasons(self) -> None:
         # An entry holding a special TVDB interleaved: "02" is absolute 2, the special, whatever season it sits in.
@@ -2793,9 +2793,9 @@ class TestRereadSeasonRun:
         series = {key: ep_id for key, ep_id in self._TWO_OF_FOUR.items() if key.episode <= 2}
         run = numbered_names("show", 2)
         parsed = self._reads(run, self._TIED)
-        scope = PlacementTarget([501], series_index(series), title_names=TitleNames("Show", ("Show 2",)))
+        target = PlacementTarget([501], series_index(series), title_names=TitleNames("Show", ("Show 2",)))
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.NO_EPISODE_FOUND))
 
@@ -2807,11 +2807,11 @@ class TestRereadSeasonRun:
         parsed = self._reads(run, self._TIED)
         parsed.update(blind(loose))
         series = {**self._TWO_OF_FOUR, **{EpisodeKey(2, n): 700 + n for n in (1, 2, 3, 4)}}
-        scope = PlacementTarget(
+        target = PlacementTarget(
             [701, 702, 703, 704], series_index(series), title_names=TitleNames("Show", ("Show Two",))
         )
 
-        result = place(parsed, scope)
+        result = place(parsed, target)
 
         assert by_name(result) == dict.fromkeys((*run, *loose), ((), PlacementVerdict.NO_EPISODE_FOUND))
 
@@ -2890,7 +2890,7 @@ _THREE_LISTING = _listing(502, 504, 506)
 
 
 def _specials_scope(
-    resolved: Sequence[int], listing: TorrentListing, identified: SizeMatches = NO_IDENTIFIED
+    resolved: Sequence[int], listing: TorrentListing, identified: SizeMatches = NO_SIZE_MATCHES
 ) -> PlacementTarget:
     """A window of `resolved` over the specials series, carrying `listing` and the size-matched `identified`."""
 
@@ -3099,9 +3099,9 @@ class TestRefuseMisnumbered:
     def test_a_member_its_size_identifies_stays_in_the_refused_pack(self) -> None:
         # The refusal runs first, so a size match never pulls one special out of a pack that was refused whole.
         pack = specials_pack(*_PACK_NUMBERS)
-        scope = _specials_scope([507, 512, 513], _EIGHT_LISTING, {"Show.S00E14.mkv": 512})
+        target = _specials_scope([507, 512, 513], _EIGHT_LISTING, {"Show.S00E14.mkv": 512})
 
-        assert verdicts_of(place(pack, scope)) == {PlacementVerdict.MISNUMBERED}
+        assert verdicts_of(place(pack, target)) == {PlacementVerdict.MISNUMBERED}
 
 
 class TestAlternateNumbering:
@@ -3182,9 +3182,9 @@ class TestAlternateNumbering:
 
     def test_a_member_whose_special_is_already_held_is_skipped(self) -> None:
         # An earlier window already holds special 7. The pack still maps whole, and only that member is skipped.
-        scope = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({507}))
+        target = replace(_specials_scope([507, 512, 513], self._LISTING), used=frozenset({507}))
 
-        placed = by_name(place(specials_pack(*_PACK_NUMBERS), scope))
+        placed = by_name(place(specials_pack(*_PACK_NUMBERS), target))
 
         assert placed["Show.S00E07.mkv"] == ((), PlacementVerdict.NO_EPISODE_FOUND)
         assert placed["Show.S00E13.mkv"] == ((512,), PlacementVerdict.SPECIAL_ALIAS)
@@ -3193,9 +3193,9 @@ class TestAlternateNumbering:
 
     def test_a_size_match_on_another_special_than_its_alias_refuses_the_pack(self) -> None:
         # File 13's size matches special 13 but its alias says special 12, so the pack is left for a hand import.
-        scope = _specials_scope([507, 512, 513], self._LISTING, {"Show.S00E13.mkv": 513})
+        target = _specials_scope([507, 512, 513], self._LISTING, {"Show.S00E13.mkv": 513})
 
-        result = place(specials_pack(*_PACK_NUMBERS), scope)
+        result = place(specials_pack(*_PACK_NUMBERS), target)
 
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
@@ -3206,9 +3206,9 @@ class TestAlternateNumbering:
             **specials_pack(*_PACK_NUMBERS),
             "Show.S00E13v2.mkv": parsed_info(season=0, episodes=(13,), matched=((0, 13),)),
         }
-        scope = _specials_scope([507, 512, 513], self._LISTING, {"Show.S00E13.mkv": 513})
+        target = _specials_scope([507, 512, 513], self._LISTING, {"Show.S00E13.mkv": 513})
 
-        result = place(pack, scope)
+        result = place(pack, target)
 
         assert verdicts_of(result) == {PlacementVerdict.MISNUMBERED}
 
@@ -3386,11 +3386,11 @@ class TestSizeIdentity:
     def test_unscoped_a_size_matching_another_series_leaves_the_file_to_its_name(self) -> None:
         # An unscoped window admits any id: only the series check keeps the file off another series' episode.
         name = "Show.S01E01.mkv"
-        scope = PlacementTarget(
+        target = PlacementTarget(
             [], _SERIES, title_names=TitleNames("Show"), seadex=SeadexEvidence(EMPTY_LISTING, {name: 999})
         )
 
-        assert by_name(place({name: self._PACK[name]}, scope)) == {name: ((601,), PlacementVerdict.EXACT)}
+        assert by_name(place({name: self._PACK[name]}, target)) == {name: ((601,), PlacementVerdict.EXACT)}
 
     def test_a_size_agreeing_with_a_rejected_reading_places_it(self) -> None:
         # The titles reject the run's numbering, so the last member's reading is rejected. Its size points at the
@@ -3929,8 +3929,8 @@ class TestRefuseInterleavedSpecial:
             cls._RUN[2]: parsed_info(season=1, episodes=(3,), matched=((1, 3),)),
             cls._RUN[3]: parsed_info(season=1, episodes=(4,)),
         }
-        scope = PlacementTarget(list(ids), series_index(cls._MAP, absolutes=absolutes), title_names=TitleNames("Show"))
-        return place(parsed, scope)
+        target = PlacementTarget(list(ids), series_index(cls._MAP, absolutes=absolutes), title_names=TitleNames("Show"))
+        return place(parsed, target)
 
     def test_the_members_from_the_special_on_are_refused(self) -> None:
         # The special is absolute 3, between S01E02 and S01E03: "S01E03" is the special or the aired third
@@ -4015,9 +4015,9 @@ class TestRefuseInterleavedSpecial:
         index = series_index({**self._MAP, EpisodeKey(2, 1): 701}, absolutes={601: 1, 602: 2, 501: 3, 603: 4})
 
         verdicts = {
-            resolved: {name: v for name, (_, v) in by_name(place(parsed, scope)).items() if name in self._RUN[2:]}
+            resolved: {name: v for name, (_, v) in by_name(place(parsed, target)).items() if name in self._RUN[2:]}
             for resolved in (603, 501, 701)
-            for scope in (PlacementTarget([resolved], index, title_names=TitleNames("Show")),)
+            for target in (PlacementTarget([resolved], index, title_names=TitleNames("Show")),)
         }
 
         assert verdicts == {
@@ -4048,10 +4048,18 @@ class TestPlacerFacts:
         facts = place_batch(batch(parsed, [titled, extra], file_map={counted: (603,)}), _scope(_FIRST_THREE)).facts
 
         assert facts == {
-            titled: NameFacts(episode_by_title=602, reads_inside=True, extra=False, title_counted=False),
-            extra: NameFacts(episode_by_title=None, reads_inside=False, extra=True, title_counted=False),
-            counted: NameFacts(episode_by_title=None, reads_inside=True, extra=False, title_counted=True),
-            _GONE: NameFacts(episode_by_title=None, reads_inside=True, extra=False, title_counted=False),
+            titled: NameFacts(
+                episode_by_title=602, parses_inside_window=True, extra=False, parsed_by_title_number=False
+            ),
+            extra: NameFacts(
+                episode_by_title=None, parses_inside_window=False, extra=True, parsed_by_title_number=False
+            ),
+            counted: NameFacts(
+                episode_by_title=None, parses_inside_window=True, extra=False, parsed_by_title_number=True
+            ),
+            _GONE: NameFacts(
+                episode_by_title=None, parses_inside_window=True, extra=False, parsed_by_title_number=False
+            ),
         }
 
     def test_a_reading_outside_the_scope_does_not_read_inside(self) -> None:
@@ -4059,7 +4067,7 @@ class TestPlacerFacts:
 
         facts = place_batch(batch(parsed), _scope(_FIRST_THREE)).facts
 
-        assert facts["show - 05 [grp].mkv"].reads_inside is False
+        assert facts["show - 05 [grp].mkv"].parses_inside_window is False
 
     def test_a_reading_a_pass_rejects_still_reads_inside(self) -> None:
         # Sonarr matched the name to episode 2, inside the scope, but it carries episode 3's title: the contradiction
@@ -4069,8 +4077,8 @@ class TestPlacerFacts:
 
         result = place_batch(batch(parsed), _scope(_FIRST_THREE))
 
-        assert by_name(result.assignment) == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
-        assert result.facts[name].reads_inside is True
+        assert by_name(result.placements) == {name: ((603,), PlacementVerdict.EPISODE_TITLE)}
+        assert result.facts[name].parses_inside_window is True
 
     def test_a_reading_the_season_re_read_replaces_keeps_its_first_read(self) -> None:
         # A special TVDB interleaved after the second episode shifted Sonarr's match: the third file onto the special,
@@ -4081,5 +4089,5 @@ class TestPlacerFacts:
 
         result = place_batch(batch(parsed), _scope([601, 602, 603, 604]))
 
-        assert by_name(result.assignment)[run[2]] == ((603,), PlacementVerdict.EXACT)
-        assert result.facts[run[2]].reads_inside is False
+        assert by_name(result.placements)[run[2]] == ((603,), PlacementVerdict.EXACT)
+        assert result.facts[run[2]].parses_inside_window is False

@@ -28,7 +28,7 @@ class ListedTitle:
     """The entry's specials aliases and their TMDB show (`MappingEntry.special_aliasing`), None when it has none."""
 
 
-def fold_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> FetchedListings:
+def build_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> FetchedListings:
     """Build the series' `ListingsRead` from its entries.
 
     Each infohash gets the windows of the entries that list it and the union of their special aliases
@@ -42,7 +42,7 @@ def fold_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) ->
             if (infohash := normalized_infohash(torrent.infohash)) is not None:
                 by_hash.setdefault(infohash, []).append(title)
     listings = {infohash: _torrent_listing(listed) for infohash, listed in by_hash.items()}
-    return FetchedListings(listings, _series_identities(titles, ignore_tags))
+    return FetchedListings(listings, _series_episode_by_size(titles, ignore_tags))
 
 
 def _torrent_listing(titles: Sequence[ListedTitle]) -> TorrentListing | None:
@@ -64,18 +64,20 @@ def _torrent_listing(titles: Sequence[ListedTitle]) -> TorrentListing | None:
     return TorrentListing(tuple(windows), unambiguous(pairs) if len(shows) == 1 else NO_ALIASES)
 
 
-def _series_identities(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> EpisodeBySize | None:
+def _series_episode_by_size(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> EpisodeBySize | None:
     """The size identities of every entry, or None if any window is unread."""
 
     pairs: list[tuple[int, int]] = []
     for title in titles:
         if title.window is None:
             return None
-        pairs.extend(size_identities(title.entry, title.window, ignore_tags))
+        pairs.extend(single_episode_sizes(title.entry, title.window, ignore_tags))
     return unambiguous(pairs)
 
 
-def size_identities(entry: EntryRecord, window: TitleWindow, ignore_tags: frozenset[str]) -> Iterator[tuple[int, int]]:
+def single_episode_sizes(
+    entry: EntryRecord, window: TitleWindow, ignore_tags: frozenset[str]
+) -> Iterator[tuple[int, int]]:
     """Yield `(size, episode)` for each torrent with exactly one video file, when the entry covers one episode.
 
     All trackers count, since the size identifies the file wherever it's served. Torrents with an ignored tag

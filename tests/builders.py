@@ -66,7 +66,7 @@ from pearlarr.pending_import import (
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import (
     EMPTY_LISTING,
-    NO_SEEDED,
+    NO_FILE_MAP,
     BatchPlacements,
     EpisodeBySize,
     EpisodeIndex,
@@ -96,7 +96,7 @@ from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, CachedOrders, IndexOrders, OrderRow, OrdersByName
 from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
-from pearlarr.window_placement import WindowedAssignment
+from pearlarr.window_placement import WindowedPlacements
 
 from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
 
@@ -1192,11 +1192,11 @@ ALIASED_PACK = torrent_listing(entry_window(1, (502, 504, 506)), aliases={1: 2, 
 
 
 def torrent_evidence(
-    *windows: TitleWindow, identities: EpisodeBySize = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
+    *windows: TitleWindow, episode_by_size: EpisodeBySize = _NO_SIZES, aliases: SpecialAliases = NO_ALIASES
 ) -> FetchedSeadex:
     """Evidence after a good read: the `windows`' listing with `aliases`, and size `identities` (both none by default)."""
 
-    return FetchedSeadex(torrent_listing(*windows, aliases=aliases), identities)
+    return FetchedSeadex(torrent_listing(*windows, aliases=aliases), episode_by_size)
 
 
 def known_torrent(
@@ -1231,17 +1231,17 @@ def seed_scope(
         series_id=series_id,
         title_index=entry,
         series_index=series,
-        names=names,
+        title_names=names,
         episode_count=episode_count,
         alternate_titles=alternate_titles,
         aired_order=aired_order,
     )
 
 
-def new_torrent(scope: GrabbingTitle) -> KnownTorrent:
+def new_torrent(grabbing_title: GrabbingTitle) -> KnownTorrent:
     """A new torrent that nothing lists, with only the scope's own series read."""
 
-    return known_torrent(indexes={scope.series_id: scope.series_index})
+    return known_torrent(indexes={grabbing_title.series_id: grabbing_title.series_index})
 
 
 def series_index(
@@ -1314,19 +1314,19 @@ def verdicts_of(result: BatchPlacements) -> set[PlacementVerdict]:
     return {p.verdict for p in result.placements}
 
 
-def merged_of(result: WindowedAssignment) -> BatchPlacements:
+def merged_of(result: WindowedPlacements) -> BatchPlacements:
     """Each file's verdict over every window, batch order (`WindowedFile.merged`)."""
 
     return BatchPlacements(tuple(file.merged for file in result.files))
 
 
-def under_window(result: WindowedAssignment, at: int) -> BatchPlacements:
+def under_window(result: WindowedPlacements, at: int) -> BatchPlacements:
     """What the placer gave each file under the window at `at`, batch order (`WindowedFile.per_window`)."""
 
     return BatchPlacements(tuple(file.per_window[at] for file in result.files))
 
 
-def decided_by(result: WindowedAssignment) -> dict[str, int]:
+def decided_by(result: WindowedPlacements) -> dict[str, int]:
     """Each decided file's name -> the position of the window that decided it (`WindowedFile.decided_at`)."""
 
     return {file.name: file.decided_at for file in result.files if file.decided_at is not None}
@@ -1348,7 +1348,7 @@ def batch(
     parsed: Mapping[str, ParsedFileInfo | None],
     to_place: Sequence[str] | None = None,
     *,
-    file_map: FileEpisodeMap = NO_SEEDED,
+    file_map: FileEpisodeMap = NO_FILE_MAP,
 ) -> PlacementBatch:
     """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `seeded`."""
 
@@ -1357,14 +1357,14 @@ def batch(
 
 def place(
     parsed: Mapping[str, ParsedFileInfo | None],
-    scope: PlacementTarget,
+    target: PlacementTarget,
     to_place: Sequence[str] | None = None,
     *,
-    file_map: FileEpisodeMap = NO_SEEDED,
+    file_map: FileEpisodeMap = NO_FILE_MAP,
 ) -> BatchPlacements:
-    """The verdicts `assign_episode_ids` gives under `scope` over `batch(parsed, to_place, seeded=seeded)`."""
+    """The verdicts `assign_episode_ids` gives under `target` over `batch(parsed, to_place, seeded=seeded)`."""
 
-    return place_batch(batch(parsed, to_place, file_map=file_map), scope).assignment
+    return place_batch(batch(parsed, to_place, file_map=file_map), target).placements
 
 
 def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[str]:

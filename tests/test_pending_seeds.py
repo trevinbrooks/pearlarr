@@ -22,7 +22,7 @@ from pearlarr.grab_placement import (
     EntryPlacements,
     PendingImportUpdate,
     TitleFacts,
-    build_pending_seeds,
+    build_pending_import_updates,
 )
 from pearlarr.parse_cache import parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
@@ -79,21 +79,21 @@ def _build(
     seadex_dict: SeadexDict,
     facts: TitleFacts,
     *,
-    scope: GrabbingTitle | None = None,
+    grabbing_title: GrabbingTitle | None = None,
 ) -> dict[str, PendingImportUpdate]:
     """Place the entry's files under `scope` (by default the strat's whole series), then fold the seeds."""
 
     series = strat._episodes.cached_episodes(facts.series_id) or []
-    scope = scope or _scope(series, series)
+    grabbing_title = grabbing_title or _scope(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_hash="")
-    placed = EntryPlacements.place(scope, files, dict.fromkeys(files, new_torrent(scope)))
-    return build_pending_seeds(seadex_dict, placed, facts)
+    placed = EntryPlacements.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))
+    return build_pending_import_updates(seadex_dict, placed, facts)
 
 
-def _record(seed: PendingImportUpdate) -> PendingImport:
+def _record(update: PendingImportUpdate) -> PendingImport:
     """The seed persisted at the grab stamp, for the views only the record has (its label, its targets)."""
 
-    return seed.pending_import_at(_ADDED_AT, fresh=True)
+    return update.pending_import_at(_ADDED_AT, fresh=True)
 
 
 def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None) -> GrabbingTitle:
@@ -128,27 +128,27 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
-            scope=_scope(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
+            grabbing_title=_scope(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
-        assert set(seeds) == {"h1"}
-        seed = seeds["h1"]
-        claim = seed.claim
+        assert set(updates) == {"h1"}
+        update = updates["h1"]
+        claim = update.claim
         assert claim.series_id == 7
         assert claim.al_id == 1  # the entry's guard-row key
         assert claim.title == "Show"
         assert claim.names == TitleNames("Show", ("Show", "Shou"))
-        assert seed.pending_import is None
-        pending = seed.pending_import_at(_ADDED_AT, fresh=True)
+        assert update.pending_import is None
+        pending = update.pending_import_at(_ADDED_AT, fresh=True)
         assert pending.added_at == _ADDED_AT
         assert pending.claims == (claim,)
-        assert dict(seed.file_map) == {normalize_name("Show - 01.mkv"): (101,)}
-        assert seed.facts.seadex_files == ("Show - 01.mkv",)
+        assert dict(update.file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert update.facts.seadex_files == ("Show - 01.mkv",)
         # The claim's own episode slice, for the wait/notification label, and the window it is judged under.
         assert claim.claimed_coverage == "S01 E01"
         assert claim.ordered_episode_ids == (101,)
@@ -171,13 +171,13 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _build(
+        updates = _build(
             strat,
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
+        assert dict(updates["h1"].file_map) == {}
 
     def test_seed_copies_the_plan_guard_groups(self) -> None:
         # entry_groups/stale_groups are the PLAN's verdicts, copied through
@@ -189,7 +189,7 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(
@@ -197,7 +197,7 @@ class TestBuildPendingSeeds:
             ),
         )
 
-        claim = seeds["h1"].claim
+        claim = updates["h1"].claim
         assert claim.guards.entry_groups == ("RG", "Kept")
         assert claim.guards.stale_groups == ("Stale",)
 
@@ -212,15 +212,15 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert seeds["h1"].facts.release_sizes == (1000, 50)
-        assert seeds["h1"].facts.sizes_by_name == {"show - 01.mkv": 1000}
-        assert _record(seeds["h1"]).sizes_by_name == {"show - 01.mkv": 1000}
+        assert updates["h1"].facts.release_sizes == (1000, 50)
+        assert updates["h1"].facts.sizes_by_name == {"show - 01.mkv": 1000}
+        assert _record(updates["h1"]).sizes_by_name == {"show - 01.mkv": 1000}
 
     def test_seed_marks_targets_already_holding_a_pick(self) -> None:
         # A target already holding another pick's file at grab time was never
@@ -247,7 +247,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(
@@ -255,7 +255,7 @@ class TestBuildPendingSeeds:
             ),
         )
 
-        assert seeds["h1"].claim.preowned_episode_ids == (101,)
+        assert updates["h1"].claim.preowned_episode_ids == (101,)
 
     def test_seed_carries_the_plan_identified_episodes(self) -> None:
         # The plan resolved which untagged files a pick's listed size named
@@ -278,7 +278,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(
@@ -286,7 +286,7 @@ class TestBuildPendingSeeds:
             ),
         )
 
-        assert seeds["h1"].claim.guards.owned_episodes == ((101, 1000),)
+        assert updates["h1"].claim.guards.owned_episodes == ((101, 1000),)
 
     def test_multi_file_pack_maps_each_file_to_its_own_episode(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
@@ -307,21 +307,21 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        seed = seeds["h1"]
-        assert dict(seed.file_map) == {
+        update = updates["h1"]
+        assert dict(update.file_map) == {
             normalize_name("Show - 01.mkv"): (101,),
             normalize_name("Show - 02.mkv"): (102,),
         }
-        assert seed.claim.claimed_coverage == "S01 E01-E02"
+        assert update.claim.claimed_coverage == "S01 E01-E02"
         # The targets are the map's per-file ids alone, so the old cross-file
         # union bug (a whole season stamped onto one file) is out.
-        assert _record(seed).file_map_episode_ids() == [101, 102]
+        assert _record(update).file_map_episode_ids() == [101, 102]
 
     def test_empty_entry_seeds_nothing_and_excludes_nothing(self) -> None:
         # An entry that resolved no episodes has no scope to place into. An empty
@@ -332,15 +332,15 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, series),
             seadex_dict,
             facts=entry_facts(),
-            scope=_scope([], series),
+            grabbing_title=_scope([], series),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
-        assert seeds["h1"].excluded == ()
+        assert dict(updates["h1"].file_map) == {}
+        assert updates["h1"].excluded == ()
 
     def test_unread_series_map_seeds_nothing(self) -> None:
         # D12: the count legs need no map, but a seed is final where an import poll is retried,
@@ -356,16 +356,16 @@ class TestBuildPendingSeeds:
             sonarr=sonarr, cache_store=FakeCacheStore(sonarr_parse=_rows(parses)), ep_list_cache={}
         )
 
-        seeds = _build(
+        updates = _build(
             strat,
             seadex_dict,
             facts=entry_facts(),
-            scope=_scope(ep_list, []),
+            grabbing_title=_scope(ep_list, []),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
-        assert seeds["h1"].excluded == ()
-        assert seeds["h1"].claim.ordered_episode_ids == (101, 102)
+        assert dict(updates["h1"].file_map) == {}
+        assert updates["h1"].excluded == ()
+        assert updates["h1"].claim.ordered_episode_ids == (101, 102)
 
     def test_sibling_slice_files_are_excluded_not_intended(self) -> None:
         # A Part 1 entry over a Part 1+2 pack: files resolving in the series map
@@ -392,19 +392,19 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, series),
             seadex_dict,
             facts=entry_facts(),
-            scope=_scope(ep_list, series),
+            grabbing_title=_scope(ep_list, series),
         )
 
-        seed = seeds["h1"]
-        assert set(seed.file_map) == {
+        update = updates["h1"]
+        assert set(update.file_map) == {
             normalize_name("Show - S03E01.mkv"),
             normalize_name("Show - S03E02.mkv"),
         }
-        assert seed.excluded == (normalize_name("Show - S03E13.mkv"),)
+        assert update.excluded == (normalize_name("Show - S03E13.mkv"),)
 
     def test_file_resolving_nowhere_in_the_series_is_not_excluded(self) -> None:
         # Its key exists nowhere in the series, so nothing proves it another
@@ -415,14 +415,14 @@ class TestBuildPendingSeeds:
             "RG": rg_group({"u1": url_item(files=["Show - S09E09.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
-        assert seeds["h1"].excluded == ()
+        assert dict(updates["h1"].file_map) == {}
+        assert updates["h1"].excluded == ()
 
     def test_collision_refused_duplicate_is_excluded(self) -> None:
         # Two claimants on one episode (a v2 beside its v1): the seed takes the
@@ -446,15 +446,15 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        seed = seeds["h1"]
-        assert dict(seed.file_map) == {normalize_name("Show - 01v2.mkv"): (101,)}
-        assert seed.excluded == (normalize_name("Show - 01.mkv"),)
+        update = updates["h1"]
+        assert dict(update.file_map) == {normalize_name("Show - 01v2.mkv"): (101,)}
+        assert update.excluded == (normalize_name("Show - 01.mkv"),)
 
     def test_unparsed_and_vetoed_files_stay_possibly_ours(self) -> None:
         # A file with no parse record and a full-season-vetoed zip: neither is
@@ -479,15 +479,15 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        seed = seeds["h1"]
-        assert set(seed.file_map) == {normalize_name("Show - 01.mkv")}
-        assert seed.excluded == ()
+        update = updates["h1"]
+        assert set(update.file_map) == {normalize_name("Show - 01.mkv")}
+        assert update.excluded == ()
 
     def test_sibling_per_episode_torrents_get_distinct_slice_labels(self) -> None:
         # The live shape that motivated the slice: one entry, one group, one
@@ -507,14 +507,14 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
-        assert _record(seeds["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
+        assert _record(updates["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
+        assert _record(updates["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
 
     def test_an_unparsed_video_still_seeds_with_an_empty_map(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
@@ -526,17 +526,17 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat({}, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert set(seeds) == {"h1"}
-        assert dict(seeds["h1"].file_map) == {}
-        assert seeds["h1"].facts.seadex_files == ("Show - 01.mkv",)
+        assert set(updates) == {"h1"}
+        assert dict(updates["h1"].file_map) == {}
+        assert updates["h1"].facts.seadex_files == ("Show - 01.mkv",)
         # Nothing claimed -> the slice is the whole window it is verified against.
-        assert seeds["h1"].claim.claimed_coverage == "S01 E01"
+        assert updates["h1"].claim.claimed_coverage == "S01 E01"
 
     def test_unclaimed_record_labels_with_the_whole_window(self) -> None:
         # Two urls over one window: the parsed file claims its episode, the
@@ -553,15 +553,15 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S01 E01"
-        assert dict(seeds["h2"].file_map) == {}
-        assert _record(seeds["h2"]).display_label == f"Show{SEP}RG{SEP}S01 E01-E02"
+        assert _record(updates["h1"]).display_label == f"Show{SEP}RG{SEP}S01 E01"
+        assert dict(updates["h2"].file_map) == {}
+        assert _record(updates["h2"]).display_label == f"Show{SEP}RG{SEP}S01 E01-E02"
 
     def test_no_video_files_is_not_seeded(self) -> None:
         # A release with only non-video files (subs) has nothing to import.
@@ -574,13 +574,13 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat({}, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert seeds == {}
+        assert updates == {}
 
 
 class TestSeedGuards:
@@ -607,16 +607,16 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
-        assert set(seeds) == {"h1"}
-        assert dict(seeds["h1"].file_map) == {}
-        assert seeds["h1"].facts.seadex_files == ("Show S05 Ending.mkv",)
+        assert set(updates) == {"h1"}
+        assert dict(updates["h1"].file_map) == {}
+        assert updates["h1"].facts.seadex_files == ("Show S05 Ending.mkv",)
 
     def test_small_full_season_parse_never_seeds(self) -> None:
         # A bare-"S01" OP/ED Sonarr matched to a whole season of only two
@@ -635,15 +635,15 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
-        assert set(seeds) == {"h1"}
-        assert dict(seeds["h1"].file_map) == {}
+        assert set(updates) == {"h1"}
+        assert dict(updates["h1"].file_map) == {}
 
     def test_legitimate_double_episode_span_still_seeds(self) -> None:
         ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
@@ -654,13 +654,13 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
+        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
 
     def test_partially_resolving_span_is_not_seeded(self) -> None:
         # A double-episode file straddling the entry boundary: only episode 1
@@ -674,14 +674,14 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, series),
             seadex_dict,
             facts=entry_facts(),
-            scope=_scope(ep_list, series),
+            grabbing_title=_scope(ep_list, series),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
+        assert dict(updates["h1"].file_map) == {}
 
     def test_second_claim_of_a_seeded_id_is_not_seeded(self) -> None:
         # "13" and "13v2" both parse to S02E13: the later version wins,
@@ -704,13 +704,13 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
+        assert dict(updates["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
 
     def test_partial_collision_refuses_the_whole_later_file(self) -> None:
         # The later file claims one taken id and one free one: assignment
@@ -734,13 +734,13 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
 
     def test_duplicate_leaf_names_seed_once(self) -> None:
         # The same basename in two folders collapses in the basename-keyed
@@ -761,15 +761,15 @@ class TestSeedGuards:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             _strat(parses, ep_list),
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
         # Both physical files stay tracked (the leaves list is disk truth).
-        assert seeds["h1"].facts.seadex_files == ("Show - 01.mkv", "Show - 01.mkv")
+        assert updates["h1"].facts.seadex_files == ("Show - 01.mkv", "Show - 01.mkv")
 
 
 class TestParseWriteFeedsSeeds:
@@ -792,13 +792,13 @@ class TestParseWriteFeedsSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             strat,
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
         # Asked once, and persisted for the next run's gather.
         assert sonarr.parse_calls == ["Show - 01.mkv"]
         assert strat._parse.cache_store.get_sonarr_parse("Show - 01.mkv") is not None
@@ -821,13 +821,13 @@ class TestParseWriteFeedsSeeds:
             ),
         }
 
-        seeds = _build(
+        updates = _build(
             strat,
             seadex_dict,
             facts=entry_facts(),
         )
 
-        assert dict(seeds["h1"].file_map) == {}
+        assert dict(updates["h1"].file_map) == {}
 
 
 class TestNetInsertedCounts:
@@ -921,7 +921,7 @@ class TestTrustedGroups:
         strat = make_sonarr_sync(sonarr=sonarr, cache_store=store)
         own = pending_import(release_group="Ours", file_episode_map={"Show - 01.mkv": [101]})
 
-        seed = strat._reconciler._read_seed(own, [101])
+        update = strat._reconciler._read_seed(own, [101])
 
-        assert seed is not None
-        assert seed.statuses.by_id == {101: EpisodeFileStatus.TRUSTED}
+        assert update is not None
+        assert update.statuses.by_id == {101: EpisodeFileStatus.TRUSTED}

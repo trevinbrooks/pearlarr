@@ -217,7 +217,7 @@ class PlacementVerdict(StrEnum):
         return not isinstance(row, _Placed) and row.leaves is _Leaves.EXCLUDED
 
     @property
-    def refused(self) -> bool:
+    def final_unplaced(self) -> bool:
         """Whether the verdict settles the file with no ids: held for a re-ask, or misnumbered for a hand import."""
 
         return isinstance(_KIND[self], _FinalUnplaced)
@@ -237,7 +237,7 @@ class PlacementVerdict(StrEnum):
     def final(self) -> bool:
         """Whether a window that gives this verdict decides the file: it placed or refused it."""
 
-        return self.placed or self.refused
+        return self.placed or self.final_unplaced
 
     @property
     def from_alias(self) -> bool:
@@ -380,7 +380,7 @@ class Placement:
     """How the file left the passes."""
     order_only: OrderOnlyKey | None = None
     """The order and key that read the file, when the verdict is `ORDER_ONLY`."""
-    read_onto: tuple[int, ...] = ()
+    other_order_episodes: tuple[int, ...] = ()
     """The episodes the order reads the file onto, when the verdict is `OTHER_ORDER_ELSEWHERE`."""
 
 
@@ -422,7 +422,7 @@ class BatchPlacements:
         return {p.name: p.order_only for p in self.placements if p.order_only is not None}
 
 
-NO_SEEDED: FileEpisodeMap = MappingProxyType({})
+NO_FILE_MAP: FileEpisodeMap = MappingProxyType({})
 """No stored map."""
 
 
@@ -440,7 +440,7 @@ class PlacementBatch:
     parsed: Mapping[str, ParsedFileInfo | None]
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable)."""
 
-    file_map: FileEpisodeMap = NO_SEEDED
+    file_map: FileEpisodeMap = NO_FILE_MAP
     """The stored record's map, normalized name -> episode ids, the ids held as tuples. Its ids count as used wherever
     the scope admits them, and the misnumbered pack pass checks each seeded member sits on its aliased special."""
 
@@ -508,7 +508,7 @@ EMPTY_LISTING = TorrentListing()
 type SizeMatches = Mapping[str, int]
 """Normalized file name -> the episode id its size matched."""
 
-NO_IDENTIFIED: SizeMatches = MappingProxyType({})
+NO_SIZE_MATCHES: SizeMatches = MappingProxyType({})
 """No files placed by size: no size matched, or the size identities weren't read."""
 
 
@@ -520,7 +520,7 @@ class SeadexEvidence:
     """The torrent's listing: the ids a numbered specials pack is checked against, and the special aliases that
     can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
 
-    size_matches: SizeMatches = NO_IDENTIFIED
+    size_matches: SizeMatches = NO_SIZE_MATCHES
     """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
 
     def __post_init__(self) -> None:
@@ -649,7 +649,7 @@ class GrabbingTitle:
     series_index: EpisodeIndex
     """The WHOLE series (empty when the series list could not be read, which places nothing)."""
 
-    names: TitleNames
+    title_names: TitleNames
     """The series and AniList titles the placement breaks ties by, persisted onto every seed."""
 
     episode_count: int | None
@@ -669,7 +669,7 @@ class GrabbingTitle:
             al_id=self.al_id,
             series_id=self.series_id,
             ep_list=self.title_index.by_id.values(),
-            names=self.names,
+            names=self.title_names,
             episode_count=self.episode_count,
         )
         object.__setattr__(self, "window", window)
@@ -692,15 +692,15 @@ class FetchedListings:
     by_hash: Mapping[str, TorrentListing | None]
     """Infohash -> listing, or None if an entry listing that torrent couldn't be read."""
 
-    identities: EpisodeBySize | None
+    episode_by_size: EpisodeBySize | None
     """The series' size identities, minus any size that two entries give to different episodes. None if any
     entry's episodes couldn't be read, since that entry's sizes would be missing."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dicts, then wrap read-only.
         object.__setattr__(self, "by_hash", MappingProxyType(dict(self.by_hash)))
-        if self.identities is not None:
-            object.__setattr__(self, "identities", MappingProxyType(dict(self.identities)))
+        if self.episode_by_size is not None:
+            object.__setattr__(self, "episode_by_size", MappingProxyType(dict(self.episode_by_size)))
 
     def listing(self, infohash: str) -> TorrentListing | None:
         """The torrent's listing: None if it couldn't be read, `EMPTY_LISTING` if no entry lists it."""
