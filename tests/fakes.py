@@ -32,7 +32,6 @@ from pearlarr.arr_models import (
     SonarrItem,
 )
 from pearlarr.clock import Clock
-from pearlarr.manual_import import AttemptKind, ImportProbe, ImportProgress, PendingImport
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import (
     CapReached,
@@ -52,6 +51,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import LegacyLine, scan_event_lines
+from pearlarr.pending_import import PendingImport
 from pearlarr.progress import ProgressSink
 from pearlarr.protocols import ArrSync
 from pearlarr.radarr_client import AbstractRadarrClient
@@ -59,6 +59,7 @@ from pearlarr.run_services import RunServices
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookMiss, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.tvdb_orders import NO_ORDERING, SeriesOrdering
+from pearlarr.wait_types import AttemptKind, ImportProbe, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 

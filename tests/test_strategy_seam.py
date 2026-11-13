@@ -45,30 +45,14 @@ from pearlarr.arr_models import (
 from pearlarr.cache import CacheRecord
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, RecordSnapshot, trusted_groups
+from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, SeedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.manual_import import (
-    AttemptKind,
-    Deferral,
-    EffectStatus,
-    EntryNames,
-    FileEpisodeMap,
-    GuardFacts,
-    HeldBack,
-    HeldFile,
-    ImportProbe,
-    ImportProgress,
-    ImportWaitMode,
-    OwnedEpisode,
-    OwnGroup,
-    PendingImport,
-    PendingState,
-    normalize_basename,
-)
 from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource, ResolvedMappings
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
+from pearlarr.pending_import import EntryNames, FileEpisodeMap, GuardFacts, OwnedEpisode, OwnGroup, PendingImport
 from pearlarr.pending_records import PendingRecords
 from pearlarr.placement_types import ListingsRead, TorrentListing, episode_index
 from pearlarr.planner import PlanResult
@@ -82,6 +66,17 @@ from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.tvdb_orders import NO_ORDERING, OFFICIAL_ORDER, OrderRow, SeriesOrdering
+from pearlarr.wait_types import (
+    AttemptKind,
+    Deferral,
+    EffectStatus,
+    HeldBack,
+    HeldFile,
+    ImportProbe,
+    ImportProgress,
+    ImportWaitMode,
+    PendingState,
+)
 
 from .builders import (
     PENDING_ADDED,

@@ -8,8 +8,8 @@ from seadex import EntryRecord
 
 from pearlarr.anibridge import SpecialAliasing
 from pearlarr.arr_models import SonarrEpisode
-from pearlarr.manual_import import EntryNames, EntryWindow
 from pearlarr.mappings import MappingEntry, ResolvedMappings
+from pearlarr.pending_import import EntryNames, EntryWindow
 from pearlarr.placement_types import EMPTY_LISTING
 from pearlarr.torrent_listings import SeriesListings
 

@@ -8,7 +8,7 @@ import pytest
 
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.episode_titles import EpisodeTitles
-from pearlarr.manual_import import FileEpisodeMap
+from pearlarr.pending_import import FileEpisodeMap
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     EpisodeIndex,

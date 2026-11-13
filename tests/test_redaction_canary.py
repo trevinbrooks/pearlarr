@@ -19,9 +19,9 @@ from typer.testing import CliRunner
 from pearlarr.arr_http import ArrConnectionError, ArrHttp
 from pearlarr.cli import pearlarr_cli
 from pearlarr.config import Arr
-from pearlarr.manual_import import Outcome
 from pearlarr.notify import Notifier
 from pearlarr.paths import resolve_paths
+from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .fakes import diagnostic_messages, install_recording_hub

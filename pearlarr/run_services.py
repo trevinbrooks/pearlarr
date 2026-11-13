@@ -26,7 +26,6 @@ from .cache import AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .clock import Clock, SystemClock
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver, ResolvedMappings
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
@@ -40,6 +39,7 @@ from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
 from .torrents import TorrentService
+from .wait_types import ImportWaitMode
 
 
 class QbitConnectionError(Exception):

@@ -20,7 +20,6 @@ from rich.console import Console, Group
 from rich.spinner import Spinner
 
 from pearlarr.config import Arr
-from pearlarr.manual_import import Outcome
 from pearlarr.output import (
     Diagnostic,
     Event,
@@ -44,6 +43,7 @@ from pearlarr.output import (
 from pearlarr.output.recording import RecordingHub
 from pearlarr.output.wait_lines import live_model
 from pearlarr.output.wait_region import WaitRegion, _LiveFrame
+from pearlarr.wait_types import Outcome
 
 from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 

@@ -92,7 +92,6 @@ from pearlarr.log import (
     apply_log_level,
     setup_logger,
 )
-from pearlarr.manual_import import ImportWaitMode, Outcome
 from pearlarr.output import (
     CycleStarted,
     Diagnostic,
@@ -112,6 +111,7 @@ from pearlarr.output import (
 from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
+from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import make_logger
 from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub

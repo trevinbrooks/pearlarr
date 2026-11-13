@@ -24,6 +24,7 @@ from .episode_state import (
     TargetStatuses,
     UnfilledTargets,
 )
+from .file_paths import path_leaf, translate_download_path
 from .import_files import (
     CandidateFile,
     DiskLeftover,
@@ -43,22 +44,8 @@ from .import_quality import (
     resolve_quality,
 )
 from .log import count_noun, pluralize
-from .manual_import import (
-    NO_PROGRESS,
-    AttemptKind,
-    Deferral,
-    EffectStatus,
-    FileEpisodeMap,
-    HeldBack,
-    HeldFile,
-    ImportProbe,
-    ImportProgress,
-    PendingImport,
-    joined_map,
-    path_leaf,
-    translate_download_path,
-)
 from .output import hub_note, hub_warn
+from .pending_import import FileEpisodeMap, PendingImport, joined_map
 from .pending_records import PendingRecords
 from .placement_types import episode_index
 from .probe_verdicts import (
@@ -80,6 +67,16 @@ from .releases import EpisodeKey
 from .run_services import RunDeps
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
+from .wait_types import (
+    NO_PROGRESS,
+    AttemptKind,
+    Deferral,
+    EffectStatus,
+    HeldBack,
+    HeldFile,
+    ImportProbe,
+    ImportProgress,
+)
 
 # How many times the rescan's status is polled, `_RESCAN_COMMAND_POLL_S` apart.
 _RESCAN_COMMAND_MAX_POLLS = 30

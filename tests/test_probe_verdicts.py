@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from pearlarr.arr_models import CommandResource, HistoryPage
-from pearlarr.manual_import import Deferral, PendingImport
+from pearlarr.pending_import import PendingImport
 from pearlarr.probe_verdicts import (
     CommandBlock,
     ContentPaths,
@@ -23,6 +23,7 @@ from pearlarr.probe_verdicts import (
     rescanned_since_add,
     sonarr_restarted,
 )
+from pearlarr.wait_types import Deferral
 
 from .builders import PENDING_ADDED, PENDING_STAMP, entry_claim, pending_import, queue_record
 

@@ -19,7 +19,6 @@ import pytest
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.manual_import import OutcomeCategory
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import (
     BootReady,
@@ -37,6 +36,7 @@ from pearlarr.output import (
 )
 from pearlarr.output.recording import RecordingHub
 from pearlarr.run_services import RunDeps
+from pearlarr.wait_types import OutcomeCategory
 
 from .builders import make_bare_instance, make_config
 from .fakes import FakeClock

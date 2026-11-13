@@ -21,7 +21,6 @@ from rich.live import Live
 from pearlarr.config import Arr
 from pearlarr.console_caps import Capabilities
 from pearlarr.log import LOG_NAME
-from pearlarr.manual_import import OutcomeCategory
 from pearlarr.output import (
     BootReady,
     BootStepFinished,
@@ -48,6 +47,7 @@ from pearlarr.output.boot_region import (
     ready_line,
     slow_line,
 )
+from pearlarr.wait_types import OutcomeCategory
 
 from .builders import SEP
 from .fakes import strip_ansi

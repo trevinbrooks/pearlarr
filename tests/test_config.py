@@ -37,7 +37,7 @@ from pearlarr.config import (
     secret_value,
 )
 from pearlarr.config_migrations import CONFIG_VERSION
-from pearlarr.manual_import import ImportWaitMode
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config
 

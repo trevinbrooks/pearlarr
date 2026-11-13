@@ -13,8 +13,9 @@ from pearlarr.episode_state import (
     TargetStatuses,
     UnfilledTargets,
 )
-from pearlarr.manual_import import GuardFacts, OwnGroup, normalize_group
+from pearlarr.pending_import import GuardFacts, OwnGroup
 from pearlarr.placement_types import episode_index
+from pearlarr.releases import normalize_group
 
 from .builders import entry_claim, episode_snapshot, pending_import, sonarr_ep, target_statuses
 

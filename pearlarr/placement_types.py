@@ -10,7 +10,7 @@ from typing import Self
 from .anibridge import NO_ALIASES, SpecialAliases
 from .arr_models import ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 from .episode_titles import EpisodeTitles
-from .manual_import import EntryNames, EntryWindow, FileEpisodeMap
+from .pending_import import EntryNames, EntryWindow, FileEpisodeMap
 from .releases import EpisodeKey, OrderOnlyKey
 from .tvdb_orders import NO_ORDERING, OrderRow, SeriesOrdering
 

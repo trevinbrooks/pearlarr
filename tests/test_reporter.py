@@ -23,7 +23,6 @@ from seadex import Tag
 from pearlarr.anilist_client import AniListClient
 from pearlarr.cache import AbstractCacheStore, CacheRecord
 from pearlarr.config import Arr
-from pearlarr.manual_import import ImportWaitMode, PendingState
 from pearlarr.output import (
     EntryHeader,
     Event,
@@ -46,6 +45,7 @@ from pearlarr.reporter import (
     RunStats,
 )
 from pearlarr.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.wait_types import ImportWaitMode, PendingState
 
 from .builders import (
     FakeCacheStore,

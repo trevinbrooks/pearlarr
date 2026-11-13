@@ -19,7 +19,7 @@ import respx
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import HistoryRecord, ImportRejection, QueueRecord
 from pearlarr.episode_state import RecordSnapshot
-from pearlarr.manual_import import PendingImport
+from pearlarr.pending_import import PendingImport
 from pearlarr.probe_verdicts import QueueVerdict, classify_queue
 from pearlarr.radarr_client import RadarrClient
 from pearlarr.sonarr_client import SonarrClient

@@ -33,9 +33,9 @@ from seadex import EntryRecord
 import pearlarr.run_services as run_services
 import pearlarr.torrents as torrents
 from pearlarr.cli import run_single
-from pearlarr.manual_import import ImportWaitMode
 from pearlarr.output import current_hub
 from pearlarr.skyhook_client import SKYHOOK_URL
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config, make_entry_record, make_torrent_record
 from .http_mock import register_sonarr_reads, skyhook_fixture, sonarr_fixture

@@ -21,8 +21,8 @@ from . import __version__
 from .config import Arr
 from .json_narrow import is_json_obj
 from .log import LOG_NAME
-from .manual_import import GuardFacts
 from .output import hub_note
+from .pending_import import GuardFacts
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
 from .tvdb_orders import StoredOrders

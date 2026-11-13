@@ -29,7 +29,6 @@ from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.log import EntryState
-from pearlarr.manual_import import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.mappings import MappingEntry
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.recording import RecordingHub
@@ -40,6 +39,7 @@ from pearlarr.run_loop import RunLoop
 from pearlarr.run_services import RunServices
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import OFFICIAL_ORDER, SeriesOrderFacts
+from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeCategory
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (

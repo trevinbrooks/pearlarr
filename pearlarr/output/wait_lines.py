@@ -36,9 +36,9 @@ from ..log import (
     indent_string,
     rule_string,
 )
-from ..manual_import import HeldBack, Outcome, OutcomeCategory
 from ..releases import EpisodeKey, EpisodeRecord
 from ..tvdb_orders import order_display_name
+from ..wait_types import HeldBack, Outcome, OutcomeCategory
 
 if TYPE_CHECKING:
     from ..console_caps import Capabilities

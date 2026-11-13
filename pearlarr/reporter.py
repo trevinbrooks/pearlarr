@@ -13,7 +13,6 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .log import EntryState
-from .manual_import import EntryNames, ImportWaitMode, PendingImport, PendingState
 from .output import (
     Accent,
     CapReached,
@@ -45,8 +44,10 @@ from .output import (
     SeverityCounts,
     StyledValue,
 )
+from .pending_import import EntryNames, PendingImport
 from .releases import GrabHold, SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
+from .wait_types import ImportWaitMode, PendingState
 
 if TYPE_CHECKING:
     # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.

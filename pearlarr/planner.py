@@ -17,10 +17,18 @@ from typing import NamedTuple
 
 from .arr_models import ArrReleases, SonarrEpisode, index_episodes_by_key
 from .config import Arr
-from .manual_import import GuardFacts, OwnedEpisode, normalize_rg
 from .output import Severity
 from .pairs import unambiguous
-from .releases import EpisodeKey, EpisodeRecord, SeadexDict, SeadexReleaseGroupItem, SeadexUrlItem, season_episode_key
+from .pending_import import GuardFacts, OwnedEpisode
+from .releases import (
+    EpisodeKey,
+    EpisodeRecord,
+    SeadexDict,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+    normalize_rg,
+    season_episode_key,
+)
 
 
 @dataclass

@@ -17,14 +17,15 @@ from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GroupVotes, TrustPolicy, trusted_groups
+from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_placement import (
     EntryFacts,
     EntryPlacements,
     PendingSeed,
     build_pending_seeds,
 )
-from pearlarr.manual_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport, normalize_basename
 from pearlarr.parse_records import to_parse_record
+from pearlarr.pending_import import EntryNames, GuardFacts, OwnedEpisode, PendingImport
 from pearlarr.placement_types import SeedScope, episode_index
 from pearlarr.releases import EpisodeRecord, SeadexDict
 from pearlarr.seadex_sonarr import SonarrSync

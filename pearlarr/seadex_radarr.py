@@ -11,24 +11,16 @@ from .config import Arr
 from .grab_pipeline import NO_SEEDS, GrabRequest
 from .grab_placement import EntryFacts, PendingSeed, build_unscoped_seed
 from .log import pluralize
-from .manual_import import (
-    NO_PROGRESS,
-    AttemptKind,
-    GuardFacts,
-    ImportProbe,
-    ImportProgress,
-    ImportWaitMode,
-    PendingImport,
-    added_at_of,
-)
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
+from .pending_import import GuardFacts, PendingImport, added_at_of
 from .progress import ProgressSink
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .releases import flagged_urls
 from .run_services import RunDeps, RunServices, bind_arr_http
 from .stamps import parse_stamp_aware
+from .wait_types import NO_PROGRESS, AttemptKind, ImportProbe, ImportProgress, ImportWaitMode
 
 # Clock-skew cushion subtracted from the oldest pending record's `added_at` before the history query.
 # The added_at stamps are converted to UTC first, so this absorbs only genuine NTP drift, never a timezone

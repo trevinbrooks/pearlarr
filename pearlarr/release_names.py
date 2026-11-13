@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from itertools import compress, takewhile
 from typing import Self
 
-from .manual_import import EntryNames
+from .pending_import import EntryNames
 from .releases import EpisodeKey
 
 # "S01E05-06" or "S01E05-E06" with no spaces, maybe a "v2" after it. A letter or digit touching either end, as in

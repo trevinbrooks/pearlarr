@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import NamedTuple, final, override
 
 from .console_caps import console_of, detect_capabilities
-from .manual_import import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 from .output import (
     Phase,
     ScopeFactory,
@@ -21,6 +20,7 @@ from .output import (
     WaitSnapshot,
     emit_to_hub,
 )
+from .wait_types import NO_HELD_BACK, HeldBack, Outcome, OutcomeCategory
 
 
 @dataclass(frozen=True, slots=True)

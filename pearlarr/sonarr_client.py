@@ -26,8 +26,8 @@ from .arr_models import (
     SonarrSeries,
 )
 from .boundary import validate_each, validation_summary
-from .manual_import import PendingImport
 from .output import hub_warn
+from .pending_import import PendingImport
 
 # Per-request timeout (seconds) for the manual-import folder scan over a slow remote mount. Bounded so a hung
 # read surfaces as a transient miss (retry) instead of blocking the run.
