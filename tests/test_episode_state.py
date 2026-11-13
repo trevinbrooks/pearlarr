@@ -52,9 +52,9 @@ class TestEpisodeFileStatuses:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
         # guard must still match it against the recommended set built from "Aergia".
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="-Aergia-")]
-        statuses = episode_snapshot(
-            episodes=episode_index(episodes), trusted={normalize_group("Aergia"): None}
-        ).statuses([5], {})
+        aergia = normalize_group("Aergia")
+        assert aergia is not None
+        statuses = episode_snapshot(episodes=episode_index(episodes), trusted={aergia: None}).statuses([5], {})
         assert statuses.by_id == {5: EpisodeFileStatus.TRUSTED}
 
     def test_untagged_file_the_grab_identified_is_recommended(self) -> None:

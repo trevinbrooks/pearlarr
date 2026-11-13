@@ -26,7 +26,7 @@ from .releases import (
     Release,
     ReleaseEpisode,
     SeadexDict,
-    normalize_rg,
+    normalize_group,
     season_episode_key,
 )
 
@@ -267,7 +267,7 @@ def episode_coverage(
     for seadex_rg, group_releases in seadex_dict.items():
         # Index by the normalized name so the membership checks in
         # `plan` are case- and dash-insensitive.
-        seadex_rg_normalized = normalize_rg(seadex_rg)
+        seadex_rg_normalized = normalize_group(seadex_rg)
         if seadex_rg_normalized is None:
             continue
 
@@ -346,7 +346,7 @@ def _file_release_groups(
         arr_file = sonarr_ep.episode_file
         if arr_file is None:
             continue
-        group = normalize_rg(arr_file.release_group)
+        group = normalize_group(arr_file.release_group)
         if group is not None:
             identities[key] = _FileReleaseGroup(group, by_size=False, size=arr_file.size)
         else:
@@ -355,7 +355,7 @@ def _file_release_groups(
         return _FileReleaseGroups(identities, untagged)
 
     for seadex_rg, group_releases in seadex_dict.items():
-        normalized = normalize_rg(seadex_rg)
+        normalized = normalize_group(seadex_rg)
         if normalized is None:
             continue
         for release in group_releases.releases.values():
@@ -449,7 +449,7 @@ def _group_ownership(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupOwners
 
     cover: dict[str | None, set[int]] = {}
     for rg, item in seadex_dict.items():
-        listed = cover.setdefault(normalize_rg(rg), set())
+        listed = cover.setdefault(normalize_group(rg), set())
         for release in item.releases.values():
             # Url-level and per-episode sizes both count (an episode parse can
             # carry sizes a bare listing record doesn't); zero proves nothing.
@@ -469,7 +469,7 @@ def _group_ownership(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupOwners
     owned: list[str] = []
     outdated: list[str] = []
     for rg in seadex_dict:
-        norm = normalize_rg(rg)
+        norm = normalize_group(rg)
         files = attributed.get(norm, [])
         listed = cover.get(norm, set())
         if not files:
@@ -523,15 +523,15 @@ class GrabPlanner:
         # The Arr's tagged sizes merged under normalized group names, built
         # once per entry and shared by the name-overlap check here and the
         # per-URL matchers. A tagged key is truthy, so the None guard only
-        # narrows the type (`normalize_rg` returns a str for truthy input).
+        # narrows the type (`normalize_group` returns a str for truthy input).
         arr_sizes_by_norm: dict[str, list[int]] = {}
         for arr_rg, sizes in arr_releases.by_group.items():
-            if (norm := normalize_rg(arr_rg)) is not None:
+            if (norm := normalize_group(arr_rg)) is not None:
                 arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
 
         # Whether any SeaDex release group matches any Arr release tag - by
         # normalized name, matching the per-episode path's comparison.
-        seadex_keys = {normalize_rg(rg) for rg in seadex_dict}
+        seadex_keys = {normalize_group(rg) for rg in seadex_dict}
         any_release_owned = not seadex_keys.isdisjoint(arr_sizes_by_norm)
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
@@ -651,7 +651,7 @@ class GrabPlanner:
         # Match by the normalized name (like the per-episode path). The merged
         # size index was built once per entry (see _PlanContext). A blank pick
         # name is no name - it can only match by untagged-copy ownership below.
-        seadex_norm = normalize_rg(seadex_rg)
+        seadex_norm = normalize_group(seadex_rg)
         if seadex_norm is not None and seadex_norm in ctx.arr_sizes_by_norm:
             # The group matches: fall through to a size comparison. A listing
             # with no sizes carries no evidence either way, so the held copy
@@ -741,7 +741,7 @@ class GrabPlanner:
         size_matches = [False] * len(seadex_episodes)
         # Fixed per call - normalize once, not once per parsed episode (only
         # sonarr_rg_normalized varies in the loop).
-        seadex_rg_normalized = normalize_rg(seadex_rg)
+        seadex_rg_normalized = normalize_group(seadex_rg)
         # Per matched episode: each size the listing places on it, and the size our group holds there.
         listed_pairs: list[tuple[EpisodeKey, int]] = []
         arr_size_by_key: dict[EpisodeKey, int] = {}
@@ -865,7 +865,7 @@ class GrabPlanner:
             return
 
         url = release.url
-        seadex_norm = normalize_rg(seadex_rg)
+        seadex_norm = normalize_group(seadex_rg)
         if _window_in_place(ctx, seadex_norm, release.file_sizes):
             if ctx.debug_on:
                 self.logger.debug(

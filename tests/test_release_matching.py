@@ -8,23 +8,22 @@ from pearlarr.planner import (
     episode_coverage,
     get_episode_keys,
     get_same_files_groups,
-    normalize_rg,
 )
-from pearlarr.releases import EpisodeKey, GroupReleases, Release, ReleaseEpisode
+from pearlarr.releases import EpisodeKey, GroupReleases, Release, ReleaseEpisode, normalize_group
 
 from .builders import sonarr_ep
 
 
-class TestNormalizeRg:
-    """`normalize_rg` casefolds and strips whitespace/leading-trailing dashes. Blank or `None` in yields `None`."""
+class TestNormalizeGroup:
+    """`normalize_group` casefolds and strips whitespace/leading-trailing dashes. Blank or `None` in yields `None`."""
 
     def test_none_and_blank_return_none(self) -> None:
-        assert normalize_rg(None) is None
-        assert normalize_rg("") is None
+        assert normalize_group(None) is None
+        assert normalize_group("") is None
 
     def test_strips_whitespace_dashes_and_casefolds(self) -> None:
-        assert normalize_rg("  Era-Raws-  ") == "era-raws"
-        assert normalize_rg("-SubsPlease-") == "subsplease"
+        assert normalize_group("  Era-Raws-  ") == "era-raws"
+        assert normalize_group("-SubsPlease-") == "subsplease"
 
 
 class TestFormatEpisodeRanges:
