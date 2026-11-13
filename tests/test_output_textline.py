@@ -47,13 +47,12 @@ from pearlarr.output import (
     EntryDetail,
     EntryHeader,
     Event,
-    FileLogSink,
+    FileLogRenderer,
     GrabAction,
     GrabFailed,
     GrabStatus,
     ItemStarted,
     JsonRenderer,
-    LedgerRow,
     LegFinished,
     LegSummary,
     LegTally,
@@ -79,6 +78,7 @@ from pearlarr.output import (
     SkipReason,
     StarterConfigWritten,
     StyledValue,
+    TitleRow,
     TorrentView,
     WaitFinished,
     WaitKind,
@@ -87,7 +87,7 @@ from pearlarr.output import (
     WaitStarted,
     textline,
 )
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.releases import ElsewhereCounts
@@ -204,7 +204,7 @@ def test_scan_and_item_lines() -> None:
 
 def test_entry_header_line_reads_the_full_breadcrumb() -> None:
     header = EntryHeader(
-        state=EntryState.CHECKING,
+        state=TitleState.CHECKING,
         title="Frieren: Beyond Journey's End",
         al_id=154587,
         coverage="S01 E01-E28",
@@ -491,7 +491,7 @@ def _line_sink() -> tuple[LineRenderer, io.StringIO]:
 
 
 def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.set_level(logging.WARNING)
 
     for event in _entry_context():
@@ -508,7 +508,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
 def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
     # P6: severity_of(RowFinished) is category-based, so a FAILED
     # graduation (ERROR) survives a raised file level while a success drops.
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.set_level(logging.WARNING)
 
     sink.handle(RowFinished(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
@@ -521,7 +521,7 @@ def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path)
 
 
 def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.set_level(logging.WARNING)
 
     sink.handle(_summary_ready(), _EPOCH)
@@ -541,7 +541,7 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
 def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> None:
     note = Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True)
     line_sink, stream = _line_sink()
-    file_sink = FileLogSink(str(tmp_path))
+    file_sink = FileLogRenderer(str(tmp_path))
 
     line_sink.handle(note, _EPOCH)
     file_sink.handle(note, _EPOCH)
@@ -555,14 +555,14 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
     events: list[Event] = [
         RunStarted(version="v1.0.0", data_dir="/data"),
         *_entry_context(),
-        EntryHeader(state=EntryState.CHECKING, title="Frieren", scope=_ENTRY),
+        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
         Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
         LegFinished(arr=Arr.SONARR),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogSink(str(tmp_path))
+    file_sink = FileLogRenderer(str(tmp_path))
 
     for event in events:
         line_sink.handle(event, _EPOCH)
@@ -582,7 +582,7 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
         Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogSink(str(tmp_path))
+    file_sink = FileLogRenderer(str(tmp_path))
     line_sink.set_level(logging.WARNING)
     file_sink.set_level(logging.WARNING)
 
@@ -615,7 +615,7 @@ def _make_backup(tmp_path: Path, name: str, age_days: float) -> Path:
 
 
 def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
@@ -637,7 +637,7 @@ def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) ->
 
 
 def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     when = datetime(2026, 1, 1, 10, 0, 0)
 
@@ -657,7 +657,7 @@ def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> N
 
 
 def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.begin_run()
     sink.begin_run()  # no writes in between: nothing to rotate
     sink.handle(RunStarted(version="only", data_dir="/d"), _EPOCH)
@@ -674,7 +674,7 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
     log.write_text("previous run\n", encoding="utf-8")
     when = datetime(2026, 1, 1, 10, 0, 0)
     _pin_mtime(log, when)
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
 
     sink.handle(RunStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
     assert list(tmp_path.glob("Pearlarr.log.*")) == []  # appended, no rotation
@@ -694,7 +694,7 @@ def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_pat
 
 
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
     sink.close()
     sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)
@@ -709,7 +709,7 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
 
 def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 2)
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stamps = [datetime(2026, 1, day, 0, 0, 0) for day in (1, 2, 3, 4)]
 
@@ -727,7 +727,7 @@ def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypa
 
 
 def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_file(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     live = tmp_path / "Pearlarr.log"
     live.write_text("live\n", encoding="utf-8")
     _pin_mtime(live, datetime.now() - timedelta(days=999))  # an ancient mtime must never matter for the live file
@@ -743,7 +743,7 @@ def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_
 
 
 def test_apply_retention_days_prunes_legacy_numbered_backups_by_age_too(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     legacy_old = _make_backup(tmp_path, "Pearlarr.log.9", age_days=30)
     legacy_young = _make_backup(tmp_path, "Pearlarr.log.1", age_days=1)
 
@@ -754,7 +754,7 @@ def test_apply_retention_days_prunes_legacy_numbered_backups_by_age_too(tmp_path
 
 
 def test_apply_retention_days_before_any_rotation_is_a_no_op(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
 
     sink.apply_retention_days(14)  # nothing exists yet - must not raise or create anything
 
@@ -765,7 +765,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Retention runs outside hub dispatch. A read-only backup must not kill the run.
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     doomed = _make_backup(tmp_path, "Pearlarr.log.2025-02-01_000000", age_days=29)
     real_remove = os.remove
@@ -784,7 +784,7 @@ def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest
 
 def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 1)
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
     stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
     real_remove = os.remove
@@ -808,7 +808,7 @@ def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypa
 def test_backups_are_found_when_the_log_dir_contains_glob_metacharacters(tmp_path: Path) -> None:
     weird = tmp_path / "logs [seedbox]"
     weird.mkdir()
-    sink = FileLogSink(str(weird))
+    sink = FileLogRenderer(str(weird))
     old_backup = _make_backup(weird, "Pearlarr.log.2025-01-01_000000", age_days=30)
 
     sink.apply_retention_days(14)
@@ -818,7 +818,7 @@ def test_backups_are_found_when_the_log_dir_contains_glob_metacharacters(tmp_pat
 
 def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     # Per-line flush (crash fidelity): the tail is on disk before close or any WARNING.
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     log = tmp_path / "Pearlarr.log"
 
     sink.handle(RunStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
@@ -830,7 +830,7 @@ def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
 
 
 def test_probe_leaves_no_file_behind_and_keeps_existing_content(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.probe()
     assert not (tmp_path / "Pearlarr.log").exists()  # the probe's own file is removed
 
@@ -844,7 +844,7 @@ def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
     log = tmp_path / "Pearlarr.log"
     log.write_text("root-owned\n", encoding="utf-8")
     log.chmod(0o400)
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     try:
         with pytest.raises(OSError):
             sink.probe()
@@ -853,9 +853,9 @@ def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
 
 
 def test_file_sink_writes_utf8(tmp_path: Path) -> None:
-    sink = FileLogSink(str(tmp_path))
+    sink = FileLogRenderer(str(tmp_path))
     sink.handle(
-        EntryHeader(state=EntryState.CHECKING, title="Pokémon — ポケモン", scope=None),
+        EntryHeader(state=TitleState.CHECKING, title="Pokémon — ポケモン", scope=None),
         _EPOCH,
     )
     sink.close()
@@ -915,7 +915,7 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=700.0, pending=0, kind=WaitKind.MONITOR, scope=_WAIT),
     ]
     line_sink, stream = _line_sink()
-    file_sink = FileLogSink(str(tmp_path))
+    file_sink = FileLogRenderer(str(tmp_path))
     for event in events:
         line_sink.handle(event, _EPOCH)
         file_sink.handle(event, _EPOCH)
@@ -1120,7 +1120,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
 def test_json_scoped_events_carry_their_breadcrumb_path() -> None:
     events: list[Event] = [
         *_entry_context(),
-        EntryHeader(state=EntryState.CHECKING, title="Frieren", scope=_ENTRY),
+        EntryHeader(state=TitleState.CHECKING, title="Frieren", scope=_ENTRY),
     ]
     payloads = _json_lines(events)
     header = payloads[-1]
@@ -1154,9 +1154,9 @@ def _exemplars() -> list[Event]:
         BootReady(elapsed_s=7.0),
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="T"),
-        EntryHeader(state=EntryState.CHECKING, title="T"),
+        EntryHeader(state=TitleState.CHECKING, title="T"),
         EntryDetail(label="status", value=StyledValue("no suitable releases")),
-        LedgerRow(state=EntryState.IGNORED, label="AniList #1"),
+        TitleRow(state=TitleState.IGNORED, label="AniList #1"),
         ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY),
         GrabFailed(group="G", url="u", error="e"),
         GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),

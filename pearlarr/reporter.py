@@ -18,12 +18,10 @@ from .output import (
     EntryDetail,
     EntryFact,
     EntryHeader,
-    EntryScope,
     GrabAction,
     GrabFailed,
     GrabStatus,
     ItemStarted,
-    LedgerRow,
     LegFinished,
     LegSummary,
     LegTally,
@@ -38,8 +36,10 @@ from .output import (
     ScopeFactory,
     Severity,
     StyledValue,
+    TitleRow,
+    TitleScope,
 )
-from .output.events import EntryState
+from .output.events import TitleState
 from .pending_import import PendingImport
 from .releases import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
@@ -80,7 +80,7 @@ class RunReporter:
         self.cache_store = cache_store
         self.anilist = anilist
         # The entry block currently open, None between entries. Boundaries and sibling rows close it first.
-        self._entry: EntryScope | None = None
+        self._entry: TitleScope | None = None
 
     # --- entry-scope lifecycle + emit helpers --------------------------------
 
@@ -125,11 +125,11 @@ class RunReporter:
 
         self._post(fact)
 
-    def _ledger(self, state: EntryState, label: str) -> None:
+    def _ledger(self, state: TitleState, label: str) -> None:
         """Close any open entry, then emit a scope-free (col-0) ledger row."""
 
         self._close_entry()
-        self._emit(LedgerRow(state, label))
+        self._emit(TitleRow(state, label))
 
     # --- run / item boundaries -----------------------------------------------
 
@@ -170,19 +170,19 @@ class RunReporter:
     def log_no_episodes(self, title: str) -> None:
         """Report a title whose mapping resolved no episodes, as a self-contained (col-0) ledger row."""
 
-        self._ledger(EntryState.NO_EPISODES, title)
+        self._ledger(TitleState.NO_EPISODES, title)
 
     def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row)."""
 
         ctx.stats.unmonitored += 1
-        self._ledger(EntryState.UNMONITORED, item_title)
+        self._ledger(TitleState.UNMONITORED, item_title)
 
     def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> None:
         """Report a title with no AniList mappings (bumps the tally, emits its row)."""
 
         ctx.stats.no_mappings += 1
-        self._ledger(EntryState.NO_MAPPING, title)
+        self._ledger(TitleState.NO_MAPPING, title)
 
     def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
@@ -191,13 +191,13 @@ class RunReporter:
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(EntryState.IGNORED, resolve_entry_title(al_id, (), ctx.arr_title))
+        self._titled_row(TitleState.IGNORED, resolve_entry_title(al_id, (), ctx.arr_title))
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         ctx.stats.no_seadex_entry += 1
-        self._titled_row(EntryState.NO_ENTRY, self._display_title(ctx, al_id, None))
+        self._titled_row(TitleState.NO_ENTRY, self._display_title(ctx, al_id, None))
 
     def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
@@ -206,7 +206,7 @@ class RunReporter:
         # The stored name wins: a prior run resolved it, so no lookup is needed.
         entry = self.cache_store.get_entry(ctx.arr, al_id)
         title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
-        self._titled_row(EntryState.SKIPPED, title)
+        self._titled_row(TitleState.SKIPPED, title)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
@@ -215,7 +215,7 @@ class RunReporter:
 
         return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
 
-    def _titled_row(self, state: EntryState, title: Title) -> None:
+    def _titled_row(self, state: TitleState, title: Title) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
 
         self._ledger(state, title.name)
@@ -244,7 +244,7 @@ class RunReporter:
 
         self._open_entry(
             EntryHeader(
-                EntryState.CHECKING,
+                TitleState.CHECKING,
                 title,
                 al_id=sd_entry.anilist_id,
                 coverage=coverage,
@@ -264,7 +264,7 @@ class RunReporter:
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
             EntryHeader(
-                EntryState.UNCHANGED,
+                TitleState.UNCHANGED,
                 title.name,
                 al_id=al_id,
                 coverage=entry.coverage if entry is not None else None,
@@ -273,10 +273,10 @@ class RunReporter:
         )
 
     # MISSING and ERRORED have no ledger vocabulary, so they render nothing inline.
-    _PENDING_ENTRY_STATES: ClassVar[dict[PendingImportState, EntryState]] = {
-        PendingImportState.DOWNLOADING: EntryState.QUEUED,
-        PendingImportState.DOWNLOADED: EntryState.DOWNLOADED,
-        PendingImportState.IMPORTED: EntryState.IMPORTED,
+    _PENDING_ENTRY_STATES: ClassVar[dict[PendingImportState, TitleState]] = {
+        PendingImportState.DOWNLOADING: TitleState.QUEUED,
+        PendingImportState.DOWNLOADED: TitleState.DOWNLOADED,
+        PendingImportState.IMPORTED: TitleState.IMPORTED,
     }
 
     def log_pending_snapshot(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:

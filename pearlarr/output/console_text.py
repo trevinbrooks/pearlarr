@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
-from .events import EntryState
+from .events import TitleState
 from ..config import Arr
 from ..log import print_literal
 
@@ -102,7 +102,7 @@ DETAIL_INDENT = 2
 DETAIL_KEY_WIDTH = (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
 
 
-def entry_string(state: EntryState, label: str) -> str:
+def entry_string(state: TitleState, label: str) -> str:
     """Format an entry-ledger body: "<state> <label>", state padded to STATE_WIDTH."""
 
     return f"{state.ljust(STATE_WIDTH)} {label}"

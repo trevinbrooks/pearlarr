@@ -29,7 +29,7 @@ from pearlarr.log import LOG_NAME, apply_log_level, setup_logger
 from pearlarr.output import (
     Diagnostic,
     Event,
-    FileLogSink,
+    FileLogRenderer,
     HubBridgeHandler,
     NullRenderer,
     OutputHub,
@@ -480,7 +480,7 @@ def _console_text(stream: TtyStringIO) -> str:
 
 
 def _file_text(log_file: Path) -> str:
-    # The FileLogSink flushes per line, so the file is current after every emit.
+    # The FileLogRenderer flushes per line, so the file is current after every emit.
     return log_file.read_text(encoding="utf-8")
 
 
@@ -499,7 +499,7 @@ def _production_stack(
     monkeypatch.setattr(sys, "stdout", stream)
     # Windows CI has no VT console, the fake TTY plays a modern terminal.
     monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
-    hub = OutputHub([FileLogSink(str(tmp_path / "logs"))], console=RichRenderer())
+    hub = OutputHub([FileLogRenderer(str(tmp_path / "logs"))], console=RichRenderer())
     install_hub(hub)
     install_bridge()
     logger = setup_logger(log_level=log_level, console_format="rich")
@@ -538,7 +538,7 @@ class TestFullStackSeams:
         assert console.count("watch out") == 1
         assert "⚠ watch out" in console  # the hub renderer's badge line
         file_text = _file_text(log_file)
-        assert file_text.count("watch out") == 1  # the FileLogSink's grammar line
+        assert file_text.count("watch out") == 1  # the FileLogRenderer's grammar line
         assert "WARNING [Pearlarr] watch out" in file_text
 
     def test_first_party_info_reaches_the_file_and_the_console_once_each(
@@ -590,7 +590,7 @@ class TestFullStackSeams:
         console = _console_text(stream)
         assert console.count("flaky pool") == 1
         assert "⚠ bridge-test-pool: flaky pool" in console
-        # The FileLogSink is the file path, and the hub counts third-party
+        # The FileLogRenderer is the file path, and the hub counts third-party
         # stragglers (N1, the deliberate tally fix).
         assert _file_text(log_file).count("flaky pool") == 1
         assert current_hub().counts.mark().warning == 1

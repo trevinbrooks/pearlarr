@@ -12,7 +12,6 @@ from pearlarr.output import (
     KIND_DEPTH,
     BootStepFinished,
     BootStepStarted,
-    BreadcrumbFold,
     CycleStarted,
     Diagnostic,
     EntryHeader,
@@ -21,6 +20,7 @@ from pearlarr.output import (
     LegFinished,
     LegSummary,
     LegTally,
+    OpenScopes,
     RunStarted,
     RunSummaryReady,
     ScanFinished,
@@ -33,7 +33,7 @@ from pearlarr.output import (
     WaitKind,
     WaitStarted,
 )
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.wait_types import OutcomeKind
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
@@ -42,14 +42,14 @@ _ENTRY = ScopeId(ScopeKind.ENTRY, 3)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 4)
 
 
-def _fold(*events: Event) -> BreadcrumbFold:
-    fold = BreadcrumbFold()
+def _fold(*events: Event) -> OpenScopes:
+    fold = OpenScopes()
     for event in events:
         fold.apply(event)
     return fold
 
 
-def _kinds(fold: BreadcrumbFold) -> list[ScopeKind]:
+def _kinds(fold: OpenScopes) -> list[ScopeKind]:
     return [node.kind for node in fold.nodes()]
 
 
@@ -227,7 +227,7 @@ def test_content_events_never_move_the_fold() -> None:
     entry_nodes = fold.nodes()
 
     fold.apply(Diagnostic(severity=Severity.WARNING, message="w"))
-    fold.apply(EntryHeader(state=EntryState.CHECKING, title="A", scope=_ENTRY))
+    fold.apply(EntryHeader(state=TitleState.CHECKING, title="A", scope=_ENTRY))
     assert fold.nodes() == entry_nodes
 
 

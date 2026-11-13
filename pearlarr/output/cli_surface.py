@@ -42,7 +42,6 @@ from .events import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LedgerRow,
     LegFinished,
     NextRunScheduled,
     PathsShown,
@@ -56,6 +55,7 @@ from .events import (
     ScopeOpened,
     Severity,
     StarterConfigWritten,
+    TitleRow,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -124,7 +124,7 @@ class CliTextRenderer(Renderer):
                 | ItemStarted()
                 | EntryHeader()
                 | EntryDetail()
-                | LedgerRow()
+                | TitleRow()
                 | ReleaseSkipped()
                 | GrabFailed()
                 | GrabAction()

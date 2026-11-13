@@ -89,7 +89,7 @@ from pearlarr.output import (
     CycleStarted,
     Diagnostic,
     Event,
-    FileLogSink,
+    FileLogRenderer,
     ItemStarted,
     NextRunScheduled,
     OutputHub,
@@ -433,7 +433,7 @@ class _RunArrsRecorder:
         *,
         paths: AppPaths,
         logger: logging.Logger,
-        file_sink: FileLogSink,
+        file_sink: FileLogRenderer,
         explicit_selection: bool = False,
         dry_run: bool = False,
         import_wait_mode: ImportWaitMode | None = None,
@@ -1096,10 +1096,10 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
 
     renderer = _CycleStampingRenderer()
 
-    def install(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
+    def install(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
         hub = OutputHub([renderer])
         install_hub(hub)  # emit_to_hub resolves this hub, conftest restores
-        return hub, FileLogSink(paths.log_dir)
+        return hub, FileLogRenderer(paths.log_dir)
 
     monkeypatch.setattr("pearlarr.cli._install_output_hub", install)
     return renderer
@@ -1228,7 +1228,7 @@ class TestHubSeats:
         stream = io.StringIO()
         monkeypatch.setattr(sys, "stdout", stream)
         hub = OutputHub(
-            [FileLogSink(str(log_dir))],
+            [FileLogRenderer(str(log_dir))],
             console_factory=partial(_console_seat, caps_cache=CapsCache()),
         )
         hub.begin_run(console_format=console_format, level=level)
@@ -1663,7 +1663,7 @@ class TestScheduledLifecycle:
             [ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
-            file_sink=FileLogSink(paths.log_dir),
+            file_sink=FileLogRenderer(paths.log_dir),
             retry_note="will retry in 6h (Ctrl-C to stop)",
         )
 
@@ -1685,7 +1685,8 @@ class TestScheduledLifecycle:
         self._stub_resolver(monkeypatch)
 
         assert (
-            run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
+            run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir))
+            is False
         )
 
         assert f"config_version: {CONFIG_VERSION}" in Path(paths.config).read_text(encoding="utf-8")
@@ -1712,7 +1713,7 @@ class TestScheduledLifecycle:
             [ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
-            file_sink=FileLogSink(paths.log_dir),
+            file_sink=FileLogRenderer(paths.log_dir),
             dry_run=True,
         )
 
@@ -1734,16 +1735,16 @@ class TestScheduledLifecycle:
             encoding="utf-8",
         )
         applied: list[int] = []
-        original = FileLogSink.apply_retention_days
+        original = FileLogRenderer.apply_retention_days
 
-        def record(self: FileLogSink, days: int) -> None:
+        def record(self: FileLogRenderer, days: int) -> None:
             applied.append(days)
             original(self, days)
 
-        monkeypatch.setattr(FileLogSink, "apply_retention_days", record)
+        monkeypatch.setattr(FileLogRenderer, "apply_retention_days", record)
         self._stub_resolver(monkeypatch)
 
-        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
+        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir))
 
         assert applied == [3]
 
@@ -1844,7 +1845,9 @@ class TestRunLockContention:
         # the guard would raise the missing-config typer.Exit).
         with single_instance_lock(paths.data_dir) as held:
             assert held
-            result = run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
+            result = run_arrs(
+                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogRenderer(paths.log_dir)
+            )
 
         assert result is False
         assert diagnostic_messages(recording, Severity.WARNING) == [

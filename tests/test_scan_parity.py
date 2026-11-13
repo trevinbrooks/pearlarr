@@ -38,7 +38,6 @@ from pearlarr.output import (
     GrabFailed,
     GrabStatus,
     ItemStarted,
-    LedgerRow,
     LegSummary,
     LegTally,
     NeedsActionCause,
@@ -53,9 +52,10 @@ from pearlarr.output import (
     SeverityCounts,
     SkipReason,
     StyledValue,
+    TitleRow,
 )
 from pearlarr.output.console_text import ConsoleRender, KvLine, SectionRule, StyledLine, TitledRule, group_highlight
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
 from pearlarr.reporter import _TIP_PRECEDENCE, RunReporter
@@ -152,25 +152,25 @@ ITEM_STARTED_RADARR_LINES: tuple[Line, ...] = (
 
 # --- self-contained ledger rows -------------------------------------------------------
 
-UNMONITORED_ROW = LedgerRow(state=EntryState.UNMONITORED, label="Unmonitored Show")
+UNMONITORED_ROW = TitleRow(state=TitleState.UNMONITORED, label="Unmonitored Show")
 UNMONITORED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  unmonitored Unmonitored Show", "grey50"),
 )
 
-NO_MAPPING_ROW = LedgerRow(state=EntryState.NO_MAPPING, label="Unmapped Show")
+NO_MAPPING_ROW = TitleRow(state=TitleState.NO_MAPPING, label="Unmapped Show")
 NO_MAPPING_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no mapping  Unmapped Show", "grey50"),
 )
 
-NO_EPISODES_ROW = LedgerRow(state=EntryState.NO_EPISODES, label="Episodeless Show")
+NO_EPISODES_ROW = TitleRow(state=TitleState.NO_EPISODES, label="Episodeless Show")
 NO_EPISODES_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no episodes Episodeless Show", "grey50"),
 )
 
-IGNORED_ROW = LedgerRow(state=EntryState.IGNORED, label="AniList #123")
+IGNORED_ROW = TitleRow(state=TitleState.IGNORED, label="AniList #123")
 IGNORED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  ignored     AniList #123", "grey50"),
@@ -185,7 +185,7 @@ IGNORED_TITLED_LINES: tuple[Line, ...] = (
 # --- entry headers (row + coverage/link continuation) ---------------------------------
 
 CHECKING_FULL = EntryHeader(
-    state=EntryState.CHECKING,
+    state=TitleState.CHECKING,
     title="Frieren",
     al_id=1,
     coverage="S01 E01-E28",
@@ -205,7 +205,7 @@ CHECKING_FULL_LINES: tuple[Line, ...] = (
 )
 
 CHECKING_URL_ONLY = EntryHeader(
-    state=EntryState.CHECKING,
+    state=TitleState.CHECKING,
     title="Perfect Blue",
     al_id=1,
     url="https://releases.moe/437",
@@ -217,7 +217,7 @@ CHECKING_URL_ONLY_LINES: tuple[Line, ...] = (
 )
 
 CACHED_FULL = EntryHeader(
-    state=EntryState.UNCHANGED,
+    state=TitleState.UNCHANGED,
     title="Cached Show",
     coverage="S01 E01-E12",
     url="https://releases.moe/20997",
@@ -229,7 +229,7 @@ CACHED_FULL_LINES: tuple[Line, ...] = (
     _detail("    link      https://releases.moe/20997", "link", "https://releases.moe/20997"),
 )
 
-CACHED_BARE = EntryHeader(state=EntryState.UNCHANGED, title="Bare Show")
+CACHED_BARE = EntryHeader(state=TitleState.UNCHANGED, title="Bare Show")
 CACHED_BARE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  unchanged   Bare Show", "grey50"),
@@ -237,7 +237,7 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
 
 # --- titled entries with detail continuations (outage skip / no entry) ----------------
 
-OUTAGE_ROW = LedgerRow(state=EntryState.SKIPPED, label="Cached Show")
+OUTAGE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
 OUTAGE_ANILIST_DETAIL = EntryDetail(label="anilist", value=StyledValue("1"))
 OUTAGE_STATUS_DETAIL = EntryDetail(label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 OUTAGE_LINES: tuple[Line, ...] = (
@@ -249,7 +249,7 @@ OUTAGE_LINES: tuple[Line, ...] = (
     _detail("    status    lookup skipped (SeaDex unreachable)", "status", "lookup skipped (SeaDex unreachable)"),
 )
 
-NO_ENTRY_RESOLVED_ROW = LedgerRow(state=EntryState.NO_ENTRY, label="Resolved Title")
+NO_ENTRY_RESOLVED_ROW = TitleRow(state=TitleState.NO_ENTRY, label="Resolved Title")
 NO_ENTRY_RESOLVED_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
 NO_ENTRY_RESOLVED_LINES: tuple[Line, ...] = (
     _blank(),
@@ -263,7 +263,7 @@ NO_ENTRY_ARR_TITLE_LINES: tuple[Line, ...] = (
     _detail("    anilist   42", "anilist", "42", style=None),
 )
 
-NO_ENTRY_UNRESOLVED_ROW = LedgerRow(state=EntryState.NO_ENTRY, label="AniList #77")
+NO_ENTRY_UNRESOLVED_ROW = TitleRow(state=TitleState.NO_ENTRY, label="AniList #77")
 NO_ENTRY_UNRESOLVED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no entry    AniList #77", "grey50"),
@@ -274,7 +274,7 @@ NO_ENTRY_UNRESOLVED_LINES: tuple[Line, ...] = (
 _PENDING_KWARGS = {"title": "My Show", "coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
 
 
-def _pending_header(state: EntryState) -> EntryHeader:
+def _pending_header(state: TitleState) -> EntryHeader:
     return EntryHeader(state=state, title="My Show · SubGroup", coverage="S01 E01-E13", url="https://releases.moe/1")
 
 
@@ -287,13 +287,13 @@ def _pending_lines(row: Line) -> tuple[Line, ...]:
     )
 
 
-PENDING_QUEUED = _pending_header(EntryState.QUEUED)
+PENDING_QUEUED = _pending_header(TitleState.QUEUED)
 PENDING_QUEUED_LINES = _pending_lines(_styled("  queued      My Show · SubGroup", "grey50"))
 
-PENDING_DOWNLOADED = _pending_header(EntryState.DOWNLOADED)
+PENDING_DOWNLOADED = _pending_header(TitleState.DOWNLOADED)
 PENDING_DOWNLOADED_LINES = _pending_lines(_styled("  downloaded  My Show · SubGroup", "grey50"))
 
-PENDING_IMPORTED = _pending_header(EntryState.IMPORTED)
+PENDING_IMPORTED = _pending_header(TitleState.IMPORTED)
 PENDING_IMPORTED_LINES = _pending_lines(_styled("  imported    My Show · SubGroup", "green"))
 
 # --- entry details -----------------------------------------------------------------------
@@ -1362,7 +1362,7 @@ class TestScopeLifecycle:
         harness.reporter.log_no_episodes("NoEps")
 
         assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)
-        assert all(isinstance(e, LedgerRow) for e in harness.events)
+        assert all(isinstance(e, TitleRow) for e in harness.events)
 
     def test_close_is_idempotent(self) -> None:
         # A second boundary with no open entry emits no spurious ScopeClosed.

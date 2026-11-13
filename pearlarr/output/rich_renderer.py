@@ -33,7 +33,7 @@ from rich.text import Text
 from rich.traceback import Traceback
 
 from .boot_region import BootRegion
-from .breadcrumbs import BreadcrumbFold
+from .breadcrumbs import OpenScopes
 from .bridge import attributed_message, is_first_party
 from .console_lines import LegacyLine, render_legacy_lines
 from .console_text import INDENT
@@ -61,7 +61,6 @@ from .events import (
     GrabAction,
     GrabFailed,
     ItemStarted,
-    LedgerRow,
     LegFinished,
     NextRunScheduled,
     PathsShown,
@@ -76,6 +75,7 @@ from .events import (
     ScopeOpened,
     Severity,
     StarterConfigWritten,
+    TitleRow,
     WaitFinished,
     WaitProgress,
     WaitStarted,
@@ -139,7 +139,7 @@ class RichRenderer(Renderer):
         # shared by this seat's surfaces (diagnostics + both regions).
         self._console_source = console_source
         self._caps = caps_cache if caps_cache is not None else CapsCache()
-        self._crumbs = BreadcrumbFold()
+        self._crumbs = OpenScopes()
         self._level = int(Severity.INFO)
         self._boot = BootRegion(console_source, self._caps, level_source=self._current_level)
         self._wait = WaitRegion(
@@ -187,7 +187,7 @@ class RichRenderer(Renderer):
                 | ItemStarted()
                 | EntryHeader()
                 | EntryDetail()
-                | LedgerRow()
+                | TitleRow()
                 | ReleaseSkipped()
                 | GrabFailed()
                 | GrabAction()

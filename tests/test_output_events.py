@@ -22,7 +22,6 @@ from pearlarr.output import (
     GrabFact,
     GrabFailed,
     ItemStarted,
-    LedgerRow,
     LegFinished,
     LegSummary,
     LegTally,
@@ -38,16 +37,17 @@ from pearlarr.output import (
     Severity,
     SkipReason,
     StyledValue,
+    TitleRow,
     severity_of,
 )
-from pearlarr.output.events import EntryState
+from pearlarr.output.events import TitleState
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 # --- value model -----------------------------------------------------------------
 
 
 def test_events_are_frozen() -> None:
-    header = EntryHeader(state=EntryState.CHECKING, title="Frieren")
+    header = EntryHeader(state=TitleState.CHECKING, title="Frieren")
     field_name = "title"
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(header, field_name, "other")
@@ -144,7 +144,7 @@ def test_torrent_graduated_severity_follows_its_outcome_category() -> None:
 def test_structural_events_default_to_info() -> None:
     assert severity_of(ScanStarted(arr=Arr.SONARR, total=182)) is Severity.INFO
     assert severity_of(ItemStarted(arr=Arr.SONARR, index=1, total=2, title="X")) is Severity.INFO
-    assert severity_of(LedgerRow(state=EntryState.IGNORED, label="AniList #1")) is Severity.INFO
+    assert severity_of(TitleRow(state=TitleState.IGNORED, label="AniList #1")) is Severity.INFO
     # The close boundaries are markers, not tallied facts: INFO tallies as nothing
     # in the warnings / errors counts.
     assert severity_of(ScanFinished(arr=Arr.SONARR)) is Severity.INFO
