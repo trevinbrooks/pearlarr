@@ -22,7 +22,7 @@ import qbittorrentapi
 from seadex import Tracker
 
 from pearlarr import notify
-from pearlarr.arr_run_state import ArrRunState, NeedsActionKind, PerTitleState
+from pearlarr.arr_run_state import ArrRunState, PerTitleState
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.file_paths import normalize_name
@@ -38,6 +38,7 @@ from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
     GrabFailed,
+    NeedsActionCause,
     ReleaseSkipped,
     Severity,
     TitleDetail,
@@ -905,7 +906,7 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._state.torrents_added == 0
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         assert [r.reason for r in pipeline._state.stats.needs_action] == ["tracker not yet supported; grab manually"]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.UNSUPPORTED_TRACKER]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.UNSUPPORTED_TRACKER]
 
     def test_private_and_unsupported_surfaces_only_private(self) -> None:
         # Both a private-only skip AND an unsupported-tracker skip on one title,
@@ -939,7 +940,7 @@ class TestUnsupportedTrackerSkip:
         assert [r.reason for r in pipeline._state.stats.needs_action] == [
             "private-only release; private releases not supported"
         ]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_private_only_in_fallback_mode_surfaces_no_alternative(self) -> None:
@@ -971,7 +972,7 @@ class TestUnsupportedTrackerSkip:
         assert [r.reason for r in pipeline._state.stats.needs_action] == [
             "private-only release; no public alternative covers these files"
         ]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_stale_held_in_fallback_mode_surfaces_stale_kind(self) -> None:
@@ -1006,7 +1007,7 @@ class TestUnsupportedTrackerSkip:
                 "and only a fallback covers it"
             )
         ]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_STALE]
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_interactive_private_pick_reads_as_a_hand_picked_no_fallback(self) -> None:
@@ -1036,7 +1037,7 @@ class TestUnsupportedTrackerSkip:
         assert [r.reason for r in pipeline._state.stats.needs_action] == [
             "hand-picked private release; private releases not supported"
         ]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
 
 
 class TestFallbackMarker:
@@ -1142,7 +1143,7 @@ class TestPlacementInputMissing:
         assert pipeline._state.torrents_added == 1
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         rows = pipeline._state.stats.needs_action
-        assert [r.kind for r in rows] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
+        assert [r.cause for r in rows] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
         assert rows[0].reason == "a read the placement needs failed; will retry next run"
         assert rows[0].group == "RG"
 
@@ -1155,7 +1156,7 @@ class TestPlacementInputMissing:
 
         assert pipeline._state.stats.up_to_date == 0
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
 
     def test_a_failed_grab_outranks_the_missing_read(self) -> None:
         nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
@@ -1165,7 +1166,7 @@ class TestPlacementInputMissing:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict, input_missing=True))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
 
 
 def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -> None:
@@ -1203,14 +1204,14 @@ class TestPlacementHolds:
             (
                 SkipReason.MISNUMBERED,
                 SkipReport(
-                    NeedsActionKind.MISNUMBERED,
+                    NeedsActionCause.MISNUMBERED,
                     "numbering does not match its SeaDex listing; import it by hand",
                 ),
             ),
             (
                 SkipReason.TITLE_REFUTED,
                 SkipReport(
-                    NeedsActionKind.TITLE_REFUTED,
+                    NeedsActionCause.TITLE_REFUTED,
                     "file titles contradict its numbering; import it by hand",
                 ),
             ),
@@ -1234,7 +1235,7 @@ class TestPlacementHolds:
         assert pipeline._state.per_title.skipped_groups == {skip_reason: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [skip_reason]
         (row,) = pipeline._state.stats.needs_action
-        assert (row.kind, row.group, row.reason) == (expected.kind, "RG", expected.reason)
+        assert (row.cause, row.group, row.reason) == (expected.cause, "RG", expected.reason)
 
     def test_a_held_url_of_a_resident_torrent_never_joins_its_record(self) -> None:
         # Another entry's record holds the torrent.
@@ -1269,7 +1270,7 @@ class TestPlacementHolds:
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         assert pipeline._state.per_title.skipped_groups == {SkipReason.INPUT_UNREAD: ["RG"]}
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.INPUT_UNREAD]
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PLACEMENT_INPUT_MISSING]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
 
     def test_a_url_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
         recording = install_recording_hub()
@@ -1290,8 +1291,8 @@ class TestPlacementHolds:
             (SkipReason.PLACED_ELSEWHERE, AnotherTitlesCounts(another_titles=12, unplaced=6))
         ]
         (row,) = pipeline._state.stats.needs_action
-        assert (row.kind, row.reason) == (
-            NeedsActionKind.PLACED_ELSEWHERE,
+        assert (row.cause, row.reason) == (
+            NeedsActionCause.PLACED_ELSEWHERE,
             "its files place under another title SeaDex lists it with; any it could not place need a hand import",
         )
 
@@ -1309,7 +1310,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.PLACED_ELSEWHERE]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACED_ELSEWHERE]
 
     def test_a_failed_grab_outranks_the_another_titles_row(self) -> None:
         another_titles = self._skipped_release(
@@ -1325,7 +1326,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
 
     def test_a_held_url_beside_a_grabbable_one_lets_the_other_grab(self) -> None:
         skipped = self._skipped_release(url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.MISNUMBERED)
@@ -1340,7 +1341,7 @@ class TestPlacementHolds:
         assert pipeline._state.torrents_added == 1
         # The grabbed half never caches the title: the held pack is re-flagged until its files are in place.
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.MISNUMBERED]
 
     def test_a_held_url_past_the_cap_posts_its_skip_and_no_cap_hold(self) -> None:
         # The refusal screens the url before the cap: its skip line lands, and no hold forms for it.
@@ -1380,7 +1381,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.UNSUPPORTED_TRACKER]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.UNSUPPORTED_TRACKER]
 
     def test_the_misnumbered_row_outranks_a_failed_grab(self) -> None:
         skipped = self._skipped_release(url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.MISNUMBERED)
@@ -1391,7 +1392,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.MISNUMBERED]
 
     def test_the_misnumbered_row_outranks_the_titles_refute_row(self) -> None:
         # The table's order decides between two hand-import holds.
@@ -1409,7 +1410,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.MISNUMBERED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.MISNUMBERED]
 
     def test_the_titles_refute_row_outranks_a_failed_grab(self) -> None:
         skipped = self._skipped_release(
@@ -1422,7 +1423,7 @@ class TestPlacementHolds:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.TITLE_REFUTED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.TITLE_REFUTED]
 
 
 class TestGrabFailureContainment:
@@ -1502,7 +1503,7 @@ class TestGrabFailureContainment:
         assert pipeline._state.torrents_added == 0
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         rows = pipeline._state.stats.needs_action
-        assert [r.kind for r in rows] == [NeedsActionKind.GRAB_FAILED]
+        assert [r.cause for r in rows] == [NeedsActionCause.GRAB_FAILED]
         assert rows[0].reason == "grab failed; will retry next run"
         assert rows[0].group == "RG"
 
@@ -1523,7 +1524,7 @@ class TestGrabFailureContainment:
         pipeline.grab_and_cache(self._request(42, seadex_dict))
         assert pipeline._state.torrents_added == 1
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert [r.kind for r in pipeline._state.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
 
     def test_cap_reached_with_a_failure_still_lands_the_grab_failed_row(self) -> None:
         # A title whose grab failed AND whose sibling add hit max_torrents_to_add
@@ -1545,7 +1546,7 @@ class TestGrabFailureContainment:
 
         assert pipeline._state.torrents_added == 1
         rows = pipeline._state.stats.needs_action
-        assert [r.kind for r in rows] == [NeedsActionKind.GRAB_FAILED]
+        assert [r.cause for r in rows] == [NeedsActionCause.GRAB_FAILED]
         assert rows[0].group == "RG"
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
 
@@ -1609,7 +1610,7 @@ class TestFallbackHoldNeverCaches:
         assert pipeline._state.per_title.private_only_skipped is True
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         rows = pipeline._state.stats.needs_action
-        assert [r.kind for r in rows] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [r.cause for r in rows] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_private_only_in_fallback_mode_surfaces_no_alternative.
         assert "no public alternative" in rows[0].reason
 

@@ -22,7 +22,7 @@ from typing import get_args, override
 
 import pytest
 
-from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionRow
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.json_narrow import is_json_list, is_json_obj
@@ -425,7 +425,7 @@ def _summary_ready() -> ArrRunSummaryReady:
             group="Okay-Subs",
             url="https://releases.moe/98765",
             reason="private tracker",
-            kind=NeedsActionKind.PRIVATE_ONLY,
+            cause=NeedsActionCause.PRIVATE_ONLY,
         ),
     )
     return ArrRunSummaryReady(

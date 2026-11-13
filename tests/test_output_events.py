@@ -11,7 +11,7 @@ from typing import Final
 
 import pytest
 
-from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
+from pearlarr.arr_run_state import ArrRunStats, GrabbedRow, NeedsActionRow
 from pearlarr.config import Arr
 from pearlarr.output import (
     Accent,
@@ -183,7 +183,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
         group="G2",
         url=None,
         reason="private tracker",
-        kind=NeedsActionKind.PRIVATE_ONLY,
+        cause=NeedsActionCause.PRIVATE_ONLY,
     )
     stats.added.append(grab)
     stats.needs_action.append(needs)
@@ -228,8 +228,3 @@ def test_run_tally_field_names_mirror_run_stats() -> None:
     stats_names = {f.name for f in dataclasses.fields(ArrRunStats)} - _PARITY_ALLOWLIST
     tally_names = {f.name for f in dataclasses.fields(ArrRunTally)} - _PARITY_ALLOWLIST
     assert stats_names == tally_names
-
-
-def test_needs_action_cause_member_names_mirror_needs_action_kind() -> None:
-    # from_stats maps by member NAME (NeedsActionCause[kind.name]). A rename breaks here.
-    assert [m.name for m in NeedsActionCause] == [m.name for m in NeedsActionKind]

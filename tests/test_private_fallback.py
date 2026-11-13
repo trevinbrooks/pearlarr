@@ -18,10 +18,10 @@ from contextlib import contextmanager
 from seadex import EntryRecord, TorrentRecord, Tracker
 
 from pearlarr.arr_models import ArrFiles
-from pearlarr.arr_run_state import ArrRunState, NeedsActionKind
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.output import ReleaseSkipped, Severity, TitleDetail, install_hub, uninstall_hub
+from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail, install_hub, uninstall_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.releases import ReleaseEpisode, SeadexDict, SkipReason
 
@@ -175,7 +175,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         assert cache.get_cached_title(Arr.SONARR, 11) is None
-        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
+        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_STALE]
         assert [n.reason for n in state.stats.needs_action] == [OUTDATED_ROW_REASON]
 
     def test_radarr_size_disjoint_warns_and_holds(self) -> None:
@@ -315,7 +315,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
 
         assert cache.get_cached_title(Arr.SONARR, 11) is None
-        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
 
 
 class TestFilterDownloadsNoticeSeam:
@@ -624,7 +624,7 @@ class TestSurvivingPrivateCoverage:
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
         # in every run's summary until a covering public release lands.
         assert cached_as_done(cache.get_cached_title(Arr.SONARR, 33), entry) is False
-        assert [n.kind for n in state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
         assert "no public alternative" in state.stats.needs_action[0].reason
@@ -1020,7 +1020,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
 
         warn_pipe = make_grab_pipeline(cache_store=cache, _state=warn_state, private_releases="warn", sleep_time=0)
         warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, entry))
-        assert [n.kind for n in warn_state.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [n.cause for n in warn_state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
         persisted = cache.get_cached_title(Arr.SONARR, 11)
         assert persisted is not None
         assert persisted.fallback_satisfied is True  # the hold left the marker alone

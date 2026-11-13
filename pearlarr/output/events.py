@@ -346,17 +346,28 @@ class GrabFact:
 
 
 class NeedsActionCause(Enum):
-    """Why a title needs attention. Member names must equal `leg_state.NeedsActionKind`'s (mapped by name)."""
+    """Why a title landed in "needs action". The summary's tips key off this, never the display reason text."""
 
     PRIVATE_ONLY = auto()
+    """The warn-mode skip: a private-only recommended release with no fallback attempted."""
     PRIVATE_ONLY_NO_FALLBACK = auto()
+    """Fallback mode that couldn't or wouldn't fall back."""
     PRIVATE_ONLY_STALE = auto()
+    """Fallback mode refusing to replace an owned stale copy of the preferred private release."""
     UNSUPPORTED_TRACKER = auto()
+    """A recommended release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
+    """A contained transient failure (tracker/qBittorrent down)."""
     PLACEMENT_INPUT_MISSING = auto()
+    """A read the grab-time placement needs failed: the grab was judged without it, or held until it answers."""
     MISNUMBERED = auto()
+    """A recommended release's file numbers disagree, or it's a specials pack numbered another way than its
+    listing: a hand import."""
     TITLE_REFUTED = auto()
+    """A recommended release's file titles contradict its numbering and none of it places on the entry."""
     PLACED_ELSEWHERE = auto()
+    """None of a recommended release's files place on the entry, and some place under another title SeaDex lists
+    it with."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,7 +421,7 @@ class ArrRunTally:
                     group=n.group,
                     url=n.url,
                     reason=n.reason,
-                    cause=NeedsActionCause[n.kind.name],
+                    cause=n.cause,
                 )
                 for n in stats.needs_action
             ),
