@@ -1,5 +1,5 @@
 # pyright: strict
-"""Characterization tests for the `MappingEntry` resolution boundary.
+"""Characterization tests for the `TitleMapping` resolution boundary.
 
 These pin the two producer paths (Kometa Anime-IDs and AniBridge) end-to-end
 through `MappingResolver.get_anilist_ids`, plus the `.mode` discriminant and

@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the shared breadcrumb fold (`output.breadcrumbs`).
+"""Tests for the shared breadcrumb fold (`output.scope_path`).
 
 Pin the fixed transition table: explicit opens/closes, the boundary events'
 deterministic close-deeper behavior, unwind close-all, idempotent defensive

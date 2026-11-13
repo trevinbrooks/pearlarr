@@ -121,7 +121,7 @@ class AbstractSkyHookClient(ABC):
         """One series' reply for one order.
 
         A reply that fails validation or doesn't match the request comes back with no episodes. After an outage
-        every call returns `SkyHookMiss.OUTAGE` without a request.
+        every call returns `SkyHookNoReply.UNREACHABLE` without a request.
         """
 
 

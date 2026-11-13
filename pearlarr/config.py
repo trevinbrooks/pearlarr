@@ -820,7 +820,7 @@ class AppConfig(_ConfigBase):
         that change which release a title should end up with - and the code's
         `SELECTION_RULES_VERSION`, so a rule change re-checks like a config
         change. The cache compares this against the digest a previous full pass
-        vouched for (`selection_stale`) and re-checks every cached verdict when
+        vouched for (`selection_changed`) and re-checks every cached verdict when
         it moved. Whole-group on purpose: a future seadex knob is covered by
         default. Over-inclusion costs one re-check run. Omission would leave
         stale verdicts.
@@ -954,7 +954,7 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     """The environment's config-key overrides as a nested mapping.
 
     Each qualifying variable's name (minus the prefix) splits on `__` into a
-    key path (see `_overlay_path`), and its value is parsed with `yaml.safe_load`
+    key path (see `_override_key_path`), and its value is parsed with `yaml.safe_load`
     so an env value means exactly what the same text means in `config.yml` (an
     empty string parses to None, which the blank-key handling then coalesces to
     the default). A malformed value raises a `ValidationError` naming only the
@@ -997,7 +997,7 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
 
 
 def _deep_merge(base: dict[str, object], overrides: Mapping[str, object]) -> None:
-    """Merge `overlay` into `base` in place: a leaf overrides, two dicts merge per key.
+    """Merge `overrides` into `base` in place: a leaf overrides, two dicts merge per key.
 
     So `PEARLARR_SONARR__URL` replaces `sonarr.url` without clobbering the file's
     sibling `sonarr.api_key`.
@@ -1026,7 +1026,7 @@ def _hash_config_bytes(raw: bytes, environ: Mapping[str, str]) -> str:
 def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:
     """Parse config bytes and bring an old-schema mapping forward, in place.
 
-    The one parse pipeline `load` and `upgrade_config_file` share, so the run
+    The one parse pipeline `load` and `migrate_config_file` share, so the run
     path and the file rewrite can never read the same bytes differently.
     Migration runs BEFORE validation: an older schema's removed keys/values
     would otherwise trip `extra="forbid"`. A non-mapping document passes
@@ -1039,12 +1039,12 @@ def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:
 
 
 class ConfigRewriteError(Exception):
-    """`upgrade_config_file` refused the write (render drift or a concurrent edit). Nothing was written."""
+    """`migrate_config_file` refused the write (render drift or a concurrent edit). Nothing was written."""
 
 
 @dataclass(frozen=True)
 class ConfigMigration:
-    """What `upgrade_config_file` did: both fields are None for an already-current file."""
+    """What `migrate_config_file` did: both fields are None for an already-current file."""
 
     migration: MigrationOutcome | None
     backup_path: str | None
@@ -1096,8 +1096,8 @@ def migrate_config_file(path: str, expected_hash: str | None = None) -> ConfigMi
 
     Nothing is written unless the rendered text parses back to the exact
     settings that were validated - a splice defect refuses cleanly
-    (`ConfigRewriteError`) instead of corrupting the file. `expected_checksum`
-    (the loaded `AppConfig.checksum()`) extends that refusal to a concurrent
+    (`ConfigRewriteError`) instead of corrupting the file. `expected_hash`
+    (the loaded `AppConfig.config_hash()`) extends that refusal to a concurrent
     edit: bytes that differ from what the run validated are never rewritten
     and never land in the backup. Validation applies the `PEARLARR_*` env
     overlay exactly like a load (an env-rescued file must stay rewritable),

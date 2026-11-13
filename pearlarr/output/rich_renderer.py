@@ -1,7 +1,7 @@
 """The rich console surface: diagnostics + the boot, scan, and wait cockpit arms.
 
 Diagnostics are position-free. This renderer is the single ambient placement
-authority: its `breadcrumbs.BreadcrumbFold` instance decides where a
+authority: its `scope_path.OpenScopes` instance decides where a
 diagnostic lands: indented while a boot section, item, wait region, or entry
 block is open, column 0 under RUN alone (before the first item and after the
 scan closes. Mid-scan an item stays on the frontier until the next boundary,
@@ -281,7 +281,7 @@ class RichRenderer(Renderer):
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.
 
-        Gating is LOGGER parity (`render_legacy_lines`): at a configured
+        Gating is LOGGER parity (`render_console_lines`): at a configured
         WARNING the INFO scan lines vanish from the console exactly as they
         vanish from the file - deliberately NOT the diagnostics' console floor.
         """

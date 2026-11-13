@@ -103,7 +103,7 @@ class PerTitleState:
     """The groups a hold stopped, by hold. While any are here the title stays uncached and is checked again next
     run, and a hand-import hold re-warns until the import covers it. `SkipReason.INPUT_UNREAD` also carries the
     groups whose placement waited on a failed read, though a url of such a group may have been grabbed. Filled by
-    `add_held`."""
+    `add_skipped`."""
     metadata_unread: bool = False
     """An entry of the series was looked up without its AniList record, or a series was read without its TVDB
     orders, so the title stays uncached and re-checks. Nothing for the user to do."""
@@ -115,9 +115,9 @@ class PerTitleState:
     """Coverage of the entry currently being processed, so grabs and the summary can attribute what they grab."""
 
     def add_skipped(self, skip_reason: SkipReason, groups: Sequence[str]) -> None:
-        """List `groups` under `hold` in `held_groups`.
+        """List `groups` under `hold` in `skipped_groups`.
 
-        No groups adds no key, so an empty `held_groups` means nothing held the title.
+        No groups adds no key, so an empty `skipped_groups` means nothing held the title.
         """
 
         if groups:
@@ -153,7 +153,7 @@ class ArrRunState:
     """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in
     `cache_store`."""
     reacquired_keys: set[str] = field(default_factory=set[str])
-    """Store-resident records this run re-saw (`ALREADY_ADDED`) without grabbing them, skipped by the snapshot
+    """Store-resident records this run re-saw (`ALREADY_IN_QBIT`) without grabbing them, skipped by the snapshot
     but counted by the tally. Never also a `pending_imports` record."""
     pending_import_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
     """Observed status of each carried-over record, keyed by infohash. Never a this-run grab, which stays

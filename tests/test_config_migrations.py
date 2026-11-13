@@ -7,7 +7,7 @@
 `tests/test_config.py::TestSchemaMigration` pins the load-path integration
 (in-memory migration + reporting). This module pins the pieces: version
 detection, each v0 fold, the comment-preserving template splice, and
-`upgrade_config_file`'s backup + atomic-rewrite contract.
+`migrate_config_file`'s backup + atomic-rewrite contract.
 """
 
 import os

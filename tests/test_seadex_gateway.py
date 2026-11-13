@@ -64,7 +64,7 @@ class FakeSeaDex:
 
 
 class _Recorder:
-    """A `ProgressSink` that records every `progress` call."""
+    """A `ProgressCallback` that records every `progress` call."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[float, str | None]] = []

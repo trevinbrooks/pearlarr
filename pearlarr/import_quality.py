@@ -67,7 +67,7 @@ def quality_parts_from_model(model: QualityModel | None) -> QualityParts:
     `model.quality.resolution` (every field defaults to None on the partial
     models the helpers build). An `"unknown"` source or a `0`/absent
     resolution maps to `None` (undetermined), so an unparsed candidate
-    cleanly yields `ParsedQuality()` and falls through to the next
+    cleanly yields `QualityParts()` and falls through to the next
     precedence layer.
     """
 
@@ -92,7 +92,7 @@ def quality_parts_from_name(
     `"Bluray-2160p"`) to its structured axes by matching it, case-insensitively,
     against the `/api/v3/qualitydefinition` list, so the default contributes a
     real `(source, resolution)` the decision fills gaps from. An unset name, or
-    one that matches no definition, yields `ParsedQuality()` (no default).
+    one that matches no definition, yields `QualityParts()` (no default).
     """
 
     if not name:

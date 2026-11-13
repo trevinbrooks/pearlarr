@@ -867,7 +867,7 @@ class TestLedgerRowParity:
 
 
 class TestEntryHeaderParity:
-    """`log_al_title` / `log_cached_entry` / `log_pending_snapshot` reproduce the pinned entry-header golden lines.
+    """`open_title_block` / `log_cached_title` / `log_pending_import` reproduce the pinned entry-header golden lines.
 
     Covers the checking, cached, and pending states.
     """
@@ -908,7 +908,7 @@ class TestEntryHeaderParity:
 
 
 class TestTitledEntryParity:
-    """`log_no_sd_entry` / `log_seadex_outage_skip` reproduce the pinned golden lines.
+    """`log_no_sd_entry` / `log_seadex_unreachable` reproduce the pinned golden lines.
 
     A title is resolved via the AniList gateway, else the arr item's own title, else the id form alone.
     """
@@ -1257,7 +1257,7 @@ def _summary_lines(
 
 
 class TestRunSummaryParity:
-    """`log_run_summary` reproduces the pinned summary golden lines across rich/dry/minimal/wait-off states.
+    """`log_arr_run_summary` reproduces the pinned summary golden lines across rich/dry/minimal/wait-off states.
 
     Includes the issues row's style ladder (plain, yellow, bold-red).
     """

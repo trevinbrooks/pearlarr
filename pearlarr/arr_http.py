@@ -95,7 +95,7 @@ class ArrUnreachableError(Exception):
 class ArrAuthError(Exception):
     """An arr rejected the API key (401/403) on the load-bearing library fetch.
 
-    A distinct error from `ArrConnectionError` so the CLI containment arm can
+    A distinct error from `ArrUnreachableError` so the CLI containment arm can
     point the operator at `<arr>.api_key` specifically.
     """
 
@@ -137,7 +137,7 @@ class ArrHttp:
     abort), and each failure warns once through the caller's `warn` template
     with the failure detail filled in - consecutive identical failures
     coalesce (`_fail`/`_recover`): the first warns, repeats drop to DEBUG,
-    a "still failing" re-warn fires every `heartbeat_s`, and the first
+    a "still failing" re-warn fires every `rewarn_s`, and the first
     success after a streak notes the recovery. The one fail-CLOSED read is
     `get_json_list_strict`, which raises typed errors for the
     load-bearing library fetch.
@@ -405,7 +405,7 @@ class ArrHttp:
         first), then turns any terminal failure into a typed error: a 401/403
         raises `ArrAuthError`. A transport error, any other non-200, a
         non-JSON body or a non-array payload raises
-        `ArrConnectionError` - both with a clean message naming this
+        `ArrUnreachableError` - both with a clean message naming this
         arr's base url and the failure detail.
         """
 
@@ -435,7 +435,7 @@ class ArrHttp:
         record's `seriesId`/`movieId` fold into one `item_id` at the
         model. Fails open to None through `get_json_list`'s matrix with a
         warning that states the consequence too: this read only feeds activity
-        detection, and the caller (`ArrActivityMonitor.scan`) doesn't re-warn.
+        detection, and the caller (`ArrActivityReader.read`) doesn't re-warn.
 
         Args:
             date: ISO8601 lower bound (arr-clock, inclusive).
@@ -489,7 +489,7 @@ class ArrHttp:
         Consecutive identical failures coalesce per (template, detail): the
         first warns as before, repeats drop to a DEBUG breadcrumb with the
         running count, and a "still failing" re-warn fires every
-        `heartbeat_s`. `_recover` closes the streak on the next success.
+        `rewarn_s`. `_recover` closes the streak on the next success.
         """
 
         if warn is None:

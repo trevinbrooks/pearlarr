@@ -209,7 +209,7 @@ class ArrFiles:
     ) -> Self:
         """Fold arr file records into one per-entry record.
 
-        Sonarr passes `keep_untagged=False`: its untagged files ride the episode list and would double-count.
+        Sonarr passes `keep_no_group=False`: its untagged files ride the episode list and would double-count.
         """
 
         tagged: dict[str, list[int]] = {}

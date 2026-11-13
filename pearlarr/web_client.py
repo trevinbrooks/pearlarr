@@ -1,7 +1,7 @@
 """The shared httpx client for non-arr web traffic, and its GET and HEAD retry helpers.
 
 `make_web_client` is the second process-wide client beside
-`arr_http.make_httpx_client`: the arr client stays pinned to
+`arr_http.make_arr_client`: the arr client stays pinned to
 no-redirects and the per-arr `verify_ssl` knob (the `X-Api-Key`
 invariants), while external hosts - tracker pages, AniList, webhooks, the
 mapping-source downloads - ride this one. `get_with_retries` and

@@ -1,7 +1,7 @@
 # pyright: strict
-"""The placer's passes through `assign_episode_ids`, over synthetic parses and series maps.
+"""The placer's passes through `place_batch`, over synthetic parses and series maps.
 
-The grab-time path through `place_release` is pinned by `test_grab_placement` and `test_pending_seeds`.
+The grab-time path through `place_release` is pinned by `test_grab_placement` and `test_pending_import_updates`.
 """
 
 from collections.abc import Mapping, Sequence
@@ -3140,7 +3140,7 @@ class TestRefuseMisnumbered:
 class TestAlternateNumbering:
     """A misnumbered specials pack is placed through the listing's special aliases when they map it one to one.
 
-    Each member goes on the special its alias points at, or is `ALIASED_ELSEWHERE` when that special is outside the
+    Each member goes on the special its alias points at, or is `ALIAS_OUTSIDE_WINDOW` when that special is outside the
     window. Anything short of a one-to-one map onto the listing, or a title or size match against an alias, refuses
     the pack whole as it would without aliases. A seed off its alias keeps the aliases out of a seeded window.
     """

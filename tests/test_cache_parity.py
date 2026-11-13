@@ -167,8 +167,8 @@ class _JsonbBlock:
     """One whole-dict JSONB block's put/get/iter surface, for the isolation check.
 
     `get` returns the single record under this block's fixed key (or None).
-    `iter_records` returns every record reachable through the block's collection
-    reads (for `pending` that is both `get_pending` and `get_pending_for_series`).
+    `iter_rows` returns every record reachable through the block's collection
+    reads (for `pending` that is both `get_pending_import_rows` and `get_pending_import_rows_for_series`).
     """
 
     name: str

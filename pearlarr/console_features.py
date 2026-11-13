@@ -4,10 +4,10 @@ The output package's live regions (`boot_region`,
 `wait_region`) drive an optional sticky `rich.Live` region over
 the SAME `Console` the logger already owns, and both must degrade to a calm
 log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal). The
-wait narrator's `wants_telemetry` probe branches on the same signals. The probe
-lives here once: `console_of` finds the logger's console and `detect_capabilities`
+wait narrator's `wants_download_progress` probe branches on the same signals. The probe
+lives here once: `console_of` finds the logger's console and `detect_features`
 folds rich's derived signals (plus `log.console_supports_unicode`) into the
-small `Capabilities` value the seats branch on.
+small `ConsoleFeatures` value the seats branch on.
 """
 
 import logging
@@ -81,7 +81,7 @@ def detect_features(console: Console | None) -> ConsoleFeatures:
 
 @final
 class DetectedFeatures:
-    """An identity-keyed `detect_capabilities` cache for the render seats.
+    """An identity-keyed `detect_features` cache for the render seats.
 
     The console seat's regions (boot + wait) branch on the probe (the slow
     heads-up policy). They must share ONE instance per hub, or a mid-boot resize

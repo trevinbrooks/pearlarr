@@ -11,21 +11,21 @@ Every window places every file, not just the ones earlier windows left, because 
 as a new run and could land wrong. Then the windows merge in order:
 
 - The first window to place or refuse a file decides it, and its ids are used under the later windows. A file a
-  window claimed for another TVDB order's episode (`OTHER_ORDER_ELSEWHERE`) is placed by a later one only there.
-- A file no window decides takes its strongest claim (`PlacementVerdict.claim_rank`).
+  window claimed for another TVDB order's episode (`OTHER_ORDER_OUTSIDE_WINDOW`) is placed by a later one only there.
+- A file no window decides takes its strongest claim (`PlacementVerdict.rank`).
 - A file the special aliases claim under one window but its numbers place elsewhere is always `MISNUMBERED`.
 
 The order of the season windows shows in what another TVDB order places (pass 16). A window that holds a key's
 aired episode places the file there, which settles it against the order under every later window.
 
-After the merge, the numberings reader (`numberings`) fills the gaps the windows left (`WindowedAssignment.filled`): a
+After the merge, the numberings reader (`numberings`) fills the gaps the windows left (`WindowedPlacements.with_proposals`): a
 file named by number alone that every window skipped or read as another slice's, that no window was party to or read
 inside itself, is placed where its numbers fall when every way the group could have counted them agrees. The fill
 never moves a file a window placed or refused, and a filled file counts as decided by the earliest window holding
 its ids.
 
 A record imports only what its own entries' windows place, and takes on a hand import only when one of them was party
-to it (`EntryView.assignment`).
+to it (`TitleView.placements`).
 """
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -90,7 +90,7 @@ def ordered_windows(
     then AniList id.
 
     A listed window with no ids is left out, since it would be unscoped and admit any id. A claim's window with no
-    ids still runs: `EntryClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
+    ids still runs: `TitleClaim.admits` reads such a claim as covering any id. It sorts with the specials windows.
 
     A claim's window takes the ignored flag and the AniList episode count from its entry's listed window, since the
     claim predates any ignore and doesn't keep the count. A claim whose entry isn't listed has neither.
@@ -167,7 +167,7 @@ class WindowedFile:
         return self.merged.name
 
     def involves(self, positions: Collection[int]) -> bool:
-        """Whether a window at one of `positions` is party to the file (`PlacementVerdict.party`)."""
+        """Whether a window at one of `positions` is party to the file (`PlacementVerdict.involves`)."""
 
         return any(self.per_window[at].verdict.involves for at in positions)
 
@@ -190,18 +190,18 @@ class TitleView:
     """What the windows made of a torrent's files, as one entry and its record see it."""
 
     placements: BatchPlacements
-    """The merged verdicts, with each file that is another title's set aside as `LISTED_ELSEWHERE`.
+    """The merged verdicts, with each file that is another title's set aside as `ANOTHER_TITLES`.
 
     A file is another title's when a window the record doesn't import placed it, or when it's left for a hand import
-    (`PlacementVerdict.hand_import`) and no window the record imports was party to that (`PlacementVerdict.party`).
+    (`PlacementVerdict.left_for_hand_import`) and no window the record imports was party to that (`PlacementVerdict.involves`).
     The record neither imports nor hand-imports such a file: the title whose window judged it reports it under its
     own row."""
     misnumbered: bool
-    """Whether a file the entry's own window was party to (`PlacementVerdict.party`) ended up `MISNUMBERED`."""
+    """Whether a file the entry's own window was party to (`PlacementVerdict.involves`) ended up `MISNUMBERED`."""
     hand_import_verdict: PlacementVerdict | None
     """The hand-import claim a file of the entry's own window still carries after the merge, else None.
 
-    The claims are `_HAND_CLAIMS`: refuted by its title, or read by another TVDB order outside the window. The
+    The claims are `_HAND_IMPORT_VERDICTS`: refuted by its title, or read by another TVDB order outside the window. The
     window made one for the file and no window placed or refused it. A title's refusal comes first when both kinds
     are left."""
     another_titles: frozenset[str]
@@ -218,7 +218,7 @@ class WindowedPlacements:
     """A torrent placed under its windows: one record per file, and what each window read off the names."""
 
     files: tuple[WindowedFile, ...]
-    """One per name in `PlacementBatch.names`, batch order."""
+    """One per name in `PlacementBatch.new_names`, batch order."""
     facts: tuple[WindowFacts, ...]
     """Each window's scope, as `place_across_windows` was handed it, and what the passes read off every name under it,
     in window order."""
@@ -226,8 +226,8 @@ class WindowedPlacements:
     def with_proposals(self, batch: PlacementBatch, proposals: NumberingProposals) -> Self:
         """The assignment with each gap the reader proposed ids for filled, in batch order.
 
-        A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`PlacementVerdict.party`) and no
-        window's reading resolved inside (`NameFacts.reads_inside`): the passes never judged it by its own numbers,
+        A gap is a merged `SKIPPED` or `FOREIGN` file no window was party to (`PlacementVerdict.involves`) and no
+        window's reading resolved inside (`NameFacts.parses_inside_window`): the passes never judged it by its own numbers,
         so a verdict on them is new, not a reversal. The proposed ids must be free, held by no merged placement, no
         name of the stored map, and no earlier fill. The receiving window is the earliest whose scope holds every id,
         and a name titled under it as an episode outside them is left (the title veto the zips apply).
@@ -270,7 +270,7 @@ class WindowedPlacements:
         return not any(window.names[file.name].parses_inside_window for window in self.facts)
 
     def seen_by(self, grabbing_window_at: int, imports: Collection[int]) -> TitleView:
-        """What the windows made of the files, as the entry whose window is at `own_at` sees them.
+        """What the windows made of the files, as the entry whose window is at `grabbing_window_at` sees them.
 
         `imports` are the positions whose files the entry's record imports (`WindowOrder.imports`).
         """
@@ -312,11 +312,11 @@ class _FileMerge:
     per_window: list[Placement] = field(default_factory=list[Placement])
     """Every window's verdict, in window order."""
     weighed: list[Placement] = field(default_factory=list[Placement])
-    """The verdicts the merge weighs: `per_window`, less a placement off the episodes in `read_onto`."""
+    """The verdicts the merge weighs: `per_window`, less a placement off the episodes in `other_order_episodes`."""
     decided_at: int | None = None
     """The position of the first window that placed or refused the file."""
     other_order_episodes: tuple[int, ...] | None = None
-    """The episodes the first `OTHER_ORDER_ELSEWHERE` claim read the file onto (`Placement.read_onto`). A later window
+    """The episodes the first `OTHER_ORDER_OUTSIDE_WINDOW` claim read the file onto (`Placement.other_order_episodes`). A later window
     places it only there."""
 
     def take(self, placement: Placement) -> None:
@@ -345,7 +345,7 @@ class _FileMerge:
         """The file's verdict over every window.
 
         With no deciding window, every verdict the windows gave is a claim, so each has a rank
-        (`PlacementVerdict.claim_rank`).
+        (`PlacementVerdict.rank`).
         """
 
         if _alias_and_numbers_disagree(self.weighed):
@@ -362,7 +362,7 @@ class _FileMerge:
 def _alias_and_numbers_disagree(judged: Collection[Placement]) -> bool:
     """Whether the aliases claimed the file under one window while another placed it on other ids by its numbers.
 
-    A placement by numbers agrees only with an `ALTERNATE` on the same ids, since an `ALIASED_ELSEWHERE` has none.
+    A placement by numbers agrees only with an `SPECIAL_ALIAS` on the same ids, since an `ALIAS_OUTSIDE_WINDOW` has none.
     """
 
     from_alias = {placement.ids for placement in judged if placement.verdict.from_alias}
@@ -395,10 +395,10 @@ def targets_of(
 def place_across_windows(batch: PlacementBatch, windows: Sequence[PlacementTarget]) -> WindowedPlacements:
     """The batch placed under each window in turn, verdicts merged.
 
-    Each window is handed the files earlier windows placed (`TargetScope.after`): their ids are used where the
+    Each window is handed the files earlier windows placed (`PlacementTarget.after`): their ids are used where the
     window admits them. With no windows, every file is skipped.
 
-    A file a window refused and then claimed for another TVDB order's episode (`OTHER_ORDER_ELSEWHERE`) is placed
+    A file a window refused and then claimed for another TVDB order's episode (`OTHER_ORDER_OUTSIDE_WINDOW`) is placed
     by a later window only on that episode. A placement of it anywhere else is dropped.
     """
 

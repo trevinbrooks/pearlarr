@@ -2,7 +2,7 @@
 
 `SeaDexGateway` wraps the SeaDex client with the connection-error handling the
 orchestrator relies on: a missing entry and a SeaDex outage both degrade to a
-typed `SeaDexMiss` rather than raising, and the two are distinguishable
+typed `SeaDexNoEntry` rather than raising, and the two are distinguishable
 so an outage skip is never reported as "no entry".
 
 `prefetch` batches ids into `ceil(N / SEADEX_BATCH_SIZE)` batched `from_filter`
@@ -49,7 +49,7 @@ class SeaDexSource(ABC):
     A nominal seam over what the engine reads off `deps.seadex`
     (`prefetch` to warm the per-run cache, `entry` to serve a lookup,
     `outage` for the run's SeaDex-unreachable state). The real
-    `SeaDexGateway` subclasses it, giving `RunDeps.seadex` a checked seam
+    `SeaDexGateway` subclasses it, giving `ArrRunDeps.seadex` a checked seam
     rather than a bare `object.__new__` instance.
     """
 

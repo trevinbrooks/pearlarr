@@ -130,8 +130,8 @@ def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
 class PlacementVerdict(StrEnum):
     """How one file was judged: placed by which pass, excluded, or unplaced.
 
-    `assign_episode_ids` gives every verdict but two, which are given once the windows merge: `NUMBERINGS_AGREE`
-    and `LISTED_ELSEWHERE`.
+    `place_batch` gives every verdict but two, which are given once the windows merge: `NUMBERINGS_AGREE`
+    and `ANOTHER_TITLES`.
     """
 
     EXACT = "exact"
@@ -381,7 +381,7 @@ class Placement:
     order_only: OrderOnlyKey | None = None
     """The order and key that read the file, when the verdict is `ORDER_ONLY`."""
     other_order_episodes: tuple[int, ...] = ()
-    """The episodes the order reads the file onto, when the verdict is `OTHER_ORDER_ELSEWHERE`."""
+    """The episodes the order reads the file onto, when the verdict is `OTHER_ORDER_OUTSIDE_WINDOW`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,7 +389,7 @@ class BatchPlacements:
     """The outcome of assigning a torrent's on-disk files to resolved episode ids, one verdict per file."""
 
     placements: tuple[Placement, ...]
-    """One per name in `PlacementBatch.names`, batch order."""
+    """One per name in `PlacementBatch.new_names`, batch order."""
 
     @property
     def placed(self) -> dict[str, tuple[int, ...]]:
@@ -411,7 +411,7 @@ class BatchPlacements:
 
     @property
     def hand_import_files(self) -> tuple[str, ...]:
-        """The skipped files left for a hand import (`PlacementVerdict.hand_import`)."""
+        """The skipped files left for a hand import (`PlacementVerdict.left_for_hand_import`)."""
 
         return tuple(p.name for p in self.placements if p.verdict.left_for_hand_import)
 
@@ -431,7 +431,7 @@ class PlacementBatch:
     """A torrent's files to place, with the parses of the WHOLE torrent and its stored map.
 
     `parsed` may cover MORE files than `to_place`. Every parsed file is read as evidence, placed or not, and a name
-    `seeded` holds is never placed, in `to_place` or not.
+    `file_map` holds is never placed, in `to_place` or not.
     """
 
     to_place: Sequence[str]
@@ -521,7 +521,7 @@ class SeadexEvidence:
     can place a misnumbered one. Empty when no entry lists the torrent, which turns the pack check off."""
 
     size_matches: SizeMatches = NO_SIZE_MATCHES
-    """File name -> episode id, for the files whose size matched an episode (see `SizeIdentities`)."""
+    """File name -> episode id, for the files whose size matched an episode (see `EpisodeBySize`)."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.
@@ -550,7 +550,7 @@ class PlacementTarget:
     """The episode set a placement batch may assign into.
 
     `resolved` is the FULL id list and `used` the ids already held: an earlier window's, plus the stored map's the
-    placer adds (`Placer.scope`). The two stay separate so a fully seeded record still enforces its scope, while an
+    placer adds (`PlacerState.target`). The two stay separate so a fully seeded record still enforces its scope, while an
     EMPTY `resolved` means no scope at all (`unscoped`): the exact pass then places a name's own keys against the
     whole series map instead of placing nothing forever.
     """
@@ -580,7 +580,7 @@ class PlacementTarget:
     The other-orders pass reads them as settled."""
 
     episode_count: int | None = None
-    """AniList's episode count for the title, None when the window carries none (`EntryWindow.episode_count`)."""
+    """AniList's episode count for the title, None when the window carries none (`TitleWindow.episode_count`)."""
 
     real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
     """The resolved ids that can be placed. A stray zero keeps the scope real but is never one."""
@@ -659,10 +659,10 @@ class GrabbingTitle:
     """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
 
     aired_order: bool
-    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.numbers_aired`)."""
+    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.aired_order`)."""
 
     window: TitleWindow = field(init=False, repr=False, compare=False)
-    """The entry's own window, built as a listing builds an entry's (`EntryWindow.of`)."""
+    """The entry's own window, built as a listing builds an entry's (`TitleWindow.of`)."""
 
     def __post_init__(self) -> None:
         window = TitleWindow.of(

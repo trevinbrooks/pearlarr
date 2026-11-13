@@ -8,7 +8,7 @@ recording fake qBittorrent client built inline here. `qbittorrentapi.Client` is
 a concrete SDK class with no Protocol seam, so the fake is cast to it at the one
 injection boundary (the sanctioned leaf-client hatch).
 
-The `QbitConnectionError` mapping itself lives in `RunDeps.build` (where the
+The `QbitConnectionError` mapping itself lives in `ArrRunDeps.build` (where the
 login happens), so that one path is exercised through `build` with the qbit
 `Client` swapped for one whose `auth_log_in` raises.
 """
@@ -253,7 +253,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.parametrize(("raw", "expected"), [("", None), ("   ", None), (_HASH, _HASH), (f"  {_HASH}  ", _HASH)])
 def test_seadex_url_item_normalizes_infohash(raw: str, expected: str | None) -> None:
-    """`SeadexUrlItem` strips its infohash and folds an empty/blank one to None (a real hash is never empty)."""
+    """`Release` strips its infohash and folds an empty/blank one to None (a real hash is never empty)."""
 
     assert Release(infohash=raw).infohash == expected
 
@@ -263,7 +263,7 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
 
     qBittorrent returns *all* torrents for an empty `hashes` filter, so a bare
     truthiness dedup would report ALREADY_ADDED against an unrelated torrent.
-    `SeadexUrlItem` folds "" -> None at construction, so the dedup lookup is
+    `Release` folds "" -> None at construction, so the dedup lookup is
     skipped and the release is added.
     """
 
@@ -375,7 +375,7 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
 
 
 def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A qBittorrent `APIConnectionError` at login is remapped to the operator-facing `QbitConnectionError` by `RunDeps.build`."""
+    """A qBittorrent `APIConnectionError` at login is remapped to the operator-facing `QbitConnectionError` by `ArrRunDeps.build`."""
 
     class _FailingClient:
         def __init__(self, **kwargs: object) -> None:

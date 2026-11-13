@@ -106,7 +106,7 @@ class RunReporter:
     def _post(self, fact: TitleEvent) -> None:
         """Post an entry fact on the open scope, else emit it scope-free.
 
-        The scope-free arm is load-bearing, not defensive: the titled-row paths post details after `_ledger`
+        The scope-free arm is load-bearing, not defensive: the titled-row paths post details after `_emit_title_row`
         closed the entry.
         """
 
@@ -372,7 +372,7 @@ class RunReporter:
     # --- summary boundary ----------------------------------------------------
 
     def counts_mark(self) -> CountsMark:
-        """The counts mark run start stamps. `log_run_summary` diffs against it."""
+        """The counts mark run start stamps. `log_arr_run_summary` diffs against it."""
 
         return self._counts().bound_mark()
 

@@ -5,7 +5,7 @@
 prints each envelope back as one `ts LEVEL [bracket] message k=v` line, for
 reading a docker-captured or archived log after the fact. `-` reads stdin.
 
-The grammar lives once, in `output.textline.render_envelope_line`. This module
+The grammar lives once, in `output.line_renderers.render_envelope_line`. This module
 owns only IO and policy. The stream is a lossy RENDERING of typed events (not a
 serialization), so the formatter is generic and additive-proof: an unknown
 newer event name still renders. The capture streams line by line (months of a

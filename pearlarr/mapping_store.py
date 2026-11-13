@@ -183,7 +183,7 @@ class AnimeIdRow(NamedTuple):
 
     A typed record (not a positional `tuple[object, ...]`) shared by the whole
     pipeline - `_anime_ids_rows` builds it, `replace_anime_ids` inserts it,
-    `anime_ids_lookup` returns it, `_entry_from_anime_row` reads named fields -
+    `anime_ids_lookup` returns it, `_mapping_from_anime_id_row` reads named fields -
     so the four column lists can't silently transpose. `anilist_id` is typed
     `int` because the only consumer (`anime_ids_lookup`) filters
     `anilist_id IS NOT NULL`, even though the column itself is nullable.
@@ -199,12 +199,12 @@ class AnimeIdRow(NamedTuple):
 
 
 class AniBridgeMappingRow(NamedTuple):
-    """One `anibridge_entry` row: the computed `_consumer_entry` picks.
+    """One `anibridge_entry` row: the computed `_raw_mapping_for` picks.
 
     A typed record (not a positional `tuple[object, ...]`) shared by the producer
-    (`AniBridge.to_rows`) and the consumer (`anibridge_entries_for`), so the two
+    (`AniBridge.to_rows`) and the consumer (`anibridge_mappings_for`), so the two
     column lists agree by construction. Tuple-compatible, so it's built straight
-    from a fetched row with `AniBridgeEntryRow(*row)`.
+    from a fetched row with `AniBridgeMappingRow(*row)`.
     """
 
     anilist_id: int
@@ -214,7 +214,7 @@ class AniBridgeMappingRow(NamedTuple):
 
 
 class AniBridgeXrefRow(NamedTuple):
-    """One `anibridge_xref` reverse-index row (`axis` -> ext id -> AniList id)."""
+    """One `anibridge_xref` reverse-index row (`id_kind` -> ext id -> AniList id)."""
 
     id_kind: str
     external_id: int | str
@@ -364,7 +364,7 @@ class MappingStore:
         """Atomically replace the anime_ids rows.
 
         Args:
-            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_HASH`).
             rows: `AnimeIdRow` tuples (column order), one per Kometa record.
         """
 
@@ -385,7 +385,7 @@ class MappingStore:
         """Atomically replace the anibridge tables.
 
         Args:
-            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_HASH`).
             rows: The row tables one graph flattens to
                 (a `range` row's `start_ep` NULL marks a present-but-empty
                 season).
@@ -422,7 +422,7 @@ class MappingStore:
         """Atomically replace the anidb tables.
 
         Args:
-            source_hash: sha256 of the source file (or `INLINE_DIGEST`).
+            source_hash: sha256 of the source file (or `INLINE_HASH`).
             mappings: `AnidbMappingRow` tuples (column order).
             ambiguous: anidb ids appearing in more than one `<anime>` element.
         """
@@ -444,7 +444,7 @@ class MappingStore:
     def anime_ids_lookup(self, column: IdKind, value: object) -> list[AnimeIdRow]:
         """`AnimeIdRow`s matching `column == value`, in first-seen (rowid) order.
 
-        Returns the full row so the caller can build a `MappingEntry`. Rows with no
+        Returns the full row so the caller can build a `TitleMapping`. Rows with no
         `anilist_id` are excluded. `column` must be one of `_ANIME_ID_COLUMNS`
         (it is interpolated, so it is allowlisted). The SELECT column order
         matches `AnimeIdRow`'s fields.
@@ -485,7 +485,7 @@ class MappingStore:
     # -- anibridge queries ---------------------------------------------------
 
     def anibridge_mappings_for(self, id_kind: str, external_id: int | str) -> list[AniBridgeMappingRow]:
-        """Every `AniBridgeEntryRow` mapped to `ext_id` on `axis`.
+        """Every `AniBridgeMappingRow` mapped to `external_id` on `id_kind`.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
         query instead of k per-id point lookups. The INNER JOIN drops any xref row
@@ -546,7 +546,7 @@ class MappingStore:
     @overload
     def anibridge_distinct(self, id_kind: Literal["imdb"]) -> set[str]: ...
     def anibridge_distinct(self, id_kind: AniBridgeIdKind) -> set[int] | set[str]:
-        """The set of all ext ids on `axis` (for the library-filter id sets).
+        """The set of all ext ids on `id_kind` (for the library-filter id sets).
 
         Unlike the anime_ids columns, the AniBridge write path coerces every ext
         id per axis before it reaches the store, so a mismatched stored type is

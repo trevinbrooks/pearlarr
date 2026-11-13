@@ -4,7 +4,7 @@
 The run loop and the end-of-run summary had no coverage before this phase, so
 these pin the run-state contracts the orchestrator depends on: the stats-tally
 counters each `log_*` method bumps, the active-title attribution set by
-`log_al_title`, and that the summary renders without error on both the real
+`open_title_block`, and that the summary renders without error on both the real
 and dry-run paths. Presentation is captured as EMITTED events (via the `emit`
 seam) and, where a test pins output, re-derived to lines through the shipped
 builders. Most tests just assert on the `ArrRunState` mutations.
@@ -101,7 +101,7 @@ def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
 
 
 class TestStatsCounters:
-    """Each `RunReporter` `log_*` method increments its matching `RunStats` counter.
+    """Each `RunReporter` `log_*` method increments its matching `ArrRunStats` counter.
 
     Cached/outage-skip paths resolve a title via the AniList gateway only when
     no name is already stored.
@@ -199,7 +199,7 @@ class TestStatsCounters:
 
 
 class TestActiveTitle:
-    """`log_al_title` sets the context's current title, url, and coverage for the open entry."""
+    """`open_title_block` sets the context's current title, url, and coverage for the open entry."""
 
     def test_log_al_title_sets_current(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
@@ -211,7 +211,7 @@ class TestActiveTitle:
 
 
 class TestEntryHeaderAlId:
-    """G1: `al_id` on the emitted `EntryHeader` is producer-unverified.
+    """G1: `al_id` on the emitted `TitleHeader` is producer-unverified.
 
     Garbage in either header-opening path passed the whole suite, so pin it on both.
     """
@@ -234,7 +234,7 @@ class TestEntryHeaderAlId:
 
 
 class TestCloseBoundaries:
-    """`scan_finished` / `run_finished` close the open entry, then state the boundary.
+    """`scan_finished` / `arr_run_finished` close the open entry, then state the boundary.
 
     Closing entry-first is what keeps a later diagnostic (a reconcile warning, a
     leg-fatal error) from rendering inside the entry the scan happened to end on.
@@ -290,7 +290,7 @@ class TestCompleteBlocksSelfClose:
 
 
 class TestRunSummary:
-    """`log_run_summary` emits a `RunSummaryReady` scoreboard from the run's stats.
+    """`log_arr_run_summary` emits a `ArrRunSummaryReady` scoreboard from the run's stats.
 
     The dry-run note wording tracks whether a qBittorrent client is configured.
     """

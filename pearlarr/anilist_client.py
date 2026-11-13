@@ -286,7 +286,7 @@ def media_from_body(body: dict[str, Any] | None) -> AniListMediaNode:
     The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary,
     and this is where it crosses into the typed domain. A miss (`data`/`Media`
     null) yields an all-`None` node, and so does a malformed node (see
-    `media_node_from`).
+    `media_from_node`).
     """
 
     return media_from_node(extract_path(body, "data", "Media"))

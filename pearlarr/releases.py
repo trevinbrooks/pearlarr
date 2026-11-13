@@ -53,7 +53,7 @@ class SkipReason(StrEnum):
     """A pack with a `PlacementVerdict.MISNUMBERED` file of the entry's own window: a file whose own numbers
     disagree, or a specials pack numbered another way than its listing. Grabbed, it would import onto the wrong
     episodes, so it's left for a hand import. Also a pack with a file another TVDB order reads outside the entry's
-    window, where no listed title placed it (`PlacementVerdict.OTHER_ORDER_ELSEWHERE`), and nothing of it placed on
+    window, where no listed title placed it (`PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW`), and nothing of it placed on
     the entry."""
     TITLE_REFUTED = "titles refute its numbers"
     """A pack whose file titles contradict its numbers, with nothing of it placed on the entry
@@ -123,7 +123,7 @@ class Release:
     skip_reason: SkipReason | None = None
     """Why the placement refuses to grab the url this run (`attach_placements` sets it), None when it may be."""
     another_titles_counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
-    """How the url's files split when it's held as another title's (`UrlPlacement.hold_counts`)."""
+    """How the url's files split when it's held as another title's (`PlacedRelease.another_titles_counts`)."""
 
     def __post_init__(self) -> None:
         self.infohash = normalized_infohash(self.infohash)
@@ -176,11 +176,11 @@ class PlannedGrab(NamedTuple):
     group: str
     """The release group's name, the key of `SeadexDict`."""
     url: str
-    """The key under `SeadexReleaseGroupItem.urls`."""
+    """The key under `GroupReleases.releases`."""
     item: Release
     """The url's item, the flag and file list the planner read."""
     qbit_hash: str
-    """The hash its torrent goes by in qBittorrent (`SeadexUrlItem.qbit_hash`), lowercase."""
+    """The hash its torrent goes by in qBittorrent (`Release.qbit_hash`), lowercase."""
 
 
 def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:

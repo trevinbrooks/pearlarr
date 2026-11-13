@@ -461,7 +461,7 @@ def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_cycle_rearms() 
 
     Strikes are a per-cycle budget: they accumulate across the RunFinished leg
     boundary, so the Nth strike quarantines regardless of the boundary, and
-    only `begin_cycle` re-arms.
+    only `begin_run` re-arms.
     """
 
     flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
@@ -995,7 +995,7 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
 
 
 def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: pytest.CaptureFixture[str]) -> None:
-    """This covers the install→`begin_cycle` window and a quarantined seat.
+    """This covers the install→`begin_run` window and a quarantined seat.
 
     A visible WARNING+ diagnostic must still reach a human, via stderr.
     """
@@ -1340,7 +1340,7 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
 
 
 def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:
-    """The swap-time `set_level` died (`begin_cycle`'s tail applies the cycle level to every sub).
+    """The swap-time `set_level` died (`begin_run`'s tail applies the cycle level to every sub).
 
     One bug must cost the fresh console ONE strike, not two.
     """

@@ -78,19 +78,19 @@ class GrabRequest:
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
     seadex_dict: SeadexDict
     update: CachedTitleUpdate
-    """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's contents."""
+    """The run's mutable `CachedTitleUpdate` accumulator: the frozen field pins the reference, not the dict's contents."""
     replaced_groups: tuple[str, ...]
     """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr)."""
     pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES
-    """One seed per flagged torrent with a video file, keyed by its hash in qBittorrent (`NO_SEEDS` when the wait
+    """One seed per flagged torrent with a video file, keyed by its hash in qBittorrent (`NO_PENDING_IMPORT_UPDATES` when the wait
     mode is off)."""
     input_unread_groups: tuple[str, ...] = ()
     """Groups with a url whose grab-time placement waited on a read that failed this run, so a run may have
     been held: the title is never cached as done and re-checks next run."""
     metadata_unread: bool = False
-    """An entry of the series was looked up without its AniList record (`SonarrEpisodes.entries_unread`), or a
+    """An entry of the series was looked up without its AniList record (`SonarrEpisodes.any_air_dates_unread`), or a
     series was read without its TVDB orders (`SonarrEpisodes.orders_unread`): the title is never cached as done and
     re-checks next run."""
 
@@ -286,7 +286,7 @@ class GrabPipeline:
         return req.pending_import_updates.get(qbit_hash)
 
     def _register_pending_import(self, release: Release, req: GrabRequest, result: AddResult) -> None:
-        """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_ADDED` accretes or reacquires.
+        """Persist a grabbed or already-present release: `ADDED` tracks, `ALREADY_IN_QBIT` accretes or reacquires.
 
         A fresh add enters the run list stamped now. A torrent already in qBittorrent, whoever added it, joins its
         stored record or starts one, and is reacquired unless the record is this run's own grab (a torrent two
@@ -347,7 +347,7 @@ class GrabPipeline:
         """The single needs-action row for a title NOT cached as done, or None.
 
         Flat guard-returns keep the precedence private-only > unsupported-tracker > hand-import holds > grab-failed >
-        the other holds, each in `_HOLD_ROWS` order. A hand import is what no retry brings, so its row outranks a
+        the other holds, each in `_SKIP_REPORTS` order. A hand import is what no retry brings, so its row outranks a
         failed grab's. A failed grab is a release the title should have, so its row outranks a url held as another
         title's or on a failed read.
         """

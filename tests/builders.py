@@ -337,7 +337,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
-        """The entry as a `CachedEntry`, or None."""
+        """The entry as a `CachedTitle`, or None."""
 
         cached = self._cached_titles.get((str(arr), al_id))
         if cached is None:
@@ -707,7 +707,7 @@ def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCat
 
 
 def make_services(**overrides: Any) -> ArrRunServices:
-    """A bare `RunServices` carrying only the attributes its methods read."""
+    """A bare `ArrRunServices` carrying only the attributes its methods read."""
 
     logger = make_logger()
 
@@ -739,7 +739,7 @@ def make_run_deps(
     skyhook_client: AbstractSkyHookClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> ArrRunDeps:
-    """A real `RunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview).
+    """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (preview).
 
     `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
     """
@@ -785,7 +785,7 @@ def make_run_deps(
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `state` and `planner` overridable."""
+    """A `SeadexReleaseFilter` over an assembled `ArrRunDeps`, with `state` and `planner` overridable."""
 
     config = _split_config(overrides)
     state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
@@ -877,7 +877,7 @@ def pending_import_update(
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
 ) -> PendingImportUpdate:
-    """A seed on `infohash` (group NAN0, no files) claimed by `entry_claim(**claim)`, new unless `stored` is given."""
+    """A seed on `infohash` (group NAN0, no files) claimed by `title_claim(**claim)`, new unless `stored` is given."""
 
     return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
@@ -922,7 +922,7 @@ def grab_request(**overrides: Any) -> GrabRequest:
 
 
 def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
-    """A bare `GrabPipeline` carrying only what its methods read, `_ctx` a non-preview blocking run."""
+    """A bare `GrabPipeline` carrying only what its methods read, `_state` a non-preview blocking run."""
 
     config = _split_config(overrides)
     logger = make_logger()
@@ -1012,7 +1012,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 
 
 def make_planner(**overrides: Any) -> GrabPlanner:
-    """A `DownloadPlanner` with test-friendly defaults (arr `SONARR`, not interactive)."""
+    """A `GrabPlanner` with test-friendly defaults (arr `SONARR`, not interactive)."""
 
     logger = make_logger()
 
@@ -1057,7 +1057,7 @@ def make_release(
 
 
 def grab_plan(seadex_dict: SeadexDict) -> GrabPlan:
-    """A `PlanResult` carrying just the dict, with no skips and no guard evidence."""
+    """A `GrabPlan` carrying just the dict, with no skips and no guard evidence."""
 
     return GrabPlan(seadex_dict=seadex_dict, skips=PrivateOnlyNotices(), guards=OwnedAtGrab())
 
@@ -1127,7 +1127,7 @@ _NO_TORRENT_GROUP = TorrentGroup("", ())
 def episode_statuses(
     by_id: Mapping[int, EpisodeFileStatus], holding_own_copy: frozenset[int] = frozenset()
 ) -> EpisodeStatuses:
-    """`TargetStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
+    """`EpisodeStatuses` over `by_id`, where `holding_own_copy` are the targets holding a copy of our own file."""
 
     return EpisodeStatuses(by_id, holding_own_copy)
 
@@ -1176,7 +1176,7 @@ def title_window(
     ignored: bool = False,
     episode_count: int | None = None,
 ) -> TitleWindow:
-    """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `entry_claim`'s), in the order given."""
+    """Entry `al_id`'s window over `ids` on `series_id` (series 7, as `title_claim`'s), in the order given."""
 
     return TitleWindow(
         al_id=al_id,
@@ -1228,7 +1228,7 @@ def make_grabbing_title(
     alternate_titles: tuple[str, ...] = (),
     aired_order: bool = True,
 ) -> GrabbingTitle:
-    """Entry `al_id`'s grab scope over `title_index`, within `series` on `series_id` (series 7, as `entry_claim`'s).
+    """Entry `al_id`'s grab scope over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
 
     Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
@@ -1357,7 +1357,7 @@ def batch(
     *,
     file_map: FileEpisodeMap = NO_FILE_MAP,
 ) -> PlacementBatch:
-    """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `seeded`."""
+    """A batch over the whole torrent's parses: `to_place` (every parsed name when None) and the stored map `file_map`."""
 
     return PlacementBatch(list(parsed) if to_place is None else to_place, parsed, file_map)
 
@@ -1369,7 +1369,7 @@ def place(
     *,
     file_map: FileEpisodeMap = NO_FILE_MAP,
 ) -> BatchPlacements:
-    """The verdicts `assign_episode_ids` gives under `target` over `batch(parsed, to_place, seeded=seeded)`."""
+    """The verdicts `place_batch` gives under `target` over `batch(parsed, to_place, file_map=file_map)`."""
 
     return place_batch(batch(parsed, to_place, file_map=file_map), target).placements
 
@@ -1393,7 +1393,7 @@ PENDING_IMPORT_ADDED = parse_stamp(PENDING_IMPORT_STAMP).astimezone()
 
 
 def title_claim(**overrides: Any) -> TitleClaim:
-    """An `EntryClaim` on series 7 by entry `PENDING_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
+    """An `TitleClaim` on series 7 by entry `PENDING_IMPORT_AL_ID`, unscoped unless `ordered_episode_ids` is given."""
 
     defaults: dict[str, Any] = {
         "al_id": PENDING_IMPORT_AL_ID,
@@ -1483,7 +1483,7 @@ def attempt_result(
     unmatched_files: tuple[str, ...] = (),
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> AttemptResult:
-    """An `ImportProbe` defaulting to the verified-import outcome (`files_present`)."""
+    """An `AttemptResult` defaulting to the verified-import outcome (`all_done`)."""
 
     return AttemptResult(
         all_done=all_done,
@@ -1567,7 +1567,7 @@ def make_sonarr_sync(
     skyhook_client: AbstractSkyHookClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> SonarrStrategy:
-    """A `SonarrSync` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
+    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
 
     deps = make_run_deps(
         config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client, categories=categories
@@ -1589,7 +1589,7 @@ def make_radarr_sync(
     config: AppConfig | None = None,
     cache_store: AbstractCacheStore | None = None,
 ) -> RadarrStrategy:
-    """A `RadarrSync` built through its real `__init__`, injecting a typed client."""
+    """A `RadarrStrategy` built through its real `__init__`, injecting a typed client."""
 
     deps = make_run_deps(config=config, cache_store=cache_store)
     services = ArrRunServices(deps, Arr.RADARR)

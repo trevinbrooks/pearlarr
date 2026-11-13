@@ -84,7 +84,7 @@ def _override_line(url: str, override: SizeOverName) -> str:
 class SonarrStrategy(ArrStrategy[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
-    See `ArrSync` for the shared DI/hook-wiring regime.
+    See `ArrStrategy` for the shared DI/hook-wiring regime.
     """
 
     def __init__(
@@ -520,7 +520,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @override
     def remove_from_queue(self, pending: PendingImport) -> EffectStatus:
-        """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.close_tracked`)."""
+        """Dismiss the torrent's leftover Sonarr queue entry (see `ImportExecutor.remove_from_queue`)."""
 
         return self._executor.remove_from_queue(pending)
 

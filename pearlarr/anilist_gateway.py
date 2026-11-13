@@ -8,7 +8,7 @@ titles / thumbnails. A record due a refetch still serves, so an AniList outage
 never drains the cache.
 
 The gateway is deliberately side-effect-free with respect to run state - the
-caller owns the `current_title` attribution.
+caller owns the `title_name` attribution.
 """
 
 import logging
@@ -195,7 +195,7 @@ class AniListGateway:
     def titles(self, al_id: int) -> tuple[str, ...]:
         """Every distinct AniList title for an id (English first, then romaji, cached or queried live), empty on a miss.
 
-        Side-effect-free: the caller owns any fallback and the `current_title` attribution.
+        Side-effect-free: the caller owns any fallback and the `title_name` attribution.
         """
 
         media = self._media(al_id)

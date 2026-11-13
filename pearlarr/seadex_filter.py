@@ -56,7 +56,7 @@ class SeadexReleaseFilter:
 
     Owns no per-run caches. It binds the run `ArrRunState` (`begin_run`)
     only so `filter_downloads` can stamp the private-only skip flags the grab tail
-    later reads. `RunServices` keeps same-named thin
+    later reads. `ArrRunServices` keeps same-named thin
     delegators (`get_seadex_dict` / `filter_seadex_interactive` /
     `filter_seadex_downloads`) forwarding here, so the strategy<->services
     contract is unchanged.
@@ -296,11 +296,11 @@ class SeadexReleaseFilter:
     ) -> GrabPlan:
         """Flip the switch on whether we're downloading each torrent or not.
 
-        Thin orchestrator seam over the `DownloadPlanner`: run it, then apply
+        Thin orchestrator seam over the `GrabPlanner`: run it, then apply
         the plan's private-only skip outcome back onto the run context the
         grab/cache tail reads (the SkipNotice log lines, the
         private_only_skipped flag, and the skipped group names). The plan
-        itself is returned whole, so a field added to `PlanResult` reaches the
+        itself is returned whole, so a field added to `GrabPlan` reaches the
         strategies without a hand-synced mirror type.
         """
 

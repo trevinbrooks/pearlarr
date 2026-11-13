@@ -21,7 +21,7 @@ from .builders import episode_snapshot, episode_statuses, pending_import, sonarr
 
 
 class TestEpisodeFileStatuses:
-    """`EpisodeSnapshot.statuses` judges each episode's file, and `TargetStatuses` answers from those judgments.
+    """`EpisodeSnapshot.statuses` judges each episode's file, and `EpisodeStatuses` answers from those judgments.
 
     `all_done` needs every status recommended, `needing_import` leaves out only the recommended ones, and
     `import_ids` takes an episode holding a copy of our own along with a needing one.
@@ -277,7 +277,7 @@ def _series(
 
 
 class TestRecordSnapshot:
-    """`RecordSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
+    """`ImportSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
 
     @staticmethod
     def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> ImportSnapshot:

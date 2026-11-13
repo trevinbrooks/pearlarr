@@ -1,10 +1,10 @@
 """The per-run dependency bundle and the per-AniList-id services hub.
 
-`RunDeps` is the shared leaf-collaborator bundle the composition root builds
-once per arr run. `RunServices` is the services hub the Arr strategies hold
+`ArrRunDeps` is the shared leaf-collaborator bundle the composition root builds
+once per arr run. `ArrRunServices` is the services hub the Arr strategies hold
 as `self._services` and call the shared per-id pipeline through. The run
-loop (`RunLoop`) adopts the hub's placeholder context and pushes each run's
-fresh context down via `RunServices.begin_run`, so the strategies depend on
+loop (`ArrRunLoop`) adopts the hub's placeholder context and pushes each run's
+fresh context down via `ArrRunServices.begin_run`, so the strategies depend on
 this module only and never see the loop type.
 """
 
@@ -46,7 +46,7 @@ from .wait_types import ImportWaitMode
 class QbitConnectionError(Exception):
     """qBittorrent auth/connection failed - a user-facing config problem.
 
-    Raised from `RunDeps.build` so the cli reports it as a clean one-line message
+    Raised from `ArrRunDeps.build` so the cli reports it as a clean one-line message
     (wrong host / credentials) instead of a stack trace under "unexpected error".
     """
 
@@ -68,8 +68,8 @@ class ArrRunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
 
     A plain value object the composition root (`bootstrap.py`) builds via
-    `build` and injects into the `RunServices` hub, the
-    `RunLoop` run loop, and the Arr-specific strategy.
+    `build` and injects into the `ArrRunServices` hub, the
+    `ArrRunLoop` run loop, and the Arr-specific strategy.
     Keeping construction here (where every collaborator type is already imported)
     and injection at the root means none of them constructs another's
     dependencies - each receives the subset it needs. `anime_mappings` /
@@ -290,12 +290,12 @@ class ArrRunDeps:
 class ArrRunServices:
     """The per-AniList-id services hub the strategies call.
 
-    Receives its shared collaborators as a `RunDeps` bundle (built and
+    Receives its shared collaborators as a `ArrRunDeps` bundle (built and
     injected by the composition root in `bootstrap.py`) and owns the shared per-id
     pipeline the Arr strategies reach through `self._services`: the release
     filter, the grab tail, the cache checks, and the strategy-facing log
     delegates. `arr` is THE authority for which Arr is being run (`ctx.arr`
-    is the per-run copy). The `RunLoop` run loop adopts
+    is the per-run copy). The `ArrRunLoop` run loop adopts
     the placeholder context minted here and pushes each run's fresh context
     down via `begin_run`, so the strategies never see the loop type.
     """
@@ -355,7 +355,7 @@ class ArrRunServices:
     def state(self) -> ArrRunState:
         """The current run context (the placeholder until a run begins).
 
-        Read by the `RunLoop` run loop at construction so
+        Read by the `ArrRunLoop` run loop at construction so
         it adopts the same placeholder instead of minting a second one.
         """
 
@@ -366,7 +366,7 @@ class ArrRunServices:
         """Whether matching settings changed since this arr's verdicts were vouched.
 
         Read by the run loop to announce the run-wide re-check
-        `_skippable_entry` applies.
+        `_unchanged_cached_title` applies.
         """
 
         return self._selection_changed
@@ -376,7 +376,7 @@ class ArrRunServices:
 
         Driven by the run loop's `begin_run`: once with the placeholder at
         construction (so pre-run paths are safe) and again right after
-        `reset_run_stats` mints the run's real ctx. The wait-manager rebind
+        `start_arr_run` mints the run's real ctx. The wait-manager rebind
         stays on the loop side (the loop owns the manager).
         """
 
@@ -415,8 +415,8 @@ class ArrRunServices:
     def _unchanged_cached_title(self, al_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
         """The cached row iff the per-id loop may skip this id. None re-processes.
 
-        The single decision BOTH cache gates share: `al_id_needs_scan` picks
-        what prefetch warms and `cached_entry_skip` what the loop skips, and
+        The single decision BOTH cache gates share: `title_needs_check` picks
+        what prefetch warms and `is_unchanged` what the loop skips, and
         the two must agree or un-warmed ids hit AniList one at a time. Run-wide
         bypasses come first (no db read): the ignore flag, a selection-digest
         change (matching preferences moved, so every cached verdict is suspect),
@@ -437,8 +437,8 @@ class ArrRunServices:
     def mark_dirty(self, al_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last pass.
 
-        Fed by the run loop's `ArrActivityMonitor` scan.
-        `al_id_needs_scan` and `cached_entry_skip` bypass the cached-entry
+        Fed by the run loop's `ArrActivityReader` scan.
+        `title_needs_check` and `is_unchanged` bypass the cached-entry
         short-circuit for exactly these ids.
         """
 
@@ -474,7 +474,7 @@ class ArrRunServices:
         """Resolve the entry's title through the ladder (resolves only: no logging, no attribution).
 
         The stored name is deliberately not read: the gateway serves its cached record, and
-        `new_cache_details` writes the result back. `log_al_title` opens the block with it.
+        `new_cached_title_update` writes the result back. `open_title_block` opens the block with it.
         """
 
         return title_from_names(al_id, self._anilist.titles(al_id), self._state.arr_title)
@@ -482,7 +482,7 @@ class ArrRunServices:
     def new_cached_title_update(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The seed record a processed id accumulates into.
 
-        `name` rides only when AniList resolved: `update_cache` merges partially, so an omitted
+        `name` rides only when AniList resolved: `update_cached_title` merges partially, so an omitted
         name keeps what an earlier run stored instead of clobbering it with a fallback label.
         """
 
@@ -525,7 +525,7 @@ class ArrRunServices:
     def import_wait_mode(self) -> ImportWaitMode:
         """The wait mode resolved for the current run (cli > config > default).
 
-        Set at the top of `run_sync`. The active strategy reads this (not the
+        Set at the top of `run_arr`. The active strategy reads this (not the
         raw `config.imports.wait_mode`) so its seed-building gate agrees with the
         run loop's persist/reconcile/blocking gates - otherwise a CLI override that
         turns the feature on over an `off` config would build no seeds and the
@@ -539,9 +539,9 @@ class ArrRunServices:
         al_id: int,
         update: CachedTitleUpdate,
     ) -> None:
-        """Merge `cache_details` into an entry's cache record (in-memory only).
+        """Merge `update` into an entry's cache record (in-memory only).
 
-        The run's save points flush it. See `CacheStore.update_cache`.
+        The run's save points flush it. See `CacheStore.update_cached_title`.
         """
 
         self.cache_store.update_cached_title(self._state.arr, al_id, update)
@@ -571,7 +571,7 @@ class ArrRunServices:
     def report_invalid_selection(self) -> None:
         """Shared tail for an interactive pick that left zero valid selections.
 
-        Unlike `no_releases_skip` this deliberately persists NOTHING: caching the title as done would suppress it
+        Unlike `report_no_releases` this deliberately persists NOTHING: caching the title as done would suppress it
         forever, when the input was only fumbled, so it must re-prompt on the next run. The picker already warned
         about the empty selection. This only owes the pacing pause.
         """
@@ -621,7 +621,7 @@ class ArrRunServices:
         """The cached-entry gate both strategies pass each id through: True skips it, False sends it on to a check.
 
         A skip backfills what an older row lacks and logs the cached block. A title sent on has its row's stamp
-        cleared here, before anything in the check can fail: `grab_and_cache` and `no_releases_skip` are the two
+        cleared here, before anything in the check can fail: `grab_and_cache` and `report_no_releases` are the two
         writes that stamp it again, each only when the outcome may be cached as done.
 
         `coverage` stays a callable so the (for Sonarr, episode-fetching) lookup runs only on the

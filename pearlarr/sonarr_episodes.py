@@ -109,8 +109,8 @@ def _dated(episodes: Iterable[SonarrEpisode]) -> str:
 class SonarrEpisodes:
     """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic, and each series' orders.
 
-    Constructed once per run in `SonarrSync` from the shared
-    `RunDeps`, the strategy's Sonarr client, and the services
+    Constructed once per run in `SonarrStrategy` from the shared
+    `ArrRunDeps`, the strategy's Sonarr client, and the services
     hub (held as `self._services` for the prefetch needs-scan gate).
     The TVDB orders come off `deps.skyhook`, read once per series per run.
     """
@@ -208,11 +208,11 @@ class SonarrEpisodes:
         runs in the pool. The in-memory `_ep_list_cache` is populated on the
         main thread (the cache and mappings are not thread-safe). A series whose
         fetch fails is left unwarmed and re-fetched (and logged) by
-        `get_ep_list` on the main thread during the loop.
+        `mapping_episodes` on the main thread during the loop.
 
         Only series the per-id loop would actually process are warmed: a series
         whose every AniList id the loop short-circuits (no SeaDex entry, or cached
-        and unchanged - `al_id_needs_scan`) is skipped, since `get_ep_list`
+        and unchanged - `title_needs_check`) is skipped, since `mapping_episodes`
         would never run for it. This keeps a warm run from re-fetching the episode
         lists the loop's cached-entry skip already obviates.
 
@@ -269,7 +269,7 @@ class SonarrEpisodes:
     def titles_needing_check(self, items: Iterable[SonarrItem]) -> list[int]:
         """The ids of the series the per-id loop will process, in item order, each once.
 
-        Skips a series whose every AniList id the loop short-circuits on (`al_id_needs_scan`), and an unmonitored
+        Skips a series whose every AniList id the loop short-circuits on (`title_needs_check`), and an unmonitored
         one under `ignore_unmonitored`.
         """
 
@@ -306,7 +306,7 @@ class SonarrEpisodes:
     def orders_for(self, series_id: int) -> IndexOrders:
         """The orders the series' episode indexes are built with, read once per run.
 
-        `NO_ORDERING` for a series Sonarr numbers by another order than official, and for one this run didn't read.
+        `NO_INDEX_ORDERS` for a series Sonarr numbers by another order than official, and for one this run didn't read.
         """
 
         ordering = self._orderings.get(series_id)
@@ -332,7 +332,7 @@ class SonarrEpisodes:
         return self._anilist.episode_count(al_id)
 
     def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
-        """Whether AniList left any of the entries unread (`AniListGateway.unread`)."""
+        """Whether AniList left any of the entries unread (`AniListGateway.air_dates_unread`)."""
 
         return any(self._anilist.air_dates_unread(al_id) for al_id in al_ids)
 

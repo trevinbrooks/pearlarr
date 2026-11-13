@@ -55,8 +55,8 @@ type AnimeIdsRawMapping = dict[str, Any]
 A loosely-shaped producer dict: a flat record carrying mixed-typed fields
 (`anilist_id`/`tvdb_id`/`tmdb_movie_id`/`imdb_id` ints or strs,
 `tvdb_season`/`tvdb_epoffset` ints). It is read at the raw->typed boundary
-(`_entry_from_raw` / `_anime_ids_rows`) and never modeled as a domain
-object, so it stays a loose `dict[str, Any]` like `AniBridgeEntry`.
+(`_mapping_from_raw` / `_anime_ids_rows`) and never modeled as a domain
+object, so it stays a loose `dict[str, Any]` like `AniBridgeRawMapping`.
 """
 
 type AnimeIdsByName = dict[str, AnimeIdsRawMapping]
@@ -79,7 +79,7 @@ class MappingKind(Enum):
 class MappingSource(Enum):
     """Which producer a resolved mapping came from (its provenance).
 
-    Distinct from `MappingMode`: `mode` is the episode strategy (derived
+    Distinct from `MappingKind`: `mode` is the episode strategy (derived
     from `tvdb_mappings` presence), `source` is the producer. They correlate
     but are not the same: a *degraded* AniBridge entry (imdb/tmdb-resolved, so it
     carries no tvdb season ranges) is `mode ANIME_IDS` yet `source ANIBRIDGE` -
@@ -138,7 +138,7 @@ class TitleMapping:
 def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
     """Absent or explicit-null tvdb_season/tvdb_epoffset -> the -1/0 sentinels.
 
-    Shared verbatim by `_entry_from_raw` and `_anime_ids_rows` so the two
+    Shared verbatim by `_mapping_from_raw` and `_anime_ids_rows` so the two
     derivations can't drift. `.get(key, default)` only fills an ABSENT key, so a
     present-but-null JSON value (`"tvdb_season": null`) is folded here rather than
     reaching the NOT NULL columns. Season 0 is a meaningful special (never
@@ -151,9 +151,9 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
 
 
 def _mapping_from_raw(anilist_id: int, raw: AnimeIdsRawMapping | AniBridgeRawMapping) -> TitleMapping:
-    """Build a `MappingEntry` from a producer's raw dict.
+    """Build a `TitleMapping` from a producer's raw dict.
 
-    The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
+    The one place a loosely-typed producer dict (an AniBridge `_raw_mapping_for`
     dict) becomes a typed record. Only the enumerated keys of `raw` are read.
     Defaults are `-1` / `0` for an AniBridge entry (which carries no
     `tvdb_season` / `tvdb_epoffset`).
@@ -177,9 +177,9 @@ def _mapping_from_raw(anilist_id: int, raw: AnimeIdsRawMapping | AniBridgeRawMap
 
 
 def _mapping_from_anime_id_row(row: AnimeIdRow) -> TitleMapping:
-    """Build a `MappingEntry` from a stored `AnimeIdRow`.
+    """Build a `TitleMapping` from a stored `AnimeIdRow`.
 
-    The SQL twin of `_entry_from_raw` for Kometa records: a row never
+    The SQL twin of `_mapping_from_raw` for Kometa records: a row never
     carries `tvdb_mappings` (only AniBridge does), so `mode` is ANIME_IDS.
     """
 
@@ -298,7 +298,7 @@ def _anime_ids_rows(anime_mappings: AnimeIdsByName) -> list[AnimeIdRow]:
 
     Every record yields a row (a NULL `anilist_id` is kept so it feeds the
     library-filter candidate sets, but is excluded from id->entry lookups). Each
-    field uses the same `.get(..., default)` reads `_entry_from_raw` used, so the
+    field uses the same `.get(..., default)` reads `_mapping_from_raw` used, so the
     SQL-served entry is identical.
     """
 
@@ -354,7 +354,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
 
     * An anidb id appearing in more than one `<anime>` element is *ambiguous*.
       It is recorded and stored with no mapping rows, and
-      `MappingResolver.anidb_mapping_dict` raises on it.
+      `MappingResolver.anidb_episode_by_tvdb` raises on it.
     * For an unambiguous id, each `<mapping-list>/<mapping>` with text is parsed
       to `{tvdb_ep: anidb_ep}` keyed by `tvdbseason`. A repeated season is
       last-wins. Malformed/unsupported mappings are skipped but tallied.

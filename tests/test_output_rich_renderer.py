@@ -69,7 +69,7 @@ def _warning(message: str, origin: str = LOG_NAME) -> Diagnostic:
 
 
 class TestPlacement:
-    """Ambient indent tracks the open scope: boot-ledger and wait indents, column 0 otherwise, reset on `begin_cycle`."""
+    """Ambient indent tracks the open scope: boot-ledger and wait indents, column 0 otherwise, reset on `begin_run`."""
 
     def test_open_boot_section_indents_to_the_ledger(self) -> None:
         renderer, stream = _renderer()

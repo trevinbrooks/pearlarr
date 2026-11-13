@@ -11,7 +11,7 @@ from .pairs import unambiguous
 from .releases import OrderOnlyKey
 
 type FileEpisodeMap = Mapping[str, tuple[int, ...]]
-"""A read view of normalized basename -> episode ids: a record's map, a placement's, or both joined (`joined_map`).
+"""A read view of normalized basename -> episode ids: a record's map, a placement's, or both joined (`joined_file_map`).
 Producers normalize the keys, and readers take them as given."""
 
 NO_ORDER_ONLY: Mapping[str, OrderOnlyKey] = MappingProxyType({})
@@ -87,7 +87,7 @@ class FileMapCoverage:
 class SizeMatchedEpisode(NamedTuple):
     """One grab-time ownership claim over an untagged on-disk file.
 
-    A tuple on purpose: `GuardFacts.owned_sizes` and the JSON form read it as an (id, size) pair.
+    A tuple on purpose: `OwnedAtGrab.owned_sizes` and the JSON form read it as an (id, size) pair.
     """
 
     ep_id: int
@@ -139,7 +139,7 @@ class TitleWindow:
     """The window's episode ids in season order, each once. Empty when the entry's episode list came back empty."""
 
     names: TitleNames
-    """The entry's series and AniList titles (see `EntryNames`)."""
+    """The entry's series and AniList titles (see `TitleNames`)."""
 
     ignored: bool = False
     """Whether the entry was in `ignore_anilist_ids` at the read. `ordered_windows` runs an ignored window after the
@@ -227,7 +227,7 @@ class TitleClaim:
     """The entry's resolved episode ids in season order. Empty means unscoped: any id the series map holds."""
 
     names: TitleNames
-    """The series and AniList titles the placement breaks ties by (see `EntryNames`)."""
+    """The series and AniList titles the placement breaks ties by (see `TitleNames`)."""
 
     preowned_episode_ids: tuple[int, ...]
     """Claimed ids that already held a recommended file at the FIRST claim (the wait bar's net-out)."""
@@ -241,7 +241,7 @@ class TitleClaim:
     def admits(self, ep_id: int) -> bool:
         """Whether the claim's window holds `ep_id`.
 
-        An unscoped claim admits every id, though `RecordSnapshot.route` judges an id under an
+        An unscoped claim admits every id, though `ImportSnapshot.route` judges an id under an
         unscoped claim only when it is alone on its series.
         """
 
@@ -315,13 +315,13 @@ class PendingImport:
     """SeaDex filenames, for our regex quality parse."""
 
     added_at: str
-    """When the download started, in `UPDATED_AT_STR_FORMAT`: Pearlarr's own add, or for a torrent already in
+    """When the download started, in `STAMP_FORMAT`: Pearlarr's own add, or for a torrent already in
     qBittorrent the client's add time (now when it reports none). The rescan proof and Radarr's history window
     count from it."""
 
     file_episode_map: FileEpisodeMap
     """Normalized basename -> Sonarr episode ids over the WHOLE torrent: the grab-time seeds plus the files Sonarr's
-    history placed for a download no scan saw. Folded as the record is built (`_normalized_map`) and wrapped
+    history placed for a download no scan saw. Folded as the record is built (`_normalized_file_map`) and wrapped
     read-only."""
 
     claims: tuple[TitleClaim, ...]
@@ -359,7 +359,7 @@ class PendingImport:
 
     is_cross_seed: bool = False
     """Whether the torrent is a cross-seed: it held the release's files under another hash than SeaDex's
-    (`SeadexUrlItem.cross_seed_hash`), so Pearlarr never added it. A forced `move` import of it runs as `auto`."""
+    (`Release.cross_seed_hash`), so Pearlarr never added it. A forced `move` import of it runs as `auto`."""
 
     def __post_init__(self) -> None:
         # Fold the map, the exclusions, the hand-import files, their order-only keys and the by-name sizes so readers
@@ -418,7 +418,7 @@ class PendingImport:
         return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
     def window_episode_ids(self) -> list[int]:
-        """The episodes a hand import must fill (`filled_by_hand`): the claims' windows in order, else the seeds' ids."""
+        """The episodes a hand import must fill (`all_done`): the claims' windows in order, else the seeds' ids."""
 
         windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
         return windows or sorted(self.file_map_episode_ids())
@@ -464,7 +464,7 @@ class PendingImport:
         return self if changed == self else changed
 
     def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
-        """The record with `placements` joined onto its map (`joined_map`).
+        """The record with `placements` joined onto its map (`joined_file_map`).
 
         Their names are lifted out of the exclusions and the hand-import files.
         """

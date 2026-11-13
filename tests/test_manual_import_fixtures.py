@@ -152,7 +152,7 @@ class TestParsedFileInfoFromRealBodies:
 
 
 class TestResolvedIds:
-    """`resolved_ids`: the claim's window when the record carries one, else the seeds' ids sorted."""
+    """`window_episode_ids`: the claim's window when the record carries one, else the seeds' ids sorted."""
 
     def test_the_claims_window_wins(self) -> None:
         pending = pending_import(file_episode_map={"a.mkv": [7]}, ordered_episode_ids=[3, 1, 2])
@@ -292,7 +292,7 @@ class TestManualImportInFlightFixture:
 
 
 class _Specials(NamedTuple):
-    """The captured specials download wired into a bare `SonarrSync` and its scripted fake."""
+    """The captured specials download wired into a bare `SonarrStrategy` and its scripted fake."""
 
     strat: SonarrStrategy
     sonarr: FakeSonarrClient

@@ -41,10 +41,10 @@ class CachedOrders:
     """One series' cached orders, replaced whole on each fetch."""
 
     fetched_at: str
-    """When the record was fetched, in `stamps.UPDATED_AT_STR_FORMAT`."""
+    """When the record was fetched, in `stamps.STAMP_FORMAT`."""
 
     fresh_until: str
-    """When the record is due for a refetch, in `stamps.UPDATED_AT_STR_FORMAT`."""
+    """When the record is due for a refetch, in `stamps.STAMP_FORMAT`."""
 
     orders: Mapping[str, tuple[OrderRow, ...]]
     """Order type name (`official`, `dvd`, `alternate`, ...) -> its rows. An order is empty when SkyHook lists it but

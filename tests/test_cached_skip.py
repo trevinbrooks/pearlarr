@@ -2,9 +2,9 @@
 # pyright: reportPrivateUsage=false
 # These read the hub's private run context (run._ctx). Strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""The cached-entry short-circuit (`RunServices.cached_entry_skip`) and the title seams around it.
+"""The cached-entry short-circuit (`ArrRunServices.is_unchanged`) and the title seams around it.
 
-Pins the skip decision, made from a single `CacheStore.get_entry` read: a cached
+Pins the skip decision, made from a single `CacheStore.get_cached_title` read: a cached
 entry whose SeaDex `updated_at` still matches is skipped (and its url/coverage
 backfilled once if the record predates those fields, its name once AniList can
 resolve it). An absent or stale entry is re-processed, and a row sent on to a
@@ -40,7 +40,7 @@ from .builders import (
 
 
 class _RecordingCacheStore(FakeCacheStore):
-    """The in-memory store, also recording each `update_cache` payload so one merged write can be asserted."""
+    """The in-memory store, also recording each `update_cached_title` payload so one merged write can be asserted."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,7 +53,7 @@ class _RecordingCacheStore(FakeCacheStore):
 
 
 class _RecordingReporter:
-    """Records the title each `log_cached_entry` call reports as cached."""
+    """Records the title each `log_cached_title` call reports as cached."""
 
     def __init__(self) -> None:
         self.cached: list[int] = []
@@ -78,7 +78,7 @@ _FRESH = datetime(2021, 1, 1)
 
 
 class TestCachedEntrySkip:
-    """`cached_entry_skip` skips only a fresh cached entry, backfilling url/coverage and the name once.
+    """`is_unchanged` skips only a fresh cached entry, backfilling url/coverage and the name once.
 
     It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
     """
@@ -407,7 +407,7 @@ class _TailReporter:
 
 
 class TestNoReleasesSkip:
-    """`no_releases_skip` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
+    """`report_no_releases` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
 
     def test_logs_persists_and_reports_not_grabbed(self) -> None:
         # The real three-step tail (log + cache write + throttle). Its body
@@ -436,7 +436,7 @@ class TestNoReleasesSkip:
 
 
 class TestAlIdPrologue:
-    """`al_id_prologue` reports a missing entry vs an outage distinctly, and resets skip flags/tallies on a hit."""
+    """`begin_check` reports a missing entry vs an outage distinctly, and resets skip flags/tallies on a hit."""
 
     def test_no_seadex_entry_reports_and_returns_none(self) -> None:
         reporter = _TailReporter()
@@ -494,7 +494,7 @@ class TestResolveTitle:
 
 
 class TestNewCacheDetails:
-    """`new_cache_details` seeds the record, carrying a name only when AniList resolved one."""
+    """`new_cached_title_update` seeds the record, carrying a name only when AniList resolved one."""
 
     @pytest.mark.parametrize(
         ("anilist", "name"),

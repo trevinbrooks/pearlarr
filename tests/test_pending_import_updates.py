@@ -2,10 +2,10 @@
 # pyright: reportPrivateUsage=false
 # The tests assert on the strat's private collaborators (_parse / _episodes),
 # which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Unit tests for `build_pending_seeds` over the strat's grab-time placement.
+"""Unit tests for `build_pending_import_updates` over the strat's grab-time placement.
 
 The seed-construction heart of the wait/import feature: it turns the filtered
-SeaDex releases into the `PendingSeed`s the pipeline stamps into the durable
+SeaDex releases into the `PendingImportUpdate`s the pipeline stamps into the durable
 `PendingImport` records the import path later reads, placing each grabbed video
 file by `place_release`, whose map the import imports as is. Built bare (no live
 Sonarr) with a seeded in-memory parse cache and a warm whole-series episode list.
@@ -111,7 +111,7 @@ def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> Truste
 
 
 class TestBuildPendingSeeds:
-    """`build_pending_seeds` seeds a `PendingSeed` per download+hash video url.
+    """`build_pending_import_updates` seeds a `PendingImportUpdate` per download+hash video url.
 
     Filenames are placed onto episode ids through the parse cache and the
     whole-series map. Releases with no video files are skipped.

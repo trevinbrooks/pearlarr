@@ -109,7 +109,7 @@ def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
 
 
 class TestSeriesFingerprint:
-    """`sonarr_series_fingerprint` is order- and duplicate-independent, differs across different id sets, and is stable for the empty set."""
+    """`sonarr_series_hash` is order- and duplicate-independent, differs across different id sets, and is stable for the empty set."""
 
     def test_order_and_duplicate_independent(self) -> None:
         assert sonarr_series_hash([3, 1, 2]) == sonarr_series_hash([2, 2, 1, 3])
@@ -265,7 +265,7 @@ def _ids(*al_ids: int) -> dict[int, TitleMapping]:
 
 
 class _Recorder:
-    """A `ProgressSink` that records every `progress` call."""
+    """A `ProgressCallback` that records every `progress` call."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[float, str | None]] = []
@@ -313,7 +313,7 @@ class _GatedSonarr(_Sonarr):
 
 
 class _StopOnFirstProgress:
-    """A `ProgressSink` that opens the fetch gate, then raises `SystemExit` as the SIGTERM handler would."""
+    """A `ProgressCallback` that opens the fetch gate, then raises `SystemExit` as the SIGTERM handler would."""
 
     def __init__(self, gate: threading.Event) -> None:
         self._gate = gate
@@ -329,7 +329,7 @@ class _Services:
 
     `get_anilist_ids` resolves a series' tvdb id to its `{al_id -> mapping}`
     dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
-    always-mapped helper). `al_id_needs_scan` is the per-id needs-scan gate
+    always-mapped helper). `title_needs_check` is the per-id needs-scan gate
     (`needs_scan=None` reports every id as scannable).
     """
 
@@ -502,11 +502,11 @@ class _Seadex:
 
 
 class TestAlIdNeedsScan:
-    """`RunServices.al_id_needs_scan` mirrors the per-id loop's no-entry + `cached_entry_skip` gates, side-effect-free.
+    """`ArrRunServices.title_needs_check` mirrors the per-id loop's no-entry + `is_unchanged` gates, side-effect-free.
 
     So `prefetch_episodes` warms only the series the loop would actually
     process (the SeaDex-modification-times fix). Pinned against the same
-    cases as `cached_entry_skip`.
+    cases as `is_unchanged`.
     """
 
     @staticmethod

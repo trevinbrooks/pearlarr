@@ -114,7 +114,7 @@ class WaitPollers:
     ) -> AttemptResult:
         """Drive the strategy's `import_completed`, swallowing any error.
 
-        Fail-open: an exception leaves the record pending (`LEAVE_PROBE`) instead of aborting the run.
+        Fail-open: an exception leaves the record pending (`NO_ATTEMPT`) instead of aborting the run.
         """
 
         if self.strategy is None:
@@ -185,8 +185,8 @@ class PostImportCleanup:
         """Heal records whose import verified in an earlier run but whose cleanup is still owed.
 
         Runs once per run, at the top of the finalize tail, re-verifying each record through the
-        standard import check before any effect fires (`_heal_one`). Records kept THIS run are
-        skipped (`_kept_keys`), so a fresh keep is never retried in its own run.
+        standard import check before any effect fires (`_retry_cleanup`). Records kept THIS run are
+        skipped (`_awaiting_cleanup_keys`), so a fresh keep is never retried in its own run.
         """
 
         # Raw-flag filter first: the common case has no flagged rows, so nothing rehydrates.
@@ -201,7 +201,7 @@ class PostImportCleanup:
     def _mark_awaiting_cleanup(self, pending: PendingImport, failed: tuple[CleanupEffect, ...]) -> None:
         """Keep a record whose import verified but whose `failed` effects have not finished.
 
-        `heal_flagged` retries the cleanup on later runs until it finishes.
+        `finish_cleanups` retries the cleanup on later runs until it finishes.
         """
 
         kept = replace(pending, awaiting_cleanup=True)
@@ -249,7 +249,7 @@ class PostImportCleanup:
 
         Gated on the other arr holding no record on the hash (a torrent both arrs grabbed moves once
         the last of them imports). Creates the category (qBittorrent 409s an unknown one). A torrent in
-        a category the arr can't see stays out of the ones it watches (`_move_hold`).
+        a category the arr can't see stays out of the ones it watches (`_move_blocked_by`).
         """
 
         qbit = self._qbit
@@ -316,7 +316,7 @@ class PostImportCleanup:
         """Re-verify one flagged record's import, then run its owed cleanup effects.
 
         The flag's evidence is a prior run's: no effect fires without a fresh files check, except
-        for a MISSING torrent (below). A third `TorrentProbe` fold after `_observe_one` and
+        for a MISSING torrent (below). A third `TorrentPoll` fold after `_observe_one` and
         `_advance`: a fourth branch means extracting a shared fold helper first.
         """
 
@@ -350,7 +350,7 @@ class PostImportCleanup:
             hub_warn(f"Imported files for {pending.display_label} are no longer present - re-importing")
 
     def _finish_cleanup(self, pending: PendingImport) -> None:
-        """Run a flagged record's owed effects through `retire`, noting a completed heal."""
+        """Run a flagged record's owed effects through `clean_up_and_drop`, noting a completed heal."""
 
         if self.clean_up_and_drop(pending):
             hub_note(f"Completed the deferred post-import cleanup for {pending.display_label}")
@@ -382,7 +382,7 @@ class ImportWaitManager:
     def bind_arr_run(self, state: ArrRunState, strategy: ImportCompleter | None) -> None:
         """Bind the fresh run context to the manager and its sub-objects, the strategy to the probes alone.
 
-        Rebound EVERY run (`reset_run_stats` mints a fresh ctx), so none of them can
+        Rebound EVERY run (`start_arr_run` mints a fresh ctx), so none of them can
         operate on a dead context after the first run. The record seam is the hub's to bind.
         """
 
@@ -404,7 +404,7 @@ class ImportWaitManager:
         return self.fresh_grab_keys() | self._state.reacquired_keys | set(self._state.pending_import_states)
 
     def note_pending_import_state(self, key: str, outcome: Outcome) -> None:
-        """Fold a pass's non-dropped outcome for a carried-over record into `pending_states`."""
+        """Fold a pass's non-dropped outcome for a carried-over record into `pending_import_states`."""
 
         self._state.pending_import_states[key] = PENDING_IMPORT_STATE_FOR_OUTCOME[outcome]
 
@@ -434,7 +434,7 @@ class ImportWaitManager:
             self.note_pending_import_state(pending.infohash, outcome)
 
     def _observe_one(self, pending: PendingImport) -> PendingImportState:
-        """Observe one carried-over record (never an import) and fold it to a `PendingState`."""
+        """Observe one carried-over record (never an import) and fold it to a `PendingImportState`."""
 
         poll = self.pollers.poll_torrent(pending.infohash)
         all_done = poll.outcome is TorrentStatus.COMPLETE and self.pollers.import_progress(pending).all_done
@@ -625,7 +625,7 @@ class _ImportClock:
 
     timeout: float
     anchor: float
-    """The first COMPLETE, then moved only by `note_progress` and `credit_deferral`."""
+    """The first COMPLETE, then moved only by `note_progress` and `pause`."""
     started: float
     """The import phase's start (the first COMPLETE), fixed for elapsed display."""
     _seen: int | None = None
@@ -727,7 +727,7 @@ class _WaitRow:
 
     @property
     def active(self) -> bool:
-        """Still running: the terminal frame is frozen exactly once, by `view_terminal`."""
+        """Still running: the terminal frame is frozen exactly once, by `view_finished`."""
 
         return self.view.phase is not Phase.FINISHED
 
@@ -828,7 +828,7 @@ class WaitPass:
     kind: WaitKind
     """Which end-of-run pass this is. Only the monitor applies the download timeout."""
     rows: dict[str, _WaitRow]
-    """Each record's live `_MonitorRow`, keyed by infohash in working-set order."""
+    """Each record's live `_WaitRow`, keyed by infohash in working-set order."""
     results: list[WaitOutcomeRow]
     """One per record that reached a terminal outcome."""
 

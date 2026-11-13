@@ -327,7 +327,7 @@ def configured_arrs(
 class RunContext:
     """The run-invariant collaborators every arr leg shares (built once per run).
 
-    Bundles the cross-leg scaffolding so `_run_leg` takes one context plus the
+    Bundles the cross-leg scaffolding so `_run_arr` takes one context plus the
     per-leg `ArrTarget`, instead of a wide positional signature.
     """
 
@@ -455,7 +455,7 @@ def run_arrs(
 
     Unconfigured arrs are dropped (or, when `explicit_selection` says they were
     asked for by flag, refused) via `configured_arrs`, and each survivor is
-    run in its own `_run_leg` (which logs and closes independently, so one
+    run in its own `_run_arr` (which logs and closes independently, so one
     crashing doesn't ruin the other). The shared config read and mapping
     download/parse happen a single time, in that order with the selection check
     in between, so a run with nothing to do fails fast instead of fetching the

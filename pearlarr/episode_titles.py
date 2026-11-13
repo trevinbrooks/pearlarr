@@ -1,7 +1,7 @@
 """The series' episode titles as words, which episode a name's words are titled as, and the placer's queries on them.
 
 Reading a torrent's names against them belongs in `placer._names`, and reading a name's own numbers in
-`release_names`. No I/O.
+`file_names`. No I/O.
 """
 
 import re
@@ -27,7 +27,7 @@ def is_distinctive_title(words: Iterable[str]) -> bool:
 
 
 def spells_title(words: Iterable[str]) -> bool:
-    """Whether a name's words spell an episode title: `is_distinct_title` with the quality junk left out."""
+    """Whether a name's words spell an episode title: `is_distinctive_title` with the quality junk left out."""
 
     return is_distinctive_title(word for word in words if not is_quality_word(word))
 
@@ -138,7 +138,7 @@ class TitleLead:
     """What the episode titles say about a name's words: a run member's tail, else the whole name."""
 
     title: TitledEpisode | None
-    """The one episode the words are titled as (`EpisodeTitles.leading` or `exactly`), whether or not other files
+    """The one episode the words are titled as (`EpisodeTitles.leading_title` or `exact_match`), whether or not other files
     carry it."""
     leading_title_ids: frozenset[int]
     """Every episode whose title, specific or not, starts the words: the evidence a run is judged by."""
@@ -208,7 +208,7 @@ class EpisodeTitles:
     def exact_match(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
         """The one episode whose title names it alone and equals a name's words, the series words dropped from both.
 
-        `keyed` are the episodes the name's numbers are a key for (`keyed_by`). A title that is just the season and
+        `keyed` are the episodes the name's numbers are a key for (`episodes_numbered_by`). A title that is just the season and
         number of another of them ("1.2" against S01E02) is that key over again, not a title: it names nothing.
         """
 
@@ -233,7 +233,7 @@ class EpisodeTitles:
         """Whether the words open with the episode's title a word off at most: one swapped, added or dropped.
 
         The words the two share must still spell a title (`spells_title`): a short title confirms no near miss.
-        Quality junk may follow the title, as under `leading`.
+        Quality junk may follow the title, as under `leading_title`.
         """
 
         for ep in self.forms:

@@ -690,7 +690,7 @@ class ImportExecutor:
         return AttemptResult.waiting(command_issued=True, pause_reason=PauseReason.ISSUED)
 
     def _all_done_result(self, context: _ImportContext, window: EpisodeStatuses) -> AttemptResult | None:
-        """The IMPORTED probe when every episode of the record's windows is filled (`filled_by_hand`), else None."""
+        """The IMPORTED probe when every episode of the record's windows is filled (`all_done`), else None."""
 
         if not window.all_done():
             return None

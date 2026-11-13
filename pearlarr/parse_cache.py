@@ -1,6 +1,6 @@
 """The Sonarr parse-cache leaf: one file name's whole `/parse`, its freshness, and the unmatched self-heal.
 
-`ParseRecords` is bound once on `RunDeps`, so the planner's sweep and the seed
+`ParseCacheRows` is bound once on `ArrRunDeps`, so the planner's sweep and the seed
 builder read one `ParsedFileInfo` per file under one freshness rule.
 """
 
@@ -33,7 +33,7 @@ class ParseFreshness(NamedTuple):
 
     Bundles the values the parse-cache freshness check and writes thread
     together. One window is opened per pass (the planner's sweep, the seed
-    build) and passed down to `ParseRecords`.
+    build) and passed down to `ParseCacheRows`.
     """
 
     now_str: str
@@ -68,7 +68,7 @@ class ParseCacheRow(TypedDict):
     """Stamps the record for TTL eviction."""
 
     parse: dict[str, Json]
-    """The whole `ParsedFileInfo` (see `to_parse_record`): the name's own numbers and title plus the matched pairs."""
+    """The whole `ParsedFileInfo` (see `parse_to_json`): the name's own numbers and title plus the matched pairs."""
 
     series_fp: NotRequired[str]
     """`NotRequired` because only an UNMATCHED record carries it (pinning it to the series-id set), and the
@@ -86,7 +86,7 @@ def parse_to_json(info: ParsedFileInfo) -> dict[str, Json]:
 
 
 def parse_from_json(row: Mapping[str, object]) -> ParsedFileInfo | None:
-    """Rebuild a record's parse (the inverse of `to_parse_record`), or None when the row has no readable parse.
+    """Rebuild a record's parse (the inverse of `parse_to_json`), or None when the row has no readable parse.
 
     A parse whose values don't validate is a miss and re-fetches. A missing key validates to its default, so the
     version gate is the field check in `_parse_is_fresh`, which every read passes first.
@@ -102,7 +102,7 @@ def parse_from_json(row: Mapping[str, object]) -> ParsedFileInfo | None:
 
 
 _PARSE_FIELDS = frozenset(ParsedFileInfo.model_fields)
-"""The keys `to_parse_record` writes: a row missing one was written before that field existed."""
+"""The keys `parse_to_json` writes: a row missing one was written before that field existed."""
 
 
 def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> bool:
@@ -127,7 +127,7 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
 class ParseCacheRows:
     """The parse-cache leaf: fresh-only reads and shape-owning writes over `cache_store`.
 
-    Bound once on `RunDeps` and shared by the planner's sweep and the seed
+    Bound once on `ArrRunDeps` and shared by the planner's sweep and the seed
     builder, so the two read one parse per file and a stale row is a miss for both.
     """
 

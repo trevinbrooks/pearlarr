@@ -357,7 +357,7 @@ def stamp_is_fresh(row: dict[str, Any], cutoff: datetime) -> bool:
 
 
 class CachedTitleUpdate(TypedDict, total=False):
-    """The fixed shape of a per-entry cache update / a `cache_details` payload."""
+    """The fixed shape of a per-entry cache update / a `update` payload."""
 
     name: str
     url: str
@@ -519,7 +519,7 @@ class CacheStore(AbstractCacheStore):
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
 
-        A missing file opens `:memory:`, promoted at the first real save. `config_checksum` is informational only.
+        A missing file opens `:memory:`, promoted at the first real save. `config_hash` is informational only.
         """
 
         exists = os.path.exists(path)

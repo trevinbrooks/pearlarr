@@ -8,7 +8,7 @@ durable scrollback lines, prints the capstone, degrades to the heads-up digest
 on a non-live rich console, and tears its single Live slot down whenever the
 boot section leaves the fold's frontier (ScopeClosed, ScanStarted, run/cycle
 boundaries). The pure ledger-line builders are pinned directly. The file/plain
-surfaces render the same events through the `output.textline` grammar.
+surfaces render the same events through the `output.line_renderers` grammar.
 """
 
 import io

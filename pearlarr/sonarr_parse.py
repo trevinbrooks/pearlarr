@@ -3,7 +3,7 @@
 `SonarrParseCache` owns the grab-time `/parse` of a release's filenames plus
 the durable parse cache: cold-cache warm, TTL eviction, and the gather that
 pairs each video file with its parse for `place_release`. The cache leaf
-itself (`ParseRecords`, in `parse_records`) is bound once on `RunDeps`. The
+itself (`ParseCacheRows`, in `parse_records`) is bound once on `ArrRunDeps`. The
 series-id fingerprint that pins unmatched records is threaded in per call
 (`series_fp`) so this stays decoupled from the episode collaborator that
 computes it.

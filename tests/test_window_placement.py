@@ -112,7 +112,7 @@ def _numbers_disagree_torrent() -> tuple[list[str], dict[str, ParsedFileInfo | N
 
 
 def _numbers_disagree_placed() -> tuple[list[str], WindowedPlacements]:
-    """`_disputed_torrent` placed: its pack and the assignment."""
+    """`_numbers_disagree_torrent` placed: its pack and the assignment."""
 
     names, parsed, windows = _numbers_disagree_torrent()
     return names, _place_across(parsed, windows)
@@ -323,7 +323,7 @@ class TestSeveralWindows:
         assert merged_of(result).placed == {name: (700 + n,) for n, name in enumerate(sequel, 1)}
 
     def test_an_aliased_pack_places_each_member_under_the_window_holding_its_special(self) -> None:
-        # Each window maps the whole pack. The member outside the first window is `ALIASED_ELSEWHERE` there and
+        # Each window maps the whole pack. The member outside the first window is `ALIAS_OUTSIDE_WINDOW` there and
         # placed under the second.
         windows = _listed_windows(_ALIASED, [502, 504], [506])
 
@@ -757,7 +757,7 @@ class TestFilled:
 
 
 class TestScopesOf:
-    """`scopes_of`: one scope per entry window in order, over its series' index, with its names, count and listing."""
+    """`targets_of`: one scope per entry window in order, over its series' index, with its names, count and listing."""
 
     def test_one_scope_per_window_over_its_series_index(self) -> None:
         names = TitleNames("Show", ("Show Alpha",))
