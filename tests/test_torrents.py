@@ -29,7 +29,7 @@ import pearlarr.torrents as torrents
 from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr, ArrSettings
-from pearlarr.leg_state import RunContext
+from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import GroupReleases, Release
@@ -652,7 +652,7 @@ def test_a_runs_seadex_dict_carries_a_finished_cross_seed_only_when_pearlarr_imp
 
     qbit = _FakeQbit(rows=(_row(_CROSS, category=_POST, state="stalledUP", progress=1.0),), files=_HELD)
     services = LegServices(replace(make_run_deps(), torrents=_service(qbit)), arr)
-    services.bind_leg(RunContext(arr=arr, import_wait_mode=wait_mode))
+    services.bind_leg(ArrRunState(arr=arr, import_wait_mode=wait_mode))
     listed = make_torrent_record(
         release_group="Group", infohash=_SEADEX, file_names=("Show - 01.mkv", "Show - 02.mkv"), file_sizes=(100, 200)
     )

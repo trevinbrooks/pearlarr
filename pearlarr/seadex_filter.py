@@ -11,10 +11,10 @@ from seadex import EntryRecord, TorrentRecord
 from .arr_models import ArrFiles, SonarrEpisode
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
-from .leg_state import RunContext
+from .leg_state import ArrRunState
 from .output import Accent, StyledValue, hub_warn
 from .output.console_text import indent_string
-from .planner import PlanResult
+from .planner import GrabPlan
 from .releases import GroupReleases, Release, SeadexDict, carries_ignored_tag, ignore_tag_set
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ class SeadexReleaseFilter:
         self,
         *,
         deps: "LegDeps",
-        ctx: RunContext,
+        ctx: ArrRunState,
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
@@ -77,7 +77,7 @@ class SeadexReleaseFilter:
         # grab tail).
         self._ctx = ctx
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the run context `filter_downloads` stamps private-only flags onto."""
 
         self._ctx = state
@@ -113,7 +113,7 @@ class SeadexReleaseFilter:
             seadex_release_groups[t.release_group].releases[t.url] = Release(
                 url=t.url,
                 files=[f.name for f in t.files],
-                size=_file_sizes(t),
+                file_sizes=_file_sizes(t),
                 tracker=t.tracker,
                 is_public=_is_public_torrent(t),
                 is_dual_audio=t.is_dual_audio,
@@ -202,9 +202,9 @@ class SeadexReleaseFilter:
             # an empty-fileset public url covers (cross-seed) while folding nothing.
             if not any(u.is_public for u in urls.values()):
                 continue
-            group_public_cover = file_size_cover(u.size for u in urls.values() if u.is_public)
+            group_public_cover = file_size_cover(u.file_sizes for u in urls.values() if u.is_public)
             release_group_item.releases = {
-                url: u for url, u in urls.items() if u.is_public or not Counter(u.size) <= group_public_cover
+                url: u for url, u in urls.items() if u.is_public or not Counter(u.file_sizes) <= group_public_cover
             }
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
@@ -293,7 +293,7 @@ class SeadexReleaseFilter:
         seadex_dict: SeadexDict,
         arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> PlanResult:
+    ) -> GrabPlan:
         """Flip the switch on whether we're downloading each torrent or not.
 
         Thin orchestrator seam over the `DownloadPlanner`: run it, then apply
@@ -304,7 +304,7 @@ class SeadexReleaseFilter:
         strategies without a hand-synced mirror type.
         """
 
-        result = self._planner.filter_by_release_group(
+        result = self._planner.plan(
             seadex_dict=seadex_dict,
             arr_releases=arr_releases,
             ep_list=ep_list,
@@ -320,7 +320,7 @@ class SeadexReleaseFilter:
             )
 
         # Carry the skip flags/groups onto the run context (reset per title in the
-        # prologue. add_torrent may append more before grab_and_cache reads them).
+        # prologue. grab_releases may append more before grab_and_cache reads them).
         self._ctx.per_title.absorb_skips(result.skips)
 
         return result

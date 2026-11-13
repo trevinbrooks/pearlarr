@@ -107,13 +107,13 @@ class ArrCategoryResolver:
         self._fetched: _ClientCategories | None = None
         self._nested: bool | None = None
 
-    def grab(self) -> str | None:
+    def grab_category(self) -> str | None:
         """The category for torrents added for this arr (`TorrentService`)."""
 
         value = self._configured.grab
         return self._client_pair().grab if value is None else _explicit(value)
 
-    def post_import(self) -> str | None:
+    def post_import_category(self) -> str | None:
         """The category applied once a torrent's imports all complete (`ImportWaitManager`)."""
 
         value = self._configured.post_import
@@ -129,7 +129,7 @@ class ArrCategoryResolver:
         deferred = configured.grab is None or (with_post_import and configured.post_import is None)
         if deferred and self._clients() is None:
             return None
-        names = (self.grab(), self.post_import() if with_post_import else None)
+        names = (self.grab_category(), self.post_import_category() if with_post_import else None)
         return tuple(dict.fromkeys(name for name in names if name))
 
     def move_untracks(self, category: str) -> bool:
@@ -148,7 +148,7 @@ class ArrCategoryResolver:
             watched = None if configured is None else frozenset({configured})
         return self._watch(watched, category) is Watch.UNWATCHED
 
-    def watch(self, category: str) -> Watch:
+    def category_watch(self, category: str) -> Watch:
         """Whether the arr's clients list a torrent in `category`.
 
         Read from the arr's own clients, never the configured category. A wrong `UNWATCHED` gets a download
@@ -168,7 +168,7 @@ class ArrCategoryResolver:
             category = self.torrent_category(infohash)
         except qbittorrentapi.APIError:
             return Watch.UNREAD
-        return Watch.UNREAD if category is None else self.watch(category)
+        return Watch.UNREAD if category is None else self.category_watch(category)
 
     def torrent_category(self, infohash: str) -> str | None:
         """The category qBittorrent holds a torrent in, `""` for an uncategorized one.

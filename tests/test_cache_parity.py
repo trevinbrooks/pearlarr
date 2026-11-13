@@ -23,7 +23,7 @@ from pearlarr.tvdb_orders import OrderRow, StoredOrders
 
 from .builders import FakeCacheStore, entry_claim, pending_import
 
-# fetched_at stamps straddling the eviction cutoff (UPDATED_AT_STR_FORMAT strings).
+# fetched_at stamps straddling the eviction cutoff (STAMP_FORMAT strings).
 _OLD = "2020-01-01 00:00:00"
 _NEW = "2030-01-01 00:00:00"
 _CUTOFF = datetime(2025, 1, 1)

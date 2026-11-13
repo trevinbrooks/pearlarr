@@ -7,7 +7,7 @@ closes, and the label-only read APIs (path text, path_for, during).
 """
 
 from pearlarr.config import Arr
-from pearlarr.leg_state import RunStats
+from pearlarr.leg_state import ArrRunStats
 from pearlarr.output import (
     KIND_DEPTH,
     BootStepFinished,
@@ -59,7 +59,7 @@ def _summary_ready() -> RunSummaryReady:
             arr=Arr.SONARR,
             dry_run_note=None,
             added_count=0,
-            tally=LegTally.from_stats(RunStats()),
+            tally=LegTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
             errors=0,

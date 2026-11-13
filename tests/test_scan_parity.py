@@ -27,7 +27,7 @@ from seadex import Tag
 
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, RunStats
+from pearlarr.leg_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     Accent,
     CapReached,
@@ -445,8 +445,8 @@ STALE_TIP = (
 )
 
 
-def _rich_stats() -> RunStats:
-    return RunStats(
+def _rich_stats() -> ArrRunStats:
+    return ArrRunStats(
         checked=8,
         added=[
             GrabbedRow(
@@ -560,8 +560,8 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
 )
 
 
-def _dry_stats() -> RunStats:
-    return RunStats(
+def _dry_stats() -> ArrRunStats:
+    return ArrRunStats(
         checked=2,
         added=[
             GrabbedRow(
@@ -637,8 +637,8 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
 )
 
 
-def _preview_stats() -> RunStats:
-    return RunStats(
+def _preview_stats() -> ArrRunStats:
+    return ArrRunStats(
         checked=1,
         added=[
             GrabbedRow(
@@ -696,7 +696,7 @@ SUMMARY_MINIMAL = RunSummaryReady(
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=LegTally.from_stats(RunStats()),
+        tally=LegTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -718,8 +718,8 @@ SUMMARY_MINIMAL_LINES: tuple[Line, ...] = (
 )
 
 
-def _wait_off_stats() -> RunStats:
-    return RunStats(
+def _wait_off_stats() -> ArrRunStats:
+    return ArrRunStats(
         checked=6,
         up_to_date=5,
         needs_action=[
@@ -839,12 +839,12 @@ class TestLedgerRowParity:
 
     def test_unmonitored(self) -> None:
         harness = _Harness()
-        harness.reporter.log_arr_item_unmonitored(RunContext(arr=Arr.SONARR), "Unmonitored Show")
+        harness.reporter.log_arr_item_unmonitored(ArrRunState(arr=Arr.SONARR), "Unmonitored Show")
         assert harness.lines() == UNMONITORED_LINES
 
     def test_no_mapping(self) -> None:
         harness = _Harness()
-        harness.reporter.log_no_anilist_mappings(RunContext(arr=Arr.SONARR), "Unmapped Show")
+        harness.reporter.log_no_anilist_mappings(ArrRunState(arr=Arr.SONARR), "Unmapped Show")
         assert harness.lines() == NO_MAPPING_LINES
 
     def test_no_episodes(self) -> None:
@@ -854,12 +854,12 @@ class TestLedgerRowParity:
 
     def test_ignored(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR), 123)
+        harness.reporter.log_ignored_anilist_id(ArrRunState(arr=Arr.SONARR), 123)
         assert harness.lines() == IGNORED_LINES
 
     def test_ignored_with_the_arr_title(self) -> None:
         harness = _Harness()
-        harness.reporter.log_ignored_anilist_id(RunContext(arr=Arr.SONARR, arr_title="Ignored Show"), 123)
+        harness.reporter.log_ignored_anilist_id(ArrRunState(arr=Arr.SONARR, arr_title="Ignored Show"), 123)
         assert harness.lines() == IGNORED_TITLED_LINES
 
 
@@ -872,23 +872,23 @@ class TestEntryHeaderParity:
     def test_checking_with_coverage_url_and_incomplete(self) -> None:
         harness = _Harness()
         entry = make_entry_record(url="https://releases.moe/111852", is_incomplete=True)
-        harness.reporter.log_al_title(RunContext(arr=Arr.SONARR), "Frieren", entry, coverage="S01 E01-E28")
+        harness.reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Frieren", entry, coverage="S01 E01-E28")
         assert harness.lines() == CHECKING_FULL_LINES
 
     def test_checking_url_only(self) -> None:
         harness = _Harness()
         entry = make_entry_record(url="https://releases.moe/437")
-        harness.reporter.log_al_title(RunContext(arr=Arr.RADARR), "Perfect Blue", entry)
+        harness.reporter.open_title_block(ArrRunState(arr=Arr.RADARR), "Perfect Blue", entry)
         assert harness.lines() == CHECKING_URL_ONLY_LINES
 
     def test_cached_full_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 1)
+        harness.reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 1)
         assert harness.lines() == CACHED_FULL_LINES
 
     def test_cached_without_coverage_or_url_renders_just_the_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(RunContext(arr=Arr.SONARR), 2)
+        harness.reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 2)
         assert harness.lines() == CACHED_BARE_LINES
 
     def test_pending_snapshots(self) -> None:
@@ -912,24 +912,24 @@ class TestTitledEntryParity:
 
     def test_no_entry_with_resolved_title(self) -> None:
         harness = _Harness(title="Resolved Title")
-        harness.reporter.log_no_sd_entry(RunContext(arr=Arr.SONARR), 42)
+        harness.reporter.log_no_sd_entry(ArrRunState(arr=Arr.SONARR), 42)
         assert harness.lines() == NO_ENTRY_RESOLVED_LINES
 
     def test_no_entry_with_the_arr_title_fallback(self) -> None:
         harness = _Harness(title=None)
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         ctx.arr_title = "Arr Title"
         harness.reporter.log_no_sd_entry(ctx, 42)
         assert harness.lines() == NO_ENTRY_ARR_TITLE_LINES
 
     def test_no_entry_without_a_title(self) -> None:
         harness = _Harness(title=None)
-        harness.reporter.log_no_sd_entry(RunContext(arr=Arr.SONARR), 77)
+        harness.reporter.log_no_sd_entry(ArrRunState(arr=Arr.SONARR), 77)
         assert harness.lines() == NO_ENTRY_UNRESOLVED_LINES
 
     def test_outage_skip_with_cached_name(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_seadex_outage_skip(RunContext(arr=Arr.SONARR), 1)
+        harness.reporter.log_seadex_outage_skip(ArrRunState(arr=Arr.SONARR), 1)
         assert harness.lines() == OUTAGE_LINES
 
 
@@ -938,7 +938,7 @@ class TestDetailParity:
 
     def test_no_suitable_releases(self) -> None:
         harness = _Harness()
-        harness.reporter.log_no_seadex_releases(RunContext(arr=Arr.SONARR))
+        harness.reporter.log_no_seadex_releases(ArrRunState(arr=Arr.SONARR))
         assert harness.lines() == NO_RELEASES_LINES
 
 
@@ -1103,7 +1103,7 @@ class TestExternalDetailParity:
                 "blue",
             ),
         ),
-        # seadex_filter.filter_downloads: a planner SkipNotice (WARNING form).
+        # seadex_filter.filter_downloads: a planner PrivateOnlyNotice (WARNING form).
         _DetailSite(
             "skipped",
             StyledValue("GroupA, GroupB private-only (private releases not supported)", Accent.CAUTION),
@@ -1155,8 +1155,8 @@ class TestExternalDetailParity:
         # Inside an open entry the fact carries the entry scope. After a boundary
         # closes it, a post emits scope-free (col-0 by design, like _post).
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
-        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        ctx = ArrRunState(arr=Arr.SONARR)
+        harness.reporter.open_title_block(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.post(self.FACT_SITES[0].fact)
         harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the entry
         harness.reporter.post(next(site.fact for site in self.FACT_SITES if isinstance(site.fact, GrabFailed)))
@@ -1230,7 +1230,7 @@ class TestActionBlockParity:
 
 
 def _summary_lines(
-    ctx: RunContext,
+    ctx: ArrRunState,
     *,
     preview: bool,
     has_client: bool,
@@ -1262,33 +1262,33 @@ class TestRunSummaryParity:
     def test_rich_summary(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A frozen clock pins the elapsed row (started at 38s, "now" 100s -> 1m 02s).
         monkeypatch.setattr(time, "monotonic", lambda: 100.0)
-        ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING, stats=_rich_stats())
+        ctx = ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING, stats=_rich_stats())
         ctx.torrents_added = 2
         ctx.started_monotonic = 38.0
         assert _summary_lines(ctx, preview=False, has_client=True, warnings=2, errors=1) == SUMMARY_RICH_LINES
 
     def test_dry_run_with_client(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR, stats=_dry_stats())
+        ctx = ArrRunState(arr=Arr.SONARR, stats=_dry_stats())
         ctx.torrents_added = 1
         assert _summary_lines(ctx, preview=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
 
     def test_dry_run_without_client(self) -> None:
-        ctx = RunContext(arr=Arr.RADARR, stats=_preview_stats())
+        ctx = ArrRunState(arr=Arr.RADARR, stats=_preview_stats())
         ctx.torrents_added = 1
         assert _summary_lines(ctx, preview=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
 
     def test_minimal_all_zeros(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_MINIMAL_LINES
 
     def test_wait_mode_off_hides_pending_rows(self) -> None:
-        ctx = RunContext(arr=Arr.SONARR, stats=_wait_off_stats())
+        ctx = ArrRunState(arr=Arr.SONARR, stats=_wait_off_stats())
         assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
 
     def test_warnings_only_issues_row_renders_yellow(self) -> None:
         # The style ladder's middle rung (warnings without errors) has no golden
         # of its own: bold-red needs errors, yellow needs warnings alone.
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         lines = _summary_lines(ctx, preview=False, has_client=True, warnings=2)
         expected = _srow("  issues       : 2 warnings, 0 errors", "issues", "2 warnings, 0 errors", style="yellow")
         assert expected in lines
@@ -1334,10 +1334,10 @@ class TestScopeLifecycle:
         # item -> entry -> entry -> item: each new entry closes the previous, and
         # the closing item boundary closes the last one.
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         harness.reporter.log_arr_item_start(Arr.SONARR, "Show", 1, 1)
-        harness.reporter.log_al_title(ctx, "First", make_entry_record(url="https://releases.moe/1"))
-        harness.reporter.log_al_title(ctx, "Second", make_entry_record(url="https://releases.moe/2"))
+        harness.reporter.open_title_block(ctx, "First", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.open_title_block(ctx, "Second", make_entry_record(url="https://releases.moe/2"))
         harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)
 
         boundaries = [e for e in harness.events if isinstance(e, (ScopeOpened, ScopeClosed))]
@@ -1355,7 +1355,7 @@ class TestScopeLifecycle:
     def test_bare_titled_rows_open_no_scope(self) -> None:
         # The self-contained ledger rows never open an entry scope (col-0 rows).
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
+        ctx = ArrRunState(arr=Arr.SONARR)
         harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
         harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
         harness.reporter.log_ignored_anilist_id(ctx, 7)
@@ -1367,8 +1367,8 @@ class TestScopeLifecycle:
     def test_close_is_idempotent(self) -> None:
         # A second boundary with no open entry emits no spurious ScopeClosed.
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
-        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        ctx = ArrRunState(arr=Arr.SONARR)
+        harness.reporter.open_title_block(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.log_arr_item_start(Arr.SONARR, "A", 1, 1)  # closes the entry
         harness.reporter.log_arr_item_start(Arr.SONARR, "B", 1, 1)  # nothing left to close
 
@@ -1379,8 +1379,8 @@ class TestScopeLifecycle:
         # the frontier - a diagnostic emitted before the next boundary indents
         # under this entry (live-verified), not col-0.
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
-        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        ctx = ArrRunState(arr=Arr.SONARR)
+        harness.reporter.open_title_block(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.log_seadex_action(
             {},
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="X", group="G")],
@@ -1397,7 +1397,7 @@ class TestScopeLifecycle:
         # A3: _entry starts None on a fresh reporter, so the first current-entry
         # detail (no header before it) opens no scope and rides scope-free.
         harness = _Harness()
-        harness.reporter.log_no_seadex_releases(RunContext(arr=Arr.SONARR))
+        harness.reporter.log_no_seadex_releases(ArrRunState(arr=Arr.SONARR))
 
         assert not any(isinstance(e, ScopeOpened) for e in harness.events)
         detail = next(e for e in harness.events if isinstance(e, EntryDetail))
@@ -1407,8 +1407,8 @@ class TestScopeLifecycle:
         # The scan breaks at the cap and _finalize_run's reconcile runs before
         # the summary: a still-open ENTRY frontier would misplace its diagnostics.
         harness = _Harness()
-        ctx = RunContext(arr=Arr.SONARR)
-        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        ctx = ArrRunState(arr=Arr.SONARR)
+        harness.reporter.open_title_block(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
         harness.reporter.log_max_torrents_added(5)
 
         opened = next(e for e in harness.events if isinstance(e, ScopeOpened))

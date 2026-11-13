@@ -14,7 +14,7 @@ import pytest
 
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE, AniListAiring
 from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT
+from pearlarr.stamps import STAMP_FORMAT
 
 from .builders import FakeCacheStore, ScriptedAniListClient, anilist_body, make_anilist_gateway
 from .fakes import CaptureHandler
@@ -23,13 +23,13 @@ from .fakes import CaptureHandler
 def _stamp(*, days_ago: int) -> str:
     """A `fetched_at` stamp `days_ago` days in the past (store string format)."""
 
-    return (datetime.now() - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
+    return (datetime.now() - timedelta(days=days_ago)).strftime(STAMP_FORMAT)
 
 
 def _now_str() -> str:
     """The current time in the store's stamp format, for "written now" assertions."""
 
-    return datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+    return datetime.now().strftime(STAMP_FORMAT)
 
 
 def _fresh_record(al_id: int) -> dict[str, Any]:

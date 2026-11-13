@@ -49,7 +49,7 @@ from pearlarr.file_paths import normalize_basename
 from pearlarr.grab_pipeline import NO_SEEDS, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.leg_state import RunContext, Title
+from pearlarr.leg_state import ArrRunState, Title
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.output.recording import RecordingHub
@@ -63,7 +63,7 @@ from pearlarr.pending_import import (
 )
 from pearlarr.pending_records import PendingImportStore
 from pearlarr.placement_types import FetchedListings, TorrentListing, episode_index
-from pearlarr.planner import PlanResult
+from pearlarr.planner import GrabPlan
 from pearlarr.probe_verdicts import DownloadHistoryVerdict, HistoryImport, placements_from_history
 from pearlarr.progress import ProgressSink
 from pearlarr.releases import EpisodeKey, EpisodeRecord, GrabHold, OrderOnlyKey, SeadexDict
@@ -185,7 +185,7 @@ class _FakeRunServices(LegServices):
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
-        filter_downloads_result: PlanResult | None = None,
+        filter_downloads_result: GrabPlan | None = None,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
         arr: Arr = Arr.SONARR,
         cache_store: FakeCacheStore | None = None,
@@ -193,7 +193,7 @@ class _FakeRunServices(LegServices):
         # The record seam the strategies read stored records through, bound as a run would bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
         self._records = PendingImportStore(self.cache_store)
-        self._records.bind_leg(RunContext(arr=arr, import_wait_mode=import_wait_mode))
+        self._records.bind_leg(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
         self._ignored = ignored or {}
         self._prologue_entry = prologue_entry
@@ -229,12 +229,12 @@ class _FakeRunServices(LegServices):
         return self._needs_scan
 
     @override
-    def get_anilist_ids(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
+    def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
         return self._anilist_ids
 
     @override
-    def listing_mappings(self, ids: ExternalIds) -> ResolvedMappings:
+    def mappings_with_ignored(self, ids: ExternalIds) -> ResolvedMappings:
         del ids
         return ResolvedMappings(mappings=self._anilist_ids, ignored=self._ignored)
 
@@ -284,7 +284,7 @@ class _FakeRunServices(LegServices):
         seadex_dict: SeadexDict,
         arr_releases: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> PlanResult:
+    ) -> GrabPlan:
         del ep_list
         self.filter_downloads_calls.append((seadex_dict, arr_releases))
         if self._filter_downloads_result is not None:
@@ -297,13 +297,15 @@ class _FakeRunServices(LegServices):
         return self._import_wait_mode
 
     @override
-    def no_releases_skip(self, al_id: int, cache_details: CachedTitleUpdate, *, metadata_unread: bool = False) -> None:
+    def report_no_releases(
+        self, al_id: int, cache_details: CachedTitleUpdate, *, metadata_unread: bool = False
+    ) -> None:
         self.no_releases_calls.append((al_id, cache_details))
         if metadata_unread:
             self.no_releases_unread.append(al_id)
 
     @override
-    def invalid_selection_skip(self) -> None:
+    def report_invalid_selection(self) -> None:
         self.invalid_selection_skips += 1
 
     @override
@@ -323,7 +325,7 @@ class _FakeRunServices(LegServices):
         del item_title
 
     @override
-    def log_al_title(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
+    def open_title_block(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
         self.log_al_title_calls.append(title)
 
@@ -386,7 +388,7 @@ class TestItemAnilistIdsDelegates:
         run = _FakeRunServices(anilist_ids={7: TitleMapping(anilist_id=7)})
         strat = make_bare_instance(RadarrStrategy, _services=run)
 
-        result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
+        result = strat.item_mappings(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: TitleMapping(anilist_id=7)}
         assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
@@ -395,7 +397,7 @@ class TestItemAnilistIdsDelegates:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrStrategy, _services=run)
 
-        strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9"))
+        strat.item_mappings(_Item(tvdbId=99, imdbId="tt9"))
 
         assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
 
@@ -553,7 +555,7 @@ class TestProcessAlIdThreadsServices:
 
     def test_sonarr_all_invalid_selection_routes_to_shared_skip(self) -> None:
         # The interactive pick rejected every token: the strategy must route to
-        # invalid_selection_skip (which persists nothing) and never reach the
+        # report_invalid_selection (which persists nothing) and never reach the
         # grab tail - the Sonarr twin of the Radarr guard in test_seadex_dict.
         seadex_dict: SeadexDict = {}
         for name in ("GroupA", "GroupB"):
@@ -4316,4 +4318,4 @@ class TestArrReleasesRecord:
         assert ArrFiles().group_count() == 0
 
     def test_replaced_groups_lists_every_tagged_name(self) -> None:
-        assert ArrFiles(tagged={"A": (1,), "B": ()}).replaced_groups() == ("A", "B")
+        assert ArrFiles(tagged={"A": (1,), "B": ()}).groups() == ("A", "B")

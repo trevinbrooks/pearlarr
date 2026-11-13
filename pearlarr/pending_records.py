@@ -5,7 +5,7 @@ from typing import Any
 
 from .cache import AbstractCacheStore
 from .config import Arr
-from .leg_state import RunContext
+from .leg_state import ArrRunState
 from .pending_import import GuardFacts, PendingImport, TitleClaim, hydrate_pending, is_awaiting_cleanup
 from .wait_types import AttemptResult
 
@@ -17,13 +17,13 @@ class PendingImportStore:
     `pending_imports` is the run list) arrives via `begin_run` each run. Every key is a torrent's infohash.
     """
 
-    _ctx: RunContext
+    _ctx: ArrRunState
     """The current run's context. Never bound at construction: `begin_run` rebinds it every run."""
 
     def __init__(self, cache_store: AbstractCacheStore) -> None:
         self._store = cache_store
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the fresh run context the views and writes read."""
 
         self._ctx = state

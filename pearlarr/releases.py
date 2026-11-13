@@ -101,7 +101,7 @@ class Release:
 
     url: str = ""
     files: list[str] = field(default_factory=list[str])
-    size: list[int] = field(default_factory=list[int])
+    file_sizes: list[int] = field(default_factory=list[int])
     tracker: Tracker = Tracker.OTHER
     """A SeaDex `Tracker` object (not a str). The notifier renders it as the link text of a grab embed."""
     is_public: bool = True
@@ -114,7 +114,7 @@ class Release:
     to_grab: bool = False
     is_fallback: bool = False
     """A public alternative added because the preferred release is private-only."""
-    upgrade: bool = False
+    is_upgrade: bool = False
     """A grab over files the Arr holds at a stale size or on too many episodes. Never set without `download`."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
     skip_reason: GrabHold | None = None
@@ -144,13 +144,13 @@ class Release:
 
         self.to_grab = True
         if upgrade:
-            self.upgrade = True
+            self.is_upgrade = True
 
     def drop_grab(self) -> None:
         """Clear the grab. `upgrade` clears with `download`: it describes the grab, so it must never outlive it."""
 
         self.to_grab = False
-        self.upgrade = False
+        self.is_upgrade = False
 
 
 @dataclass

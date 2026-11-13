@@ -7,7 +7,7 @@ from .arr_activity import ArrActivityMonitor
 from .arr_models import ArrItem
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
-from .leg_state import RunContext, unresolved_label
+from .leg_state import ArrRunState, unresolved_label
 from .output import hub_error, hub_note, hub_warn
 from .output.console_text import arr_item_noun, count_noun
 from .protocols import ArrStrategy, ImportCompleter
@@ -49,20 +49,20 @@ class LegLoop:
         self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, records=services.records)
         self.bind_leg(self._ctx)
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the fresh run context to every per-run collaborator."""
 
         self._services.bind_leg(state)
         self._wait_manager.bind_leg(state, self._active_strategy)
 
-    def reset_run_stats(
+    def start_arr_run(
         self,
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
         """Start a fresh run context and the run clock, and rebind collaborators."""
 
-        self._ctx = RunContext(
+        self._ctx = ArrRunState(
             arr=self._services.arr,
             dry_run=dry_run,
             import_wait_mode=import_wait_mode,
@@ -104,7 +104,7 @@ class LegLoop:
 
         arr = self._services.arr
 
-        self.reset_run_stats(dry_run=dry_run, import_wait_mode=resolved_wait_mode)
+        self.start_arr_run(dry_run=dry_run, import_wait_mode=resolved_wait_mode)
 
         with boot.step(f"Fetching {arr.capitalize()} library") as fetching:
             all_items: list[ItemT] = strategy.get_items()
@@ -124,7 +124,7 @@ class LegLoop:
                 dirty: set[int] = set()
                 for item in all_items:
                     if scan.rescan_all or item.id in scan.touched:
-                        dirty.update(strategy.item_anilist_ids(item, log_ignored=False))
+                        dirty.update(strategy.item_mappings(item, log_ignored=False))
                 self._services.mark_dirty(dirty)
                 if scan.rescan_all:
                     step.note("history gap - rechecking all entries")
@@ -138,7 +138,7 @@ class LegLoop:
             if not item.monitored and self._arr_config.ignore_unmonitored:
                 continue
             prefetch_ids.update(
-                strategy.item_anilist_ids(item, log_ignored=False),
+                strategy.item_mappings(item, log_ignored=False),
             )
 
         with boot.step("Fetching AniList metadata") as step:
@@ -245,7 +245,7 @@ class LegLoop:
             self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
             return
 
-        al_mappings = strategy.item_anilist_ids(item)
+        al_mappings = strategy.item_mappings(item)
 
         if len(al_mappings) == 0:
             self._reporter.log_no_anilist_mappings(self._ctx, item_title)

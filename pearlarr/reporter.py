@@ -8,7 +8,7 @@ from seadex import EntryRecord
 from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
-from .leg_state import RunContext, Title, resolve_entry_title
+from .leg_state import ArrRunState, Title, resolve_entry_title
 from .output import (
     Accent,
     CapReached,
@@ -172,19 +172,19 @@ class RunReporter:
 
         self._ledger(TitleState.NO_EPISODES, title)
 
-    def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> None:
+    def log_arr_item_unmonitored(self, ctx: ArrRunState, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row)."""
 
         ctx.stats.unmonitored += 1
         self._ledger(TitleState.UNMONITORED, item_title)
 
-    def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> None:
+    def log_no_anilist_mappings(self, ctx: ArrRunState, title: str) -> None:
         """Report a title with no AniList mappings (bumps the tally, emits its row)."""
 
         ctx.stats.no_mappings += 1
         self._ledger(TitleState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
+    def log_ignored_anilist_id(self, ctx: ArrRunState, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
 
         No AniList lookup: an ignored id is dropped before the prefetch, so the arr's own title
@@ -193,13 +193,13 @@ class RunReporter:
 
         self._titled_row(TitleState.IGNORED, resolve_entry_title(al_id, (), ctx.arr_title))
 
-    def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
+    def log_no_sd_entry(self, ctx: ArrRunState, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         ctx.stats.no_seadex_entry += 1
         self._titled_row(TitleState.NO_ENTRY, self._display_title(ctx, al_id, None))
 
-    def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> None:
+    def log_seadex_outage_skip(self, ctx: ArrRunState, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable)."""
 
         ctx.stats.seadex_unreachable += 1
@@ -210,7 +210,7 @@ class RunReporter:
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
-    def _display_title(self, ctx: RunContext, al_id: int, stored: str | None) -> Title:
+    def _display_title(self, ctx: ArrRunState, al_id: int, stored: str | None) -> Title:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
         return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
@@ -224,9 +224,9 @@ class RunReporter:
 
     # --- entry-block headers -------------------------------------------------
 
-    def log_al_title(
+    def open_title_block(
         self,
-        ctx: RunContext,
+        ctx: ArrRunState,
         title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
@@ -236,7 +236,7 @@ class RunReporter:
         `coverage` is a one-line range (e.g. "S04 E01-E12"). None or "" renders the URL only.
         """
 
-        # Remembered so add_torrent and the summary can attribute what they grab, and show the files we
+        # Remembered so grab_releases and the summary can attribute what they grab, and show the files we
         # mapped from the Arr even when a release's own file list can't be parsed.
         ctx.per_title.current_title = title
         ctx.per_title.current_url = sd_entry.url
@@ -253,7 +253,7 @@ class RunReporter:
             ),
         )
 
-    def log_cached_entry(self, ctx: RunContext, al_id: int) -> None:
+    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
         """Emit a cached entry's self-contained block, read from the cache record."""
 
         ctx.stats.unchanged += 1
@@ -302,7 +302,7 @@ class RunReporter:
 
     # --- entry-block details -------------------------------------------------
 
-    def log_no_seadex_releases(self, ctx: RunContext) -> None:
+    def log_no_seadex_releases(self, ctx: ArrRunState) -> None:
         """Report no suitable SeaDex releases (a status detail on the open entry)."""
 
         ctx.stats.no_releases += 1
@@ -376,7 +376,7 @@ class RunReporter:
 
         return self._counts().bound_mark()
 
-    def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> None:
+    def log_run_summary(self, ctx: ArrRunState, *, preview: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard."""
 
         self._close_entry()

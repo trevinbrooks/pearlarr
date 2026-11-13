@@ -36,7 +36,7 @@ from .torrent_listings import SeriesListings
 from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress, ImportWaitMode
 
 
-def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
+def releases_overlap(seadex_dict: SeadexDict) -> bool:
     """See if SeaDex releases have overlapping episodes."""
 
     # Shares get_episode_keys with get_same_files_groups (planner) but
@@ -185,14 +185,14 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         return filtered
 
     @override
-    def item_anilist_ids(
+    def item_mappings(
         self,
         item: SonarrItem,
         log_ignored: bool = True,
     ) -> dict[int, TitleMapping]:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
-        return self._services.get_anilist_ids(
+        return self._services.title_mappings(
             ExternalIds.of_series(item),
             log_ignored=log_ignored,
         )
@@ -315,7 +315,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         coverage = _coverage.coverage_string(
             _coverage.episodes_from_ep_list(ep_list),
         )
-        run.log_al_title(
+        run.open_title_block(
             title=title.name,
             sd_entry=sd_entry,
             coverage=coverage,
@@ -334,7 +334,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the entry whose window gave the coverage counts.
-            run.no_releases_skip(al_id, cache_details, metadata_unread=self._episodes.entries_unread([al_id]))
+            run.report_no_releases(al_id, cache_details, metadata_unread=self._episodes.entries_unread([al_id]))
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -347,7 +347,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         stored: dict[str, PendingImport] = run.records.stored_records(hashes) if waits_on_imports else {}
         series_ids = {sonarr_series_id, *(sid for record in stored.values() for sid in record.series_ids)}
         indexes = self._series_indexes(series_ids)
-        resolved = self._services.listing_mappings(ExternalIds.of_series(item))
+        resolved = self._services.mappings_with_ignored(ExternalIds.of_series(item))
         listings = self._listings.read(sonarr_series_id, resolved)
         scope = GrabbingTitle(
             al_id=al_id,
@@ -368,11 +368,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         self._log_placements(placed)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
-        if (
-            self._config.advanced.interactive
-            and len(seadex_dict) > 1
-            and get_overlapping_results(seadex_dict=seadex_dict)
-        ):
+        if self._config.advanced.interactive and len(seadex_dict) > 1 and releases_overlap(seadex_dict=seadex_dict):
             seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
@@ -381,7 +377,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             # cache the title as done and suppress it forever) so it re-prompts
             # next run.
             if len(seadex_dict) == 0:
-                run.invalid_selection_skip()
+                run.report_invalid_selection()
                 return
 
         # Filter downloads by whether the episodes in each torrent match the release
@@ -421,7 +417,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 entry=sd_entry,
                 seadex_dict=seadex_dict,
                 cache_details=cache_details,
-                replaced_groups=sonarr_releases.replaced_groups(),
+                replaced_groups=sonarr_releases.groups(),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
                 input_missing_groups=placed.input_missing_groups(seadex_dict),

@@ -60,7 +60,7 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
         """Narrow the item list to the single external id `item_id`."""
 
     @abstractmethod
-    def item_anilist_ids(
+    def item_mappings(
         self,
         item: ItemT,
         log_ignored: bool = True,

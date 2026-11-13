@@ -46,7 +46,7 @@ from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeSt
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, PostImportCleanup
-from pearlarr.leg_state import RunContext
+from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
@@ -77,7 +77,7 @@ from pearlarr.placement_types import (
     episode_index,
 )
 from pearlarr.placer import place_batch
-from pearlarr.planner import DownloadPlanner, PlanResult, PrivateOnlySkips
+from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotices
 from pearlarr.progress import ProgressSink
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.releases import EpisodeKey, EpisodeRecord, GroupReleases, OrderOnlyKey, Release, SeadexDict
@@ -92,7 +92,7 @@ from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import UPDATED_AT_STR_FORMAT, parse_stamp, stamp_of
+from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 from pearlarr.tvdb_orders import NO_ORDERS, OrderRow, SeriesOrdering, SeriesOrders, StoredOrders
 from pearlarr.wait_types import NO_HELD_BACK, AttemptResult, HeldFile, ImportWaitMode, LeftForHandImport, PauseReason
@@ -183,7 +183,7 @@ _FAKE_ENTRY_FIELDS: tuple[str, ...] = _ENTRY_COLUMNS
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     """Drop records whose `fetched_at` is stamp-less or older than `cutoff`."""
 
-    cutoff_str = cutoff.strftime(UPDATED_AT_STR_FORMAT)
+    cutoff_str = cutoff.strftime(STAMP_FORMAT)
     stale: list[K] = []
     for cache_key, record in store.items():
         stamp = record.get("fetched_at")
@@ -314,7 +314,7 @@ class FakeCacheStore(AbstractCacheStore):
         details: dict[str, Any] = dict(cache_details)
         updated_at = details.get("updated_at")
         if isinstance(updated_at, datetime):
-            details["updated_at"] = updated_at.strftime(UPDATED_AT_STR_FORMAT)
+            details["updated_at"] = updated_at.strftime(STAMP_FORMAT)
 
         supplied = {column: details[column] for column in _FAKE_ENTRY_FIELDS if column in details}
         if supplied:
@@ -708,9 +708,9 @@ def make_services(**overrides: Any) -> LegServices:
     defaults: dict[str, Any] = {
         "logger": logger,
         "_config": config,
-        # The real __init__ always sets the authoritative arr and a RunContext. Override _ctx=... for a run state.
+        # The real __init__ always sets the authoritative arr and an ArrRunState. Override _ctx=... for a run state.
         "arr": Arr.SONARR,
-        "_ctx": RunContext(arr=Arr.SONARR),
+        "_ctx": ArrRunState(arr=Arr.SONARR),
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
         "_dirty_al_ids": set[int](),
         "_selection_stale": False,
@@ -781,7 +781,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     """A `SeadexReleaseFilter` over an assembled `RunDeps`, with `ctx` and `planner` overridable."""
 
     config = _split_config(overrides)
-    ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
+    ctx = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
     deps = make_run_deps(config=config)
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
@@ -932,7 +932,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_reporter": _real_reporter(logger, cache_store, web),
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
-        "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        "_ctx": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
     defaults.update(overrides)
     if "_records" not in defaults:
@@ -971,7 +971,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
     strategy = overrides.pop("strategy", None)
-    ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
+    ctx = overrides.pop("ctx", None) or ArrRunState(arr=Arr.SONARR)
     reporter = overrides.pop("reporter", None) or _real_reporter(logger, cache_store, httpx.Client())
     if overrides:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
@@ -1004,7 +1004,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     return mgr
 
 
-def make_planner(**overrides: Any) -> DownloadPlanner:
+def make_planner(**overrides: Any) -> GrabPlanner:
     """A `DownloadPlanner` with test-friendly defaults (arr `SONARR`, not interactive)."""
 
     logger = make_logger()
@@ -1015,7 +1015,7 @@ def make_planner(**overrides: Any) -> DownloadPlanner:
         "logger": logger,
     }
     defaults.update(overrides)
-    return DownloadPlanner(**defaults)
+    return GrabPlanner(**defaults)
 
 
 def url_item(
@@ -1037,22 +1037,22 @@ def url_item(
     return Release(
         url=url,
         files=files or [],
-        size=size or [],
+        file_sizes=size or [],
         tracker=tracker,
         is_public=is_public,
         is_dual_audio=is_dual_audio,
         infohash=infohash,
         to_grab=download,
         is_fallback=is_fallback,
-        upgrade=upgrade,
+        is_upgrade=upgrade,
         episodes=episodes or [],
     )
 
 
-def plan_result(seadex_dict: SeadexDict) -> PlanResult:
+def plan_result(seadex_dict: SeadexDict) -> GrabPlan:
     """A `PlanResult` carrying just the dict, with no skips and no guard evidence."""
 
-    return PlanResult(seadex_dict=seadex_dict, skips=PrivateOnlySkips(), guards=GuardFacts())
+    return GrabPlan(seadex_dict=seadex_dict, skips=PrivateOnlyNotices(), guards=GuardFacts())
 
 
 def rg_group(

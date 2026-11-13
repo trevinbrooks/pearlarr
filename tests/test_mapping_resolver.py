@@ -40,7 +40,7 @@ from pearlarr.anibridge import (
     TvdbMappings,
     _parse_ranges,
 )
-from pearlarr.leg_state import RunContext
+from pearlarr.leg_state import ArrRunState
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsMap,
@@ -647,7 +647,7 @@ class _IgnoredIdLog:
     def __init__(self) -> None:
         self.ids: list[int] = []
 
-    def log_ignored_anilist_id(self, ctx: RunContext, al_id: int) -> None:
+    def log_ignored_anilist_id(self, ctx: ArrRunState, al_id: int) -> None:
         del ctx
         self.ids.append(al_id)
 
@@ -677,13 +677,13 @@ class TestRunServicesIgnoredIds:
     def test_the_processed_entries_leave_out_the_ignored_one_and_log_it(self) -> None:
         log = _IgnoredIdLog()
         with self._services(log) as services:
-            assert list(services.get_anilist_ids(ExternalIds(tvdb=74796))) == [269]
+            assert list(services.title_mappings(ExternalIds(tvdb=74796))) == [269]
         assert log.ids == [270]
 
     def test_the_listing_read_gets_the_ignored_entry_set_apart_and_logs_nothing(self) -> None:
         log = _IgnoredIdLog()
         with self._services(log) as services:
-            resolved = services.listing_mappings(ExternalIds(tvdb=74796))
+            resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
         assert (list(resolved.mappings), list(resolved.ignored)) == ([269], [270])
         assert log.ids == []
 

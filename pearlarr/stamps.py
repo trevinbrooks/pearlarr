@@ -2,14 +2,14 @@
 
 from datetime import datetime
 
-UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
+STAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 """Timestamp format for cache record fields (`updated_at`, `fetched_at`, `added_at`)."""
 
 
 def stamp_of(moment: datetime) -> str:
     """`moment` in `UPDATED_AT_STR_FORMAT`."""
 
-    return moment.strftime(UPDATED_AT_STR_FORMAT)
+    return moment.strftime(STAMP_FORMAT)
 
 
 def now_stamp() -> str:
@@ -21,7 +21,7 @@ def now_stamp() -> str:
 def parse_stamp(stamp: str) -> datetime:
     """`stamp` parsed back from `UPDATED_AT_STR_FORMAT`, raising like `strptime` on junk."""
 
-    return datetime.strptime(stamp, UPDATED_AT_STR_FORMAT)
+    return datetime.strptime(stamp, STAMP_FORMAT)
 
 
 def parse_stamp_or_none(stamp: str) -> datetime | None:

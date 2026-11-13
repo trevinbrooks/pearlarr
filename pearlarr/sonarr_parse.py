@@ -114,7 +114,7 @@ class SonarrParseCache:
 
         # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
         listed = {
-            url: [(f, release.size[idx]) for idx, f in indexed_video_files(release.files)]
+            url: [(f, release.file_sizes[idx]) for idx, f in indexed_video_files(release.files)]
             for release_group_item in seadex_dict.values()
             for url, release in release_group_item.releases.items()
         }

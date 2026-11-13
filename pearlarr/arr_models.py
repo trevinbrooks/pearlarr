@@ -236,7 +236,7 @@ class ArrFiles:
 
         return ", ".join([*self.tagged, *(["(none)"] if self.untagged else [])]) or "(no files)"
 
-    def replaced_groups(self) -> tuple[str, ...]:
+    def groups(self) -> tuple[str, ...]:
         """Every tagged name a grab would replace (the notify `Replacing` field)."""
 
         return tuple(self.tagged)

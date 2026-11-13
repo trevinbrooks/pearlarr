@@ -34,7 +34,7 @@ from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportProbes, ImportWaitManager, WaitPass
-from pearlarr.leg_state import RunContext
+from pearlarr.leg_state import ArrRunState
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_import import GuardFacts, PendingImport
@@ -535,7 +535,7 @@ def make_orchestration_manager(
         reporter=reporter or _RecordingReporter(),
         clock=clock if clock is not None else FakeClock(),
         strategy=strategy,
-        ctx=RunContext(arr=Arr.SONARR, grabbed_this_run={p.infohash: p for p in pending or []}),
+        ctx=ArrRunState(arr=Arr.SONARR, grabbed_this_run={p.infohash: p for p in pending or []}),
         **config_overrides,
     )
     for record in store_records or []:
@@ -2244,7 +2244,7 @@ class TestImportWaitModeProperty:
 
     def test_reflects_resolved_mode(self) -> None:
         services = make_services(
-            _ctx=RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.HYBRID),
+            _ctx=ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.HYBRID),
         )
 
         assert services.import_wait_mode is ImportWaitMode.HYBRID
@@ -2280,7 +2280,7 @@ class _FinalizeReporter:
 
     def log_run_summary(
         self,
-        ctx: RunContext,
+        ctx: ArrRunState,
         *,
         preview: bool,
         has_client: bool,
@@ -2371,7 +2371,7 @@ def _finalize_engine(
     strategy, False a Radarr one (reconciles pre-summary, never monitors).
     """
 
-    ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
+    ctx = ArrRunState(arr=Arr.SONARR, import_wait_mode=mode)
     return make_bare_instance(
         LegLoop,
         qbit=qbit,
@@ -3001,7 +3001,7 @@ def _radarr_reconcile_manager(
         categories=make_categories(config, Arr.RADARR),
         strategy=strat,
         reporter=_RecordingReporter(),
-        ctx=RunContext(arr=Arr.RADARR),
+        ctx=ArrRunState(arr=Arr.RADARR),
     )
     for record in radarr_records or []:
         store.put_pending(Arr.RADARR, record.infohash, record.to_json())
@@ -4141,7 +4141,7 @@ def make_add_engine(
         _reporter=_RecordingReporter(),
         cache_store=FakeCacheStore(),
     )
-    engine._ctx = RunContext(arr=Arr.SONARR, dry_run=dry_run, import_wait_mode=mode)
+    engine._ctx = ArrRunState(arr=Arr.SONARR, dry_run=dry_run, import_wait_mode=mode)
     pipeline = make_grab_pipeline(
         _config=engine._config,
         _torrents=torrents,
@@ -4165,7 +4165,7 @@ class TestRegisteredGrabSurvivesSnapshot:
         engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
         seeds = {"h1": pending_seed("h1", series_id=7)}
 
-        pipeline.add_torrent(
+        pipeline.grab_releases(
             grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds),
         )
         engine._wait_manager.snapshot_pending_for_series(7)

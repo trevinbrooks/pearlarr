@@ -12,7 +12,7 @@ from typing import Final
 import pytest
 
 from pearlarr.config import Arr
-from pearlarr.leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunStats
+from pearlarr.leg_state import ArrRunStats, GrabbedRow, NeedsActionKind, NeedsActionRow
 from pearlarr.output import (
     Accent,
     BootStepFinished,
@@ -74,7 +74,7 @@ def test_dry_run_derives_from_the_note() -> None:
         arr=Arr.SONARR,
         dry_run_note=None,
         added_count=0,
-        tally=LegTally.from_stats(RunStats()),
+        tally=LegTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
@@ -164,7 +164,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
 
 
 def test_run_tally_freezes_run_stats_whole() -> None:
-    stats = RunStats(checked=182, up_to_date=161, unchanged=14)
+    stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
     stats.no_mappings = 2
     stats.no_seadex_entry = 3
     stats.seadex_unreachable = 4
@@ -217,12 +217,12 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     assert tally.added == (grab_fact,)
 
 
-# Fields allowed to differ between RunStats and LegTally - deliberately empty.
+# Fields allowed to differ between ArrRunStats and LegTally - deliberately empty.
 _PARITY_ALLOWLIST: Final[frozenset[str]] = frozenset()
 
 
 def test_run_tally_field_names_mirror_run_stats() -> None:
-    stats_names = {f.name for f in dataclasses.fields(RunStats)} - _PARITY_ALLOWLIST
+    stats_names = {f.name for f in dataclasses.fields(ArrRunStats)} - _PARITY_ALLOWLIST
     tally_names = {f.name for f in dataclasses.fields(LegTally)} - _PARITY_ALLOWLIST
     assert stats_names == tally_names
 

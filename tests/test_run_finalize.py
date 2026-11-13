@@ -28,7 +28,7 @@ from pearlarr.cache import AbstractCacheStore, CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
-from pearlarr.leg_state import RunContext
+from pearlarr.leg_state import ArrRunState
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounts
 from pearlarr.output.events import TitleState
@@ -89,19 +89,19 @@ class _FakeReporter:
     def log_arr_item_start(self, arr: Arr, item_title: str, n_item: int, n_items: int) -> bool:
         return True
 
-    def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> bool:
+    def log_arr_item_unmonitored(self, ctx: ArrRunState, item_title: str) -> bool:
         return True
 
-    def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> bool:
+    def log_no_anilist_mappings(self, ctx: ArrRunState, title: str) -> bool:
         return True
 
-    def log_no_seadex_releases(self, ctx: RunContext) -> bool:
+    def log_no_seadex_releases(self, ctx: ArrRunState) -> bool:
         return True
 
     def scan_finished(self, arr: Arr) -> bool:
         return True
 
-    def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> bool:
+    def log_run_summary(self, ctx: ArrRunState, *, preview: bool, has_client: bool) -> bool:
         return True
 
     def run_finished(self, arr: Arr) -> bool:
@@ -111,7 +111,7 @@ class _FakeReporter:
 class _FakeBound:
     """A collaborator whose only run-loop hook is the `begin_run` ctx bind."""
 
-    def bind_leg(self, state: RunContext, strategy: ImportCompleter | None = None) -> None:
+    def bind_leg(self, state: ArrRunState, strategy: ImportCompleter | None = None) -> None:
         del state, strategy
 
 
@@ -256,12 +256,12 @@ class _ItemRaisingStrategy(FakeStrategy):
         self._raise_on_item = raise_on_item
 
     @override
-    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
+    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
         # Only the per-item scan calls with the log_ignored default. The pre-loop
         # activity/prefetch passes pass False and must stay healthy.
         if log_ignored and item.id == self._raise_on_item:
             raise RuntimeError("mapping lookup exploded")
-        return super().item_anilist_ids(item, log_ignored)
+        return super().item_mappings(item, log_ignored)
 
 
 class TestPerItemErrorContainment:
@@ -307,7 +307,7 @@ class _StagingStrategy(FakeStrategy):
 
     @override
     def check_title(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
-        self._services.no_releases_skip(item.id * 10 + al_id, {"name": item.title})
+        self._services.report_no_releases(item.id * 10 + al_id, {"name": item.title})
         if (item.id, al_id) == self._stop_at:
             raise SystemExit(0)
 
@@ -489,7 +489,7 @@ class TestNotifyWaitCompleteContainment:
             LegLoop,
             _config=make_config(wait_notify=True),
             _notifier=_RaisingNotifier(),
-            _ctx=RunContext(arr=Arr.SONARR),
+            _ctx=ArrRunState(arr=Arr.SONARR),
         )
         recording = install_recording_hub()
         result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)

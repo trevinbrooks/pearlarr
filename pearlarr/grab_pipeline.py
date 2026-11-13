@@ -12,7 +12,7 @@ from . import coverage as _coverage
 from .cache import CachedTitleUpdate
 from .config import PrivateReleaseAction
 from .grab_placement import PendingImportUpdate
-from .leg_state import GrabbedRow, NeedsActionKind, NeedsActionRow, RunContext, is_dry_run
+from .leg_state import ArrRunState, GrabbedRow, NeedsActionKind, NeedsActionRow, is_dry_run
 from .notify import GrabNotice
 from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .pending_records import PendingImportStore
@@ -116,7 +116,7 @@ class GrabPipeline:
         self,
         *,
         deps: "LegDeps",
-        ctx: RunContext,
+        ctx: ArrRunState,
         records: PendingImportStore,
     ) -> None:
         self._config = deps.config
@@ -133,7 +133,7 @@ class GrabPipeline:
         # Rebound each run by bind_leg to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
 
-    def bind_leg(self, state: RunContext) -> None:
+    def bind_leg(self, state: ArrRunState) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
 
         self._ctx = state
@@ -155,7 +155,7 @@ class GrabPipeline:
         cap = self._effective_cap
         return cap is not None and self._ctx.torrents_added >= cap
 
-    def add_torrent(self, req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
+    def grab_releases(self, req: GrabRequest) -> tuple[int, list[ReleaseOutcome]]:
         """Add the request's torrent(s) to qBittorrent, holding the grabbable ones past the run's cap.
 
         Returns the added / already-downloading outcome lines rather than logging them (the caller emits the block).
@@ -274,7 +274,7 @@ class GrabPipeline:
 
         # ALREADY_ADDED is the url's torrent already in qBittorrent, SeaDex's or a cross-seed holding its files,
         # whoever added it, and it's tracked like a grab. The genuine "already own it" case is the
-        # any_to_grab=False branch, which never reaches add_torrent.
+        # any_to_grab=False branch, which never reaches grab_releases.
         self._register_pending_import(release, req, result)
         return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
@@ -465,10 +465,10 @@ class GrabPipeline:
         anilist_thumb = self._anilist.thumb(req.al_id)
         anilist_banner = self._anilist.banner(req.al_id)
 
-        # add_torrent runs even in a preview: the service simulates the add, while the download-flag, private-release
+        # grab_releases runs even in a preview: the service simulates the add, while the download-flag, private-release
         # and tracker filters still apply, so only releases that would really be grabbed are counted.
         before = self._ctx.torrents_added
-        n_torrents_added, results = self.add_torrent(req)
+        n_torrents_added, results = self.grab_releases(req)
 
         # Logged only now the outcome is known, so the status reads "adding" only when something was actually grabbed.
         preview = self._is_preview()
