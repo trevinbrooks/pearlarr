@@ -1,5 +1,5 @@
 # pyright: strict
-"""Direct tests for the path and name helpers: the basename and group normalizers, path leaves, and download path mapping."""
+"""Direct tests for the path and name helpers: the name and group normalizers, file names, and download path mapping."""
 
 from pearlarr.arr_models import RemotePathMapping
 from pearlarr.file_paths import file_name, normalize_name, translate_download_path
@@ -23,7 +23,7 @@ class TestNormalize:
 
     def test_folding_a_folded_key_gives_the_same_key(self) -> None:
         # MUTATION PIN: casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
-        # uncomposed, until the NFC after the casefold composes it. A stored record folds its keys again on
+        # uncomposed, until the NFC after the casefold composes it. A stored pending import folds its keys again on
         # every load, so without that NFC the second pass would re-key it.
         name = "Der Weiß\u0323e Ritter - 01.mkv"
         once = normalize_name(name)
@@ -39,19 +39,19 @@ class TestNormalize:
         # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
         # sees no separator at all and would key the whole path.
         assert normalize_name(file_name("C:\\downloads\\Show\\Show - 01.mkv")) == "show - 01.mkv"
-        # And a directory entry never folds to the empty leaf, which every other
+        # And a directory path never folds to an empty file name, which every other
         # unnamed thing would then collide with.
         assert normalize_name(file_name("Show/NC/")) == "nc"
 
     def test_path_leaf_folds_separators_but_preserves_the_name(self) -> None:
-        # The parser input, before normalize_name: same separator folding, but
+        # The parser input, before normalize_name: same separator conversion, but
         # case/unicode intact - Sonarr's /parse and the video gate must see the
         # real filename, never a whole Windows path or a folded one.
         assert file_name("C:\\downloads\\Show\\Show - 01 [1080p].MKV") == "Show - 01 [1080p].MKV"
         assert file_name("Show/NC/") == "NC"
 
     def test_path_leaf_keeps_a_leaf_that_looks_like_a_drive(self) -> None:
-        # MUTATION PIN: catches a file_name on os.path only on the Windows CI leg, where os.path is ntpath and
+        # MUTATION PIN: catches a file_name on os.path only on the Windows CI job, where os.path is ntpath and
         # reads the leading "K:" as a drive, so the grab's key for the file never matches the one Sonarr's path
         # gives.
         assert file_name("K: Return of Kings - 01.mkv") == "K: Return of Kings - 01.mkv"
@@ -80,7 +80,7 @@ def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathM
 
 
 class TestTranslateDownloadPath:
-    """The remote-path translation behind the folder-scan fallback."""
+    """The remote-path translation behind the folder-fetch fallback."""
 
     def test_no_mappings_is_a_no_op(self) -> None:
         assert translate_download_path("/d/folder", [], "qbit") == "/d/folder"
@@ -132,7 +132,7 @@ class TestTranslateDownloadPath:
 
     def test_host_mismatch_never_excludes(self) -> None:
         # Sonarr's host is the download-client host as SONARR knows it -
-        # routinely a different string from our qBittorrent host.
+        # routinely a different string from pearlarr's qBittorrent host.
         mappings = [_mapping("/d", "/data", host="sonarr-view-of-qbit")]
         assert translate_download_path("/d/Show", mappings, "localhost") == "/data/Show"
 

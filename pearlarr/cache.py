@@ -1,6 +1,6 @@
 """Persistent run cache: `CacheStore` owns `cache.db`, its schema, freshness checks, and writes.
 
-Writes stage in a deferred transaction until the next non-preview `save` commits them (a run saves
+Writes stage in a deferred transaction until the next `save` outside a dry run commits them (a run saves
 after each title). Do NOT set `isolation_level=None` on its connection: real autocommit commits staged
 writes and breaks that gate.
 One `CacheStore` per arr, never shared across arrs or threads.
@@ -138,7 +138,7 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
-    """Backfill one `guard_facts` row per Sonarr entry, then strip `guards` from every blob."""
+    """Backfill one `guard_facts` row per Sonarr title, then strip `guards` from every blob."""
 
     if conn.execute("SELECT EXISTS (SELECT 1 FROM guard_facts)").fetchone()[0]:
         return
@@ -157,7 +157,7 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
-    """Null the id-form names an AniList outage once stored, so the next cached read resolves them."""
+    """Null the id-form names an unreachable AniList once stored, so the next cached read resolves them."""
 
     # The pattern is the frozen v3-era form of `arr_run_state.unresolved_label`, spelled
     # out on purpose so the migration never tracks the live label.
@@ -166,7 +166,7 @@ def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _PendingImportV4:
-    """One v4 `pending_imports` row narrowed once: the per-entry record shape before the torrent-level fold."""
+    """One v4 `pending_imports` row narrowed once: the per-title row shape before the torrent-level merge."""
 
     al_id: int
     series_id: int
@@ -213,9 +213,9 @@ class _PendingImportV4:
         )
 
     def claim(self) -> dict[str, Any]:
-        """The v5 claim this row becomes, its fields carried as stored (an unscoped window stays unscoped).
+        """The v5 claim this row becomes, its fields carried as stored (a claim with no window stays without one).
 
-        Only a row from before the window (a legacy `episode_ids` list) derives one: its map's and the list's ids.
+        Only a row from before the window (a legacy `episode_ids` list) derives one: its file map's and the list's ids.
         """
 
         ordered = self.ordered_episode_ids
@@ -237,7 +237,7 @@ class _PendingImportV4:
 
 
 def _merge_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str, Any]:
-    """One torrent's v4 rows (`al_id` order) as the v5 record: the first row's facts, the maps unioned."""
+    """One torrent's v4 rows (`al_id` order) as the v5 row: the first row's facts, the file maps unioned."""
 
     first = rows[0]
     if any(row.release_group != first.release_group or row.is_dual_audio != first.is_dual_audio for row in rows):
@@ -263,7 +263,7 @@ def _merge_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str,
 
 
 def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
-    """Fold the per-entry `pending_imports` rows into one record per torrent, each old row a claim."""
+    """Merge the per-title `pending_imports` rows into one row per torrent, each old row a claim."""
 
     if not _has_column(conn, "pending_imports", "al_id"):
         return
@@ -326,7 +326,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         return
     for step in range(version, SCHEMA_VERSION):
-        # SQLite DDL is transactional, so a failed step rolls back whole, stamp included.
+        # SQLite DDL is transactional, so a failed step rolls back whole, version included.
         conn.execute("BEGIN")
         try:
             _MIGRATIONS[step](conn)
@@ -339,7 +339,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
 
 
 def row_payload(row: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
-    """The non-empty payload object a persisted record holds under `key`, else None."""
+    """The non-empty payload object a stored row holds under `key`, else None."""
 
     if not isinstance(row, dict):
         return None
@@ -348,7 +348,7 @@ def row_payload(row: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
 
 
 def stamp_is_fresh(row: dict[str, Any], cutoff: datetime) -> bool:
-    """True if the record's `fetched_at` parses and is at or after `cutoff`."""
+    """True if the row's `fetched_at` parses and is at or after `cutoff`."""
 
     try:
         return parse_stamp(row.get("fetched_at", "")) >= cutoff
@@ -357,7 +357,7 @@ def stamp_is_fresh(row: dict[str, Any], cutoff: datetime) -> bool:
 
 
 class CachedTitleUpdate(TypedDict, total=False):
-    """The fixed shape of a per-entry cache update / a `update` payload."""
+    """The fixed shape of a per-title cache update / a `update` payload."""
 
     name: str
     url: str
@@ -366,7 +366,7 @@ class CachedTitleUpdate(TypedDict, total=False):
     fallback_satisfied: bool
     """Whether a public fallback satisfied the title."""
     season_type: str
-    """The TVDB order the entry's Sonarr series was numbered by when it was checked."""
+    """The TVDB order the title's Sonarr series was numbered by when it was checked."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,7 +374,7 @@ class CachedTitle:
     """One `entries` row, read in a single query."""
 
     updated_at: str | None
-    """SeaDex's update time the title was cached as done under. None while the title waits on a check."""
+    """SeaDex's update time the title was cached under. None while the title waits on a check."""
     name: str | None
     url: str | None
     coverage: str | None
@@ -382,7 +382,7 @@ class CachedTitle:
     season_type: str | None
 
     def cached_under(self, seadex_updated_at: datetime) -> bool:
-        """Whether the title is cached as done under this SeaDex update time."""
+        """Whether the title is cached under this SeaDex update time."""
 
         return self.updated_at == stamp_of(seadex_updated_at)
 
@@ -433,7 +433,7 @@ def _arr_key(arr: Arr) -> str:
 
 
 def selection_hash_key(arr: Arr) -> str:
-    """The `kv` key holding the selection digest an arr's verdicts were vouched under."""
+    """The `kv` key holding the selection hash an arr's cached titles were stored under."""
 
     return f"selection_digest_{_arr_key(arr)}"
 
@@ -505,7 +505,7 @@ class CacheStore(AbstractCacheStore):
     def __init__(self, conn: sqlite3.Connection, path: str, *, on_memory: bool) -> None:
         self._conn = conn
         self._path = path
-        # True while backed by an in-memory db. The first non-preview save promotes it to `path`.
+        # True while backed by an in-memory db. The first save outside a dry run promotes it to `path`.
         self._on_memory = on_memory
 
     # -- lifecycle -----------------------------------------------------------
@@ -517,7 +517,7 @@ class CacheStore(AbstractCacheStore):
         *,
         config_hash: str,
     ) -> "CacheStore":
-        """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
+        """Open the cache db (or an in-memory stand-in) and reconcile the stored version and config hash.
 
         A missing file opens `:memory:`, promoted at the first real save. `config_hash` is informational only.
         """
@@ -547,14 +547,14 @@ class CacheStore(AbstractCacheStore):
         return cls(connect(path, ensure_wal=False), path, on_memory=False)
 
     def _reconcile(self, config_hash: str) -> None:
-        """Stamp the current package version and config checksum into `kv`."""
+        """Store the current package version and config hash in `kv`."""
 
         self._set_kv("pearlarr_version", __version__)
         self._set_kv("config_checksum", config_hash)
 
     @override
     def save(self, *, dry_run: bool) -> None:
-        """Persist staged writes, unless this is a preview run."""
+        """Persist staged writes, unless this is a dry run."""
 
         # Invariant: a preview run never commits, so every staged write is discarded on close and preview mode can
         # never mark a title as handled.
@@ -598,7 +598,7 @@ class CacheStore(AbstractCacheStore):
 
         rollback_and_close(self._conn)
 
-    # -- descriptor (kv) -----------------------------------------------------
+    # -- version and hashes (kv) ---------------------------------------------
 
     def _set_kv(self, key: str, value: str) -> None:
         self._conn.execute(
@@ -612,22 +612,25 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def selection_changed(self, arr: Arr, selection_hash: str) -> bool:
-        """Whether the arr's cached verdicts predate `digest` (matching settings moved)."""
+        """Whether the arr's cached titles predate `selection_hash` (the selection settings changed)."""
 
         stored = self._get_kv(selection_hash_key(arr))
         return stored is not None and stored != selection_hash
 
     @override
     def store_selection_hash(self, arr: Arr, selection_hash: str) -> None:
-        """Stage `digest` as the settings this arr's verdicts reflect. Only a full-library re-check may vouch."""
+        """Stage `selection_hash` as the settings this arr's cached titles reflect.
+
+        Only a full-library re-check may store it.
+        """
 
         self._set_kv(selection_hash_key(arr), selection_hash)
 
-    # -- per-entry records (entries) ------------------------------------------
+    # -- cached titles (entries) ----------------------------------------------
 
     @override
     def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
-        """An entry's row in one query, or None."""
+        """A title's row in one query, or None."""
 
         row = self._conn.execute(
             "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
@@ -643,9 +646,9 @@ class CacheStore(AbstractCacheStore):
         al_id: int,
         update: CachedTitleUpdate,
     ) -> None:
-        """Merge fields into an entry's record: only supplied ones, staged until a save point.
+        """Merge fields into a title's row: only supplied ones, staged until a save point.
 
-        An empty record writes nothing.
+        An empty update writes nothing.
         """
 
         details: dict[str, Any] = dict(update)
@@ -670,7 +673,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def uncache_title(self, arr: Arr, al_id: int) -> None:
-        """Clear an entry's stamp: the arr's own runs stop skipping the title until a check caches it as done again.
+        """Clear a title's stamp: the arr's runs check the title again until a check caches it again.
 
         The rest of the row stays. Without a row this does nothing. Staged like any write.
         """
@@ -680,12 +683,12 @@ class CacheStore(AbstractCacheStore):
             (_arr_key(arr), al_id),
         )
 
-    # -- JSONB record blocks (shared plumbing) --------------------------------
+    # -- JSONB blocks (shared plumbing) ---------------------------------------
     # Table/column names come only from the closed _JsonTable constants, so the f-string SQL isn't an injection
     # surface (same pattern as stats()).
 
     def _json_get(self, block: _JsonTable, key: tuple[int | str, ...]) -> dict[str, Any] | None:
-        """The stored record under `key` in a JSONB block, or None."""
+        """The stored value under `key` in a JSONB block, or None."""
 
         where = " AND ".join(f"{c} = ?" for c in block.key_cols)
         row = self._conn.execute(
@@ -695,7 +698,7 @@ class CacheStore(AbstractCacheStore):
         return json.loads(row[0]) if row else None
 
     def _json_put(self, block: _JsonTable, key: tuple[int | str, ...], row: dict[str, Any]) -> None:
-        """Upsert a record into a JSONB block (staged, persisted at a save point)."""
+        """Upsert a value into a JSONB block (staged, persisted at a save point)."""
 
         cols = ", ".join(block.key_cols)
         placeholders = ", ".join("?" for _ in block.key_cols)
@@ -711,7 +714,7 @@ class CacheStore(AbstractCacheStore):
         return {infohash: json.loads(rec_json) for infohash, rec_json in self._conn.execute(sql, params)}
 
     def _evict_stale_json(self, block: _JsonTable, cutoff: datetime) -> int:
-        """Delete records older than `cutoff` (or stamp-less, which is otherwise un-evictable). Count deleted."""
+        """Delete rows older than `cutoff` (or stamp-less, which is otherwise un-evictable). Count deleted."""
 
         cursor = self._conn.execute(
             f"DELETE FROM {block.table} WHERE fetched_at < ? OR fetched_at IS NULL",
@@ -723,7 +726,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        """Yield `(al_id, record)` for every stored record, age unfiltered (see `stamp_is_fresh`)."""
+        """Yield `(al_id, answer)` for every cached answer, age unfiltered (see `stamp_is_fresh`)."""
 
         for al_id, rec_json in self._conn.execute(
             "SELECT al_id, json(record) FROM anilist_meta",
@@ -732,13 +735,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
-        """The stored `{"fetched_at", "data"}` record for an id, or None."""
+        """The cached `{"fetched_at", "data"}` answer for an id, or None."""
 
         return self._json_get(_ANILIST_META, (al_id,))
 
     @override
     def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None:
-        """Upsert an AniList-meta record (staged, persisted at a save point)."""
+        """Upsert a cached AniList answer (staged, persisted at a save point)."""
 
         self._json_put(_ANILIST_META, (al_id,), row)
 
@@ -746,13 +749,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
-        """The stored `{"fetched_at", "episodes"}` record for a filename, or None."""
+        """The stored `{"fetched_at", "episodes"}` row for a filename, or None."""
 
         return self._json_get(_SONARR_PARSE, (filename,))
 
     @override
     def put_sonarr_parse(self, filename: str, row: dict[str, Any]) -> None:
-        """Upsert a Sonarr parse record (staged, persisted at a save point)."""
+        """Upsert a Sonarr parse row (staged, persisted at a save point)."""
 
         self._json_put(_SONARR_PARSE, (filename,), row)
 
@@ -760,7 +763,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]:
-        """All pending-import records for an arr, keyed by infohash (snapshot)."""
+        """All pending imports for an arr, keyed by infohash (snapshot)."""
 
         return self._pending_import_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
@@ -769,13 +772,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
-        """One torrent's stored record, or None."""
+        """One torrent's stored pending import, or None."""
 
         return self._json_get(_PENDING_IMPORTS, (_arr_key(arr), infohash))
 
     @override
     def get_pending_import_rows_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
-        """The records with a claim on one Sonarr `series_id`, keyed by infohash."""
+        """The pending imports with a claim on one Sonarr `series_id`, keyed by infohash."""
 
         return self._pending_import_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND EXISTS ("
@@ -785,19 +788,22 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
-        """Upsert one torrent's record (staged, persisted at a save point)."""
+        """Upsert one torrent's pending import (staged, persisted at a save point)."""
 
         self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), row)
 
     @override
     def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
-        """Delete one torrent's record."""
+        """Delete one torrent's pending import."""
 
         self._conn.execute("DELETE FROM pending_imports WHERE arr = ? AND infohash = ?", (_arr_key(arr), infohash))
 
     @override
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool:
-        """Whether the OTHER arr holds a record on the torrent (an exact key match: hashes are stored lowercase)."""
+        """Whether the OTHER arr has a pending import for the torrent.
+
+        An exact key match: hashes are stored lowercase.
+        """
 
         row = self._conn.execute(
             "SELECT 1 FROM pending_imports WHERE arr != ? AND infohash = ? LIMIT 1",
@@ -807,13 +813,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None:
-        """Upsert the entry's guard-evidence row (staged, persisted at a save point)."""
+        """Upsert the title's guard-evidence row (staged, persisted at a save point)."""
 
         self._json_put(_GUARD_FACTS, (_arr_key(arr), al_id), asdict(guards))
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
-        """The arr's guard rows for entries with LIVE pending records. Rows are immortal, nothing deletes one."""
+        """The arr's guard rows for titles with LIVE pending imports. Rows are immortal, nothing deletes one."""
 
         return {
             al_id: OwnedAtGrab.from_json(json.loads(rec_json))
@@ -828,7 +834,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None:
-        """The series' stored orders at any age, or None (also for a record that no longer reads)."""
+        """The series' stored orders at any age, or None (also for a row that no longer reads)."""
 
         raw = self._json_get(_TVDB_ORDERS, (tvdb_id,))
         return None if raw is None else CachedOrders.from_json(raw)
@@ -865,13 +871,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
-        """Delete AniList-meta records older than `cutoff` (or stamp-less). Count."""
+        """Delete AniList-meta rows older than `cutoff` (or stamp-less). Count."""
 
         return self._evict_stale_json(_ANILIST_META, cutoff)
 
     @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
-        """Delete Sonarr parse records older than `cutoff` (or stamp-less). Count."""
+        """Delete Sonarr parse rows older than `cutoff` (or stamp-less). Count."""
 
         return self._evict_stale_json(_SONARR_PARSE, cutoff)
 

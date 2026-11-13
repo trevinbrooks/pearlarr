@@ -1,4 +1,4 @@
-"""Path and file name helpers: the basename normalizer every match uses, path leaves, and download path mapping."""
+"""Path and file name helpers: the name normalizer every match uses, a path's file name, and download path mapping."""
 
 import posixpath
 import unicodedata
@@ -8,10 +8,10 @@ from .arr_models import RemotePathMapping
 
 
 def normalize_name(name: str) -> str:
-    """Normalize a filename leaf for cross-source matching.
+    """Normalize a file name for cross-source matching.
 
     Args:
-        name: A filename (basename or full path - only the text is folded).
+        name: A file name (or full path - only the text is folded).
 
     Returns:
         The name stripped and case-folded, composed (NFC) before and after the casefold, so two spellings of
@@ -27,13 +27,13 @@ def normalize_name(name: str) -> str:
 
 
 def to_forward_slashes(path: str) -> str:
-    r"""Fold `\` to `/` for cross-platform comparison."""
+    r"""Convert `\` to `/` for cross-platform comparison."""
 
     return path.replace("\\", "/")
 
 
 def _path_segments(path: str) -> list[str]:
-    """Split a path into non-empty segments for the boundary-aware compare (separators folded)."""
+    """Split a path into non-empty segments for the boundary-aware compare (separators converted)."""
 
     return [segment for segment in to_forward_slashes(path).split("/") if segment]
 
@@ -45,10 +45,10 @@ def translate_download_path(
 ) -> str:
     """Map a download-client path into Sonarr's filesystem view.
 
-    Longest-`remotePath`-prefix match is the PRIMARY rule. Host equality (our
+    Longest-`remotePath`-prefix match is the PRIMARY rule. Host equality (pearlarr's
     `qbit_host`, folded here) only tiebreaks equally-long prefixes, and host
     inequality never excludes a mapping: Sonarr's `host` is the download-client
-    host as SONARR configured it, routinely a different string from our
+    host as SONARR configured it, routinely a different string from pearlarr's
     qBittorrent host (localhost vs container name vs IP). Matching is per path
     segment, so it is separator-boundary-aware (`/downloads` never matches
     `/downloads-x/f`), tolerant of trailing slashes and Windows backslashes on
@@ -87,8 +87,8 @@ def translate_download_path(
 
 
 def file_name(name: str) -> str:
-    """A path's leaf with case and unicode preserved, for parser and display use."""
+    """A path's file name with case and unicode preserved, for parser and display use."""
 
-    # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a leaf whose second
+    # posixpath on purpose: the separators are already `/`, and on Windows `os.path` reads a file name whose second
     # character is a colon (`K: Return of Kings - 01.mkv`) as a drive and cuts those two characters off.
     return posixpath.basename(to_forward_slashes(name).rstrip("/"))

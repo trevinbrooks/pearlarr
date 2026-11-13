@@ -3,10 +3,10 @@
 The anibridge dataset (https://github.com/anibridge/anibridge-mappings) is a
 *directional* graph: a JSON object whose keys and values are descriptors of the
 form "provider: id[:scope]" (e.g. "anilist:269", `tvdb_show:74796: s2`).
-Every value is a map "{target_descriptor: {source_range: target_range}}".
+Every value is an object "{target_descriptor: {source_range: target_range}}".
 
 Every AniList id present in the dataset also appears as its own source key, so
-this module parses the "anilist:*" entries once into a per-AniList record plus
+this module parses the "anilist:*" keys once into per-title data plus
 a set of reverse indexes (tvdb/tmdb/imdb -> AniList), giving O(1) lookups.
 
 Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
@@ -14,11 +14,11 @@ Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
 (`1-21`) is the season-2 TVDB episode range, which is exactly what episode
 filtering in Sonarr needs.
 
-When a record maps its specials onto one TVDB show and one TMDB show,
+When AniBridge maps a title's specials onto one TVDB show and one TMDB show,
 `_special_aliasing` pairs the two numberings by position within each source
-range, so a specials pack numbered in TMDB's order can be placed on the TVDB
+range, so a specials torrent numbered in TMDB's order can be placed on the TVDB
 specials. `AniBridge._unshared_aliasing` then drops any alias onto a TVDB
-special another entry of the show also maps.
+special another title of the show also maps.
 """
 
 import logging
@@ -56,12 +56,12 @@ type SpecialAliases = Mapping[int, int]
 """TMDB specials number -> the TVDB specials number it stands for."""
 
 NO_ALIASES: SpecialAliases = MappingProxyType({})
-"""No specials pairs: AniBridge pairs none, nothing was read, or the entries listing a torrent pair against different
+"""No specials pairs: AniBridge pairs none, nothing was read, or the titles listing a torrent pair against different
 TMDB shows."""
 
 
 class SpecialAliasing(NamedTuple):
-    """An entry's specials aliases and the TMDB show their TMDB numbers count in. An entry without any holds None."""
+    """A title's specials aliases and the TMDB show their TMDB numbers count in. A title without any holds None."""
 
     tmdb_id: int
     """The TMDB show the aliases' TMDB numbers count in."""
@@ -74,30 +74,30 @@ type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
 
 type AniBridgeRawMapping = dict[str, Any]
-"""One consumer-facing mapping entry (mixed-typed). `mappings` reads it via
+"""One consumer-facing raw mapping (mixed-typed). `mappings` reads it via
 `_mapping_from_raw`. Stays a loose `dict` - it is the raw->typed boundary,
 not the typed domain."""
 
 type AniBridgeLookup = dict[int, AniBridgeRawMapping]
-"""A `lookup_by_*` result: AniList id -> its consumer entry."""
+"""A `lookup_by_*` result: AniList id -> its raw mapping."""
 
 
 class TvdbShowFields(NamedTuple):
-    """The per-show fields a TVDB lookup adds to an entry, named as the entry dict keys them."""
+    """The per-show fields a TVDB lookup adds to a raw mapping, named as the mapping dict keys them."""
 
     tvdb_mappings: TvdbMappings
     special_aliasing: SpecialAliasing | None
-    """None when the record's specials don't pair for this show, and then the entry leaves the key out."""
+    """None when the title's specials don't pair for this show, and then the raw mapping leaves the key out."""
 
 
 @dataclass
 class AniBridgeTitle:
-    """The per-AniList record built incrementally while parsing the graph.
+    """The per-title data built incrementally while parsing the graph.
 
-    One record accumulates every external id and season->episode-range map an
-    `anilist:*` entry points to. It is *mutable and built up* by
+    It accumulates every external id and season->episode-range dict an
+    `anilist:*` key points to. It is *mutable and built up* by
     `AniBridge._add_target` (appending to the list/dict fields as targets
-    are folded in), so the collection fields default-construct empty rather than
+    are merged in), so the collection fields default-construct empty rather than
     being passed at once. `_raw_mapping_for` then reads attributes off it.
     """
 
@@ -108,8 +108,8 @@ class AniBridgeTitle:
     tmdb_movie_ids: list[int] = field(default_factory=list[int])
     imdb_ids: list[str] = field(default_factory=list[str])
     special_aliasing: dict[int, SpecialAliasing] = field(default_factory=dict[int, SpecialAliasing])
-    """TVDB show id -> the record's specials aliasing for that show. `AniBridge._parse` fills it per record, then
-    runs it through `_unshared_aliasing` once every record exists."""
+    """TVDB show id -> the title's specials aliasing for that show. `AniBridge._parse` fills it per title, then
+    runs it through `_unshared_aliasing` once every title exists."""
 
 
 def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
@@ -200,14 +200,14 @@ def _plain_ranges(text: str) -> list[range] | None:
 
 
 class SpecialsTarget(NamedTuple):
-    """One season-0 target of a record: its show id (None if not a number) and its source -> target range map."""
+    """One season-0 target of a title: its show id (None if not a number) and its source -> target range dict."""
 
     show_id: int | None
     episode_ranges: Mapping[str, str]
 
 
 def _specials_targets(targets: Mapping[str, Mapping[str, str]], provider: str) -> list[SpecialsTarget]:
-    """The record's season-0 targets on `provider` (`tvdb_show` or `tmdb_show`)."""
+    """The title's season-0 targets on `provider` (`tvdb_show` or `tmdb_show`)."""
 
     found: list[SpecialsTarget] = []
     for target, episode_ranges in targets.items():
@@ -218,7 +218,7 @@ def _specials_targets(targets: Mapping[str, Mapping[str, str]], provider: str) -
 
 
 def _special_aliasing(targets: Mapping[str, Mapping[str, str]]) -> dict[int, SpecialAliasing]:
-    """A record's TMDB specials numbers paired with its TVDB ones, keyed by the TVDB show. Empty if nothing pairs.
+    """A title's TMDB specials numbers paired with its TVDB ones, keyed by the TVDB show. Empty if nothing pairs.
 
     Needs exactly one TVDB and one TMDB specials target, each with a show id. In each source range both map,
     the numbers pair by position when the source and both targets are plain ranges of the same width
@@ -267,8 +267,8 @@ class AniBridge:
     Two interchangeable backings behind one interface (`lookup_by_*` / the
     `all_*` id sets / `__len__` / `__bool__`):
 
-    * **Graph-backed** (`AniBridge(graph)`): parses the graph once into per-AniList
-      records + reverse indexes. This is the parser/populator (its `to_rows`
+    * **Graph-backed** (`AniBridge(graph)`): parses the graph once into per-title
+      data + reverse indexes. This is the parser/populator (its `to_rows`
       feeds the SQL store) and the test oracle.
     * **SQL-backed** (`from_store`): answers the same lookups from
       `mappings.db` without holding the parsed graph in memory - the runtime path.
@@ -285,7 +285,7 @@ class AniBridge:
         # SQL backing, set only by `from_store`. None means graph-backed (below).
         self._store: MappingStore | None = None
 
-        # AniList id (int) -> the record of the ids/episode-maps it points to
+        # AniList id (int) -> the title's data: the ids and episode ranges it points to
         self.by_anilist: dict[int, AniBridgeTitle] = {}
 
         # Reverse indexes: external id -> set of AniList ids
@@ -300,7 +300,7 @@ class AniBridge:
         self.all_tmdb_movie_ids: set[int] = set(self.tmdb_movie_index)
         self.all_imdb_ids: set[str] = set(self.imdb_index)
 
-        # Entry count, cached once: by_anilist is fixed after _parse, so __len__ /
+        # Title count, computed once: by_anilist is fixed after _parse, so __len__ /
         # __bool__ never recompute it.
         self._len = len(self.by_anilist)
 
@@ -309,7 +309,7 @@ class AniBridge:
         """Build a SQL-backed view that answers lookups from `mappings.db`.
 
         Holds only the store handle plus the (small) `all_*` id sets loaded once.
-        The per-AniList records and reverse indexes live in SQL, so the ~25MB parsed
+        The per-title data and reverse indexes live in SQL, so the ~25MB parsed
         graph is never resident. `lookup_by_*` query the store on demand.
 
         Args:
@@ -329,7 +329,7 @@ class AniBridge:
         self.all_tvdb_ids = store.anibridge_distinct("tvdb")
         self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
         self.all_imdb_ids = store.anibridge_distinct("imdb")
-        # Entry count, fetched once: the store is immutable for this view's lifetime
+        # Title count, fetched once: the store is immutable for this view's lifetime
         # (populated before from_store, read-only after), so a per-call COUNT(*) - an
         # O(rows) scan that resolve would trigger twice per item - is wasteful.
         self._len = store.anibridge_len()
@@ -338,7 +338,7 @@ class AniBridge:
     def to_rows(self) -> AniBridgeRows:
         """Flatten this (graph-backed) view into store row tuples.
 
-        Persists the *computed* consumer-entry picks (`_first`) and the already
+        Persists the *computed* raw-mapping choices (`_first`) and the already
         filtered specials aliases, so the SQL backing reproduces `_raw_mapping_for`
         with zero re-derivation.
 
@@ -399,7 +399,7 @@ class AniBridge:
         `fields` - instead of a hand-ordered literal that can silently drift out of
         positional alignment with `fields` (the `zip(strict=True)` only checks
         length, not correspondence). The keys are exactly the `mapping_key`s the
-        library filter passes (tvdb / tmdb-movie / imdb axes).
+        library filter passes (tvdb / tmdb-movie / imdb id kinds).
         """
 
         return {
@@ -409,12 +409,12 @@ class AniBridge:
         }[kind]
 
     def _parse(self, graph: AniBridgeGraph) -> None:
-        """Build per-AniList records and reverse indexes from the graph."""
+        """Build per-title data and reverse indexes from the graph."""
 
         for key, targets in graph.items():
             provider, pid, _ = _parse_descriptor(key)
             if provider != "anilist" or pid is None:
-                # Reverse links are reconstructed from the anilist-keyed entries,
+                # Reverse links are reconstructed from the "anilist:*" keys,
                 # and `$meta` / non-anilist sources are not needed here.
                 continue
 
@@ -431,7 +431,7 @@ class AniBridge:
 
             self.by_anilist[anilist_id] = title
 
-        # Filter only now that the loop is done: `_unshared_aliasing` reads every other record of the show.
+        # Filter only now that the loop is done: `_unshared_aliasing` reads every other title of the show.
         for anilist_id, title in self.by_anilist.items():
             if title.special_aliasing:
                 title.special_aliasing = self._unshared_aliasing(anilist_id, title.special_aliasing)
@@ -439,10 +439,10 @@ class AniBridge:
     def _unshared_aliasing(
         self, anilist_id: int, aliasing: Mapping[int, SpecialAliasing]
     ) -> dict[int, SpecialAliasing]:
-        """The aliasing minus every alias onto a TVDB special another entry of the show maps in its own season 0.
+        """The aliasing minus every alias onto a TVDB special another title of the show maps in its own season 0.
 
-        AniBridge sometimes has a stale specials range on one entry and the right one on another, and an alias
-        built from the stale range would put a file on the wrong special. A show left with no alias is dropped.
+        AniBridge sometimes has a wrong specials range on one title and the right one on another, and an alias
+        built from the wrong range would put a file on the wrong special. A show left with no alias is dropped.
         """
 
         unshared: dict[int, SpecialAliasing] = {}
@@ -465,11 +465,11 @@ class AniBridge:
         target: str,
         episode_ranges: dict[str, str],
     ) -> None:
-        """Fold a single target descriptor into an AniList record.
+        """Merge a single target descriptor into a title's data.
 
         Args:
-            title: The AniList record being built
-            anilist_id: AniList id owning this record
+            title: The title's data being built
+            anilist_id: AniList id of this title
             target: Target descriptor (e.g. "tvdb_show:74796:s2")
             episode_ranges: {source_range: target_range} for this target
         """
@@ -492,7 +492,7 @@ class AniBridge:
             season = _parse_season(scope)
             if season is None:
                 # Keep the id discoverable even if the season scope is malformed.
-                # An empty season map simply selects no episodes for it.
+                # An empty season dict simply selects no episodes for it.
                 if self.logger is not None:
                     self.logger.debug(f"anibridge: unparseable show scope {target!r} for anilist:{anilist_id}")
                 return
@@ -546,11 +546,11 @@ class AniBridge:
     ) -> AniBridgeRawMapping:
         """Build the mapping dict consumed by the Sonarr/Radarr pipeline.
 
-        The entry mirrors the field names the rest of the code already reads.
+        The dict mirrors the field names the rest of the code already reads.
         "tvdb_mappings" (season -> ranges) is only attached when the lookup is
         scoped to a tvdb id that has season data, so it doubles as the "this is an
-        anibridge series" marker used by "get_ep_list". "special_aliasing" comes
-        along only when the record's specials also pair for that show.
+        anibridge series" marker used by `TitleMapping.kind`. "special_aliasing" comes
+        along only when the title's specials also pair for that show.
         """
 
         title = self.by_anilist[anilist_id]
@@ -566,7 +566,7 @@ class AniBridge:
 
     @staticmethod
     def _ranges_to_mappings(rows: list[tuple[int, int | None, int | None]]) -> TvdbMappings:
-        """Rebuild a season -> `[(start, end)]` map from ordered range rows.
+        """Rebuild a season -> `[(start, end)]` dict from ordered range rows.
 
         `rows` arrive in populate (insertion) order, so each season's range list
         is rebuilt in the same order the in-memory view appended them. A NULL-start
@@ -591,7 +591,7 @@ class AniBridge:
     ) -> AniBridgeLookup:
         """Batched SQL twin of the graph `lookup_by_*` (on a stored view).
 
-        One xref->entry JOIN fetches every entry mapped to `external_id` on `id_kind`.
+        One xref->entry JOIN fetches every title mapped to `external_id` on `id_kind`.
         For a tvdb-scoped lookup, an xref->range JOIN and an xref->alias JOIN fetch
         all their range and alias rows at once (grouped here by AniList id), so
         resolving k ids costs 3 queries rather than the 1 + 3k point queries a per-id
@@ -599,7 +599,7 @@ class AniBridge:
         whenever `tvdb_id` is supplied, and `special_aliasing` whenever the id also has
         alias rows. The only such caller (`lookup_by_tvdb`)
         iterates the tvdb xref, so every resolved id is guaranteed to carry that
-        tvdb (matching the in-memory `tvdb_id in record.tvdb_shows` guard).
+        tvdb (matching the in-memory `tvdb_id in title.tvdb_shows` guard).
         """
 
         store = self._store
@@ -627,7 +627,7 @@ class AniBridge:
         return result
 
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to a TVDB series id."""
+        """Return "{anilist_id: raw mapping}" for AniList ids mapped to a TVDB series id."""
 
         if self._store is not None:
             return self._sql_lookup("tvdb", tvdb_id, tvdb_id=tvdb_id)
@@ -638,7 +638,7 @@ class AniBridge:
         }
 
     def lookup_by_tmdb_movie(self, tmdb_id: int) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id."""
+        """Return "{anilist_id: raw mapping}" for AniList ids mapped to a TMDB movie id."""
 
         if self._store is not None:
             return self._sql_lookup("tmdb_movie", tmdb_id)
@@ -646,7 +646,7 @@ class AniBridge:
         return {anilist_id: self._raw_mapping_for(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 
     def lookup_by_imdb(self, imdb_id: str) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id (e.g. "tt0094625")."""
+        """Return "{anilist_id: raw mapping}" for AniList ids mapped to an IMDb id (e.g. "tt0094625")."""
 
         if self._store is not None:
             return self._sql_lookup("imdb", imdb_id)

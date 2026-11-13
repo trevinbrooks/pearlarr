@@ -6,7 +6,7 @@
 
 `tests/test_config.py::TestSchemaMigration` pins the load-path integration
 (in-memory migration + reporting). This module pins the pieces: version
-detection, each v0 fold, the comment-preserving template splice, and
+detection, each v0 conversion, the comment-preserving template splice, and
 `migrate_config_file`'s backup + atomic-rewrite contract.
 """
 
@@ -52,7 +52,7 @@ class TestDeclaredVersion:
 
 
 class TestMigrateMapping:
-    """Each v0 fold fires only on its historical spelling and lands on the old runtime behavior."""
+    """Each v0 conversion fires only on its historical spelling and lands on the old runtime behavior."""
 
     def test_current_and_newer_mappings_are_untouched(self) -> None:
         for version in (CONFIG_VERSION, CONFIG_VERSION + 1):
@@ -61,10 +61,10 @@ class TestMigrateMapping:
             assert mapping == {"config_version": version, "seadex": {"private_releases": "allow"}}
 
     def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
-        # Only removed keys/values fold. A never-valid value (the typo'd mode)
+        # Only removed keys/values convert. A never-valid value (the typo'd mode)
         # passes through untouched for validation to reject by name. wait_mode
-        # is pinned so the v2 default-flip notice stays out of the count; the
-        # unconditional v3 category notice always rides.
+        # is pinned so the v2 default-flip notice stays out of the count. The
+        # unconditional v3 category notice always comes.
         mapping: dict[str, Json] = {
             "seadex": {"public_only": False, "want_best": False},
             "imports": {"mode": "hardlink", "wait_mode": "off"},
@@ -139,9 +139,9 @@ class TestMigrateMapping:
 
     def test_v2_to_v3_always_notes_the_category_flip(self) -> None:
         # Note-only AND unconditional: whether the flip bites depends on
-        # connection state the mapping cannot see (env overlays, qBittorrent
-        # credentials added after the stamp), and a v3 stamp forecloses any
-        # later notice. The `""` opt-out spelling rides in the note text.
+        # connection state the mapping cannot see (env overrides, qBittorrent
+        # credentials added after the version was written), and a written v3 version forecloses any
+        # later notice. The `""` opt-out spelling goes in the note text.
         mapping: dict[str, Json] = {"config_version": 2, "radarr": {"url": "http://r"}}
         outcome = migrate_mapping(mapping)
         assert outcome is not None
@@ -342,7 +342,7 @@ class TestUpgradeConfigFile:
         path = self._write(tmp_path, text)
         before = AppConfig.load(path)
 
-        # The run path passes the loaded checksum; matching bytes must not refuse.
+        # The run path passes the loaded config hash. Matching bytes must not refuse.
         upgrade = migrate_config_file(path, expected_hash=before.config_hash())
 
         assert upgrade.migration is not None
@@ -424,7 +424,7 @@ class TestUpgradeConfigFile:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # ENOSPC/EBUSY failure mid-swap (a single-file bind mount fails here
-        # every cycle): the config survives untouched and both this cycle's
+        # every run): the config survives untouched and both this run's
         # siblings go - the torn temp file (it carries API keys) and the
         # backup of a config that was never replaced.
         text = "seadex:\n  private_releases: allow\n"
@@ -442,7 +442,7 @@ class TestUpgradeConfigFile:
     def test_a_file_changed_since_the_load_is_refused(self, tmp_path: Path) -> None:
         # The rewrite re-reads the file, so a write landing after the load
         # would otherwise be validated against itself - even a torn one. The
-        # loaded checksum refuses anything but the exact bytes the run uses.
+        # loaded config hash refuses anything but the exact bytes the run uses.
         path = self._write(tmp_path, "seadex:\n  public_only: true\n")
         loaded = AppConfig.load(path)
         torn = "seadex:\n  public_"
@@ -458,8 +458,8 @@ class TestUpgradeConfigFile:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # A file leaf the env overlay rescues loads and runs fine, so the
-        # rewrite must accept it too (it validates with the same overlay) -
+        # A file value the env override rescues loads and runs fine, so the
+        # rewrite must accept it too (it validates with the same overrides) -
         # while the written file keeps the file's own values: env secrets
         # never land on disk.
         monkeypatch.setenv("PEARLARR_SEADEX__PRIVATE_RELEASES", "warn")

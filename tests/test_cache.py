@@ -1,9 +1,9 @@
 # pyright: strict
 """Behavioral tests for the SQLite-backed `CacheStore`.
 
-Pins behavior, not internals: the per-entry records, the JSONB meta/parse caches,
-pending imports, the descriptor, and - critically -
-the staged-write / preview gate (a preview never persists, a real save does) and
+Pins behavior, not internals: the cached title rows, the JSONB meta/parse caches,
+pending imports, the stored version and config hash, and - critically -
+the staged-write / dry-run gate (a dry run never persists, a real save does) and
 the in-memory -> file promotion for a missing cache.
 """
 
@@ -40,13 +40,13 @@ from pearlarr.tvdb_orders import CachedOrders, OrderRow
 from .builders import cached_as_done, claim_al_ids, make_entry_record, pending_import, title_claim
 from .fakes import RecordingHub
 
-# Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
+# Stand-in for a config hash. `CacheStore` only stores and compares the
 # value it is handed. It never computes one, so any string works here.
 CONFIG_HASH = "0123456789abcdef0123456789abcdef"
 
 
 def _cached_title_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
-    """The entry's stored name via `get_cached_title` (None when the row is absent)."""
+    """The cached title's stored name via `get_cached_title` (None when the row is absent)."""
 
     cached = store.get_cached_title(arr, al_id)
     return None if cached is None else cached.name
@@ -65,7 +65,7 @@ def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
 
 
 def _row(pending: PendingImport) -> dict[str, Any]:
-    """The record as the store's JSON column reads it back (tuples as lists)."""
+    """The pending import as the store's JSON column reads it back (tuples as lists)."""
 
     return json.loads(json.dumps(pending.to_json()))
 
@@ -75,7 +75,7 @@ def _open(tmp_path: Path) -> contextlib.closing[CacheStore]:
 
 
 class TestSchemaAndDescriptor:
-    """A missing db opens in-memory and reads empty. A saved db persists the version/checksum descriptor."""
+    """A missing db opens in-memory and reads empty. A saved db persists the version and config hash."""
 
     def test_missing_file_opens_in_memory(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -87,9 +87,9 @@ class TestSchemaAndDescriptor:
         with _open(tmp_path) as store:
             store.save(dry_run=False)
 
-        # Read kv with a RAW connection. CacheStore.load re-stamps the descriptor on
+        # Read kv with a RAW connection. CacheStore.load rewrites the version and config hash on
         # open (via _reconcile), so reopening through the facade would read back the
-        # just-re-stamped constants and pass even if save() never persisted them.
+        # just-rewritten constants and pass even if save() never persisted them.
         db = tmp_path / "cache.db"
         assert db.exists()
         raw = sqlite3.connect(str(db))
@@ -110,9 +110,9 @@ CREATE TABLE torrent_hashes (
 """
 
 
-# The original (pre-versioning) shape of the per-entry tables: `entries` without
-# `fallback_satisfied`, stamped `user_version` 0 by default. Pins the v0 -> v1
-# upgrade path (the shape a first-release cache.db still has on disk).
+# The original (pre-versioning) shape of the cached title tables: `entries` without
+# `fallback_satisfied`, with `user_version` 0 by default. Pins the v0 -> v1
+# migration (the shape a first-release cache.db still has on disk).
 _V0_SCHEMA = (
     """
 CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
@@ -153,7 +153,7 @@ CREATE TABLE pending_imports (
 
 
 # The v3 shape of the tables `CacheStore.load` needs: `kv` plus the `entries`
-# the v3 -> v4 step rewrites (a name may hold the id form an outage once stored).
+# the v3 -> v4 step rewrites (a name may hold the id form an unreachable AniList once stored).
 _V3_ENTRIES_SCHEMA = """
 CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE entries (
@@ -171,7 +171,7 @@ _V6_TORRENT_HASHES_SCHEMA = (
 
 
 def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
-    """A v2-stamped db whose `pending_imports` holds the given (arr, infohash, al_id, json) rows."""
+    """A v2 db whose `pending_imports` holds the given (arr, infohash, al_id, json) rows."""
 
     raw = sqlite3.connect(str(db))
     raw.executescript(_V2_PENDING_SCHEMA)
@@ -184,8 +184,8 @@ def _seed_v2_db(db: Path, rows: list[tuple[str, str, int, str]]) -> None:
     raw.close()
 
 
-# The v4 shape: the v2 pending table (still one row per entry) plus the `guard_facts`
-# rows the v2 -> v3 step backfilled. The v4 -> v5 step folds the rows per torrent.
+# The v4 shape: the v2 pending table (still one row per title) plus the `guard_facts`
+# rows the v2 -> v3 step backfilled. The v4 -> v5 step merges the rows per torrent.
 _V4_PENDING_SCHEMA = (
     _V2_PENDING_SCHEMA
     + """
@@ -201,7 +201,7 @@ CREATE TABLE guard_facts (
 def _seed_v4_db(
     db: Path, rows: Sequence[tuple[str, str, int, str]], guards: Sequence[tuple[str, int, str]] = ()
 ) -> None:
-    """A v4-stamped db holding the given (arr, infohash, al_id, json) pending rows and (arr, al_id, json) guard rows."""
+    """A v4 db holding the given (arr, infohash, al_id, json) pending rows and (arr, al_id, json) guard rows."""
 
     raw = sqlite3.connect(str(db))
     raw.executescript(_V4_PENDING_SCHEMA)
@@ -216,7 +216,7 @@ def _seed_v4_db(
 
 
 def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
-    """A fully shaped v4 pending row: one entry's per-entry record on `infohash`, `fields` overriding."""
+    """A fully shaped v4 pending row: one title's row on `infohash`, `fields` overriding."""
 
     blob: dict[str, Any] = {
         "infohash": infohash,
@@ -243,7 +243,7 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
 
 
 def _assert_round_trips(rows: dict[str, dict[str, Any]]) -> None:
-    """Every migrated blob re-serializes byte-for-byte as a record, plus empty sizes and its unplaced listed files.
+    """Each migrated blob round-trips byte-for-byte as a pending import, plus empty sizes and its unplaced listed files.
 
     The listed files the blob neither mapped nor excluded come back as its hand imports with no order-only keys, and
     no row is a cross-seed.
@@ -288,8 +288,8 @@ class TestSchemaVersionGate:
     """The schema-version gate: older dbs migrate step-by-step, newer dbs are refused."""
 
     def test_fresh_db_is_stamped_through_promote(self, tmp_path: Path) -> None:
-        # The :memory: stand-in is stamped on create. The backup-API promote must
-        # carry that stamp into the file it writes, or every fresh install would
+        # The :memory: stand-in gets its schema version on create. The backup-API promote must
+        # carry that version into the file it writes, or every fresh install would
         # look like a v0 db on its second run.
         with _open(tmp_path) as store:
             store.save(dry_run=False)
@@ -312,7 +312,7 @@ class TestSchemaVersionGate:
             assert cached is not None
             assert cached.name == "Frieren"
             assert cached.fallback_satisfied is False  # backfilled column default
-        # The upgrade committed at load time - durable even though the run's own
+        # The migration committed at load time - durable even though the run's own
         # staged writes were rolled back by close().
         assert _user_version(db) == SCHEMA_VERSION
         # Each step announces itself as an INFO hub Diagnostic, one per step walked.
@@ -333,12 +333,12 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            assert store.get_cached_title(Arr.SONARR, 7) is None  # reads work post-upgrade
+            assert store.get_cached_title(Arr.SONARR, 7) is None  # reads work after the migration
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v1_pending_imports_walk_the_chain_to_torrent_records(self, tmp_path: Path) -> None:
         # The v1 -> v2 step grows the (arr, infohash) PK to (arr, infohash, al_id)
-        # via a table rebuild, and the v4 -> v5 fold turns each row into a claim.
+        # via a table rebuild, and the v4 -> v5 merge turns each row into a claim.
         # A legacy row with no al_id in its JSON lands under the 0 sentinel and
         # ends as its hash's one claim with al_id 0. A row that DOES carry al_id
         # in its JSON backfills the key from it.
@@ -367,16 +367,16 @@ class TestSchemaVersionGate:
             tagged = PendingImport.from_json(pending["tagged"], guards={})
             assert claim_al_ids(tagged) == (9,)
             assert tagged.series_ids == (6,)
-            # The folded rows behave exactly like modern records: keyed by hash, dropped by hash.
+            # The merged rows behave exactly like modern rows: keyed by hash, dropped by hash.
             store.drop_pending_import_row(Arr.SONARR, "legacy")
             assert set(store.get_pending_import_rows(Arr.SONARR)) == {"tagged"}
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v2_guard_backfill_latest_added_at_wins(self, tmp_path: Path) -> None:
-        # The v2 -> v3 step: two records of one entry carry divergent frozen guard
+        # The v2 -> v3 step: two rows of one title carry divergent frozen guard
         # copies - the exact divergence the guard_facts row kills. The newest
-        # blob's copy (by added_at) becomes the entry's row, and every blob is
-        # stripped of its guards key. (A guard-less record NEWER than a
+        # blob's copy (by added_at) becomes the title's row, and every blob is
+        # stripped of its guards key. (A guard-less row NEWER than a
         # guard-carrying sibling is chronologically unreachable in released dbs.)
         db = tmp_path / "cache.db"
         old = {
@@ -399,12 +399,12 @@ class TestSchemaVersionGate:
                     entry_groups=("New",), stale_groups=("Old",), owned_episodes=(SizeMatchedEpisode(101, 700),)
                 ),
             }
-            # The divergent per-record copies are gone for good.
+            # The divergent per-row copies are gone for good.
             assert all("guards" not in rec for rec in store.get_pending_import_rows(Arr.SONARR).values())
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v2_guard_backfill_skips_ineligible_records(self, tmp_path: Path) -> None:
-        # No row may come from: the legacy al_id=0 sentinel, a radarr record, a
+        # No row may come from: the legacy al_id=0 sentinel, a radarr row, a
         # guards-less blob, or a JSON-null guards value (a null row would poison
         # from_json at every read). The stray keys are still stripped everywhere.
         db = tmp_path / "cache.db"
@@ -431,7 +431,7 @@ class TestSchemaVersionGate:
             assert all("guards" not in rec for rec in stripped)
 
     def test_v2_migration_leaves_existing_guard_rows_alone(self, tmp_path: Path) -> None:
-        # The step's idempotence guard: a v2-stamped db already carrying guard
+        # The step's idempotence guard: a v2 db already carrying guard
         # rows is left exactly as found (no backfill overwrites them).
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
@@ -456,8 +456,8 @@ class TestSchemaVersionGate:
             assert store.get_guards(Arr.SONARR) == {9: OwnedAtGrab(entry_groups=("Kept",))}
 
     def test_v3_id_form_names_are_nulled(self, tmp_path: Path) -> None:
-        # The v3 -> v4 step: a name stored as the id-form fallback (an AniList
-        # outage at write time) is nulled so a later cached read resolves it. A
+        # The v3 -> v4 step: a name stored as the id-form fallback (AniList
+        # unreachable at write time) is nulled so a later cached read resolves it. A
         # real name and an absent one survive untouched.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
@@ -477,12 +477,12 @@ class TestSchemaVersionGate:
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v4_rows_of_one_torrent_fold_into_one_record(self, tmp_path: Path) -> None:
-        # The v4 -> v5 step: one torrent's per-entry rows become ONE record whose
+        # The v4 -> v5 step: one torrent's per-title rows become ONE row whose
         # claims sit in al_id order. The rows group by case fold and the key +
-        # record hash come out lowercase.
-        # The release facts are the first row's, the maps union with the first
+        # blob hash come out lowercase.
+        # The release facts are the first row's, the file maps union with the first
         # row winning a shared name, an exclusion another row mapped is dropped,
-        # `added_at` is the oldest stamp, and the flag holds when every row had it.
+        # `added_at` is the oldest stamp, and `awaiting_cleanup` is set when every row had it.
         # The union keeps distinct file-name keys byte-exact (an NFC and an NFD
         # spelling stay two keys): `normalize_name` reconciles them at read time.
         db = tmp_path / "cache.db"
@@ -506,7 +506,7 @@ class TestSchemaVersionGate:
             excluded_files=["x.mkv"],
             awaiting_cleanup=True,
         )
-        # Inserted newest first: the fold orders claims by al_id, not by row order.
+        # Inserted newest first: the merge orders claims by al_id, not by row order.
         _seed_v4_db(db, [("sonarr", "ABCD", 22, json.dumps(second)), ("sonarr", "abcd", 11, json.dumps(first))])
 
         with _open(tmp_path) as store:
@@ -553,9 +553,9 @@ class TestSchemaVersionGate:
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v4_fold_needs_every_cleanup_flag_and_keeps_the_arrs_apart(self, tmp_path: Path) -> None:
-        # One unflagged row clears the folded flag. The other arr's row on the
-        # same hash stays its own record, and the guard rows survive the step
-        # to be read through the folded claims (the orphan stays unread).
+        # One row not awaiting cleanup clears the merged `awaiting_cleanup`. The other arr's row on the
+        # same hash stays its own row, and the guard rows survive the step
+        # to be read through the merged claims (the orphan stays unread).
         db = tmp_path / "cache.db"
         _seed_v4_db(
             db,
@@ -608,9 +608,9 @@ class TestSchemaVersionGate:
 
     def test_v4_legacy_ids_fold_into_the_claims_window(self, tmp_path: Path) -> None:
         # A row from before the ordered window (no `ordered_episode_ids`) claims
-        # the ids its map and legacy `episode_ids` list held, sorted, zeros
+        # the ids its file map and legacy `episode_ids` list had, sorted, zeros
         # dropped. A row that carried its window keeps it as is, and the legacy
-        # list reaches no record.
+        # list reaches no row.
         db = tmp_path / "cache.db"
         legacy = {
             "infohash": "old",
@@ -629,7 +629,8 @@ class TestSchemaVersionGate:
             old = PendingImport.from_json(rows["old"], guards={})
             assert old.claims[0].ordered_episode_ids == (1, 2, 3)
             assert old.claims[0].names == TitleNames()
-            # The fold carries the map verbatim and only derives the window from it. The record drops the zero.
+            # The merge carries the file map verbatim and only derives the window from it. The pending import drops
+            # the zero.
             assert rows["old"]["file_episode_map"] == {"a.mkv": [2, 0]}
             assert dict(old.file_episode_map) == {"a.mkv": (2,)}
             new = PendingImport.from_json(rows["new"], guards={})
@@ -637,8 +638,8 @@ class TestSchemaVersionGate:
             _assert_round_trips({"new": rows["new"]})
 
     def test_v4_unscoped_row_stays_unscoped_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
-        # An unscoped v4 claim (an empty window, no legacy list) claims nothing off
-        # its map, and the stored names dict rides as is, never re-encoded through
+        # A v4 claim with no window (an empty window, no legacy list) claims nothing off
+        # its file map, and the stored names dict goes as is, never re-encoded through
         # the live class.
         db = tmp_path / "cache.db"
         no_window_blob = _v4_blob("u", 5, ordered_episode_ids=[], names={"series": "Series"})
@@ -652,9 +653,9 @@ class TestSchemaVersionGate:
             assert PendingImport.from_json(rows["u"], guards={}).claims[0].names == TitleNames(series="Series")
 
     def test_v4_migration_is_a_no_op_on_reopen(self, tmp_path: Path) -> None:
-        # The migrated db reopens as found: same records, no step announced, and
-        # a v4 stamp over a table already in the v5 shape (no al_id column) is
-        # stamped current without touching the rows.
+        # The migrated db reopens as found: same rows, no step announced, and
+        # a v4 `user_version` over a table already in the v5 shape (no al_id column) is
+        # set current without touching the rows.
         db = tmp_path / "cache.db"
         _seed_v4_db(db, [("sonarr", "h", 11, json.dumps(_v4_blob("h", 11)))])
         with _open(tmp_path) as migrated:
@@ -682,7 +683,7 @@ class TestSchemaVersionGate:
         assert _user_version(folded) == SCHEMA_VERSION
 
     def test_v5_entries_gain_a_season_type_column_left_null(self, tmp_path: Path) -> None:
-        # The v5 -> v6 step: a stored entry keeps its columns and reads no season type, and the
+        # The v5 -> v6 step: a cached title keeps its columns and reads no season type, and the
         # `tvdb_orders` table the step relies on `_SCHEMA` for is there to write.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
@@ -701,7 +702,7 @@ class TestSchemaVersionGate:
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v6_torrent_hashes_table_is_dropped(self, tmp_path: Path) -> None:
-        # The v6 -> v7 step: the table goes, and the entry its rows hung off stays.
+        # The v6 -> v7 step: the table goes, and the cached title its rows hung off stays.
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 2, {"name": "Frieren", "url": "u"})
@@ -743,7 +744,7 @@ class TestSchemaVersionGate:
 
 
 class TestEntries:
-    """Per-entry columns merge partially on update, format and clear timestamps, and stay isolated per arr."""
+    """Cached title columns merge partially on update, format and clear timestamps, and stay isolated per arr."""
 
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -804,7 +805,7 @@ class TestEntries:
                 "S01",
                 "2021-06-05 04:03:02",
             )
-            # A missing row reads back as None, not an all-None record.
+            # A missing row reads back as None, not an all-None cached title.
             assert store.get_cached_title(Arr.SONARR, 999) is None
 
 
@@ -850,7 +851,7 @@ class TestFallbackSatisfied:
 
 
 class TestPreviewGate:
-    """The staged-write preview gate: a preview save never persists, only a real save does."""
+    """The staged-write dry-run gate: a dry-run save never persists, only a real save does."""
 
     def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -873,7 +874,7 @@ class TestPreviewGate:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Original"})
             store.save(dry_run=False)
 
-        # A preview run stages changes but must persist none of them.
+        # A dry run stages changes but must persist none of them.
         with _open(tmp_path) as dry_run_store:
             dry_run_store.update_cached_title(Arr.SONARR, 7, {"name": "Changed"})
             dry_run_store.update_cached_title(Arr.SONARR, 8, {"name": "New"})
@@ -901,9 +902,9 @@ class TestSelectionDigest:
             assert reopened.selection_changed(Arr.SONARR, "d2") is True
 
     def test_preview_save_does_not_consume_a_pending_recheck(self, tmp_path: Path) -> None:
-        # Matching prefs changed (the committed digest is old). A preview run
-        # stages the new one, but its rollback must leave the re-check armed
-        # for the next real run.
+        # Matching prefs changed (the committed selection hash is old). A dry run
+        # stages the new one, but its rollback must leave the re-check due
+        # on the next real run.
         with _open(tmp_path) as store:
             store.store_selection_hash(Arr.SONARR, "old")
             store.save(dry_run=False)
@@ -924,7 +925,7 @@ class TestSelectionDigest:
 
 
 class TestAnilistMeta:
-    """AniList metadata records round-trip by id, are iterable, and a later `put` overwrites the prior record."""
+    """AniList cached answers round-trip by id, are iterable, and a later `put` overwrites the prior answer."""
 
     def test_roundtrip_get_and_iter(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -944,7 +945,7 @@ class TestAnilistMeta:
 
 
 class TestRecordFreshness:
-    """The persisted-record readers: the payload half and the stamp half, split apart."""
+    """The stored-row helpers: the payload half and the stamp half, split apart."""
 
     def test_record_payload_wants_a_non_empty_object(self) -> None:
         assert row_payload(None, "data") is None
@@ -964,13 +965,13 @@ class TestRecordFreshness:
         assert parse_stamp_or_none("2026-06-26 12:00:00") == datetime(2026, 6, 26, 12)
         assert parse_stamp_or_none("junk") is None
         assert parse_stamp_or_none("") is None
-        # A raw row's stamp may not even be a string: the reader answers None, never raises.
+        # A raw row's stamp may not even be a string: the helper answers None, never raises.
         raw: dict[str, Any] = {"added_at": 5}
         assert parse_stamp_or_none(raw["added_at"]) is None
 
 
 class TestSonarrParse:
-    """Parsed Sonarr records round-trip whole keyed by filename, and a missing filename reads back None."""
+    """Cached Sonarr parses round-trip whole keyed by file name, and a missing file name reads back None."""
 
     def test_roundtrip_get(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -984,7 +985,7 @@ class TestSonarrParse:
             assert store.get_sonarr_parse("missing.mkv") is None
 
     def test_series_fingerprint_key_round_trips(self, tmp_path: Path) -> None:
-        # The unmatched record's pin: the freshness reader dispatches on its presence.
+        # The unmatched parse's pin: the freshness check dispatches on its presence.
         with _open(tmp_path) as store:
             rec = {
                 "fetched_at": "2026-06-20 12:00:00",
@@ -996,7 +997,7 @@ class TestSonarrParse:
 
     def test_legacy_record_reads_back_unreadable(self, tmp_path: Path) -> None:
         # A pre-existing row carries an episode list, not a whole parse: it reads
-        # back verbatim and the parse reader refuses it, so the file re-parses.
+        # back verbatim and the parse check rejects it, so the file re-parses.
         with _open(tmp_path) as store:
             rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 1}]}
             store.put_sonarr_parse("legacy.mkv", rec)
@@ -1007,7 +1008,7 @@ class TestSonarrParse:
 
 
 class TestPendingImports:
-    """Pending records are tracked per (arr, infohash), read keyed or by any claim's series id, and droppable."""
+    """Pending imports are tracked per (arr, infohash), read keyed or by any claim's series id, and droppable."""
 
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1027,8 +1028,8 @@ class TestPendingImports:
             store.drop_pending_import_row(Arr.SONARR, "nope")
 
     def test_one_record_per_torrent_replaced_whole(self, tmp_path: Path) -> None:
-        # One torrent listed on two AniList entries is ONE row carrying both
-        # claims: a re-put under the hash replaces the record whole (never a
+        # One torrent listed on two titles is ONE row carrying both
+        # claims: a re-put under the hash replaces the row whole (never a
         # second row), and the drop takes every claim with it.
         with _open(tmp_path) as store:
             store.put_pending_import_row(Arr.SONARR, "h", _row(pending_import(infohash="h", al_id=11, series_id=5)))
@@ -1046,7 +1047,7 @@ class TestPendingImports:
             assert store.get_pending_import_rows(Arr.SONARR) == {}
 
     def test_other_arr_holds_matches_the_key_exactly(self, tmp_path: Path) -> None:
-        # Every record key is the lowercase infohash, so the other arr's row is
+        # Every row key is the lowercase infohash, so the other arr's row is
         # found by exact key and never by case fold.
         with _open(tmp_path) as store:
             store.put_pending_import_row(Arr.RADARR, "abcd", {"infohash": "abcd"})
@@ -1057,7 +1058,7 @@ class TestPendingImports:
 
     def test_other_arr_holds_ignores_the_arrs_own_record(self, tmp_path: Path) -> None:
         # The category gate asks whether the OTHER arr still claims the torrent:
-        # an arr's own record never counts, a missing hash reads False, and the
+        # the same arr's row never counts, a missing hash reads False, and the
         # other arr's row flips the answer for as long as it lives.
         with _open(tmp_path) as store:
             store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=11).to_json())
@@ -1076,7 +1077,7 @@ class TestPendingImports:
             a = _row(pending_import(infohash="a", al_id=1, series_id=5))
             b = _row(pending_import(infohash="b", al_id=2, series_id=5))
             c = _row(pending_import(infohash="c", al_id=3, series_id=9))
-            # A two-claim record spanning both series answers to either.
+            # A two-claim row spanning both series answers to either.
             both = _row(
                 pending_import(
                     infohash="t",
@@ -1087,22 +1088,22 @@ class TestPendingImports:
             store.put_pending_import_row(Arr.SONARR, "b", b)
             store.put_pending_import_row(Arr.SONARR, "c", c)
             store.put_pending_import_row(Arr.SONARR, "t", both)
-            # A claim with no series id, and a record with no claims: never matched.
+            # A claim with no series id, and a row with no claims: never matched.
             store.put_pending_import_row(Arr.SONARR, "d", {"infohash": "d", "claims": [{"al_id": 4}]})
             store.put_pending_import_row(Arr.SONARR, "e", {"infohash": "e"})
 
-            # Only records with a claim on the series come back. The integer series_id binds directly.
+            # Only rows with a claim on the series come back. The integer series_id binds directly.
             assert store.get_pending_import_rows_for_series(Arr.SONARR, 5) == {"a": a, "b": b, "t": both}
             assert store.get_pending_import_rows_for_series(Arr.SONARR, 9) == {"c": c, "t": both}
             assert store.get_pending_import_rows_for_series(Arr.SONARR, 404) == {}
 
-            # Fresh per call: a drop is reflected immediately (no stale snapshot).
+            # Fresh per call: a drop is reflected immediately (no copy kept from an earlier call).
             store.drop_pending_import_row(Arr.SONARR, "a")
             assert store.get_pending_import_rows_for_series(Arr.SONARR, 5) == {"b": b, "t": both}
 
 
 class TestGuardFacts:
-    """One guard-evidence row per (arr, al_id), read-filtered to entries with a live claim."""
+    """One guard-evidence row per (arr, al_id), read-filtered to titles with a live claim."""
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1123,8 +1124,8 @@ class TestGuardFacts:
             assert store.get_guards(Arr.RADARR) == {7: OwnedAtGrab(entry_groups=("Beatrice-Raws",))}
 
     def test_latest_put_wins(self, tmp_path: Path) -> None:
-        # The fix's write semantic: a re-seed overwrites the entry's single row
-        # whole, so no two reads can ever see divergent evidence for one entry.
+        # The fix's write semantic: a re-put overwrites the title's single row
+        # whole, so no two reads can ever see divergent evidence for one title.
         with _open(tmp_path) as store:
             store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
             store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("Old",)))
@@ -1133,10 +1134,10 @@ class TestGuardFacts:
             assert store.get_guards(Arr.SONARR) == {7: newest}
 
     def test_orphan_rows_are_stored_but_never_read(self, tmp_path: Path) -> None:
-        # There is deliberately no delete path (an entry's claims on several
+        # There is deliberately no delete path (a title's claims on several
         # torrents share the row), so reads join live claims: the read stays
         # bounded by in-flight work, not all-time grab history, and an orphan
-        # row is invisible until the entry seeds again.
+        # row is invisible until the title gets a claim again.
         with _open(tmp_path) as store:
             facts = OwnedAtGrab(entry_groups=("SubGroup",))
             store.put_guards(Arr.SONARR, 7, facts)
@@ -1145,14 +1146,14 @@ class TestGuardFacts:
             store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
             assert store.get_guards(Arr.SONARR) == {7: facts}
 
-            # The last record dropping re-orphans the row: stored, no longer read.
+            # The last pending import dropping re-orphans the row: stored, no longer read.
             store.drop_pending_import_row(Arr.SONARR, "h")
             assert store.get_guards(Arr.SONARR) == {}
             assert store.stats().guard_facts == 1
 
     def test_reads_through_every_claim_of_a_record(self, tmp_path: Path) -> None:
-        # The join walks every claim on a live record: both entries sharing one
-        # torrent get their evidence back, an entry claiming nothing stays unread.
+        # The join walks every claim on a live pending import: both titles sharing one
+        # torrent get their evidence back, a title claiming nothing stays unread.
         with _open(tmp_path) as store:
             seven = OwnedAtGrab(entry_groups=("A",))
             eight = OwnedAtGrab(entry_groups=("B",))
@@ -1178,7 +1179,7 @@ _ORDERS = CachedOrders(
 
 
 class TestTvdbOrders:
-    """One record per series, replaced whole, and a record that no longer reads is a miss."""
+    """One row per series, replaced whole, and a row that no longer reads counts as uncached."""
 
     def test_a_record_round_trips_and_a_put_replaces_it(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1204,7 +1205,7 @@ class TestTvdbOrders:
 
 
 class TestHistoryCheckpoints:
-    """History checkpoints upsert per arr and respect the preview gate."""
+    """History checkpoints upsert per arr and respect the dry-run gate."""
 
     def test_roundtrip_upsert_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1223,7 +1224,7 @@ class TestHistoryCheckpoints:
         # The dry-run gate: a previewed run must never advance the cursor.
         db = tmp_path / "cache.db"
         with _open(tmp_path) as store:
-            store.save(dry_run=False)  # promote so the preview below has a real file
+            store.save(dry_run=False)  # promote so the dry run below has a real file
             store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T10:00:00Z", 12))
             store.save(dry_run=True)
 
@@ -1267,7 +1268,7 @@ class TestRunLifecycle:
     """
 
     def test_run_call_order_persists_and_reloads(self, tmp_path: Path) -> None:
-        # Run 1 (real): process one entry the way the loop does, then commit + close.
+        # Run 1 (real): check one title the way the loop does, then commit + close.
         with _open(tmp_path) as store:
             store.update_cached_title(
                 Arr.SONARR,
@@ -1298,7 +1299,7 @@ class TestRunLifecycle:
 
 
 class TestMaintenance:
-    """Eviction drops only stale or stampless records and keeps fresh ones. Stats/integrity report accurate counts."""
+    """Eviction drops only stale or stampless answers and keeps fresh ones. Stats/integrity report accurate counts."""
 
     def test_evict_anilist_meta_drops_only_stale(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -1318,7 +1319,7 @@ class TestMaintenance:
             assert store.get_sonarr_parse("new.mkv") is not None
 
     def test_evict_sweeps_stampless_records(self, tmp_path: Path) -> None:
-        # A record with no fetched_at -> NULL generated column. It is unreadable
+        # An answer with no fetched_at -> NULL generated column. It is unreadable
         # (stamp_is_fresh rejects it) and must not become un-evictable dead weight.
         with _open(tmp_path) as store:
             store.put_anilist_meta(1, {"data": {"x": 1}})  # no fetched_at -> NULL

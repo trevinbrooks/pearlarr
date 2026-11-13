@@ -1,9 +1,9 @@
-"""The one record timestamp format: what the cache and the pending records stamp, and how both parse."""
+"""The one stored timestamp format: what the cache and the pending imports stamp, and how both parse."""
 
 from datetime import datetime
 
 STAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
-"""Timestamp format for cache record fields (`updated_at`, `fetched_at`, `added_at`)."""
+"""Timestamp format for cache row fields (`updated_at`, `fetched_at`, `added_at`)."""
 
 
 def stamp_of(moment: datetime) -> str:

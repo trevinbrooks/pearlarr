@@ -7,10 +7,10 @@ naming the cause), the strict library-fetch matrix (the same failures RAISE
 typed `ArrUnreachableError`/`ArrAuthError` instead), the GET retry policy
 (transient statuses retry with backoff, terminal ones don't - the `retries=0`
 poll handle never retries), the consecutive-failure coalescing (streak dict,
-heartbeat re-warns, recovery notes, shared ledger), the POST policy
+timed re-warns, recovery notes, shared streak dict), the POST policy
 (`post_json` NEVER retries - not idempotent), the per-request GET timeout
 override, and the two
-security invariants: the API key rides the `X-Api-Key` header (never the
+security invariants: the API key goes in the `X-Api-Key` header (never the
 URL) and a redirect is NEVER followed (a 3xx must not replay the key at a new
 location).
 """
@@ -145,7 +145,7 @@ def test_shape_helpers_reject_the_wrong_shape() -> None:
 
 @respx.mock
 def test_warn_template_with_literal_braces_is_safe() -> None:
-    # Migration call sites embed filenames/titles, which can carry braces
+    # Migration call sites embed filenames/display names, which can carry braces
     # ("Steins;{Gate}"). The fail-open warning must never crash on them.
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     http, recording = _bind()
@@ -167,7 +167,7 @@ def test_warn_none_fails_open_silently() -> None:
 def test_get_timeout_override_rides_the_request() -> None:
     """`timeout=` overrides the client-level timeout for that request only.
 
-    Used for the 120s manual-import scans. The default rides the client's timeout.
+    Used for the 120s ManualImport folder fetches. The default is the client's timeout.
     """
 
     seen: list[dict[str, float | None]] = []
@@ -206,7 +206,7 @@ class _RecordingHandler(logging.Handler):
 
 @contextmanager
 def _debug_records() -> Generator[list[logging.LogRecord]]:
-    """Capture the arr_http module logger's DEBUG breadcrumbs for one test."""
+    """Capture the arr_http module logger's DEBUG lines for one test."""
 
     logger = logging.getLogger(f"{LOG_NAME}.arr_http")
     handler = _RecordingHandler()
@@ -234,7 +234,7 @@ class _ManualClock:
 def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
     """`replace(http, retries=0)` makes exactly ONE attempt. The primary still retries.
 
-    The wait-path poll handle: its monitor loop IS the retry mechanism.
+    The wait pass's poll handle: its poll loop IS the retry mechanism.
     """
 
     route = respx.get(f"{_URL}/api/v3/thing").respond(status_code=500)
@@ -251,11 +251,11 @@ def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
 
 
 def test_replace_shares_the_streak_ledger() -> None:
-    """The no-retry handle and the primary share ONE streak ledger (`is`).
+    """The no-retry handle and the primary share ONE streak dict (`is`).
 
     Guards the init=False trap: `dataclasses.replace` re-runs `default_factory`
-    for init=False fields, silently un-sharing the ledger (which would
-    double-fire heartbeats and recovery notes across the two handles).
+    for init=False fields, silently un-sharing the streak dict (which would
+    double-fire re-warns and recovery notes across the two handles).
     """
 
     http, _ = _bind()
@@ -310,7 +310,7 @@ def test_interleaved_keys_keep_independent_streaks() -> None:
 
 @respx.mock
 def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
-    """A long streak re-warns ("still failing") once per heartbeat interval."""
+    """A long streak re-warns ("still failing") once per re-warn interval."""
 
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     primary, recording = _bind()
@@ -334,7 +334,7 @@ def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
 def test_concurrent_failures_keep_an_exact_streak_count() -> None:
     """Concurrent sweep threads hammer one failing key. The count stays exact.
 
-    Pins the ledger lock: `streak.count += 1` is a read-modify-write that
+    Pins the streak lock: `streak.count += 1` is a read-modify-write that
     would drop increments unlocked (the shared client pool serves
     `SONARR_FETCH_WORKERS` threads).
     """
@@ -433,7 +433,7 @@ def test_delete_404_is_gone_and_quiet() -> None:
 
 @respx.mock
 def test_delete_404_after_a_failure_closes_the_streak() -> None:
-    """GONE is a success for the ledger: it ends an open delete streak with the recovery note."""
+    """GONE is a success for the streak dict: it ends an open delete streak with the recovery note."""
 
     route = respx.delete(f"{_URL}/api/v3/queue/7")
     route.side_effect = [httpx.Response(500), httpx.Response(404)]
@@ -520,7 +520,7 @@ def test_strict_get_retryable_status_retries_then_succeeds() -> None:
 
 
 def test_make_httpx_client_pins_the_transport_policy() -> None:
-    """The factory pins no-redirects: the key must never ride one.
+    """The factory pins no-redirects: the key must never follow one.
 
     It also fixes the (connect, read) timeout split every arr call used to pass per-request.
     """

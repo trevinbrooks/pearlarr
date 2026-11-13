@@ -6,7 +6,7 @@
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
 graph-backed view is used directly as the oracle (the unchanged parser). anime_ids
 is checked against an inline reconstruction of the former reverse-index merge, and
-the anidb + digest-gate behaviors are pinned. These are the safety net for the
+the anidb + hash-gate behaviors are pinned. These are the safety net for the
 "parse once, serve from SQL" migration - the resolver lookups had no direct
 coverage before.
 """
@@ -86,7 +86,7 @@ GRAPH: AniBridgeGraph = {
         "tvdb_show:600:s1": {"1-": "1-"},  # open-ended range (end None)
     },
     "anilist:300": {
-        "tvdb_show:111:s1": {"1-5": "1-5"},  # two tvdb shows -> first-pick matters
+        "tvdb_show:111:s1": {"1-5": "1-5"},  # two tvdb shows -> first choice matters
         "tvdb_show:222:s1": {"1-5": "1-5"},
         "imdb_show:tt300": {},
     },
@@ -157,7 +157,7 @@ class TestAniBridgeParity:
 # a `<=`->`<` off-by-one would silently drop.
 # --------------------------------------------------------------------------- #
 
-_SMALL_ID = st.integers(min_value=1, max_value=5)  # small pool -> shared ids across AniList entries
+_SMALL_ID = st.integers(min_value=1, max_value=5)  # small pool -> shared ids across titles
 _IMDB_ID = st.sampled_from(("tt1", "tt2", "tt3"))
 _SEASON = st.integers(min_value=0, max_value=3)
 _EP = st.integers(min_value=1, max_value=40)
@@ -227,8 +227,8 @@ def _specials_ranges_pair(draw: DrawFn) -> tuple[dict[str, str], dict[str, str]]
 def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
     """A structurally-valid anibridge graph over a small, collision-prone id pool.
 
-    The tiny external-id range forces shared tvdb/tmdb/imdb ids across AniList
-    entries (reverse-index sets + first-pick), and every tvdb season is drawn
+    The tiny external-id range forces shared tvdb/tmdb/imdb ids across
+    titles (reverse-index sets + first choice), and every tvdb season is drawn
     either empty (present-but-empty `{season: []}`) or range-bearing - the exact
     round-trip dimensions `to_rows`/`from_store` must preserve.
     """
@@ -334,7 +334,7 @@ class TestAniBridgeRangeContainment:
 
 
 def _aliasing_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> SpecialAliasing | None:
-    """The entry's `special_aliasing` on a TVDB lookup (None when absent), asserted equal under both backings."""
+    """The title's `special_aliasing` on a TVDB lookup (None when absent), asserted equal under both backings."""
 
     graph_ab, sql_ab, store = _ab_pair(graph)
     try:
@@ -347,14 +347,14 @@ def _aliasing_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> Specia
 
 
 def _aliases_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> SpecialAliases:
-    """The entry's special aliases on a TVDB lookup (empty when it has none), asserted equal under both backings."""
+    """The title's special aliases on a TVDB lookup (empty when it has none), asserted equal under both backings."""
 
     aliasing = _aliasing_of(graph, tvdb_id, anilist_id)
     return NO_ALIASES if aliasing is None else aliasing.aliases
 
 
 class TestSpecialAliases:
-    """A record's TMDB specials numbers pair by position with its TVDB ones, within each source range both map."""
+    """A title's TMDB specials numbers pair by position with its TVDB ones, within each source range both map."""
 
     def test_each_source_range_pairs_by_position(self) -> None:
         graph: AniBridgeGraph = {
@@ -434,7 +434,7 @@ class TestSpecialAliases:
         assert _aliases_of(graph, 500, 1) == {8: 7}
 
     def test_an_alias_onto_a_special_another_entry_maps_is_dropped(self) -> None:
-        # Entry 2 maps TVDB special 5 in its own season 0, so entry 1's alias onto 5 is dropped. Its alias onto 4 stays.
+        # Title 2 maps TVDB special 5 in its own season 0, so title 1's alias onto 5 is dropped. Its alias onto 4 stays.
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "4-5"}, "tmdb_show:900:s0": {"1-2": "4-5"}},
             "anilist:2": {"tvdb_show:500:s0": {"1": "5"}},
@@ -443,7 +443,7 @@ class TestSpecialAliases:
         assert _aliases_of(graph, 500, 1) == {4: 4}
 
     def test_another_entry_mapping_the_whole_specials_season_drops_every_alias(self) -> None:
-        # An empty map covers the whole season, so entry 2 maps every special and entry 1 keeps no alias.
+        # An empty dict covers the whole season, so title 2 maps every special and title 1 keeps no alias.
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "4-5"}, "tmdb_show:900:s0": {"1-2": "4-5"}},
             "anilist:2": {"tvdb_show:500:s0": {}},
@@ -589,8 +589,8 @@ class TestAnimeIdsParity:
             resolver.close()
 
     def test_candidate_sets_include_records_without_anilist(self) -> None:
-        # The former full-map scan added external ids even from anilist-less records
-        # (record E). The SQL distinct must keep that, even though lookups skip them.
+        # The former full-dict walk added external ids even from anilist-less objects
+        # (object E). The SQL distinct must keep that, even though lookups skip them.
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
@@ -634,7 +634,7 @@ class TestGetAnilistIdsMerge:
             assert resolved.ignored[270].anilist_id == 270
             mappings = resolved.kept
             assert list(mappings) == [269]  # 270 set aside, sorted
-            # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
+            # AniBridge won for 269 -> EPISODE_RANGES kind (not the anime-ids season 7).
             assert mappings[269].kind is MappingKind.EPISODE_RANGES
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
         finally:
@@ -653,7 +653,7 @@ class _IgnoredIdLog:
 
 
 class TestRunServicesIgnoredIds:
-    """The run's two reads of one series' mappings: the entries it processes, and every entry its listing reads."""
+    """The run's two reads of one series' mappings: the titles it checks, and every title its listings fetch reads."""
 
     @staticmethod
     @contextmanager
@@ -689,7 +689,7 @@ class TestRunServicesIgnoredIds:
 
 
 class TestVu1DegradedAniBridge:
-    """VU1: an AniBridge id reachable via imdb but not tvdb is 'degraded' (no tvdb season ranges).
+    """VU1: an AniBridge id reachable via imdb but not tvdb has no TVDB mappings (no tvdb season ranges).
 
     In the Sonarr/tvdb context it must defer to Kometa (which has the precise season) and, with no Kometa
     fallback, skip rather than grab the wrong episodes - while Radarr's AniBridge-primary precedence stays
@@ -698,7 +698,7 @@ class TestVu1DegradedAniBridge:
 
     def test_sonarr_context_kometa_overrides_degraded(self) -> None:
         # AniBridge resolves AniList 400 ONLY via imdb (imdb_show:tt400, no tvdb_show)
-        # -> a degraded entry. Kometa carries the precise season for the same id on
+        # -> an AniBridge mapping without TVDB mappings. Kometa carries the precise season for the same id on
         # the series' tvdb. In the Sonarr context (tvdb_id passed) Kometa must win.
         resolver = MappingResolver(
             cache_time=1,
@@ -713,16 +713,16 @@ class TestVu1DegradedAniBridge:
         try:
             mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
             mapping = mappings[400]
-            assert mapping.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
+            assert mapping.source is MappingSource.ANIME_IDS  # Kometa won, not the AniBridge one without TVDB mappings
             assert mapping.tvdb_season == 2  # the precise season is no longer shadowed
         finally:
             resolver.close()
 
     def test_sonarr_movie_as_special_keeps_kometa_season_zero(self) -> None:
         # A movie-as-special: Kometa attaches AniList 600 to series 555 at
-        # tvdb_season=0, while AniBridge carries it via the movie's imdb (degraded)
+        # tvdb_season=0, while AniBridge carries it via the movie's imdb (without TVDB mappings)
         # that the series' imdbId collides with. The Sonarr-context override must
-        # restore Kometa's season 0 - without it the degraded -1 shadows season 0,
+        # restore Kometa's season 0 - without it the AniBridge mapping's -1 shadows season 0,
         # and check_ep_by_anime_ids DROPS every s0 episode (`-1 & season 0 -> False`),
         # so the special is never grabbed. Guards that the fix does not break (it
         # RESTORES) Sonarr grabbing movies as specials.
@@ -739,13 +739,13 @@ class TestVu1DegradedAniBridge:
         try:
             mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
             mapping = mappings[600]
-            assert mapping.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
+            assert mapping.source is MappingSource.ANIME_IDS  # Kometa restored, not the AniBridge -1
             assert mapping.tvdb_season == 0  # season 0 preserved -> the special is still selectable
         finally:
             resolver.close()
 
     def test_radarr_context_preserves_anibridge_precedence(self) -> None:
-        # The SAME degraded shape for a movie (tmdb_movie/imdb, never tvdb-scoped):
+        # The SAME shape without TVDB mappings for a movie (tmdb_movie/imdb, never tvdb-scoped):
         # in the Radarr context (NO tvdb_id) the override must NOT fire, so AniBridge
         # stays the winning source - the documented "AniBridge is primary" invariant.
         resolver = MappingResolver(
@@ -765,8 +765,8 @@ class TestVu1DegradedAniBridge:
             resolver.close()
 
     def test_imdb_only_degraded_entry_makes_sonarr_skip(self) -> None:
-        # End-to-end: the resolver emits a degraded entry (no Kometa fallback), and
-        # feeding THAT real entry to mapping_episodes returns [] - the series is skipped,
+        # End-to-end: the resolver emits an AniBridge mapping without TVDB mappings (no Kometa fallback), and
+        # feeding THAT real mapping to mapping_episodes returns [] - the series is skipped,
         # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
         resolver = MappingResolver(
             cache_time=1,
@@ -791,7 +791,7 @@ class TestVu1DegradedAniBridge:
             SonarrEpisodes,
             _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
         )
-        # A non-empty series, yet the degraded entry resolves to NO episodes (skip).
+        # A non-empty series, yet the mapping without TVDB mappings resolves to NO episodes (skip).
         assert episodes.mapping_episodes(sonarr_series_id=777, al_id=500, mapping=without_tvdb_mappings) == []
 
 
@@ -894,7 +894,7 @@ class TestAnidbSkipTallies:
     upstream data. Mapping-level drops are *unsupported* forms the parser
     deliberately doesn't consume (the offset form's empty text, multi-episode
     spans) - present in the hundreds on a healthy file. A healthy sibling anime
-    rides along in every case to pin that its rows survive the skip.
+    comes along in every case to pin that its rows survive the skip.
     """
 
     @staticmethod
@@ -940,7 +940,7 @@ class TestAnidbSkipTallies:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # File-based load (the digest-gated path): the DEBUG summary appends each
+        # File-based load (the hash-gated path): the DEBUG summary appends each
         # tally only when nonzero - here 1 unsupported form, 0 malformed.
         source = tmp_path / "anime-list.xml"
         source.write_text(
@@ -974,12 +974,12 @@ class TestAnidbSkipTallies:
 
 
 # --------------------------------------------------------------------------- #
-# Digest gate end-to-end: an unchanged source file is not re-parsed
+# Hash gate end-to-end: an unchanged source file is not re-parsed
 # --------------------------------------------------------------------------- #
 
 
 class TestDigestGate:
-    """The digest gate skips re-parsing an unchanged source file and re-parses only when its content changes."""
+    """The hash gate skips re-parsing an unchanged source file and re-parses only when its content changes."""
 
     def test_unchanged_file_is_not_reparsed_changed_file_is(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1017,9 +1017,9 @@ class TestDigestGate:
         build().close()
         assert calls["n"] == 1  # cold: parsed once
         build().close()
-        assert calls["n"] == 1  # warm + unchanged digest: served from SQL, no re-parse
+        assert calls["n"] == 1  # warm + unchanged source hash: served from SQL, no re-parse
 
-        # New content -> digest changes -> re-parse.
+        # New content -> source hash changes -> re-parse.
         source.write_text(json.dumps({"A": {"anilist_id": 2, "tvdb_id": 20}}))
         resolver = build()
         try:
@@ -1297,7 +1297,7 @@ class TestMaybeDownloadFailOpen:
         resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
         resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
-        # Warned (not aborted): the fall-open notice rides the hub.
+        # Warned (not aborted): the fall-open notice goes through the hub.
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "Could not refresh anime_ids.json" in warning
         assert source.exists()  # the cached copy is left intact
@@ -1355,7 +1355,7 @@ class TestDownloadFile:
 
         `raise_for_status` fires before the `.part` open, so nothing lands on
         disk. The exact-message assert pins the containment contract (the httpx
-        message embeds the URL, ours must not).
+        message embeds the URL, pearlarr's must not).
         """
 
         respx.get("https://example/src.json").respond(status_code=500)

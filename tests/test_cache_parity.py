@@ -2,7 +2,7 @@
 """Parity guard: `tests/builders.FakeCacheStore` must observably match `CacheStore`.
 
 ~50 tests trust `FakeCacheStore` as a drop-in for the SQLite `CacheStore`, yet
-nothing checks the two agree. A semantic drift - TTL eviction, the entry
+nothing checks the two agree. A semantic drift - TTL eviction, the cached title
 merge, the JSONB round-trip, the pending series filter - would
 silently invalidate every test that leans on the fake. This
 drives one identical op sequence through both and asserts every observable read is
@@ -44,7 +44,7 @@ def _both_stores(tmp_path: Path) -> Generator[tuple[FakeCacheStore, CacheStore]]
 
 
 def _apply_ops(store: AbstractCacheStore) -> None:
-    """One identical mutating sequence: entries, the two TTL caches, pending."""
+    """One identical mutating sequence: cached titles, the two TTL caches, pending imports."""
 
     store.update_cached_title(
         Arr.SONARR,
@@ -58,13 +58,13 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             season_type="dvd",
         ),
     )
-    # Partial re-update of the SAME entry (omits name/url/updated_at/marker): pins the
+    # Partial re-update of the SAME cached title (omits name/url/updated_at/marker): pins the
     # partial merge (absent columns untouched - incl. the fallback marker, still True).
     store.update_cached_title(Arr.SONARR, 7, CachedTitleUpdate(coverage="S2"))
     # A cross-arr row. No fallback_satisfied key, pinning the default-False parity.
     store.update_cached_title(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
-    # neither does an empty record.
+    # neither does an empty update.
     store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_CACHED_TITLE_STAMP))
     store.uncache_title(Arr.SONARR, 8)
     store.uncache_title(Arr.SONARR, 4242)
@@ -90,7 +90,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_pending_import_row(
         Arr.SONARR, "hashB", pending_import(infohash="hashB", al_id=8, series_id=8, title="B").to_json()
     )
-    # A Radarr record on hashA, so `other_arr_holds` answers differently per arr: a
+    # A Radarr row on hashA, so `other_arr_holds` answers differently per arr: a
     # fake ignoring the arr narrowing cannot match both.
     store.put_pending_import_row(
         Arr.RADARR, "hashA", pending_import(infohash="hashA", al_id=7, series_id=0, title="AR").to_json()
@@ -110,11 +110,11 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-02T00:00:00Z", 9))
 
-    # Selection digest: an initial vouch then an upsert (only the last survives).
+    # Selection hash: an initial store then an upsert (only the last survives).
     store.store_selection_hash(Arr.SONARR, "digest-old")
     store.store_selection_hash(Arr.SONARR, "digest-new")
 
-    # TVDB orders: a record replaced whole (the dvd order goes), an empty listed order, a series with no orders.
+    # TVDB orders: a row replaced whole (the dvd order goes), an empty listed order, a series with no orders.
     row = (OrderRow(1, 1, 101, 1),)
     store.put_tvdb_orders(5, CachedOrders(_OLD, _OLD, {"official": row, "dvd": row}, {"official": 1, "dvd": 1}))
     store.put_tvdb_orders(5, CachedOrders(_NEW, _NEW, {"official": row, "alt": ()}, {"official": 1}))
@@ -166,8 +166,8 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
 class _JsonbBlock:
     """One whole-dict JSONB block's put/get/iter surface, for the isolation check.
 
-    `get` returns the single record under this block's fixed key (or None).
-    `iter_rows` returns every record reachable through the block's collection
+    `get` returns the single row under this block's fixed key (or None).
+    `iter_rows` returns every row reachable through the block's collection
     reads (for `pending` that is both `get_pending_import_rows` and `get_pending_import_rows_for_series`).
     """
 
@@ -191,7 +191,7 @@ def _sonarr_parse_rows(store: AbstractCacheStore) -> list[dict[str, Any]]:
 
 
 # The three blocks the real store round-trips through JSON on both ends. Each carries
-# a claim on `_ISO_SID` so the pending block's get_pending_import_rows_for_series filter matches the record.
+# a claim on `_ISO_SID` so the pending block's get_pending_import_rows_for_series filter matches the row.
 # guard_facts is deliberately absent: the scribble check needs raw mutable dicts and
 # `OwnedAtGrab` is frozen (isolation by construction), so `_apply_ops` covers it instead.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
@@ -220,7 +220,7 @@ _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
 
 
 def _scribble(rec: dict[str, Any], marker: str) -> None:
-    """Mutate a record in place: top-level, nested, and a fresh key.
+    """Mutate a row in place: top-level, nested, and a fresh key.
 
     Any leak into the store (a shallow copy OR a shared reference) surfaces on the next read.
     """
@@ -231,7 +231,7 @@ def _scribble(rec: dict[str, Any], marker: str) -> None:
 
 
 def _assert_not_mutated(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
-    """The record is present and none of `_scribble`'s mutations reached it."""
+    """The row is present and none of `_scribble`'s mutations reached it."""
 
     assert rec is not None, block
     assert rec["title"] == "orig", block
@@ -241,7 +241,7 @@ def _assert_not_mutated(rec: dict[str, Any] | None, block: str) -> dict[str, Any
 
 
 def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBlock) -> None:
-    """A JSONB record is caller-mutation-isolated on both ends, like the real store's json round-trip.
+    """A JSONB row is caller-mutation-isolated on both ends, like the real store's json round-trip.
 
     Mutating the dict handed to `put` afterwards, or any dict returned by `get` / `iter`, must not reach the store.
     """
@@ -257,7 +257,7 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
     _scribble(after_put, "leaked-via-get")
     _assert_not_mutated(block.get(store), block.name)
 
-    # read side (iter): mutate each iterated record.
+    # read side (iter): mutate each iterated row.
     for rec in block.iter_rows(store):
         _scribble(rec, "leaked-via-iter")
     for rec in block.iter_rows(store):

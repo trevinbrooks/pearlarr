@@ -1,11 +1,11 @@
 # pyright: strict
 """Characterization tests for the `TitleMapping` resolution boundary.
 
-These pin the two producer paths (Kometa Anime-IDs and AniBridge) end-to-end
-through `MappingResolver.get_anilist_ids`, plus the `.mode` discriminant and
+These pin the two mapping source paths (Kometa Anime-IDs and AniBridge) end-to-end
+through `MappingResolver.get_anilist_ids`, plus the `.kind` discriminant and
 the field defaults. The boundary had no coverage before the TypedDict ->
 dataclass deepening, so these guard the behavior the dataclass must preserve:
-which mode an entry drives, and the exact `.get(..., default)` values the
+which kind a mapping has, and the exact `.get(..., default)` values the
 former dict reads produced.
 """
 
@@ -42,7 +42,7 @@ def _resolver(
 
 
 class TestKometaPath:
-    """Kometa Anime-IDs records resolve to ANIME_IDS-mode entries."""
+    """Kometa Anime-IDs objects resolve to SEASON_OFFSET mappings."""
 
     def test_carries_flat_fields_and_no_tvdb_mappings(self) -> None:
         resolver = _resolver(
@@ -90,7 +90,7 @@ class TestKometaPath:
 
 
 class TestAniBridgePath:
-    """An AniBridge tvdb-scoped lookup resolves to an ANIBRIDGE-mode entry."""
+    """An AniBridge tvdb-scoped lookup resolves to an EPISODE_RANGES mapping."""
 
     def test_tvdb_lookup_attaches_tvdb_mappings(self) -> None:
         # anilist:269 -> tvdb_show 74796 season 2, episodes 1-21 (target side).
@@ -110,13 +110,13 @@ class TestAniBridgePath:
         assert mapping.tvdb_mappings == {2: [(1, 21)]}
         assert mapping.anilist_id == 269
         assert mapping.anidb_id == 1234
-        # AniBridge entries carry no flat season/offset -> the dataclass defaults.
+        # AniBridge mappings carry no flat season/offset -> the dataclass defaults.
         assert mapping.tvdb_season == -1
         assert mapping.tvdb_epoffset == 0
 
 
 class TestSpecialAliasing:
-    """An entry's `special_aliasing` defaults to None and holds a read-only copy of the producer's aliases."""
+    """A mapping's `special_aliasing` defaults to None and keeps a read-only copy of the aliases it was built with."""
 
     def test_an_entry_defaults_to_no_aliasing(self) -> None:
         assert TitleMapping(anilist_id=1).special_aliasing is None
@@ -143,7 +143,7 @@ class TestSpecialAliasing:
 
 
 class TestModeDiscriminant:
-    """`mode` keys off presence, not truthiness (the empty-dict trap)."""
+    """`kind` keys off presence, not truthiness (the empty-dict trap)."""
 
     def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.
@@ -158,7 +158,7 @@ class TestModeDiscriminant:
 
 
 def test_entry_is_frozen() -> None:
-    # Immutability is what makes sharing entries across the resolver's memo safe.
+    # Immutability is what makes sharing mappings across the resolver's memo safe.
     mapping = TitleMapping(anilist_id=1)
     # Attribute name kept in a var so ruff's B010 (constant setattr) doesn't fire
     # and the type checker doesn't flag a static frozen-field assignment.

@@ -91,11 +91,11 @@ class Arr(StrEnum):
 
 
 class ArrTarget(NamedTuple):
-    """One arr-selection target: which arr, plus the optional single item to narrow to.
+    """One arr-selection target: which arr, plus the optional single library item to narrow to.
 
-    `item_id` is a TMDB id for Radarr, a TVDB/series id for Sonarr (None runs the
+    `external_id` is a TMDB id for Radarr, the series' TVDB id for Sonarr (None runs the
     whole library). A NamedTuple so it still unpacks and compares as a plain
-    `(arr, item_id)` pair, keeping the name that says what the second slot means.
+    `(arr, external_id)` pair, keeping the name that says what the second slot means.
     """
 
     arr: Arr
@@ -338,7 +338,7 @@ class QbittorrentSettings(_ConfigBase):
     def credentials(self) -> tuple[str, str, str] | None:
         """The `(host, username, password)` triple, or `None` if any part is unset.
 
-        All three are needed to add torrents. A missing one means run in preview mode
+        All three are needed to add torrents. A missing one means a dry run
         (nothing is grabbed). The caller builds the client with explicit kwargs. The
         password is unwrapped here, at its point of use.
         """
@@ -419,9 +419,9 @@ _LANGUAGES_SINGLE_DEFAULT = ["Japanese"]
 
 
 class ImportsSettings(_ConfigBase):
-    """Wait-for-completion + manual import.
+    """Wait-for-completion + auto import.
 
-    The wait modes, the blocking monitor, and the manual import itself are Sonarr
+    The wait modes, the blocking wait, and the auto import itself are Sonarr
     only. Pending-import tracking and the per-arr `post_import_category` also
     cover Radarr grabs (which Radarr's own completed-download handling imports).
     """
@@ -448,7 +448,7 @@ class ImportsSettings(_ConfigBase):
     poll_interval: int = Field(default=30, ge=1)
     """Seconds between polls of qBittorrent and the Sonarr queue while waiting."""
 
-    # The fast lane between heavy polls: re-reads /api/v3/episode + one batched
+    # The progress poll between polls: re-reads /api/v3/episode + one batched
     # qBittorrent info read - NEVER the heavy RefreshMonitoredDownloads/queue.
     progress_poll_interval: int = Field(default=5, ge=0)
     """Seconds between lightweight wait-screen refreshes (progress bars, speed, ETA) within each poll interval.
@@ -578,7 +578,7 @@ class NotificationsSettings(_ConfigBase):
 
 
 class ScheduleSettings(_ConfigBase):
-    """Scheduled-mode cadence (hours between cycles)."""
+    """Scheduled-mode cadence (hours between scheduled runs)."""
 
     interval_hours: float = Field(default=6.0, gt=0, allow_inf_nan=False)
     """Hours between scheduled cycles."""
@@ -686,11 +686,11 @@ class MappingsSettings(_ConfigBase):
 
 
 def _canonical_for_hash(value: object) -> Json:
-    """A model-dump value as digest-stable JSON data.
+    """A model-dump value as hash-stable JSON data.
 
     Sets are sorted (their iteration order is hash-seed dependent, so it differs
     between processes). Dict keys are left to `json.dumps(sort_keys=True)`. A
-    `StrEnum` member passes through the `str` arm - `json.dumps` writes a str
+    `StrEnum` member passes through the `str` branch - `json.dumps` writes a str
     subclass's raw content, which IS the enum's plain value.
     """
 
@@ -760,7 +760,7 @@ class AppConfig(_ConfigBase):
     """ID and episode mapping sources. `anibridge_mappings` is the primary. The others fill anything it misses."""
 
     # Set once by `load` after construction (frozen models still allow private-attr
-    # assignment). The file checksum is the cache descriptor, the path feeds error text.
+    # assignment). The config hash is what the cache stores, the path feeds error text.
     _path: str = PrivateAttr(default="")
     _config_hash: str = PrivateAttr(default="")
     _migration: MigrationOutcome | None = PrivateAttr(default=None)
@@ -770,7 +770,7 @@ class AppConfig(_ConfigBase):
     @field_validator("config_version")
     @classmethod
     def _refuse_newer_schema(cls, value: int) -> int:
-        """Refuse a file stamped by a newer Pearlarr, naming both versions."""
+        """Refuse a file from a newer Pearlarr, naming both versions."""
 
         if value > CONFIG_VERSION:
             raise ValueError(
@@ -786,7 +786,7 @@ class AppConfig(_ConfigBase):
         Copies the bundled template to `path` and raises `FileNotFoundError` when
         the file is missing (so a first run writes a starter config), then parses,
         migrates an older file's mapping to the current schema (in memory only -
-        see `migration`), overlays any `PEARLARR_*__*` environment overrides, and
+        see `migration`), applies any `PEARLARR_*__*` environment overrides, and
         validates it. An invalid config raises `pydantic.ValidationError` (a
         `ValueError` subclass) naming the offending keys.
         """
@@ -809,7 +809,7 @@ class AppConfig(_ConfigBase):
         return config
 
     def config_hash(self) -> str:
-        """MD5 hex digest of the config file's bytes at load time (cache descriptor)."""
+        """MD5 hex hash of the config file's bytes at load time (stored in the cache)."""
 
         return self._config_hash
 
@@ -819,11 +819,11 @@ class AppConfig(_ConfigBase):
         Covers the whole `seadex` group plus `imports.languages_*` - the settings
         that change which release a title should end up with - and the code's
         `SELECTION_RULES_VERSION`, so a rule change re-checks like a config
-        change. The cache compares this against the digest a previous full pass
-        vouched for (`selection_changed`) and re-checks every cached verdict when
-        it moved. Whole-group on purpose: a future seadex knob is covered by
+        change. The cache compares this against the selection hash a previous full scan
+        stored (`selection_changed`) and re-checks every cached title when
+        it changed. Whole-group on purpose: a future seadex knob is covered by
         default. Over-inclusion costs one re-check run. Omission would leave
-        stale verdicts.
+        cached titles unchecked.
         Memoized (the model is immutable) so the run's repeated reads hash once.
         """
 
@@ -890,7 +890,7 @@ def _qualifying_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
     A variable qualifies only when it starts with `PEARLARR_` and carries the
     `__` nesting delimiter after that prefix. A delimiter-less `PEARLARR_*` name
     (the data-dir and Docker operational vars) is reserved and never read as
-    config. Sorted for a deterministic overlay and checksum.
+    config. Sorted for a deterministic override merge and config hash.
     """
 
     return sorted(
@@ -901,7 +901,7 @@ def _qualifying_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
 
 
 def _mapping_annotation(annotation: object) -> bool:
-    """Whether the annotation is (or one union arm is) a free-form mapping."""
+    """Whether the annotation is (or one union member is) a free-form mapping."""
 
     if get_origin(annotation) is dict:
         return True
@@ -913,7 +913,7 @@ def _mapping_annotation(annotation: object) -> bool:
 def _override_key_path(name: str) -> list[str]:
     """The key path a qualifying variable's name addresses.
 
-    Model-addressed segments fold to lowercase (matching the file's key style).
+    Model-addressed segments are lowercased (matching the file's key style).
     Once the path enters a free-form mapping field (e.g. `qbittorrent.options`,
     whose keys reach qbittorrentapi verbatim and case-sensitively), the
     remaining segments keep the variable's exact case.
@@ -958,7 +958,7 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     so an env value means exactly what the same text means in `config.yml` (an
     empty string parses to None, which the blank-key handling then coalesces to
     the default). A malformed value raises a `ValidationError` naming only the
-    variable, so it renders through the invalid-configuration arms like a bad
+    variable, so it renders through the invalid-configuration handlers like a bad
     file key.
     """
 
@@ -1012,11 +1012,11 @@ def _deep_merge(base: dict[str, object], overrides: Mapping[str, object]) -> Non
 
 
 def _hash_config_bytes(raw: bytes, environ: Mapping[str, str]) -> str:
-    """MD5 over the config bytes plus the qualifying env overrides (the cache descriptor).
+    """MD5 over the config bytes plus the qualifying env overrides (the config hash).
 
-    Folding the overrides in means an env change registers as a config change,
+    Including the overrides means an env change registers as a config change,
     so the cache re-checks against the effective settings. An unrelated env var
-    leaves the digest untouched.
+    leaves the hash untouched.
     """
 
     lines = "".join(f"{name}={value}\n" for name, value in _qualifying_env(environ))
@@ -1065,7 +1065,7 @@ def _write_owner_only(path: str, data: bytes) -> None:
 
 
 def _validate_with_env(parsed: object, environ: Mapping[str, str]) -> AppConfig:
-    """Validate a parsed config mapping the way a load would: env overlay applied.
+    """Validate a parsed config mapping the way a load would: env overrides applied.
 
     Env wins per leaf. A non-mapping file (junk) skips the merge so its own
     validation error stands unchanged. Deep-copies before merging so the
@@ -1089,7 +1089,7 @@ def migrate_config_file(path: str, expected_hash: str | None = None) -> ConfigMi
     land beside it first, as `<path>.bak`. Both new files are created
     owner-only (they carry API keys) and the swap goes through a temp file +
     `os.replace`, so a failed write can never leave a truncated config; a
-    failed swap removes both new files again (nothing changed, so this cycle's
+    failed swap removes both new files again (nothing changed, so this rewrite's
     backup records nothing). A symlinked config resolves to its target first:
     the rewrite and its backup land beside the target and the link survives. A
     file already at the current version is not touched at all.
@@ -1100,7 +1100,7 @@ def migrate_config_file(path: str, expected_hash: str | None = None) -> ConfigMi
     (the loaded `AppConfig.config_hash()`) extends that refusal to a concurrent
     edit: bytes that differ from what the run validated are never rewritten
     and never land in the backup. Validation applies the `PEARLARR_*` env
-    overlay exactly like a load (an env-rescued file must stay rewritable),
+    overrides exactly like a load (an env-rescued file must stay rewritable),
     while the render always spells the file's own values. Raises like
     `AppConfig.load` (`OSError` / `yaml.YAMLError` / `ValidationError`): a
     file this version cannot fully read is never rewritten.

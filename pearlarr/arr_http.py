@@ -1,6 +1,6 @@
 """Shared raw-endpoint HTTP for the arr clients.
 
-`ArrHttp` is the httpx-native transport every raw arr endpoint rides:
+`ArrHttp` is the httpx-native transport every raw arr endpoint uses:
 one bound helper per client holding the request/retry/parse/fail-open
 boilerplate each raw arr endpoint would otherwise repeat (plus the strict,
 fail-closed library fetch and its typed errors, and the shared history read
@@ -26,7 +26,7 @@ from .output import hub_note, hub_warn
 from .output.console_text import compact_duration
 
 # (connect, read) seconds, shared by the arr http client and the qBittorrent adapter.
-# A hung service then surfaces as a transient miss instead of blocking the run.
+# A hung service then surfaces as a transient failure instead of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
 
 # Transient statuses worth another try on an idempotent GET - shared with the
@@ -38,14 +38,14 @@ BACKOFF_BASE_S = 0.5
 # `imports.digest_interval` (same default) via `replace`; everything else keeps this.
 REWARN_INTERVAL_S = 300.0
 
-# Coalesced-repeat breadcrumbs ride the stdlib channel (first-party child of
-# the app logger, so the bridge adopts them into the file sink at DEBUG).
+# Coalesced-repeat DEBUG lines go through the stdlib channel (first-party child of
+# the app logger, so the bridge adopts them into the file log renderer at DEBUG).
 _LOG = logging.getLogger(f"{LOG_NAME}.arr_http")
 
 
 @dataclass
 class _Streak:
-    """One (template, detail) key's consecutive-failure run (guard: `FailureStreaks.lock`)."""
+    """One (template, detail) key's consecutive-failure streak (guard: `FailureStreaks.lock`)."""
 
     count: int
     first_at: float
@@ -54,12 +54,12 @@ class _Streak:
 
 @dataclass
 class FailureStreaks:
-    """The consecutive-failure ledger an arr's transport handles share.
+    """The consecutive-failure streaks an arr's transport handles share.
 
     Mutable on purpose: `ArrHttp` stays frozen while `_fail`/`_recover`
     accumulate streak state here, and `dataclasses.replace` handles (the
     no-retry poll handle) share the one object so a streak spans both -
-    separate ledgers would double-fire heartbeats and recovery notes.
+    separate streak state would double-fire re-warns and recovery notes.
     `lock` guards `active`: the shared client pool serves concurrent sweep
     threads (`SONARR_FETCH_WORKERS`).
     """
@@ -69,7 +69,7 @@ class FailureStreaks:
 
 
 class DeleteOutcome(Enum):
-    """One DELETE's terminal reading (never rendered, so a plain Enum)."""
+    """One DELETE's final result (never rendered, so a plain Enum)."""
 
     OK = auto()
     """The arr confirmed the delete (200/204)."""
@@ -86,8 +86,8 @@ class ArrUnreachableError(Exception):
 
     Raised (instead of failing open) by `ArrHttp.get_json_list_strict`:
     the library list is a run's ground truth, so an unreachable arr / non-200 /
-    non-JSON body / wrong payload shape aborts the leg with this clean,
-    user-facing message (the CLI containment arm renders it without a
+    non-JSON body / wrong payload shape aborts the arr run with this clean,
+    user-facing message (the CLI containment handler renders it without a
     traceback) rather than reading as an empty library.
     """
 
@@ -95,7 +95,7 @@ class ArrUnreachableError(Exception):
 class ArrAuthError(Exception):
     """An arr rejected the API key (401/403) on the load-bearing library fetch.
 
-    A distinct error from `ArrUnreachableError` so the CLI containment arm can
+    A distinct error from `ArrUnreachableError` so the CLI containment handler can
     point the operator at `<arr>.api_key` specifically.
     """
 
@@ -104,8 +104,8 @@ def make_arr_client(*, verify: bool = True) -> httpx.Client:
     """The pinned httpx client the arr transports share (one per run).
 
     - `follow_redirects=False` (httpx's default, pinned here on purpose): the
-      `X-Api-Key` header must never ride a cross-host redirect, so a 3xx from
-      an arr (a reverse-proxy login bounce) surfaces as a non-200 miss instead
+      `X-Api-Key` header must never be sent on a cross-host redirect, so a 3xx from
+      an arr (a reverse-proxy login bounce) surfaces as a non-200 failure instead
       of silently replaying credentials elsewhere.
     - Client-level timeout mirroring `ARR_REQUEST_TIMEOUT_S`, so no call site
       can forget one.
@@ -129,11 +129,11 @@ class ArrHttp:
     Frozen: `bind` is the single write point, so the auth header and base url
     can't be reassigned on a shared instance post-bind.
 
-    Owns the boilerplate every raw endpoint would otherwise repeat: the auth header rides
+    Owns the boilerplate every raw endpoint would otherwise repeat: the auth header goes with
     each request (the client is shared across arrs, so never on the client),
     transient GET failures retry with jittered backoff (a POST is not
     idempotent, so `post_json` never retries), EVERY body is parsed
-    behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
+    behind a JSON guard (a 200 HTML proxy page reads as a failure, never an
     abort), and each failure warns once through the caller's `warn` template
     with the failure detail filled in - consecutive identical failures
     coalesce (`_fail`/`_recover`): the first warns, repeats drop to DEBUG,
@@ -151,24 +151,24 @@ class ArrHttp:
     headers: Mapping[str, str]
     sleep: Callable[[float], None] = time.sleep  # injectable backoff sleep (bypassed in tests)
     retries: int = GET_RETRIES
-    """In-call GET retry budget. The wait-path poll handle rides `replace(http,
-    retries=0)` - its monitor loop IS the retry mechanism, so in-call backoff
+    """In-call GET retry budget. The wait pass's poll handle uses `replace(http,
+    retries=0)` - its poll loop IS the retry mechanism, so in-call backoff
     would only stretch each poll."""
     rewarn_s: float = REWARN_INTERVAL_S
     """Seconds between "still failing" re-warns while a streak runs (the Sonarr
     client swaps in `imports.digest_interval` via `replace` - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
     streaks: FailureStreaks = field(default_factory=FailureStreaks, compare=False)
-    """The failure-streak ledger. MUST stay `init=True`: `dataclasses.replace`
+    """The failure streaks. MUST stay `init=True`: `dataclasses.replace`
     re-runs `default_factory` for init=False fields, which would silently
-    un-share the ledger between the primary and no-retry handles.
+    un-share the streaks between the primary and no-retry handles.
     `compare=False` keeps accumulated state out of `__eq__`."""
 
     @property
     def display_url(self) -> str:
         """The base URL as messages may show it: any embedded login masked.
 
-        Requests ride `base_url` verbatim (a `user:pass@` login there is
+        Requests use `base_url` verbatim (a `user:pass@` login there is
         real basic auth, e.g. an arr behind a protected reverse proxy). Every
         error/warning string uses this instead - the login is a credential
         under the redaction guarantee.
@@ -211,11 +211,11 @@ class ArrHttp:
         """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
-        `retries` times (the bind-time budget - the wait-path poll handle rides
+        `retries` times (the bind-time budget - the wait pass's poll handle uses
         0) with jittered exponential backoff - GETs only, so
         this stays safe for idempotent reads. `timeout` overrides the
-        client-level timeout per request (the 120s manual-import scans).
-        None rides the client default. Returns the final response (a 200, or
+        client-level timeout per request (the 120s ManualImport fetches).
+        None uses the client default. Returns the final response (a 200, or
         the terminal / retry-exhausted non-200) paired with a detail naming
         the failure, or `(None, detail)` when no request completed.
         """
@@ -255,7 +255,7 @@ class ArrHttp:
         warn: str | None,
         timeout: float | None,
     ) -> object | None:
-        """GET + JSON-parse core: the failure side of the streak ledger only.
+        """GET + JSON-parse core: the failure side of the streaks only.
 
         The public reads layer their shape checks and the `_recover` success
         hook on top - recovery must fire only when the WHOLE read succeeds, or
@@ -280,13 +280,13 @@ class ArrHttp:
     ) -> object | None:
         """GET `path` and parse the JSON body, failing open to None with one warning.
 
-        Rides `_get_with_retries` (transient failures retry with jittered
+        Uses `_get_with_retries` (transient failures retry with jittered
         backoff, up to the handle's `retries`). Any terminal failure (request
         error, non-200, non-JSON body)
         warns via `warn` - a template whose `{detail}` names the cause - and
         returns None. `warn=None` keeps a deliberate quiet path silent.
         `timeout` overrides the client-level timeout per request (seconds).
-        None rides the client default.
+        None uses the client default.
         """
 
         payload = self._fetch_json(path, params, warn=warn, timeout=timeout)
@@ -400,7 +400,7 @@ class ArrHttp:
         """GET `path` and parse the JSON array body - RAISE instead of failing open.
 
         The strict counterpart of `get_json_list`, for the load-bearing
-        library fetch where a failure must abort the leg rather than read as an
+        library fetch where a failure must abort the arr run rather than read as an
         empty library. Shares the retry core (transient statuses still retry
         first), then turns any terminal failure into a typed error: a 401/403
         raises `ArrAuthError`. A transport error, any other non-200, a
@@ -431,8 +431,8 @@ class ArrHttp:
         """History records since `date` (`/api/v3/history/since`, ascending), or None.
 
         One unfiltered call (`eventType` is single-valued server-side - the
-        activity scan filters client-side), shared by both arr clients - the
-        record's `seriesId`/`movieId` fold into one `item_id` at the
+        activity read filters client-side), shared by both arr clients - the
+        record's `seriesId`/`movieId` merge into one `item_id` at the
         model. Fails open to None through `get_json_list`'s matrix with a
         warning that states the consequence too: this read only feeds activity
         detection, and the caller (`ArrActivityReader.read`) doesn't re-warn.
@@ -450,7 +450,7 @@ class ArrHttp:
         if raw is None:
             return None
 
-        # Every field folds junk independently, so only a non-object stray skips.
+        # Every field converts junk independently, so only a non-object stray skips.
         return validate_each(HistoryRecord, raw)
 
     def download_clients(self) -> list[DownloadClientRecord] | None:
@@ -459,8 +459,8 @@ class ArrHttp:
         Read lazily, at most once per run, by the category resolver
         (`arr_categories.ArrCategoryResolver`), shared by both arr clients
         like `history_since`. Fails open to None through `get_json_list`'s
-        matrix with a warning stating the consequence: a miss leaves blank
-        categories blank, calls no category unwatched, and holds a post-import
+        matrix with a warning stating the consequence: a failed read leaves blank
+        categories blank, calls no category unwatched, and blocks a post-import
         move that might carry a torrent into a watched one.
         """
 
@@ -483,11 +483,11 @@ class ArrHttp:
     def _fail(self, warn: str | None, detail: str) -> None:
         """The single fail-open tail: warn (when wanted) and return None.
 
-        Literal replace, NOT str.format: templates will embed filenames/titles
+        Literal replace, NOT str.format: templates will embed filenames/display names
         (which can carry braces), and the fail-open path must never crash.
 
         Consecutive identical failures coalesce per (template, detail): the
-        first warns as before, repeats drop to a DEBUG breadcrumb with the
+        first warns as before, repeats drop to a DEBUG line with the
         running count, and a "still failing" re-warn fires every
         `rewarn_s`. `_recover` closes the streak on the next success.
         """
@@ -521,7 +521,7 @@ class ArrHttp:
 
         The success side of `_fail`'s coalescing, called from each public
         read's success tail. Keyed by template alone so a streak whose detail
-        shifted mid-outage (500 -> ConnectError) still closes as ONE note
+        shifted mid-streak (500 -> ConnectError) still closes as ONE note
         carrying the combined total.
         """
 

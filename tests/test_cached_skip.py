@@ -2,13 +2,13 @@
 # pyright: reportPrivateUsage=false
 # These read the hub's private run context (run._ctx). Strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""The cached-entry short-circuit (`ArrRunServices.is_unchanged`) and the title seams around it.
+"""The cached-title short-circuit (`ArrRunServices.is_unchanged`) and the title interfaces around it.
 
-Pins the skip decision, made from a single `CacheStore.get_cached_title` read: a cached
-entry whose SeaDex `updated_at` still matches is skipped (and its url/coverage
-backfilled once if the record predates those fields, its name once AniList can
-resolve it). An absent or stale entry is re-processed, and a row sent on to a
-check loses its stamp until a check caches the title as done.
+Pins the decision, made from a single `CacheStore.get_cached_title` read: a cached
+title whose SeaDex `updated_at` still matches is unchanged (and its url/coverage
+backfilled once if the row predates those fields, its name once AniList can
+resolve it). An absent cached title, or one whose entry changed, is checked again,
+and a row sent on to a check loses its stamp until a check caches the title.
 """
 
 from dataclasses import dataclass
@@ -65,7 +65,7 @@ class _RecordingReporter:
 
 @dataclass(frozen=True, slots=True)
 class _BackfillCase:
-    """One cached-entry backfill: the stored row, what AniList resolves, the single write, the wire calls, the name after."""
+    """One cached-title backfill: the stored row, what AniList resolves, the single write, the wire calls, the name after."""
 
     stored: CachedTitleUpdate
     anilist: str | None
@@ -78,7 +78,7 @@ _FRESH = datetime(2021, 1, 1)
 
 
 class TestCachedEntrySkip:
-    """`is_unchanged` skips only a fresh cached entry, backfilling url/coverage and the name once.
+    """`is_unchanged` is True only for a fresh cached title, backfilling url/coverage and the name once.
 
     It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
     """
@@ -114,7 +114,7 @@ class TestCachedEntrySkip:
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
-        # SeaDex entry now carries a newer updated_at -> stale -> re-process.
+        # SeaDex entry now carries a newer updated_at -> changed -> check again.
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
 
     @pytest.mark.parametrize(
@@ -173,8 +173,8 @@ class TestCachedEntrySkip:
         ],
     )
     def test_backfills_once_in_a_single_write(self, case: _BackfillCase) -> None:
-        # Nothing else re-processes a fresh entry, so the skip is where an older record
-        # picks up its url/coverage and a record written during an outage picks up its name.
+        # Nothing else checks a fresh cached title again, so the unchanged check is where an older row
+        # picks up its url/coverage and a row written while AniList was unreachable picks up its name.
         cache = _RecordingCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, case.stored)
         cache.updates.clear()
@@ -201,7 +201,7 @@ class TestCachedEntrySkip:
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
-        # An arr-side file change bypasses the skip despite a matching timestamp.
+        # An arr-side file change bypasses the unchanged check despite a matching timestamp.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
@@ -209,7 +209,7 @@ class TestCachedEntrySkip:
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_selection_stale_reprocesses_even_when_fresh(self) -> None:
-        # A matching-preference change bypasses the skip despite a matching timestamp.
+        # A matching-preference change bypasses the unchanged check despite a matching timestamp.
         cache = FakeCacheStore()
         cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_changed=True)
@@ -241,11 +241,11 @@ class TestCachedEntrySkip:
 
 
 _CACHED_ON = datetime(2026, 1, 1)
-"""SeaDex's update time for entry 7, the stamp its row carries while it is cached as done."""
+"""SeaDex's update time for title 7's entry, the stamp its row carries while it is cached."""
 
 
 class TestACheckedTitleLosesItsStamp:
-    """The gate clears the stamp of a title it sends on to a check: only a check that caches it as done writes it back."""
+    """The gate clears the stamp of a title it sends on to a check: only a check that caches it writes it back."""
 
     _ENTRY = make_entry_record(updated_at=_CACHED_ON)
 
@@ -259,7 +259,7 @@ class TestACheckedTitleLosesItsStamp:
         )
 
     def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> ArrRunServices:
-        """A run made to check entry 7 again over its cached row, as a library change makes it."""
+        """A run made to check title 7 again over its cached row, as a library change makes it."""
 
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
@@ -270,7 +270,7 @@ class TestACheckedTitleLosesItsStamp:
         return run
 
     def _grab(self, run: ArrRunServices) -> None:
-        """The check's tail over one flagged release, hash h1, seeded as a strategy seeds it."""
+        """The check's tail over one planned grab, hash h1, set up as an arr strategy sets it up."""
 
         run.grab_and_cache(
             grab_request(
@@ -332,7 +332,7 @@ class TestACheckedTitleLosesItsStamp:
 
 
 class TestFallbackSatisfiedResurfacing:
-    """The fallback-satisfied marker bypasses the cache skip in warn mode only."""
+    """The fallback-satisfied marker bypasses the unchanged check in warn mode only."""
 
     @staticmethod
     def _cache(*, marker: bool) -> FakeCacheStore:
@@ -356,7 +356,7 @@ class TestFallbackSatisfiedResurfacing:
 
     def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
         # Fresh timestamp, but the title was satisfied by a fallback: warn mode
-        # re-processes it so the private-only warning resurfaces.
+        # checks it again so the private-only warning resurfaces.
         assert self._skips(self._cache(marker=True), "warn") is False
 
     def test_fallback_mode_still_skips_a_marked_entry(self) -> None:
@@ -367,7 +367,7 @@ class TestFallbackSatisfiedResurfacing:
 
     def test_no_releases_skip_clears_a_preseeded_marker(self) -> None:
         # A title that stops yielding usable releases is never fallback-satisfied:
-        # the shared tail overwrites a stale True.
+        # the shared tail overwrites an old True.
         cache = self._cache(marker=True)
         run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
         run.report_no_releases(7, {"name": "Title"})
@@ -384,7 +384,7 @@ class _CtxBind:
 
 
 class _TailReporter:
-    """Records the no-releases / no-entry / outage-skip outcomes the shared tails report."""
+    """Records the no-releases / no-entry / SeaDex-unreachable outcomes the shared tails report."""
 
     def __init__(self) -> None:
         self.no_releases_ctxs: list[ArrRunState] = []
@@ -411,7 +411,7 @@ class TestNoReleasesSkip:
 
     def test_logs_persists_and_reports_not_grabbed(self) -> None:
         # The real three-step tail (log + cache write + throttle). Its body
-        # previously had fake-only coverage: the seam tests script it, nothing
+        # previously had fake-only coverage: the interface tests script it, nothing
         # drove the real thing.
         cache = FakeCacheStore()
         reporter = _TailReporter()
@@ -436,7 +436,7 @@ class TestNoReleasesSkip:
 
 
 class TestAlIdPrologue:
-    """`begin_check` reports a missing entry vs an outage distinctly, and resets skip flags/tallies on a hit."""
+    """`begin_check` reports no entry vs an unreachable SeaDex distinctly, and resets skip flags/tallies on a hit."""
 
     def test_no_seadex_entry_reports_and_returns_none(self) -> None:
         reporter = _TailReporter()
@@ -448,8 +448,8 @@ class TestAlIdPrologue:
         assert run._state.stats.checked == 1
 
     def test_outage_skip_reports_distinctly_and_returns_none(self) -> None:
-        # A SeaDex-unreachable skip must never be reported as "no entry" - it
-        # takes the outage reporter hook and its own tally.
+        # A SeaDex-unreachable title must never be reported as "no entry" - it
+        # takes the unreachable reporter hook and its own tally.
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(unreachable=True), _reporter=reporter)
 
@@ -461,7 +461,7 @@ class TestAlIdPrologue:
     def test_entry_found_resets_skip_flags_and_tallies(self) -> None:
         entry = make_entry_record()
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
-        run._state.per_title.private_only_skipped = True  # stale flag from a previous title
+        run._state.per_title.private_only_skipped = True  # leftover flag from a previous title
 
         assert run.begin_check(5) is entry
         assert run._state.per_title.private_only_skipped is False
@@ -469,7 +469,7 @@ class TestAlIdPrologue:
 
 
 class TestResolveTitle:
-    """`resolve_title` shows AniList's title, else the arr's own, else the id form."""
+    """`resolve_title` shows AniList's name, else the arr's, else the id form."""
 
     @staticmethod
     def _run(client: ScriptedAniListClient, arr_title: str = "") -> ArrRunServices:
@@ -494,7 +494,7 @@ class TestResolveTitle:
 
 
 class TestNewCacheDetails:
-    """`new_cached_title_update` seeds the record, carrying a name only when AniList resolved one."""
+    """`new_cached_title_update` builds the cached title update, carrying a name only when AniList resolved one."""
 
     @pytest.mark.parametrize(
         ("anilist", "name"),

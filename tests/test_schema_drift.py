@@ -1,5 +1,5 @@
 # pyright: strict
-"""Drift net: our boundary models vs the vendored Sonarr/Radarr OpenAPI captures.
+"""Drift net: pearlarr's boundary models vs the vendored Sonarr/Radarr OpenAPI captures.
 
 Every `arr_models` model that mirrors an arr resource
 is pinned to its component in `schemas/sonarr.schema` / `schemas/radarr.schema`:
@@ -150,7 +150,7 @@ _BOTH: Final = ("sonarr", "radarr")
 # ManualImportCommand payload) and the spec's Command component models only the
 # generic envelope, so there is no schema contract to check them against.
 ROSTER: Final = (
-    # `seasonType` / `seasonTypes` are Sonarr v5's, and the capture is v4's. `seasonType` defaults to the official
+    # `seasonType` / `seasonTypes` are Sonarr v5's, and the capture is v4's. `seasonType` defaults to the aired
     # order v4 numbers by, and the empty `seasonTypes` is how the order fetch tells v4 apart.
     Spec(SonarrSeries, "SeriesResource", _SONARR, exempt=frozenset({"seasonType", "seasonTypes"})),
     Spec(AlternateTitle, "AlternateTitleResource", _SONARR),
@@ -212,8 +212,8 @@ def test_quality_source_enum_matches_sonarr() -> None:
     """QualitySource is set-equal to sonarr.schema's QualitySource enum.
 
     Sonarr ONLY: Radarr's QualitySource is a disjoint vocabulary (cam, telesync,
-    tv, ...) our enum never consumes - quality-source matching lives on the
-    Sonarr manual-import path.
+    tv, ...) pearlarr's enum never consumes - quality-source matching lives on the
+    Sonarr auto import path.
     """
 
     values = _SCHEMAS["sonarr"].component("QualitySource").get("enum")

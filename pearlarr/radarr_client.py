@@ -1,4 +1,4 @@
-"""Radarr REST client: the HTTP surface the Radarr syncer talks to."""
+"""Radarr REST client: the HTTP surface the Radarr strategy talks to."""
 
 from abc import ABC, abstractmethod
 from typing import override
@@ -12,9 +12,9 @@ from .mappings import KnownExternalIds
 
 
 class AbstractRadarrClient(ABC):
-    """The Radarr read surface the Radarr syncer consumes.
+    """The Radarr read surface the Radarr strategy consumes.
 
-    The nominal seam mirroring `sonarr_client.AbstractSonarrClient`:
+    The nominal interface mirroring `sonarr_client.AbstractSonarrClient`:
     the strategy and `collect_anime_movies` take this type, so tests inject a
     subclassed fake that is statically checked against the real client's
     surface (a missing method is a `reportAbstractUsage` error, not a
@@ -27,7 +27,7 @@ class AbstractRadarrClient(ABC):
 
     @abstractmethod
     def movie_files(self, movie_id: int) -> list[MovieFile]:
-        """Movie-file records for a movie (`/api/v3/moviefile`)."""
+        """Movie-file resources for a movie (`/api/v3/moviefile`)."""
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None:
@@ -40,15 +40,15 @@ class RadarrClient(AbstractRadarrClient):
     def __init__(self, *, http: ArrHttp) -> None:
         """Instantiate the Radarr API client.
 
-        Construction is network-free (no connection probe): the first request
+        Construction is network-free (no connection check): the first request
         happens on the first method call, so an unreachable Radarr surfaces as
         that call's typed error / fail-open path, never a constructor hang.
-        Warnings ride the hub - unlike Sonarr, this client emits no lines of
+        Warnings go through the hub - unlike Sonarr, this client emits no lines of
         its own, so it holds no logger at all.
 
         Args:
             http: The transport already bound to Radarr's url + key
-                (`run_services.bind_arr_http` does the `label="Radarr"` bind).
+                (`arr_run_services.bind_arr_http` does the `label="Radarr"` bind).
         """
 
         self._http = http
@@ -58,19 +58,19 @@ class RadarrClient(AbstractRadarrClient):
         """Every movie in Radarr (`/api/v3/movie`, unfiltered).
 
         The one fail-CLOSED read: the library list is the run's ground truth
-        (an outage reading as an empty library would silently no-op the leg),
+        (an unreachable Radarr reading as an empty library would silently no-op the arr run),
         so a failure raises the typed `arr_http` errors for the CLI
-        containment arms instead of degrading to an empty list.
+        containment handlers instead of degrading to an empty list.
         """
 
         raw = self._http.get_json_list_strict("/api/v3/movie")
         # Strict validation to match: a non-empty payload with zero valid
-        # records raises BoundaryContractError instead of reading as empty.
+        # movies raises BoundaryContractError instead of reading as empty.
         return list[RadarrItem](validate_each(RadarrMovie, raw, strict=True))
 
     @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:
-        """Movie-file records for a movie (`/api/v3/moviefile`).
+        """Movie-file resources for a movie (`/api/v3/moviefile`).
 
         Each `MovieFileResource` is parsed into an `arr_models.MovieFile`
         view at this client boundary.
@@ -88,7 +88,7 @@ class RadarrClient(AbstractRadarrClient):
         if raw is None:
             return []
 
-        # Validate each record at this boundary (junk records skip with a warning).
+        # Validate each movie file at this boundary (junk ones skip with a warning).
         return validate_each(MovieFile, raw)
 
     @override
@@ -106,7 +106,7 @@ def collect_anime_movies(
     known_ids: KnownExternalIds,
     anibridge: AniBridge | None,
 ) -> list[RadarrItem]:
-    """Radarr movies that have an AniList mapping, sorted by title.
+    """Radarr movies that have an AniList mapping, sorted by name.
 
     Gathers the candidate TMDB/IMDb id sets from the two mapping sources, then
     keeps each Radarr movie that matches one of them.

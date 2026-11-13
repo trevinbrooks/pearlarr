@@ -51,7 +51,7 @@ class WireModel(BaseModel):
 
 
 class BoundaryContractError(RuntimeError):
-    """A strict library read got a non-empty payload with zero valid records."""
+    """A strict library read got a non-empty payload with zero valid elements."""
 
 
 def validation_summary(e: ValidationError) -> str:
@@ -72,7 +72,7 @@ def validate_each[ModelT: ApiModel](
     *,
     strict: bool = False,
 ) -> list[ModelT]:
-    """Validate each raw record into `model`, warning on and skipping the ones that fail.
+    """Validate each raw element into `model`, warning on and skipping the ones that fail.
 
     With `strict=True` a non-empty `raw` that validates to NOTHING raises `BoundaryContractError`.
     """
@@ -82,8 +82,8 @@ def validate_each[ModelT: ApiModel](
         try:
             validated.append(model.model_validate(record))
         except ValidationError as e:
-            # Deferred: a top-level .output import cycles back here through wait_types.
-            # Skip-arm only, so the all-valid hot path never touches the import machinery.
+            # Imported here: a top-level .output import cycles back here through wait_types.
+            # Skip branch only, so the all-valid hot path never touches the import machinery.
             from .output import hub_warn
 
             hub_warn(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
@@ -94,19 +94,19 @@ def validate_each[ModelT: ApiModel](
 
 
 def _str_or_none(value: object) -> str | None:
-    """Per-field lenient fold: keep a str, fold any other shape to None."""
+    """Per-field lenient conversion: keep a str, reduce any other shape to None."""
 
     return value if isinstance(value, str) else None
 
 
 def _str_or_blank(value: object) -> str:
-    """Per-field lenient fold: keep a str, fold any other shape to ""."""
+    """Per-field lenient conversion: keep a str, reduce any other shape to ""."""
 
     return value if isinstance(value, str) else ""
 
 
 def _datetime_or_none(value: object) -> datetime | None:
-    """Per-field lenient fold: a zoned datetime or zoned ISO 8601 string parses, anything else folds to None."""
+    """Per-field lenient conversion: a zoned datetime or zoned ISO 8601 string parses, anything else reduces to None."""
 
     parsed = value
     if isinstance(value, str):
@@ -118,7 +118,7 @@ def _datetime_or_none(value: object) -> datetime | None:
 
 
 def _day_or_none(value: object) -> date | None:
-    """Per-field lenient fold: a date, or an ISO date string such as `2020-08-29`, parses. Anything else folds to None."""
+    """Per-field lenient conversion: a date, or an ISO date string like `2020-08-29`, parses. Anything else is None."""
 
     if isinstance(value, date):
         return value
@@ -131,9 +131,9 @@ def _day_or_none(value: object) -> date | None:
 
 
 def _fuzzy_date_or_none(value: object) -> date | None:
-    """Per-field lenient fold: AniList's `{year, month, day}` parses when it names a real day.
+    """Per-field lenient conversion: AniList's `{year, month, day}` parses when it names a real day.
 
-    AniList sends null for a part it doesn't know, and a date with any part missing folds to None.
+    AniList sends null for a part it doesn't know, and a date with any part missing reduces to None.
     """
 
     if isinstance(value, date):
@@ -151,25 +151,25 @@ def _fuzzy_date_or_none(value: object) -> date | None:
 
 
 def _int_or_zero(value: object) -> int:
-    """Per-field lenient fold: best-effort int, folding junk/None to 0."""
+    """Per-field lenient conversion: best-effort int, reducing junk/None to 0."""
 
     return coerce_int(value) or 0
 
 
 def stringified(value: object) -> str:
-    """Per-field lenient fold: `str(value or "")` (a falsy value reads as "")."""
+    """Per-field lenient conversion: `str(value or "")` (a falsy value reads as "")."""
 
     return str(value or "")
 
 
 def none_if_falsy(value: object) -> object:
-    """Fold a falsy value (`{}`/None) to None before nested validation."""
+    """Reduce a falsy value (`{}`/None) to None before nested validation."""
 
     return value or None
 
 
 def _lax_bool(value: object) -> bool:
-    """Per-field lenient fold: real bools and recognized spellings parse, junk folds to False."""
+    """Per-field lenient conversion: real bools and recognized spellings parse, junk reduces to False."""
 
     if isinstance(value, bool):
         return value
@@ -206,7 +206,7 @@ type LaxBool = Annotated[bool, BeforeValidator(_lax_bool)]
 
 
 def validate_skipping_junk[ModelT: ApiModel](model: type[ModelT], value: object) -> object:
-    """Nested-array before-validator: validate each entry into `model`, skipping junk without failing the array."""
+    """Nested-array before-validator: validate each element into `model`, skipping junk without failing the array."""
 
     if not isinstance(value, list):
         return ()
@@ -220,7 +220,7 @@ def validate_skipping_junk[ModelT: ApiModel](model: type[ModelT], value: object)
 
 
 def validate_all_or_none[ModelT: ApiModel](model: type[ModelT], value: object) -> list[ModelT] | None:
-    """Validate every entry into `model`, or None when the value isn't a list or ANY entry fails."""
+    """Validate every element into `model`, or None when the value isn't a list or ANY element fails."""
 
     # tuple included: direct construction passes the field's own type.
     if not isinstance(value, (list, tuple)):

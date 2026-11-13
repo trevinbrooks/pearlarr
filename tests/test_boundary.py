@@ -18,9 +18,9 @@ from .fakes import RecordingHub
 
 
 def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
-    """A junk record is skipped with ONE warning naming the model, index, and failing field.
+    """A junk element is skipped with ONE warning naming the model, index, and failing field.
 
-    It never includes the payload value itself (it may carry titles/paths).
+    It never includes the payload value itself (it may carry names/paths).
     """
 
     recording = RecordingHub()
@@ -50,7 +50,7 @@ def test_validate_each_empty_list_is_empty() -> None:
 
 
 def test_validate_each_strict_raises_when_nothing_validates() -> None:
-    """strict=True: a non-empty payload with ZERO valid records raises `BoundaryContractError`.
+    """strict=True: a non-empty payload with ZERO valid elements raises `BoundaryContractError`.
 
     An all-invalid library must never read as empty.
     """
@@ -62,7 +62,7 @@ def test_validate_each_strict_raises_when_nothing_validates() -> None:
 def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
     """strict=True still reads an EMPTY payload as [] (a legitimate empty library).
 
-    It keeps the valid records of a partially-junk payload too.
+    It keeps the valid elements of a partially-junk payload too.
     """
 
     assert validate_each(SonarrSeries, [], strict=True) == []
@@ -77,7 +77,7 @@ def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
 def test_frozen_model_mutation_raises_validation_error() -> None:
     """Ported models are frozen: assignment raises pydantic's ValidationError.
 
-    The attribute name rides a variable because the checkers (pyrefly) already
+    The attribute name goes in a variable because the checkers (pyrefly) already
     reject a direct assignment statically - this pins the RUNTIME contract.
     """
 

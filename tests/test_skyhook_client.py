@@ -1,5 +1,5 @@
 # pyright: strict
-"""The SkyHook wire client over `respx`: reply validation, the not-found miss, and the outage latch."""
+"""The SkyHook wire client over `respx`: reply validation, not found, and the unreachable flag."""
 
 import httpx
 import pytest
@@ -181,7 +181,7 @@ def test_skyhooks_own_not_found_is_a_miss_for_that_series_only() -> None:
 def test_the_fake_answers_one_fetch_sequence_as_the_real_client_does() -> None:
     install_recording_hub()
     official = skyhook_fixture("tvdb_112961_official.json")
-    # Served, not found, the outage, then a pair that would be served if the latch let it through.
+    # Served, not found, unreachable, then a pair that would be served if the unreachable flag let it through.
     fetches = [(_SERIES, "official"), (1, "official"), (71776, "official"), (_SERIES, "official")]
     fake = FakeSkyHookClient(
         {(_SERIES, "official"): SkyHookReply.model_validate(official)}, failing=frozenset({(71776, "official")})

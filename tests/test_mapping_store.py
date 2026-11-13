@@ -1,8 +1,8 @@
 # pyright: strict
 """Unit tests for `MappingStore`: freshness gate, atomic populate, schema rebuild, corruption fail-open, durability.
 
-These pin the guarantees the parse-once-per-download cache relies on - in
-particular that a torn populate can never leave a digest marked fresh against
+These pin the guarantees the parse-once-per-download store relies on - in
+particular that a torn populate can never leave a source hash marked fresh against
 empty tables, and that an unchanged source persists across process restarts.
 """
 
@@ -30,9 +30,9 @@ ROW2 = AnimeIdRow(101, 201, -1, 0, None, None, None)
 
 
 class TestFreshnessGate:
-    """`is_fresh` reads fresh only for a matching per-source digest.
+    """`is_fresh` reads fresh only for a matching per-source hash.
 
-    `replace_*` swaps both the digest and the rows atomically.
+    `replace_*` swaps both the source hash and the rows atomically.
     """
 
     def test_is_fresh_only_for_matching_digest(self) -> None:
@@ -53,8 +53,8 @@ class TestFreshnessGate:
         store.close()
 
     def test_replace_marks_source_fresh_for_its_digest(self) -> None:
-        # An empty populate still stamps the digest, so the source reads fresh for
-        # that digest (and not for any other) - the gate a re-parse decision hinges on.
+        # An empty populate still stores the source hash, so the source reads fresh for
+        # that hash (and not for any other) - the gate a re-parse decision hinges on.
         store = MappingStore.open(":memory:")
         assert not store.is_fresh(SOURCE_ANIDB, "d")
         store.replace_anidb("d", [], [])
@@ -65,7 +65,7 @@ class TestFreshnessGate:
 class TestAtomicReplace:
     """A populate that errors mid-write rolls back to the prior state.
 
-    It never leaves the digest fresh against empty/partial tables.
+    It never leaves the source hash fresh against empty/partial tables.
     """
 
     def test_failed_populate_keeps_prior_state(self) -> None:
@@ -126,9 +126,9 @@ class TestCorruptionFailOpen:
 
 
 class TestDistinctTyping:
-    """The per-column/per-axis distinct overloads' runtime halves.
+    """The per-column/per-id-kind distinct overloads' runtime halves.
 
-    `anime_ids` values come from third-party JSON un-coerced (junk is skipped), while anibridge ext ids were
+    `anime_ids` values come from third-party JSON un-coerced (junk is skipped), while anibridge external ids were
     coerced on write (a mismatch is corruption and raises).
     """
 
@@ -195,7 +195,7 @@ class TestAniBridgeAliases:
 
 
 class TestDurability:
-    """A missing db file is created on first open, and its digest/rows persist across a fresh open (new process)."""
+    """A missing db file is created on first open, and its source hash/rows survive a fresh open (new process)."""
 
     def test_missing_file_created_and_persists_across_opens(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
@@ -205,7 +205,7 @@ class TestDurability:
         store.replace_anime_ids("digest-A", [ROW])
         store.close()
 
-        # A fresh open (a new "process") sees the committed rows + digest.
+        # A fresh open (a new "process") sees the committed rows + source hash.
         store = MappingStore.open(path)
         assert store.is_fresh(SOURCE_ANIME_IDS, "digest-A")
         assert store.anime_ids_lookup("tvdb_id", 200) == [ROW]

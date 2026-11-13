@@ -19,7 +19,7 @@ from .paths import PROJECT_URL
 
 
 class AniListError(ApiModel):
-    """One entry of an AniList GraphQL `errors` array.
+    """One element of an AniList GraphQL `errors` array.
 
     `status` is an HTTP-style code (`429` when soft-throttling).
     """
@@ -28,7 +28,7 @@ class AniListError(ApiModel):
     status: int | None = None
 
 
-# --- AniList Media node (cached GraphQL `Media` record) --------------------
+# --- AniList Media node (cached GraphQL `Media` answer) --------------------
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -51,7 +51,7 @@ class AniListAiring:
 class AniListMediaNode(ApiModel):
     """One AniList `Media` node, validated at the cache read boundary.
 
-    An EMPTY DICT must validate to the all-None miss node (`{"data": {"Media": null}}` reduces to `{}` first).
+    An EMPTY DICT must validate to the all-None not-found node (`{"data": {"Media": null}}` reduces to `{}` first).
     """
 
     id: int | None = None
@@ -68,7 +68,7 @@ class AniListMediaNode(ApiModel):
 
     @property
     def airing(self) -> AniListAiring:
-        """The node's dates, episode count and episode length as one record."""
+        """The node's dates, episode count and episode length together."""
 
         return AniListAiring(start=self.start_date, end=self.end_date, episodes=self.episodes, duration=self.duration)
 
@@ -83,9 +83,9 @@ type AniListBody = dict[str, dict[str, Any]]
 """One raw GraphQL body `{"data": {"Media": {...}}}`, stored verbatim."""
 
 type AniListAnswers = dict[int, AniListBody]
-"""In-memory AniList cache: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
+"""In-memory AniList answers: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
 
-The cached value is the *whole* response body (what `AniListClient.query`
+Each answer is the *whole* response body (what `AniListClient.query`
 / `AniListClient.query_batch` return), so it round-trips verbatim through
 the persisted `anilist_meta` block. The gateway extracts and parses the
 `Media` node out of it into an `AniListMediaNode`.
@@ -99,7 +99,7 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
-# AniList's error message is quoted in the once-per-run breaker warning, clamped to this.
+# AniList's error message is quoted in the once-per-run unreachable warning, clamped to this.
 _REFUSAL_MESSAGE_MAX = 160
 
 
@@ -180,20 +180,20 @@ query ($ids: [Int]) {{
 def _log_wait(reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
     """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-    # A network-blip wait rides at DEBUG, a throttle wait at INFO.
+    # A network-blip wait logs at DEBUG, a throttle wait at INFO.
     hub_note(f"AniList {reason} - waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
 
 
 def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error.
 
-    AniList soft-throttles with HTTP 200 and a 429 error entry, retried like a
+    AniList soft-throttles with HTTP 200 and a 429 error object, retried like a
     real 429. An unknown id answers HTTP 404 with `Media: null` under `data`
-    and a not-found error, which stays an ordinary miss.
+    and a not-found error, which stays an ordinary not found.
     """
 
     for err in _parse_errors(body):
-        # A 429 or 5xx status carried in the error entry is retryable.
+        # A 429 or 5xx status carried in the error object is retryable.
         if err.status in RETRYABLE_STATUS:
             return True
         # Otherwise match the message (case-insensitive) for throttle wording.
@@ -205,7 +205,7 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
 
 
 def _refusal(status: int, body: dict[str, Any] | None) -> str | None:
-    """The breaker reason when AniList did not answer, else None. An unknown id keeps its `data` node."""
+    """Why AniList is unreachable when it did not answer, else None. An unknown id keeps its `data` node."""
 
     if body is not None and body.get("data") is not None:
         return None
@@ -220,14 +220,14 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     """Parse a GraphQL body's `errors` array into typed `AniListError`.
 
     The `errors` array is the dynamic GraphQL boundary. This maps each raw
-    entry into the typed domain (skipping any non-object entry), so the caller
+    element into the typed domain (skipping any non-object element), so the caller
     reads `err.status` / `err.message` rather than untyped `dict` keys.
     """
 
     raw_errors = (body or {}).get("errors")
     if not is_json_list(raw_errors):
         return []
-    # Validate each GraphQL error entry into the typed AniListError, dropping
+    # Validate each GraphQL error object into the typed AniListError, dropping
     # the junk ones (a soft-throttle or malformed body can carry non-dict junk).
     errors: list[AniListError] = []
     for err in raw_errors:
@@ -239,7 +239,7 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
 
 
 def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
-    """Walk a null-safe key path through a GraphQL body, yielding {} on any miss.
+    """Walk a null-safe key path through a GraphQL body, yielding {} on any absent level.
 
     AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
     id or a rate-limit, so each hop is guarded with "or {}" and a missing or
@@ -269,8 +269,8 @@ def lacks_air_dates(body: dict[str, Any]) -> bool:
 def media_from_node(raw: dict[str, Any]) -> AniListMediaNode:
     """Validate a raw `Media` dict into the typed node (single-object fail-open).
 
-    A miss (`{}`) validates to the all-`None` node. A malformed node
-    degrades to the same all-`None` miss with one scrubbed warning.
+    A not-found answer (`{}`) validates to the all-`None` node. A malformed node
+    degrades to the same all-`None` node with one scrubbed warning.
     """
 
     try:
@@ -284,7 +284,7 @@ def media_from_body(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode.
 
     The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary,
-    and this is where it crosses into the typed domain. A miss (`data`/`Media`
+    and this is where it crosses into the typed domain. A not-found answer (`data`/`Media`
     null) yields an all-`None` node, and so does a malformed node (see
     `media_from_node`).
     """
@@ -295,7 +295,7 @@ def media_from_body(body: dict[str, Any] | None) -> AniListMediaNode:
 class AniListClient:
     """AniList GraphQL wire client: the POST + retry policy, bound once.
 
-    Cache-blind (the gateway layers the run cache on top). A per-run breaker trips
+    Cache-blind (the gateway layers the run cache on top). AniList is marked unreachable for the run
     on retry exhaustion or a dataless answer, after which every call returns empty.
     """
 
@@ -308,12 +308,12 @@ class AniListClient:
 
     @property
     def unreachable(self) -> bool:
-        """True once AniList has been declared unavailable for this run."""
+        """True once AniList has been marked unreachable for this run."""
 
         return self._unreachable
 
     def _note_unreachable(self, detail: str) -> None:
-        """Warn ONCE that AniList is unavailable, muting every later call via the flag."""
+        """Warn ONCE that AniList is unreachable, muting every later call via the flag."""
 
         if not self._unreachable:
             hub_warn(f"AniList {detail}, skipping further lookups this run")
@@ -328,14 +328,14 @@ class AniListClient:
         """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in.
 
         Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
-        so the results can seed the same cache directly. Ids unknown to AniList are
+        so the results can populate the same cache directly. Ids unknown to AniList are
         simply absent from the result.
         """
 
         j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
         # The cache stores each Media body verbatim (re-parsed on read into an
         # AniListMediaNode). Keep each Media OBJECT carrying an int id, skipping
-        # junk entries in the array.
+        # junk elements in the array.
         out: AniListAnswers = {}
         media_list = extract_path(j, "data", "Page").get("media")
         for raw in media_list if is_json_list(media_list) else []:
@@ -349,8 +349,8 @@ class AniListClient:
     def _post_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         """POST a GraphQL query, retrying politely on rate limits and 5xx.
 
-        Returns the parsed body, or `{}` when it was not JSON or the breaker has
-        tripped. Retry exhaustion and any dataless answer trip the breaker for the run.
+        Returns the parsed body, or `{}` when it was not JSON or AniList is
+        unreachable. Retry exhaustion and any dataless answer mark AniList unreachable for the run.
         """
 
         if self._unreachable:
@@ -362,7 +362,7 @@ class AniListClient:
                     API_URL, json={"query": query, "variables": variables}, headers=REQUEST_HEADERS
                 )
             except httpx.HTTPError as e:
-                # Network blip: back off and retry, then trip the breaker with an empty result.
+                # Network blip: back off and retry, then mark AniList unreachable with an empty result.
                 if attempt >= MAX_RETRIES:
                     self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
                     return {}
@@ -375,8 +375,8 @@ class AniListClient:
 
             # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
             # can take the same retry path as a 429 status. A non-JSON body, or a
-            # JSON body that isn't an object (e.g. an array), folds to None here
-            # and trips the breaker below.
+            # JSON body that isn't an object (e.g. an array), reduces to None here
+            # and marks AniList unreachable below.
             raw_body: object
             try:
                 raw_body = resp.json()
@@ -407,7 +407,7 @@ class AniListClient:
                 time.sleep(wait)
                 continue
 
-            # Terminal: exhausted retries and any dataless answer trip the breaker. The
+            # Terminal: exhausted retries and any dataless answer mark AniList unreachable. The
             # body (possibly an error payload) still returns so the caller degrades.
             if retryable:
                 self._note_unreachable(f"request failed after {MAX_RETRIES} retries")

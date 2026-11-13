@@ -3,7 +3,7 @@
 
 Each test builds a REAL `SonarrClient` (construction is network-free), then
 drives one method and asserts the request URL / body it builds AND the decoded
-return view its boundary models produce. Every endpoint rides the
+return view its boundary models produce. Every endpoint goes through the
 httpx-based `ArrHttp`, mocked via `respx`. Bodies come from the
 captured `tests/fixtures/sonarr` JSON where one exists (queue /
 manual-import / command-list / quality-definitions), otherwise a minimal
@@ -51,7 +51,7 @@ _KEY = "testkey"
 def _make_client() -> SonarrClient:
     """Build a real `SonarrClient` (construction is network-free).
 
-    Every endpoint rides the bound `ArrHttp` over the httpx client, mocked
+    Every endpoint goes through the bound `ArrHttp` over the httpx client, mocked
     through `respx`. The bind's `sleep` is stubbed out so fail-open tests
     don't wait out real backoffs.
     """
@@ -69,7 +69,7 @@ def _make_client() -> SonarrClient:
 
 
 def _make_pending_import(*, infohash: str, title: str) -> PendingImport:
-    """A minimal `PendingImport` carrying only the fields the scan reads."""
+    """A minimal `PendingImport` carrying only the fields the ManualImport fetch reads."""
 
     return PendingImport(
         infohash=infohash,
@@ -84,7 +84,7 @@ def _make_pending_import(*, infohash: str, title: str) -> PendingImport:
 
 # --- all_series() -------------------------------------------------------------
 
-# A minimal `/api/v3/series` record: the consumed item fields plus a couple of
+# A minimal `/api/v3/series` resource: the consumed item fields plus a couple of
 # extras proving unknown keys are ignored by `SonarrSeries`.
 _SERIES_BODY: dict[str, object] = {
     "id": 228,
@@ -99,7 +99,7 @@ _SERIES_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_series_parses_into_sonarr_item_shape() -> None:
-    """`all_series` parses each raw record into a `SonarrSeries` satisfying the `SonarrItem` protocol.
+    """`all_series` parses each raw resource into a `SonarrSeries` satisfying the `SonarrItem` protocol.
 
     The check runs against `object` (the runtime counterpart of the client's
     typed claim), with correctly-typed id fields.
@@ -117,7 +117,7 @@ def test_all_series_parses_into_sonarr_item_shape() -> None:
     assert show.imdbId == "tt5311514"
     assert show.monitored is True
     request = route.calls.last.request
-    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in str(request.url)
     assert request.headers["X-Api-Key"] == _KEY
 
@@ -167,7 +167,7 @@ def test_queue_decodes_records_and_builds_request() -> None:
     url = str(request.url)
     assert "pageSize=1000" in url
     assert "includeUnknownSeriesItems=true" in url
-    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == _KEY
 
@@ -216,7 +216,7 @@ def test_queue_later_page_failure_fails_the_whole_read() -> None:
     """A failed LATER page returns None, never the partial pages.
 
     A partial queue misreads a tracked download as untracked, so the caller
-    must see the outage and retry instead.
+    must see the failure and retry instead.
     """
 
     route = respx.get(f"{_BASE}/queue")
@@ -275,7 +275,7 @@ def test_queue_delete_request_error_fails_open() -> None:
 
 @respx.mock
 def test_queue_delete_404_is_gone_and_quiet() -> None:
-    """An already-dismissed entry reads GONE with zero diagnostics (the goal is met, not a failure)."""
+    """An already-dismissed queue record reads GONE with zero diagnostics (the goal is met, not a failure)."""
 
     recording = install_recording_hub()
     respx.delete(f"{_BASE}/queue/7").respond(status_code=404)
@@ -307,14 +307,14 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     assert "seriesId=228" in url
     assert "includeImages=false" in url
     assert "includeEpisodeFile=true" in url
-    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock
 def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
-    """A record missing seasonNumber/episodeNumber sorts first (as -1).
+    """An episode missing seasonNumber/episodeNumber sorts first (as -1).
 
     This avoids raising a `None < int` TypeError and killing the whole fetch.
     """
@@ -386,9 +386,9 @@ def test_episodes_request_error_returns_none() -> None:
 
 @respx.mock
 def test_parse_decodes_season_episode() -> None:
-    """An `SxxExx` release decodes to its own numbers plus Sonarr's matched pair.
+    """An `SxxExx` name decodes to its own numbers plus Sonarr's matched episode.
 
-    The request carries the title in the URL and the api key in the
+    The request carries the name in the URL and the api key in the
     X-Api-Key header.
     """
 
@@ -412,10 +412,10 @@ def test_parse_decodes_season_episode() -> None:
 
 @respx.mock
 def test_parse_decodes_absolute() -> None:
-    """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
+    """An absolute-numbered name decodes to its absolute numbers (season 0, no SxxExx episode numbers).
 
     The name alone carries no `(season, episode)`. Sonarr's series-matched
-    `episodes` array rides along as `matched_episodes`, the exact leg's
+    `episodes` array comes along as `matched_episodes`, the exact pass's
     in-set fallback for exactly this shape.
     """
 
@@ -434,9 +434,9 @@ def test_parse_decodes_absolute() -> None:
 
 @respx.mock
 def test_parse_junk_matched_entry_drops_the_whole_array() -> None:
-    """One unreadable `episodes[]` entry folds the WHOLE array away, the name's own numbers surviving.
+    """One unreadable `episodes[]` element drops the WHOLE array, the name's own numbers surviving.
 
-    All-or-nothing on purpose: dropping the bad entry alone would shorten a
+    All-or-nothing on purpose: dropping the bad element alone would shorten a
     span and slip the every-pair check.
     """
 
@@ -460,7 +460,7 @@ def test_parse_reads_full_season_flag() -> None:
     """`parse()` lifts `parsedEpisodeInfo.fullSeason` onto the result.
 
     A bare-"S05" name Sonarr matches to a whole season carries the flag the
-    grab-time seed refuses on, even when the season is small enough to slip
+    grab-time placement rejects on, even when the season is small enough to slip
     under the span cap. Absent/false reads False.
     """
 
@@ -487,7 +487,7 @@ def test_parse_clean_no_match_returns_an_empty_parse() -> None:
     """A clean 200 where Sonarr matched no episode returns the empty parse.
 
     This is a *confirmed* no-match the caller may cache (pinned to the series
-    fingerprint), distinct from a failure's None. A missing `episodes` key is
+    hash), distinct from a failure's None. A missing `episodes` key is
     the same clean no-match.
     """
 
@@ -555,7 +555,7 @@ def test_parse_request_error_returns_none() -> None:
 
 @respx.mock
 def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
-    """The scan keys on the UPPERCASED infohash (no `seriesId`).
+    """The ManualImport fetch keys on the UPPERCASED infohash (no `seriesId`).
 
     It narrows each candidate to its `path` / `quality` / `rejections`.
     """
@@ -579,18 +579,18 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     url = str(route.calls.last.request.url)
     assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
     assert "filterExistingFiles=false" in url
-    # The scan must ride the long manual-import timeout (slow remote mounts).
+    # The fetch must use the long ManualImport timeout (slow remote mounts).
     timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
     assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
 
 
 @respx.mock
 def test_manual_import_candidates_non_200_returns_none_silently() -> None:
-    """A non-200 scan returns None with NO warning.
+    """A non-200 fetch returns None with NO warning.
 
     The executor owns the fallback's messaging, since a warn here would brand every
-    dead-tracked poll with a misleading "will retry" right before the folder
-    scan handles it.
+    poll of a download whose history is closed with a misleading "will retry" right before the folder
+    fetch handles it.
     """
 
     recording = install_recording_hub()
@@ -614,11 +614,11 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 
 @respx.mock
 def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
-    """CONTRACT: the folder scan carries NEITHER `downloadId` NOR `seriesId`.
+    """CONTRACT: the folder fetch carries NEITHER `downloadId` NOR `seriesId`.
 
     A `downloadId` re-enters the poisoned tracked branch (the NRE the fallback
-    exists to dodge). A `seriesId` makes the controller scan the LIBRARY folder
-    instead of ours. Candidates decode exactly like the downloadId scan.
+    exists to dodge). A `seriesId` makes the controller read the LIBRARY folder
+    instead of pearlarr's. Candidates decode exactly like the downloadId fetch.
     """
 
     route = respx.get(f"{_BASE}/manualimport").respond(json=sonarr_fixture("manualimport_yamada.json"))
@@ -634,14 +634,14 @@ def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
     assert "filterExistingFiles=false" in url
     assert "downloadId" not in url
     assert "seriesId" not in url
-    # The scan must ride the long manual-import timeout (slow remote mounts).
+    # The fetch must use the long ManualImport timeout (slow remote mounts).
     timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
     assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
 
 
 @respx.mock
 def test_folder_scan_non_200_returns_none_and_empty_stays_empty() -> None:
-    """A non-200 folder scan is None (retry). A 200 `[]` is a real empty answer."""
+    """A non-200 folder fetch is None (retry). A 200 `[]` is a real empty answer."""
 
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
@@ -666,10 +666,10 @@ def test_folder_scan_request_error_returns_none() -> None:
 
 @respx.mock
 def test_history_for_download_decodes_and_pins_paging() -> None:
-    """The probe pins page-1 / pageSize-100 / date-descending explicitly and uppercases the hash.
+    """The history read pins page-1 / pageSize-100 / date-descending explicitly and uppercases the hash.
 
     A 23-file batch has ~46+ events. An unlucky default page size would yield a
-    false verdict from a partial newest-first window.
+    false answer from a partial newest-first window.
     """
 
     envelope: dict[str, object] = {
@@ -697,7 +697,7 @@ def test_history_for_download_decodes_and_pins_paging() -> None:
 
 @respx.mock
 def test_history_for_download_non_200_returns_none() -> None:
-    """A failed probe is None ("no verdict") - never read as clean history."""
+    """A failed history read is None ("no answer") - never read as clean history."""
 
     respx.get(f"{_BASE}/history").respond(status_code=500)
     assert _make_client().history_for_download(download_id="a" * 40) is None
@@ -705,7 +705,7 @@ def test_history_for_download_non_200_returns_none() -> None:
 
 @respx.mock
 def test_history_for_download_junk_record_is_skipped_not_fatal() -> None:
-    """A junk `records[]` entry skips. The page (and its verdict) survives."""
+    """A junk `records[]` element skips. The page (and its answer) survives."""
 
     envelope: dict[str, object] = {
         "records": ["junk", {"eventType": "downloadFailed", "date": "2026-01-01T00:00:00Z"}],
@@ -756,11 +756,11 @@ def test_remote_path_mappings_non_200_returns_none() -> None:
 
 @respx.mock
 def test_wait_path_polls_make_exactly_one_attempt() -> None:
-    """The three wait-path polls ride the no-retry handle: ONE attempt each.
+    """The three wait pass polls use the no-retry handle: ONE attempt each.
 
-    manual_import_candidates / the folder scan / the history probe run inside
-    the import monitor loop, which IS the retry mechanism, while in-call retries
-    would only stretch each poll cycle and multiply identical warnings.
+    manual_import_candidates / the folder fetch / the history read run inside
+    the wait pass's poll loop, which IS the retry mechanism, while in-call retries
+    would only stretch each poll and multiply identical warnings.
     """
 
     manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
@@ -778,10 +778,10 @@ def test_wait_path_polls_make_exactly_one_attempt() -> None:
 
 @respx.mock
 def test_sweep_reads_keep_the_retry_budget() -> None:
-    """The non-wait reads (episodes, parse) ride the primary retrying handle.
+    """The non-wait reads (episodes, parse) use the primary retrying handle.
 
-    `/parse` is a string parse, never a disk scan, so one transport serves the
-    sweep and the import wait alike.
+    `/parse` is a string parse, never a disk read, so one transport serves the
+    scan and the wait pass alike.
     """
 
     episodes = respx.get(f"{_BASE}/episode").respond(status_code=500)
@@ -841,7 +841,7 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
 
 @respx.mock
 def test_manual_import_execute_non_2xx_returns_none() -> None:
-    """A non-2xx command POST leaves the import pending (returns `None`)."""
+    """A non-2xx command POST leaves the pending import as it is (returns `None`)."""
 
     file = ManualImportFile(
         path="/downloads/show/ep01.mkv",
@@ -871,7 +871,7 @@ def test_post_command_request_error_returns_none() -> None:
 def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
     """A 2xx command POST whose body isn't a JSON object warns before returning None.
 
-    Sonarr may still have queued the command, so leave a breadcrumb.
+    Sonarr may still have queued the command, so leave a warning.
     """
 
     recording = install_recording_hub()
@@ -923,7 +923,7 @@ def test_command_status_non_200_returns_default() -> None:
 def test_command_status_request_error_returns_default() -> None:
     """A transient request error also yields the default `CommandResource`.
 
-    The caller treats the import as unverified and leaves it pending.
+    The caller treats the import as unverified and leaves the pending import as it is.
     """
 
     respx.get(f"{_BASE}/command/9").mock(side_effect=httpx.ConnectError("boom"))
@@ -1035,7 +1035,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 @respx.mock
 def test_history_since_non_200_returns_none_and_warns() -> None:
-    """A non-200 history read returns None (the activity scan fails open)."""
+    """A non-200 history read returns None (the activity read fails open)."""
 
     respx.get(f"{_BASE}/history/since").respond(status_code=500)
     recording = install_recording_hub()
@@ -1043,7 +1043,7 @@ def test_history_since_non_200_returns_none_and_warns() -> None:
 
     assert result is None
     # The single warning for a failed history fetch states its consequence too
-    # (the activity monitor only debug-logs, so this line is all that surfaces).
+    # (the activity read only debug-logs, so this line is all that surfaces).
     [warning] = diagnostic_messages(recording, Severity.WARNING)
     assert warning == "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
 
@@ -1132,7 +1132,7 @@ def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
 
 @respx.mock
 def test_languages_decodes_id_name_records() -> None:
-    """Languages decode to the {id, name} records the resolver matches/re-builds."""
+    """Languages decode to the {id, name} objects the resolver matches/re-builds."""
 
     body: list[object] = [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
     respx.get(f"{_BASE}/language").respond(json=body)

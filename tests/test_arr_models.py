@@ -42,7 +42,7 @@ def test_sonarr_episode_folds_a_missing_or_junk_air_date_and_runtime_to_none(raw
 
 
 def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -> None:
-    """A junk `body.files[]` entry is skipped while the command survives.
+    """A junk `body.files[]` element is skipped while the command survives.
 
     A dropped command would blind the in-flight ManualImport guard.
     """
@@ -64,7 +64,7 @@ def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -
 
 
 def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
-    """v4 sends no order fields. A null `seasonType` names no order, and a junk `seasonTypes[]` entry drops alone."""
+    """v4 sends no order fields. A null `seasonType` names no order, and a junk `seasonTypes[]` element drops alone."""
 
     assert SonarrSeries.model_validate({"id": 1, "title": "Show"}).seasonType == "official"
     assert SonarrSeries.model_validate({"id": 1, "title": "Show", "seasonType": None}).seasonType == ""
@@ -89,7 +89,7 @@ def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
 
 
 def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -> None:
-    """A row with no `alternateTitles` has none, and a junk entry (a null title among them) drops alone."""
+    """A series with no `alternateTitles` has none, and a junk element (a null title among them) drops alone."""
 
     assert SonarrSeries.model_validate({"id": 1, "title": "Show"}).alternateTitles == ()
 
@@ -109,7 +109,7 @@ def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -
 
 
 def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
-    """Sonarr nulls empty number arrays. They fold to () like the absent case."""
+    """Sonarr nulls empty number arrays. They reduce to () like the absent case."""
 
     info = ParsedFileInfo.model_validate(
         {"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": None, "absoluteEpisodeNumbers": None}},
@@ -118,7 +118,7 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
 
 
 def test_parsed_file_info_reads_the_lifted_series_title_and_folds_a_null_one() -> None:
-    """The title Sonarr lifted rides along. A null one, or a null `parsedEpisodeInfo`, reads as "" and never fails."""
+    """The parsed series name comes along. A null one, or a null `parsedEpisodeInfo`, reads as "" and never fails."""
 
     lifted = ParsedFileInfo.model_validate({"parsedEpisodeInfo": {"seriesTitle": "To Glimmer-Zu"}})
     assert lifted.series_title == "To Glimmer-Zu"
@@ -177,7 +177,7 @@ def test_sonarr_history_record_reads_the_import_row_fields() -> None:
     }
     record = SonarrHistoryRecord.model_validate(row)
     assert (record.item_id, record.episode_id, record.dropped_path, record.reason) == (5, 77, "/d/a.mkv", "x")
-    # A top-level reason never blocks the path lift: each validator reads its own key.
+    # A top-level reason never blocks taking the path: each validator reads its own key.
     with_reason = SonarrHistoryRecord.model_validate({**row, "reason": "top"})
     assert (with_reason.reason, with_reason.dropped_path) == ("top", "/d/a.mkv")
     bare = SonarrHistoryRecord.model_validate({"eventType": "grabbed"})

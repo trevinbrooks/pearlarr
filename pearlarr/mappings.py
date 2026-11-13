@@ -50,9 +50,9 @@ from .progress import ProgressCallback
 from .web_client import failure_detail
 
 type AnimeIdsRawMapping = dict[str, Any]
-"""One Kometa Anime-IDs record (`{field: value}`).
+"""One Kometa Anime-IDs object (`{field: value}`).
 
-A loosely-shaped producer dict: a flat record carrying mixed-typed fields
+A loosely-shaped mapping-source dict: a flat object carrying mixed-typed fields
 (`anilist_id`/`tvdb_id`/`tmdb_movie_id`/`imdb_id` ints or strs,
 `tvdb_season`/`tvdb_epoffset` ints). It is read at the raw->typed boundary
 (`_mapping_from_raw` / `_anime_ids_rows`) and never modeled as a domain
@@ -60,16 +60,16 @@ object, so it stays a loose `dict[str, Any]` like `AniBridgeRawMapping`.
 """
 
 type AnimeIdsByName = dict[str, AnimeIdsRawMapping]
-"""The parsed Kometa Anime-IDs JSON: `{name -> record}` (~16k entries)."""
+"""The parsed Kometa Anime-IDs JSON: `{name -> object}` (~16k objects)."""
 
 
 class MappingKind(Enum):
-    """The two closed kinds of episode mapping a SeaDex mapping can carry.
+    """The two closed ways a mapping names its episodes.
 
     A mapping either ships explicit AniBridge `tvdb_mappings` (season ->
     episode ranges) or it doesn't, in which case the Sonarr path falls back to
     Anime-ID season/offset logic. There is no third kind, so dispatch on this
-    enum needs no defensive default arm.
+    enum needs no defensive default branch.
     """
 
     SEASON_OFFSET = "anime_ids"
@@ -77,14 +77,14 @@ class MappingKind(Enum):
 
 
 class MappingSource(Enum):
-    """Which producer a resolved mapping came from (its provenance).
+    """Which mapping source a resolved mapping came from (its provenance).
 
-    Distinct from `MappingKind`: `mode` is the episode strategy (derived
-    from `tvdb_mappings` presence), `source` is the producer. They correlate
-    but are not the same: a *degraded* AniBridge entry (imdb/tmdb-resolved, so it
-    carries no tvdb season ranges) is `mode ANIME_IDS` yet `source ANIBRIDGE` -
-    the only signal that separates it from a legit Kometa whole-series entry
-    (also `mode ANIME_IDS`, but `source ANIME_IDS`).
+    Distinct from `MappingKind`: `kind` is how the mapping names its episodes (derived
+    from `tvdb_mappings` presence), `source` is the mapping source. They correlate
+    but are not the same: an AniBridge mapping without TVDB mappings (imdb/tmdb-resolved, so it
+    carries no tvdb season ranges) is `kind SEASON_OFFSET` yet `source ANIBRIDGE` -
+    the only signal that separates it from a legit Kometa whole-series mapping
+    (also `kind SEASON_OFFSET`, but `source ANIME_IDS`).
     """
 
     ANIBRIDGE = "anibridge"
@@ -93,14 +93,14 @@ class MappingSource(Enum):
 
 @dataclass(frozen=True, slots=True)
 class TitleMapping:
-    """One resolved AniList mapping, as the sync strategies consume it.
+    """One resolved AniList mapping, as the arr strategies consume it.
 
-    Built at the raw->typed boundary from the two producers: the AniBridge graph
+    Built at the raw->typed boundary from the two mapping sources: the AniBridge graph
     attaches `tvdb_mappings` (season -> episode ranges) only on a TVDB lookup,
-    while the Kometa Anime-IDs records carry the flat `tvdb_season` /
-    `tvdb_epoffset` fields. Both normalize into one typed record with attribute
+    while the Kometa Anime-IDs objects carry the flat `tvdb_season` /
+    `tvdb_epoffset` fields. Both normalize into one typed mapping with attribute
     reads. The `tvdb_mappings`-present-or-not distinction becomes the typed
-    `mode` discriminant.
+    `kind` discriminant.
     """
 
     anilist_id: int
@@ -113,21 +113,21 @@ class TitleMapping:
     source: MappingSource = MappingSource.ANIME_IDS
     special_aliasing: SpecialAliasing | None = None
     """Which TMDB specials numbers stand for which TVDB specials, and the TMDB show they count in. Only an AniBridge
-    TVDB lookup sets it, when the entry's specials pair for that show. Otherwise None."""
+    TVDB lookup sets it, when the title's specials pair for that show. Otherwise None."""
 
     def __post_init__(self) -> None:
-        # Detach from the producer's dict, then wrap read-only.
+        # Detach from the mapping source's dict, then wrap read-only.
         if self.special_aliasing is not None:
             tmdb_id, aliases = self.special_aliasing
             object.__setattr__(self, "special_aliasing", SpecialAliasing(tmdb_id, MappingProxyType(dict(aliases))))
 
     @property
     def kind(self) -> MappingKind:
-        """Which episode-mapping mode this entry drives.
+        """How this mapping names its episodes.
 
-        ANIBRIDGE iff `tvdb_mappings` was attached. Tested with `is not
+        EPISODE_RANGES iff `tvdb_mappings` was attached. Tested with `is not
         None` (not truthiness) on purpose: an *empty* `tvdb_mappings` dict is
-        still ANIBRIDGE.
+        still EPISODE_RANGES.
         """
 
         # Invariant: an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness
@@ -140,7 +140,7 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
 
     Shared verbatim by `_mapping_from_raw` and `_anime_ids_rows` so the two
     derivations can't drift. `.get(key, default)` only fills an ABSENT key, so a
-    present-but-null JSON value (`"tvdb_season": null`) is folded here rather than
+    present-but-null JSON value (`"tvdb_season": null`) is converted here rather than
     reaching the NOT NULL columns. Season 0 is a meaningful special (never
     `or`-collapsed).
     """
@@ -151,17 +151,17 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
 
 
 def _mapping_from_raw(anilist_id: int, raw: AnimeIdsRawMapping | AniBridgeRawMapping) -> TitleMapping:
-    """Build a `TitleMapping` from a producer's raw dict.
+    """Build a `TitleMapping` from a mapping source's raw dict.
 
-    The one place a loosely-typed producer dict (an AniBridge `_raw_mapping_for`
-    dict) becomes a typed record. Only the enumerated keys of `raw` are read.
-    Defaults are `-1` / `0` for an AniBridge entry (which carries no
+    The one place a loosely-typed raw dict (an AniBridge `_raw_mapping_for`
+    dict) becomes a typed mapping. Only the enumerated keys of `raw` are read.
+    Defaults are `-1` / `0` for an AniBridge mapping (which carries no
     `tvdb_season` / `tvdb_epoffset`).
     """
 
     season, epoffset = _coalesce_season_epoffset(raw)
-    # Both AniBridge backings tag their entries source="anibridge". A Kometa-style
-    # raw dict (no key) is ANIME_IDS, so this derives provenance for either producer.
+    # Both AniBridge backings tag their raw mappings source="anibridge". A Kometa-style
+    # raw dict (no key) is ANIME_IDS, so this derives provenance for either mapping source.
     source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
     return TitleMapping(
         anilist_id=anilist_id,
@@ -179,8 +179,8 @@ def _mapping_from_raw(anilist_id: int, raw: AnimeIdsRawMapping | AniBridgeRawMap
 def _mapping_from_anime_id_row(row: AnimeIdRow) -> TitleMapping:
     """Build a `TitleMapping` from a stored `AnimeIdRow`.
 
-    The SQL twin of `_mapping_from_raw` for Kometa records: a row never
-    carries `tvdb_mappings` (only AniBridge does), so `mode` is ANIME_IDS.
+    The SQL twin of `_mapping_from_raw` for Kometa rows: a row never
+    carries `tvdb_mappings` (only AniBridge does), so `kind` is SEASON_OFFSET.
     """
 
     return TitleMapping(
@@ -196,13 +196,13 @@ def _mapping_from_anime_id_row(row: AnimeIdRow) -> TitleMapping:
 
 
 def _is_anibridge_without_tvdb_mappings(mapping: TitleMapping) -> bool:
-    """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
+    """An AniBridge mapping resolved via imdb/tmdb only - no usable tvdb mapping.
 
-    Such an entry carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
-    `mode ANIME_IDS` with the default `tvdb_season=-1`). In a TVDB/Sonarr
+    Such a mapping carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
+    `kind SEASON_OFFSET` with the default `tvdb_season=-1`). In a TVDB/Sonarr
     context that drives a wrong-episode grab and shadows a precise Kometa season,
-    so Kometa must override it there. A rich AniBridge entry (`tvdb_mappings` set,
-    incl. an empty `{}`) is NOT degraded.
+    so Kometa must override it there. An AniBridge mapping with `tvdb_mappings` set
+    (incl. an empty `{}`) is NOT one.
     """
 
     return mapping.source is MappingSource.ANIBRIDGE and mapping.tvdb_mappings is None
@@ -240,13 +240,13 @@ class ResolvedMappings:
     kept: dict[int, TitleMapping]
     """AniList id -> mapping, the ignore list removed, in AniList id order."""
     ignored: dict[int, TitleMapping]
-    """The entries on the ignore list, AniList id -> mapping, in AniList id order. Never processed, but a series'
-    listing read still builds their windows, flagged so `ordered_windows` runs each after the kept windows of its
+    """The titles on the ignore list, AniList id -> mapping, in AniList id order. Never checked, but a series'
+    listings fetch still builds their windows, marked so `ordered_windows` runs each after the kept windows of its
     kind."""
 
     @property
     def kept_and_ignored(self) -> dict[int, TitleMapping]:
-        """The kept and the ignored entries together, in AniList id order, for the series' listing read."""
+        """The kept and the ignored titles together, in AniList id order, for the series' listings fetch."""
 
         return dict(sorted({**self.kept, **self.ignored}.items()))
 
@@ -257,7 +257,7 @@ ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/
 ANIDB_MAPPINGS_FILE = "anime-list-master.xml"
 
 # anibridge-mappings ships daily-rolling release assets tagged by major version.
-# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands. The cache filename is
+# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands. The downloaded filename is
 # versioned to match so an old-format file is never parsed by the new loader.
 ANIBRIDGE_RELEASE = "v3"
 ANIBRIDGE_MAPPINGS_URL = (
@@ -286,20 +286,20 @@ def _file_hash(path: str) -> str:
 
 
 def _parse_anime_mappings(path: str) -> AnimeIdsByName:
-    """Load the Kometa Anime-IDs JSON map from disk."""
+    """Load the Kometa Anime-IDs JSON from disk."""
 
     with open(path, encoding="utf-8") as f:
-        # Raw JSON boundary: json.load returns Any. Narrow to the known map shape.
+        # Raw JSON boundary: json.load returns Any. Narrow to the known dict shape.
         return cast("AnimeIdsByName", json.load(f))
 
 
 def _anime_ids_rows(anime_mappings: AnimeIdsByName) -> list[AnimeIdRow]:
-    """Flatten the Kometa map into anime_ids store rows (first-seen order).
+    """Flatten the Kometa JSON into anime_ids store rows (first-seen order).
 
-    Every record yields a row (a NULL `anilist_id` is kept so it feeds the
-    library-filter candidate sets, but is excluded from id->entry lookups). Each
+    Every object yields a row (a NULL `anilist_id` is kept so it feeds the
+    library-filter candidate sets, but is excluded from id->mapping lookups). Each
     field uses the same `.get(..., default)` reads `_mapping_from_raw` used, so the
-    SQL-served entry is identical.
+    SQL-served mapping is identical.
     """
 
     rows: list[AnimeIdRow] = []
@@ -308,13 +308,13 @@ def _anime_ids_rows(anime_mappings: AnimeIdsByName) -> list[AnimeIdRow]:
         # NOT NULL `tvdb_season` / `tvdb_epoffset` columns and raise an
         # IntegrityError that aborts the whole populate (then the :memory:
         # fail-open re-parses the same data and re-raises, taking down the entire
-        # run). The shared helper folds it to the same sentinel an absent key gets.
+        # run). The shared helper converts it to the same sentinel an absent key gets.
         season, epoffset = _coalesce_season_epoffset(raw)
         rows.append(
             AnimeIdRow(
                 # NULL anilist_id is kept here but filtered out at query time. The
                 # field is typed int per that IS NOT NULL contract, so cast the
-                # producer's nullable value (it rides through as a stored NULL).
+                # mapping source's nullable value (it goes through as a stored NULL).
                 anilist_id=cast("int", raw.get("anilist_id")),
                 tvdb_id=raw.get("tvdb_id"),
                 tvdb_season=season,
@@ -419,9 +419,9 @@ class MappingSources:
 
 
 class KnownExternalIds(ABC):
-    """The slice of `MappingResolver` the Radarr library filter consumes.
+    """The part of `MappingResolver` the Radarr library filter consumes.
 
-    A nominal seam homed here (not in `radarr_client`) so `MappingResolver` can
+    A nominal interface homed here (not in `radarr_client`) so `MappingResolver` can
     subclass it without a cycle - `radarr_client` imports `mappings`, never the
     reverse. Supplies the DISTINCT Anime-IDs id set for a given kind.
     """
@@ -434,7 +434,7 @@ class KnownExternalIds(ABC):
 class MappingResolver(KnownExternalIds):
     """Resolve external Arr ids to AniList ids via three SQL-backed sources.
 
-    Downloads-if-stale, then - only when a source's content digest changed -
+    Downloads-if-stale, then - only when a source's content hash changed -
     parses and indexes it into `mappings.db` (owned here). Lookups are answered
     from SQL. `get_anilist_ids` returns the AniList mappings plus the ones it
     set aside because they're configured to be ignored, so the caller (not the
@@ -460,13 +460,13 @@ class MappingResolver(KnownExternalIds):
             ignore_anilist_ids: AniList ids to set aside from every result.
             sources: The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
-            web: The shared web client the source downloads ride.
-            mappings_db: Path to the SQLite mapping cache. The in-memory
+            web: The shared web client the source downloads use.
+            mappings_db: Path to the SQLite mappings database. The in-memory
                 default is for tests / pre-parsed configs.
             logger: For download/parse visibility (DEBUG,
-                the boot cockpit owns the INFO-level startup narrative).
-            progress: The boot cockpit's step handle, fed
-                streaming download progress for the live bar. With no cockpit,
+                the boot owns the INFO-level startup narrative).
+            progress: The boot step's handle, fed
+                streaming download progress for the live bar. With no boot step,
                 progress falls back to throttled DEBUG lines.
         """
 
@@ -484,7 +484,7 @@ class MappingResolver(KnownExternalIds):
         self._anidb_path = os.path.join(base, ANIDB_MAPPINGS_FILE)
         self._anibridge_path = os.path.join(base, ANIBRIDGE_MAPPINGS_FILE)
 
-        # Memoize resolve per identifying key, so the prefetch pass and the
+        # Memoize resolve per identifying key, so the prefetch and the
         # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[ExternalIds, ResolvedMappings] = {}
 
@@ -496,7 +496,7 @@ class MappingResolver(KnownExternalIds):
         self._store = MappingStore.open(mappings_db)
         # Close the store on ANY construction failure: the resolver is never
         # returned on a raise, so nobody else can call close() - a leak that would
-        # accumulate a SQLite fd/WAL handle every scheduled cycle on a persistent
+        # accumulate a SQLite fd/WAL handle every scheduled run on a persistent
         # download/parse failure.
         try:
             try:
@@ -569,9 +569,9 @@ class MappingResolver(KnownExternalIds):
 
         Writes to a `.part` temp and atomically renames on success, so a failed or
         stalled download never leaves a truncated source file for the next run to
-        digest and trust. A per-read timeout bounds a stall (the read raises rather
+        hash and trust. A per-read timeout bounds a stall (the read raises rather
         than blocking forever). Progress is reported about once per MB - to the boot
-        cockpit's live bar when the resolver has a progress sink, else as a
+        step's live bar when the resolver has a progress handle, else as a
         throttled DEBUG line. Raises `OSError` on any failure (the callers'
         containment contract).
         """
@@ -640,11 +640,11 @@ class MappingResolver(KnownExternalIds):
             except OSError as e:
                 # A transient blip refreshing a stale-but-valid cached source must not abort
                 # the run: the atomic .part write left the cached file intact, so fall open to
-                # it and warn (next cycle re-attempts). A first-ever download above stays fatal.
+                # it and warn (the next run re-attempts). A first-ever download above stays fatal.
                 hub_warn(f"Could not refresh {label} ({e}) - using the cached copy")
 
     def _load_anime_ids(self) -> None:
-        """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
+        """Download + (re)index the Kometa Anime-IDs JSON only if its content changed."""
 
         self._maybe_download(self._anime_ids_path, ANIME_IDS_URL, "anime_ids.json")
         file_hash = _file_hash(self._anime_ids_path)
@@ -669,7 +669,7 @@ class MappingResolver(KnownExternalIds):
         t0 = time.perf_counter()
         parsed = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
         self._store.replace_anidb(file_hash, parsed.rows, parsed.ambiguous)
-        # The skip tallies ride the summary only when nonzero: malformed is 0 on
+        # The skip tallies go into the summary only when nonzero: malformed is 0 on
         # healthy upstream data. Unsupported forms number in the hundreds.
         skips = f", {parsed.malformed} malformed skipped" if parsed.malformed else ""
         if parsed.unsupported:
@@ -698,7 +698,7 @@ class MappingResolver(KnownExternalIds):
     def _log(self, message: str) -> None:
         """Emit a DEBUG line if a logger was injected (no-op otherwise).
 
-        The boot cockpit owns the INFO-level startup narrative (the "Refreshing
+        The boot owns the INFO-level startup narrative (the "Refreshing
         mappings" step + its live bar + finish line), so these per-source
         download/parse/cache-hit notes stay at DEBUG to keep a normal run calm.
         """
@@ -719,7 +719,7 @@ class MappingResolver(KnownExternalIds):
         return " · ".join(names) if names else "none enabled"
 
     def close(self) -> None:
-        """Close the mapping store (idempotent). Call once per cycle at teardown."""
+        """Close the mapping store (idempotent). Call once per run at teardown."""
 
         self._store.close()
 
@@ -731,7 +731,7 @@ class MappingResolver(KnownExternalIds):
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
         `all_*` sets), so `collect_anime_items` queries these instead of
-        scanning the full map. Returns an empty set when the source is
+        scanning the full table. Returns an empty set when the source is
         disabled. The covariant
         `AbstractSet` return absorbs the store's per-column `set[int]` /
         `set[str]` overloads.
@@ -782,8 +782,8 @@ class MappingResolver(KnownExternalIds):
 
         Returns:
             A `ResolvedMappings`: a fresh copy of the resolved mappings (so a
-            caller mutating it can't corrupt the memo), plus the ignored entries
-            removed from the result, for the caller to log and the listing read.
+            caller mutating it can't corrupt the memo), plus the ignored mappings
+            removed from the result, for the caller to log and the listings fetch.
         """
 
         ids.require_any()
@@ -796,17 +796,17 @@ class MappingResolver(KnownExternalIds):
         else:
             anilist_mappings: dict[int, TitleMapping] = {}
 
-            # AniBridge is the primary source: its richer per-season episode
+            # AniBridge is the primary source: its more detailed per-season episode
             # offsets win, so query it first and key results by AniList ID.
             if self.anibridge:
                 anilist_mappings = self.mappings_from_anibridge(ids)
 
             # Then fall back to the Kometa Anime IDs for anything AniBridge
-            # doesn't cover - EXCEPT a degraded AniBridge entry, which Kometa
+            # doesn't cover - EXCEPT an AniBridge mapping without TVDB mappings, which Kometa
             # overrides in the Sonarr/tvdb context only (tvdb id passed). There
             # its missing season ranges drive a wrong-episode grab, so Kometa's
             # explicit season wins. Radarr (no tvdb id) keeps AniBridge primary,
-            # since the entry value is unused for movies and overriding would
+            # since the mapping value is unused for movies and overriding would
             # silently flip the documented "AniBridge is primary" precedence.
             if self._anime_enabled:
                 for al_id, mapping in self.mappings_from_anime_ids(ids).items():
@@ -827,7 +827,7 @@ class MappingResolver(KnownExternalIds):
             self._anilist_ids_cache[ids] = ResolvedMappings(kept=anilist_mappings, ignored=ignored)
 
         # Return fresh copies of BOTH so a caller mutating either can't corrupt the
-        # memo (the entries are frozen, so a shallow dict copy is enough).
+        # memo (the mappings are frozen, so a shallow dict copy is enough).
         return ResolvedMappings(kept=dict(anilist_mappings), ignored=dict(ignored))
 
     def mappings_from_anime_ids(

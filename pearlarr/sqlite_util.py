@@ -6,12 +6,12 @@ a busy timeout, a corruption predicate that distinguishes a genuinely torn file
 from a transient lock, and a fail-open quarantine of an unreadable file. Those
 primitives live here so the two stores share ONE copy - a change to the
 corruption policy (which gates a destructive rename) or the transaction-control
-pin (which gates the cache's preview-write semantics) can't land in one store and
+pin (which gates the cache's dry-run write semantics) can't land in one store and
 silently diverge in the other.
 
 The store *classes* stay separate on purpose: their write models genuinely differ
-(the cache stages writes behind a preview gate and promotes an in-memory db. The
-mapping store does atomic per-source digest-gated replaces with a rebuild-on-format
+(the cache stages writes behind a dry-run gate and promotes an in-memory db. The
+mapping store does atomic per-source hash-gated replaces with a rebuild-on-format
 -change). Only the connection/corruption plumbing is shared.
 """
 
@@ -41,7 +41,7 @@ def connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     Transaction control is pinned *explicitly* to legacy/deferred rather than
     leaning on the sqlite3 defaults: legacy mode means an implicit `BEGIN`
     precedes the first DML and nothing commits until the owner calls `commit` -
-    exactly what the cache's staged-write preview gate and the mapping store's
+    exactly what the cache's staged-write dry-run gate and the mapping store's
     atomic per-source replace both rely on - so a future Python flipping a default
     can't silently turn staged writes into immediate commits and break either. Do
     NOT set `isolation_level=None` / real autocommit. (Both attributes are set
