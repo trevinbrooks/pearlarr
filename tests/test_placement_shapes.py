@@ -16,7 +16,7 @@ from pydantic import BaseModel, RootModel
 
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import ListedFile, place_release
 from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
@@ -150,8 +150,8 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
     placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
 
     placements = placement.placements
-    assert placements.placed == {normalize_name(name): ids for name, ids in case.expected.items()}
-    assert {p.name for p in placements.excluded} == {normalize_name(name) for name in case.expected_excluded}
+    assert placements.placed == {normalize_file_name(name): ids for name, ids in case.expected.items()}
+    assert {p.name for p in placements.excluded} == {normalize_file_name(name) for name in case.expected_excluded}
     assert list(placement.episodes) == [
         ReleaseEpisode(
             grabbing_title.series_index.by_id[ep_id].season_number,

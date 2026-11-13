@@ -8,7 +8,7 @@ from typing import ClassVar
 import pytest
 
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
-from pearlarr.file_paths import file_name, normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import (
     EntryPlacements,
     FetchedSeadex,
@@ -160,9 +160,7 @@ class TestPlaceRelease:
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
         assert placement.episodes == tuple(ReleaseEpisode(1, n, 10 * n) for n in range(1, 5))
-        assert placement.placements.placed == {
-            normalize_name(file_name(name)): (100 + n,) for n, name in enumerate(_RUN, 1)
-        }
+        assert placement.placements.placed == {normalize_file_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         assert placement.covered_ids == {101, 102, 103, 104}
         assert placement.inputs_read
         assert placement.pending_import is None
@@ -340,7 +338,7 @@ class TestPlaceOntoResident:
     def test_an_unread_parse_in_a_file_map_holding_the_whole_torrent_skips_nothing(self) -> None:
         pending = pending_import(
             infohash="h1",
-            file_episode_map={normalize_name(name): [100 + n] for n, name in enumerate(_SEASON_NAMES, start=1)},
+            file_episode_map={normalize_file_name(name): [100 + n] for n, name in enumerate(_SEASON_NAMES, start=1)},
             seadex_files=_SEASON_NAMES,
             ordered_episode_ids=(101, 102, 103, 104),
         )
@@ -689,10 +687,10 @@ class TestPlaceSkipped:
 
         assert placement.skip_reason is None
         assert placement.placements.placed == {
-            normalize_name(self._EARLY_KEYS[0]): (102,),
-            normalize_name(self._EARLY_KEYS[1]): (103,),
+            normalize_file_name(self._EARLY_KEYS[0]): (102,),
+            normalize_file_name(self._EARLY_KEYS[1]): (103,),
         }
-        assert placement.placements.hand_import_files == (normalize_name(self._EARLY_KEYS[2]),)
+        assert placement.placements.hand_import_files == (normalize_file_name(self._EARLY_KEYS[2]),)
         assert len(placement.episodes) == 2
 
     def test_the_pending_import_update_keeps_the_file_left_for_a_hand_import(self) -> None:
@@ -701,7 +699,7 @@ class TestPlaceSkipped:
 
         update = build_pending_import_update(release, grabbing_title, title_facts())
 
-        assert update.hand_import_files == (normalize_name(self._EARLY_KEYS[2]),)
+        assert update.hand_import_files == (normalize_file_name(self._EARLY_KEYS[2]),)
 
     def test_a_torrent_the_listing_agrees_with_places_and_is_not_skipped(self) -> None:
         placement = place_release(self._specials(), self._specials_grabbing_title(1, 2), self._listing((501, 502, 503)))
@@ -968,7 +966,7 @@ class TestPlaceBesideAnotherListedTitle:
         placement = place_release(files, _grabbing_title(_SERIES[-2:], al_id=2), torrent)
 
         assert by_name(placement.placements) == {
-            **{normalize_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
+            **{normalize_file_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
             "show - ncop.mkv": ((), PlacementVerdict.EXTRA),
         }
         assert placement.skip_reason is SkipReason.INPUT_UNREAD
@@ -1063,11 +1061,11 @@ _RG_FILES = (
     ListedFile(_rg_name(" - OP"), 305872174, ParsedFileInfo()),
     ListedFile(_rg_name(" - ED"), 541996641, ParsedFileInfo()),
 )
-_RG_EPISODE_NAMES = [normalize_name(f.file_name) for f in _RG_FILES[:12]]
+_RG_EPISODE_NAMES = [normalize_file_name(f.file_name) for f in _RG_FILES[:12]]
 # Under either window the shorts place nowhere, and the OP and ED are extras.
 _RG_REST = {
-    **{normalize_name(f.file_name): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
-    **{normalize_name(f.file_name): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
+    **{normalize_file_name(f.file_name): ((), PlacementVerdict.NO_EPISODE_FOUND) for f in _RG_FILES[12:18]},
+    **{normalize_file_name(f.file_name): ((), PlacementVerdict.EXTRA) for f in _RG_FILES[18:]},
 }
 
 
@@ -1223,7 +1221,9 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         placement = place_release(_MHA_FILES, _MHA_GRABBING_TITLE, torrent)
 
-        assert by_name(placement.placements) == {normalize_name(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)}
+        assert by_name(placement.placements) == {
+            normalize_file_name(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)
+        }
         assert placement.covered_ids == {9254}
         assert placement.episodes == (ReleaseEpisode(0, 8, 1_400_000_000),)
         assert placement.skip_reason is None
@@ -1234,7 +1234,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         pending = pending_import(
             infohash="h1",
             al_id=122349,
-            file_episode_map={normalize_name(_MHA_OVA): [9254]},
+            file_episode_map={normalize_file_name(_MHA_OVA): [9254]},
             seadex_files=[_MHA_OVA],
             ordered_episode_ids=(9254, 9255),
         )
@@ -1266,10 +1266,10 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         assert by_name(placement.placements) == {
             **{
-                normalize_name(name): ((ep.id,), PlacementVerdict.NUMBERINGS_AGREE)
+                normalize_file_name(name): ((ep.id,), PlacementVerdict.NUMBERINGS_AGREE)
                 for name, ep in zip(_SC_EPISODES, _SC_SEASON, strict=False)
             },
-            **dict.fromkeys((normalize_name(name) for name in _SC_SPS), ((), PlacementVerdict.NO_EPISODE_FOUND)),
+            **dict.fromkeys((normalize_file_name(name) for name in _SC_SPS), ((), PlacementVerdict.NO_EPISODE_FOUND)),
         }
         assert placement.covered_ids == {ep.id for ep in _SC_SEASON[:12]}
         assert placement.skip_reason is None
@@ -1287,7 +1287,7 @@ class TestPlaceWhereEveryNumberingAgrees:
 
         placement = place_release(_SC_FILES, grabbing_title, torrent)
 
-        assert {by_name(placement.placements)[normalize_name(name)] for name in _SC_EPISODES} == {
+        assert {by_name(placement.placements)[normalize_file_name(name)] for name in _SC_EPISODES} == {
             ((), PlacementVerdict.ANOTHER_TITLES)
         }
         assert placement.episodes == ()
@@ -1472,8 +1472,10 @@ class TestEntryPlacements:
         listed_files = build_pending_import_updates(seadex_dict, placed, facts)
 
         assert set(listed_files) == {"h1", "h2"}
-        assert dict(listed_files["h1"].file_map) == {normalize_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
-        listed = {normalize_name(name): 10 * n for n, name in enumerate(_RUN, 1)}
+        assert dict(listed_files["h1"].file_map) == {
+            normalize_file_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)
+        }
+        listed = {normalize_file_name(name): 10 * n for n, name in enumerate(_RUN, 1)}
         assert listed_files["h1"].facts == torrent_facts(
             seadex_files=tuple(_RUN), release_sizes=(10, 20, 30, 40), sizes_by_name=listed
         )
@@ -1532,8 +1534,8 @@ class TestOrderOnlyUpdate:
         update = build_pending_import_update(release, grabbing_title, title_facts())
 
         assert update.order_only == {
-            normalize_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
-            normalize_name(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+            normalize_file_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+            normalize_file_name(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
         }
         assert update.pending_import_at(_STAMP, fresh=True).order_only == update.order_only
 
@@ -1656,7 +1658,7 @@ class TestPendingImportAt:
         assert joined.hand_import_files == ("show - 02.mkv", "show - 03.mkv")
 
     def test_joined_merges_the_order_only_keys(self) -> None:
-        halves = [normalize_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2)]
+        halves = [normalize_file_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2)]
         keys = {halves[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)), halves[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
         stored = pending_import(infohash="h1", hand_import_files=halves[:1], order_only={halves[0]: keys[halves[0]]})
 

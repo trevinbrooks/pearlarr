@@ -17,7 +17,7 @@ from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.boundary import Json
 from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, TrustedGroups, trusted_groups
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import (
     EntryPlacements,
     PendingImportUpdate,
@@ -149,7 +149,7 @@ class TestBuildPendingImportUpdates:
         pending = update.pending_import_at(_ADDED_AT, fresh=True)
         assert pending.added_at == _ADDED_AT
         assert pending.claims == (claim,)
-        assert dict(update.file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(update.file_map) == {normalize_file_name("Show - 01.mkv"): (101,)}
         assert update.facts.seadex_files == ("Show - 01.mkv",)
         # The claim's episode coverage, for the wait/notification label, and the window it is checked under.
         assert claim.claimed_coverage == "S01 E01"
@@ -317,8 +317,8 @@ class TestBuildPendingImportUpdates:
 
         update = updates["h1"]
         assert dict(update.file_map) == {
-            normalize_name("Show - 01.mkv"): (101,),
-            normalize_name("Show - 02.mkv"): (102,),
+            normalize_file_name("Show - 01.mkv"): (101,),
+            normalize_file_name("Show - 02.mkv"): (102,),
         }
         assert update.claim.claimed_coverage == "S01 E01-E02"
         # The file map episodes are the file map's per-file ids alone, so the old cross-file
@@ -405,10 +405,10 @@ class TestBuildPendingImportUpdates:
 
         update = updates["h1"]
         assert set(update.file_map) == {
-            normalize_name("Show - S03E01.mkv"),
-            normalize_name("Show - S03E02.mkv"),
+            normalize_file_name("Show - S03E01.mkv"),
+            normalize_file_name("Show - S03E02.mkv"),
         }
-        assert update.excluded == (normalize_name("Show - S03E13.mkv"),)
+        assert update.excluded == (normalize_file_name("Show - S03E13.mkv"),)
 
     def test_file_resolving_nowhere_in_the_series_is_not_excluded(self) -> None:
         # Its key exists nowhere in the series, so nothing proves it another
@@ -459,8 +459,8 @@ class TestBuildPendingImportUpdates:
         )
 
         update = updates["h1"]
-        assert dict(update.file_map) == {normalize_name("Show - 01v2.mkv"): (101,)}
-        assert update.excluded == (normalize_name("Show - 01.mkv"),)
+        assert dict(update.file_map) == {normalize_file_name("Show - 01v2.mkv"): (101,)}
+        assert update.excluded == (normalize_file_name("Show - 01.mkv"),)
 
     def test_unparsed_and_rejected_files_stay_possibly_this_torrents(self) -> None:
         # A file with no cached parse and a full-season-rejected zip: neither is
@@ -492,7 +492,7 @@ class TestBuildPendingImportUpdates:
         )
 
         update = updates["h1"]
-        assert set(update.file_map) == {normalize_name("Show - 01.mkv")}
+        assert set(update.file_map) == {normalize_file_name("Show - 01.mkv")}
         assert update.excluded == ()
 
     def test_sibling_per_episode_torrents_get_distinct_coverage_labels(self) -> None:
@@ -666,7 +666,7 @@ class TestFileMapGuards:
             facts=title_facts(),
         )
 
-        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
+        assert dict(updates["h1"].file_map) == {normalize_file_name("Show - 01-02.mkv"): (101, 102)}
 
     def test_partially_resolving_span_is_not_placed(self) -> None:
         # A double-episode file straddling the title boundary: only episode 1
@@ -716,7 +716,7 @@ class TestFileMapGuards:
             facts=title_facts(),
         )
 
-        assert dict(updates["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
+        assert dict(updates["h1"].file_map) == {normalize_file_name("Show - 13v2.mkv"): (213,)}
 
     def test_partial_collision_leaves_the_whole_later_file_unplaced(self) -> None:
         # The later file claims one already-placed id and one unplaced one: placement
@@ -746,7 +746,7 @@ class TestFileMapGuards:
             facts=title_facts(),
         )
 
-        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_file_name("Show - 01.mkv"): (101,)}
 
     def test_duplicate_file_names_place_once(self) -> None:
         # The same file name in two folders collapses in the name-keyed
@@ -773,7 +773,7 @@ class TestFileMapGuards:
             facts=title_facts(),
         )
 
-        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_file_name("Show - 01.mkv"): (101,)}
         # Both physical files stay tracked (the file name list is the folder's truth).
         assert updates["h1"].facts.seadex_files == ("Show - 01.mkv", "Show - 01.mkv")
 
@@ -804,7 +804,7 @@ class TestParseWriteFeedsUpdates:
             facts=title_facts(),
         )
 
-        assert dict(updates["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
+        assert dict(updates["h1"].file_map) == {normalize_file_name("Show - 01.mkv"): (101,)}
         # Asked once, and persisted for the next run's gather.
         assert sonarr.parse_calls == ["Show - 01.mkv"]
         assert strat._parse.cache_store.get_sonarr_parse("Show - 01.mkv") is not None

@@ -14,7 +14,7 @@ from seadex import Tracker
 
 from .arr_categories import ArrCategoryResolver
 from .boundary import coerce_int
-from .file_paths import file_name, normalize_name
+from .file_paths import normalize_file_name
 from .output import hub_warn
 from .releases import Release, SeadexDict, normalized_infohash
 from .tracker_links import (
@@ -115,7 +115,7 @@ type _FileSet = Counter[tuple[str, int | None]]
 def _file_set(files: Iterable[tuple[str, int | None]]) -> _FileSet:
     """The (name, size) pairs of a torrent's files as a `_FileSet`."""
 
-    return Counter((normalize_name(file_name(name)), size) for name, size in files)
+    return Counter((normalize_file_name(name), size) for name, size in files)
 
 
 @dataclass(frozen=True, slots=True)

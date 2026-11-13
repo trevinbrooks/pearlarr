@@ -60,7 +60,7 @@ from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.cli import run_single
 from pearlarr.config import AppConfig, Arr
-from pearlarr.file_paths import normalize_name
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.json_narrow import is_json_list, is_json_obj
 from pearlarr.output import current_hub
 from pearlarr.paths import DATA_DIR_ENV
@@ -677,8 +677,8 @@ def _plant_pending_import(cache_path: Path, config_hash: str, scenario: _Scenari
         if scenario.listing is _Listing.NO_NUMBERS
         else (*(name for _, name in named), *siblings),
         added_at=stamp,
-        file_episode_map={normalize_name(name): (ep_id,) for ep_id, name in named} if mapped else {},
-        excluded_files=tuple(normalize_name(name) for name in siblings),
+        file_episode_map={normalize_file_name(name): (ep_id,) for ep_id, name in named} if mapped else {},
+        excluded_files=tuple(normalize_file_name(name) for name in siblings),
         claims=(claim,),
     )
     store = CacheStore.load(str(cache_path), config_hash=config_hash)
