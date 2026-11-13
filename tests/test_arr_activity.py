@@ -1,15 +1,15 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The run-loop section reads the services hub's private dirty set (the wiring
+# The run-loop half reads the services hub's private dirty set (the wiring
 # under test). Strict re-flags that and the repo disables it for tests.
-"""The arr-side activity scan (`ArrActivityReader`) and its run-loop wiring.
+"""The arr-side activity read (`ArrActivityReader`) and its run-loop wiring.
 
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
-+ item-id filters (no own-grab exemption), and the fail-open contract. Run-loop
++ item-id filters (no exemption for pearlarr's grabs), and the fail-open contract. Run-loop
 half (reusing `test_run_finalize`'s `_engine` harness): touched items flow into
 `ArrRunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
-only on full-library, non-outage runs (held drift signals replay on the next
+only on full-library runs with SeaDex reachable (kept drift signals replay on the next
 healthy run), and either config toggle disables the fetch entirely.
 """
 
@@ -143,7 +143,7 @@ class TestScan:
 
     def test_gap_with_empty_window_still_signals_rescan(self) -> None:
         # No fresh records to advance the cursor: coverage stays broken, so the
-        # rescan repeats next pass until history produces a new stamp.
+        # rescan repeats next run until history produces a new stamp.
         activity, cache = _activity_reader()
         since = _NOW - timedelta(days=40)
         stored = HistoryCheckpoint(format_history_date(since), 1)
@@ -215,7 +215,8 @@ class TestScan:
         [(Arr.SONARR, "downloadFolderImported"), (Arr.RADARR, "movieFolderImported")],
     )
     def test_own_grab_import_touches_its_item(self, arr: Arr, event: str) -> None:
-        # An own pending grab is seeded so a re-added own-grab filter fails here: the arr may import only part of a grab.
+        # A pending grab of pearlarr's is set up so a re-added filter on pearlarr's grabs fails here: the arr may import
+        # only part of a grab.
         cache = FakeCacheStore()
         cache.put_pending_import_row(arr, "beef01", {"infohash": "beef01"})
         activity = ArrActivityReader(arr, cache, make_logger())
@@ -259,8 +260,8 @@ class TestScan:
 
         assert scan.touched == frozenset()
         assert scan.rescan_all is False
-        # The fetch helper (arr_http) owns the operator-facing warning. The monitor
-        # leaves only a debug breadcrumb, so one failure never warns twice.
+        # The fetch helper (arr_http) owns the operator-facing warning. The reader
+        # leaves only a debug line, so one failure never warns twice.
         assert not any(r.levelno == logging.WARNING for r in capture.records)
         assert any(r.levelno == logging.DEBUG for r in capture.records)
         # No pending checkpoint either: commit is a no-op.
@@ -269,7 +270,7 @@ class TestScan:
 
     def test_fetch_failure_on_a_gap_keeps_the_gap_detectable(self) -> None:
         # Fail-open beats rescan: nothing this run, but the untouched checkpoint
-        # re-detects the gap next pass.
+        # re-detects the gap next run.
         activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(days=40)), 1)
         cache.put_history_checkpoint(Arr.SONARR, stored)
@@ -300,7 +301,7 @@ class TestScan:
 
     def test_empty_date_record_does_not_stash_a_checkpoint(self) -> None:
         # An empty stored date would collapse the next window to the overlap.
-        # keep the old cursor and let the id dedup absorb the re-delivery.
+        # keep the old cursor and let the id dedup drop the re-delivery.
         activity, cache = _activity_reader()
         stored = HistoryCheckpoint(format_history_date(_NOW - timedelta(hours=3)), 12)
         cache.put_history_checkpoint(Arr.SONARR, stored)
@@ -387,7 +388,7 @@ class TestRunLoopActivityWiring:
         return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
 
     def test_outage_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
-        # A SeaDex-outage run skips every lookup, so committing would consume
+        # A SeaDex-unreachable run skips every lookup, so committing would consume
         # drift events the run never acted on.
         cache = FakeCacheStore()
         engine = self._engine_with_seadex_unreachable(logger, cache)
@@ -405,12 +406,12 @@ class TestRunLoopActivityWiring:
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
     def test_held_checkpoint_replays_dirty_on_the_next_healthy_run(self, logger: logging.Logger) -> None:
-        # Outage run first: dirty derived but unactionable, checkpoint held.
+        # Unreachable run first: dirty derived but unactionable, checkpoint kept.
         cache = FakeCacheStore()
         engine = self._engine_with_seadex_unreachable(logger, cache)
         engine.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
-        # Healthy run over the SAME store: the held cursor replays the same
+        # Healthy run over the SAME store: the kept cursor replays the same
         # records through the id dedup, re-derives the dirty mark, and commits.
         healthy = _engine(_FinalizeRecorder(), logger, cache_store=cache)
         healthy.run_arr(

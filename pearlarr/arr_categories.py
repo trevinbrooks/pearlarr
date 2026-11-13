@@ -4,7 +4,7 @@ A category OMITTED in config adopts the matching category of the arr's own
 qBittorrent download client (`/api/v3/downloadclient`); an explicit blank
 string keeps no category at all. Resolution is lazy - the client fetch happens
 at first use (the run's first title checked, an import poll, a post-import
-move), where the arr is provably up - and every miss fails open to blank.
+move), where the arr is provably up - and every failed fetch fails open to blank.
 
 The same read says which categories the arr watches: each of its enabled
 qBittorrent clients lists only the torrents in its own category, and in that
@@ -23,7 +23,7 @@ from .arr_models import DownloadClientRecord
 from .config import Arr, ArrSettings
 from .log import LOG_NAME
 
-# Debug breadcrumbs ride the stdlib channel (first-party child of the app
+# Debug lines go through the stdlib channel (first-party child of the app
 # logger), matching `arr_http`'s coalesced-repeat idiom.
 _LOG = logging.getLogger(f"{LOG_NAME}.arr_categories")
 
@@ -91,17 +91,17 @@ def _explicit(value: str | None) -> str | None:
 class ArrCategoryResolver:
     """The two effective categories and which categories the arr watches, off one lazy client fetch a run.
 
-    Lazy on purpose: at first use the arr is provably up (the library fetch before the run's first title, an
-    import scan or a verified import just went through its API), where an eager boot-time fetch would turn an arr
-    restart into a run-long miss. A successful fetch is memoized; a failed one is NOT - the next use retries, so a
-    blip costs only the work racing it. Every miss fails open to blank (the transport warns, coalesced).
+    Lazy on purpose: at first use the arr is provably up (the library fetch before the run's first title, a
+    candidate fetch or a confirmed import just went through its API), where an eager boot-time fetch would turn an
+    arr restart into a run-long failure. A successful fetch is memoized; a failed one is NOT - the next use retries,
+    so a blip costs only the work racing it. Every failed fetch fails open to blank (the transport warns, coalesced).
     """
 
     def __init__(self, arr: Arr, config: ArrSettings, sources: CategorySources | None) -> None:
-        """`sources` None (no qBittorrent to apply a category, or missing connection keys) stays blank fetchless."""
+        """`sources` None (no qBittorrent to apply a category, or absent connection keys) stays blank fetchless."""
 
         self._arr = arr
-        # None = the key is absent from config, deferring to the arr's client.
+        # None = the key is absent from config, leaving it to the arr's client.
         self._configured = _CategoryPair(config.torrent_category, config.post_import_category)
         self._sources = sources
         self._fetched: _ClientCategories | None = None
@@ -239,7 +239,7 @@ def _read_clients(arr: Arr, clients: list[DownloadClientRecord]) -> _ClientCateg
     """The preferred qBittorrent client's (grab, post-import) categories, and every enabled one's grab category.
 
     Preferred = enabled, lowest `priority` number (1 is the arrs' highest and
-    default), list order breaking ties. Which client the arr itself would pick
+    default), list order breaking ties. Which client the arr itself would choose
     is not decidable from outside (round-robin within a priority group,
     indexer pins, tag restrictions) - the config docs say so. `(None, None)`
     when no enabled qBittorrent client is defined or the fields are blank,

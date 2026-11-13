@@ -1,5 +1,5 @@
 # pyright: strict
-"""The pure verdicts over the import probes' Sonarr reads: queue, in-flight import, commands, history."""
+"""The pure states over the import attempts' Sonarr reads: queue, in-flight import, commands, history."""
 
 from datetime import datetime, timedelta
 
@@ -29,7 +29,7 @@ from .builders import PENDING_IMPORT_ADDED, PENDING_IMPORT_STAMP, pending_import
 
 
 class TestClassifyQueue:
-    """`classify_queue` buckets queue records (state + pending status) into one verdict."""
+    """`classify_queue` buckets queue records (state + importPending status) into one state."""
 
     def test_empty_is_not_in_queue(self) -> None:
         assert classify_queue([]) is QueueState.NOT_IN_QUEUE
@@ -44,14 +44,14 @@ class TestClassifyQueue:
         assert classify_queue([queue_record("A", "importPending", status="ok")]) is QueueState.IMPORT_PENDING_OK
 
     def test_statusless_pending_is_pending_clean(self) -> None:
-        # No reported status folds to clean: only an explicit warning/error flag
-        # routes a pending record away from the defer-to-Sonarr path.
+        # No reported status reads as clean: only an explicit warning/error mark
+        # routes an importPending queue record away from the leave-it-to-Sonarr path.
         assert classify_queue([queue_record("A", "importPending", status=None)]) is QueueState.IMPORT_PENDING_OK
 
     def test_flagged_pending_steps_in(self) -> None:
         # warning/error on importPending = Sonarr's own import attempt failed and
-        # it won't reliably retry (observed live: flagged-pending torrents sat
-        # 10+ minutes untouched) - so waiting only burns the readiness deadline.
+        # it won't reliably retry (observed live: marked importPending torrents sat
+        # 10+ minutes untouched) - so waiting only burns the import timeout.
         assert classify_queue([queue_record("A", "importPending", status="warning")]) is QueueState.STUCK
         assert classify_queue([queue_record("A", "importPending", status="error")]) is QueueState.STUCK
 
@@ -60,18 +60,18 @@ class TestClassifyQueue:
 
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
-        # record is blocked. A later poll re-evaluates once the import settles.
+        # queue record is blocked. A later poll re-evaluates once the import settles.
         records = [queue_record("A", "importing"), queue_record("A", "importBlocked")]
         assert classify_queue(records) is QueueState.IMPORTING
 
     def test_importing_outranks_a_clean_pending_sibling(self) -> None:
-        # The copy itself is Sonarr's wait (credited), and it outranks every other reading.
+        # The copy itself is Sonarr's work (a pause), and it outranks every other state.
         records = [queue_record("A", "importPending", status="ok"), queue_record("A", "importing")]
         assert classify_queue(records) is QueueState.IMPORTING
 
     def test_downloading_beats_blocked_as_a_plain_wait(self) -> None:
         # In motion but not copying: Sonarr's view lags the finished torrent, so
-        # the wait is the record's own (uncredited).
+        # the wait is the pending import's own (no pause).
         records = [queue_record("A", "downloading"), queue_record("A", "importBlocked")]
         assert classify_queue(records) is QueueState.WAIT
 
@@ -107,7 +107,7 @@ class TestManualImportInFlight:
 
     def test_matching_download_id_is_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "ABC", "episodeIds": [1]}])]
-        # Case-insensitive match on the infohash.
+        # Case-insensitive match on the hash.
         assert manual_import_in_flight(cmds, DownloadIdentifiers("abc", _paths("/d"), set()))
 
     def test_completed_command_is_not_in_flight(self) -> None:
@@ -132,7 +132,7 @@ class TestManualImportInFlight:
         assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/d/folder"), set()))
 
     def test_folder_import_matches_by_translated_prefix(self) -> None:
-        # A dead-tracked folder import POSTs the TRANSLATED path. The raw
+        # A folder import for a closed history POSTs the TRANSLATED path. The raw
         # qBittorrent prefix matches nothing, the Sonarr-visible one must.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": []}])]
         assert manual_import_in_flight(
@@ -145,8 +145,8 @@ class TestManualImportInFlight:
         assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/other"), {9}))
 
     def test_translated_command_with_empty_seed_matches_by_episode_arm(self) -> None:
-        # The empty-seed edge: nothing to match by path (both views miss), the
-        # episode-id arm still guards - it is translation-immune.
+        # The empty-file-map edge: nothing to match by path (both views fail), the
+        # episode-id branch still guards - it is translation-immune.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": [9]}])]
         assert manual_import_in_flight(cmds, DownloadIdentifiers("no-hash", _paths("/nowhere"), {9}))
 
@@ -161,7 +161,7 @@ class TestManualImportInFlight:
 
 
 class TestClassifyCommands:
-    """The verdict layer: precedence + ownership over one command snapshot."""
+    """The state layer: precedence + ownership over one command snapshot."""
 
     def test_clear_snapshot_steps_in(self) -> None:
         assert classify_commands([], DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False) is None
@@ -173,7 +173,7 @@ class TestClassifyCommands:
         assert block is CommandBlock.AUTO_IMPORT
 
     def test_unproven_folder_match_blocks_without_a_claim(self) -> None:
-        # Possibly foreign: it blocks (and the wait is credited) but never claims the import.
+        # Possibly foreign: it blocks (and the import clock pauses) but never claims the import.
         cmds = [_command(files=[{"path": "/d/ep.mkv", "episodeIds": []}])]
         block = classify_commands(cmds, DownloadIdentifiers("abc", _paths("/d"), set()), lambda _: False)
         assert block is CommandBlock.IN_FLIGHT_IMPORT
@@ -204,7 +204,7 @@ _BLOCK_WAITS = {
 
 
 class TestCommandBlock:
-    """The wait each command block calls for."""
+    """The waiting attempt result each command block calls for."""
 
     @pytest.mark.parametrize("block", list(CommandBlock))
     def test_waiting(self, block: CommandBlock) -> None:
@@ -229,11 +229,11 @@ class TestInFlightDiskCommands:
         assert in_flight_disk_commands([_command(name="DownloadedEpisodesScan")])
 
     def test_rename_sweep_defers(self) -> None:
-        # Any RequiresDiskAccess command blocks, not just the passes.
+        # Any RequiresDiskAccess command blocks, not just the import commands.
         assert in_flight_disk_commands([_command(name="RenameFiles")])
 
     def test_running_manual_import_defers(self) -> None:
-        # A foreign ManualImport blocks ours the same way (our own is also
+        # A foreign ManualImport blocks an auto import the same way (pearlarr's is also
         # caught by manual_import_in_flight; this guard needs no file match).
         assert in_flight_disk_commands([_command(name="ManualImport")])
 
@@ -321,7 +321,7 @@ class TestDiskCommandsChangedSince:
 
 
 def _event_row(event: str, date: str) -> dict[str, object]:
-    """A bare history row."""
+    """A plain history row."""
 
     return {"eventType": event, "date": date}
 
@@ -338,7 +338,7 @@ def _import_row(episode_id: int, path: str, date: str) -> dict[str, object]:
 
 
 def _history(*rows: tuple[str, str] | dict[str, object], total_records: int = 0) -> HistoryPage:
-    """A history page from `(eventType, date)` pairs or raw rows, newest first (as the probe reads)."""
+    """A history page from `(eventType, date)` pairs or raw rows, newest first (as the attempt reads)."""
 
     records = [
         {**(row if isinstance(row, dict) else _event_row(*row)), "id": len(rows) - index}
@@ -348,7 +348,7 @@ def _history(*rows: tuple[str, str] | dict[str, object], total_records: int = 0)
 
 
 class TestClassifyDownloadHistory:
-    """The dead-tracked probe: the newest relevant event decides, others are skipped."""
+    """The history-closed check: the newest relevant event decides, others are skipped."""
 
     def test_newest_imported_is_dead_tracked(self) -> None:
         verdict = classify_download_history(
@@ -379,7 +379,7 @@ class TestClassifyDownloadHistory:
 
     def test_irrelevant_events_are_skipped_not_decided_on(self) -> None:
         # episodeFileDeleted is newer than the import but is NOT one of the four
-        # tracked-state events - the verdict must come from the import below it.
+        # tracked-state events - the state must come from the import below it.
         verdict = classify_download_history(
             _history(
                 ("episodeFileDeleted", "2026-07-15T00:00:00Z"),
@@ -430,7 +430,7 @@ class TestClassifyDownloadHistory:
         )
 
     def test_rows_stop_at_the_grab_below(self) -> None:
-        # An older cycle's import rows below the grab belong to another import.
+        # An older import's rows below the grab belong to another import.
         verdict = classify_download_history(
             _history(
                 _import_row(101, "/d/new.mkv", "d"),
@@ -449,7 +449,7 @@ class TestClassifyDownloadHistory:
 
     def test_a_cut_page_without_the_grab_carries_nothing(self) -> None:
         # The page holds fewer rows than the envelope counts and no grab bounds
-        # the cycle: the rows may go on past the page, so none are trusted.
+        # the import: the rows may go on past the page, so none are trusted.
         verdict = classify_download_history(_history(_import_row(101, "/d/a.mkv", "d"), total_records=150))
         assert verdict.history_closed
         assert verdict.import_rows == ()
@@ -462,7 +462,7 @@ class TestClassifyDownloadHistory:
 
 
 def _unplaced(**overrides: object) -> PendingImport:
-    """A record with an empty map over a one-file listing resolved to episode 101."""
+    """A pending import with an empty file map over a one-file listing resolved to episode 101."""
 
     fields: dict[str, object] = {
         "file_episode_map": {},
@@ -474,7 +474,7 @@ def _unplaced(**overrides: object) -> PendingImport:
 
 
 class TestPlacementsFromHistory:
-    """Sonarr's import rows fill only the listing files the record's own map leaves unplaced."""
+    """Sonarr's import rows place only the listing files the pending import's own file map leaves unplaced."""
 
     def test_a_row_outside_the_listing_is_dropped(self) -> None:
         rows = [HistoryImport("/d/Show - 01.mkv", 101, 7), HistoryImport("/d/Extra.mkv", 101, 7)]
@@ -501,8 +501,8 @@ class TestPlacementsFromHistory:
         assert placements_from_history([HistoryImport("/d/Show - 01.mkv", 101, 8)], _unplaced()) == {}
 
     def test_a_row_is_admitted_by_the_claim_on_its_series(self) -> None:
-        # A row lands only where a claim on ITS series admits the episode: the other series' claim
-        # holding the same id never vouches for it.
+        # A row goes only where a claim on ITS series admits the episode: the other series' claim
+        # holding the same id never admits it.
         pending = _unplaced(
             seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
             claims=(
@@ -514,8 +514,8 @@ class TestPlacementsFromHistory:
         assert placements_from_history(rows, pending) == {"show - 01.mkv": (201,)}
 
     def test_the_claims_window_scopes_the_ids_when_present(self) -> None:
-        # A row outside the claim's window is a sibling's slice (or a parse we
-        # would not have made). An unscoped claim, the specials shape, accepts
+        # A row outside the claim's window is a sibling's claimed coverage (or a parse pearlarr
+        # would not have made). A claim with no window, the specials shape, accepts
         # every in-series row.
         rows = [HistoryImport("/d/Show - 01.mkv", 999, 7)]
         assert placements_from_history(rows, _unplaced()) == {}

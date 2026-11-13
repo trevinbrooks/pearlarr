@@ -106,14 +106,14 @@ class TestQualityAxesFromName:
 
 
 class TestResolveQuality:
-    """`resolve_quality` picks the winning value per axis - Sonarr's own parse, then ours, then the default.
+    """`resolve_quality` chooses the winning value per axis - Sonarr's own parse, then pearlarr's, then the default.
 
     It resolves the pair to a definition, falling back to the candidate verbatim or an explicit Unknown
     when nothing resolves.
     """
 
     def test_sonarr_wins_over_ours_and_default(self) -> None:
-        # Sonarr parsed (web, 1080). Our filename parse and the default disagree.
+        # Sonarr parsed (web, 1080). pearlarr's filename parse and the default disagree.
         sonarr = QualityParts(source=QualitySource.WEB, resolution=1080)
         ours = QualityParts(source=QualitySource.BLURAY, resolution=2160)
         default = QualityParts(source=QualitySource.TELEVISION, resolution=720)
@@ -135,7 +135,7 @@ class TestResolveQuality:
         assert model.quality.id == 20
 
     def test_per_axis_fill_from_default(self) -> None:
-        # User's example: we parsed (None, 1080). Default is Bluray-2160p ->
+        # User's example: pearlarr parsed (None, 1080). Default is Bluray-2160p ->
         # import as Bluray-1080p, NOT WEBDL-1080p and NOT Unknown.
         ours = QualityParts(source=None, resolution=1080)
         default = QualityParts(source=QualitySource.BLURAY, resolution=2160)

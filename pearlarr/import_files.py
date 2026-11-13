@@ -1,4 +1,4 @@
-"""Pure per-file import plan: which of our intended files import onto which episodes, and which are left."""
+"""Pure per-file import plan: which of the file map's files import onto which episodes, and which are left."""
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from .file_paths import file_name, normalize_name
 from .pending_import import FileEpisodeMap, PendingImport
 from .video_files import is_video_candidate
 
-# Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr holds the file:
+# Rejection-reason substrings, matched case-insensitively. Only ALREADY_IMPORTED means Sonarr has the file:
 # a SAMPLE is just a file to skip, never a sign the episode imported, so the two stay apart.
 _ALREADY_IMPORTED_TOKENS = ("already", "exist")
 _SAMPLE_TOKENS = ("sample",)
@@ -18,28 +18,28 @@ _SAMPLE_TOKENS = ("sample",)
 
 @dataclass(frozen=True, slots=True)
 class CandidateFile:
-    """An on-disk manual-import candidate, reduced to what planning needs (`candidate_files`)."""
+    """A ManualImport candidate in the download's folder, reduced to what planning needs (`candidate_files`)."""
 
     normalized_name: str
-    """The normalized match key against our authoritative map."""
+    """The normalized match key against the authoritative file map."""
 
     path: str
-    """What we POST."""
+    """What pearlarr POSTs."""
 
     quality: QualityModel | None
-    """Reused if our own quality parse comes up empty."""
+    """Reused if pearlarr's quality parse comes up empty."""
 
     is_sample: bool
-    """Folds Sonarr's per-file sample rejection into the plan."""
+    """Merges Sonarr's per-file sample rejection into the plan."""
 
     is_already_imported: bool
-    """Folds Sonarr's per-file already-imported rejection into the plan."""
+    """Merges Sonarr's per-file already-imported rejection into the plan."""
 
 
 def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]) -> bool:
     """True if any of a candidate's rejection reasons contains one of `tokens` (lowercase), case-insensitively.
 
-    A bare-string rejection from an older Sonarr is folded into `reason` at the client boundary.
+    A plain-string rejection from an older Sonarr is converted to `reason` at the client boundary.
     """
 
     for rejection in candidate.rejections:
@@ -52,7 +52,7 @@ def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]
 
 
 def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, CandidateFile]:
-    """Index on-disk candidates by normalized basename: a basename duplicated across folders carries one verdict.
+    """Index the folder's candidates by normalized file name: a file name duplicated across folders carries one answer.
 
     The candidates arrive parsed at the Sonarr client boundary (`SonarrClient.manual_import_candidates_by_download_id`), so each is
     read by attribute and the raw DTO never reaches the decision path.
@@ -76,20 +76,20 @@ def candidate_files(candidates: Iterable[ManualImportCandidate]) -> dict[str, Ca
 
 @dataclass(frozen=True, slots=True)
 class UnplacedInFolder:
-    """One poll's video files on disk that the import's map lacks. The import reports them and never places one."""
+    """One poll's video files in the folder the file map lacks. The import reports them and never places one."""
 
     names: tuple[str, ...]
-    """Their normalized basenames, in SeaDex's order, then the scan's for a file SeaDex doesn't list."""
+    """Their normalized file names, in SeaDex's order, then the fetch's for a file SeaDex doesn't list."""
 
     reported: tuple[str, ...]
-    """The names the record doesn't exclude (`PendingImport.excluded_files`), in the same order."""
+    """The names the pending import doesn't exclude (`PendingImport.excluded_files`), in the same order."""
 
     hand_import_files: tuple[str, ...]
     """The reported names the grab left for a hand import (`PendingImport.hand_import_files`)."""
 
     @property
     def quiet(self) -> int:
-        """How many names the record excludes: reported at the grab, not again."""
+        """How many names the pending import excludes: reported at the grab, not again."""
 
         return len(self.names) - len(self.reported)
 
@@ -101,9 +101,9 @@ class UnplacedInFolder:
 
     @property
     def when_nothing_placed(self) -> tuple[str, ...]:
-        """The names a hand import must place when nothing is mapped.
+        """The names a hand import must place when the file map places nothing.
 
-        The reported ones, or every name when the record excluded them all.
+        The reported ones, or every name when the pending import excluded them all.
         """
 
         return self.reported or self.names
@@ -112,10 +112,10 @@ class UnplacedInFolder:
 def unplaced_in_folder(
     pending: PendingImport, candidates_by_name: Mapping[str, CandidateFile], file_map: FileEpisodeMap
 ) -> UnplacedInFolder:
-    """The video files among `candidates_by_name` that `mapped` lacks, split by what `pending` says of them."""
+    """The video files among `candidates_by_name` that `file_map` lacks, split by what `pending` says of them."""
 
     video = {name for name, candidate in candidates_by_name.items() if is_video_candidate(file_name(candidate.path))}
-    # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in disk order.
+    # SeaDex's order keeps the output stable from poll to poll. A file the list doesn't name follows in fetch order.
     listed = dict.fromkeys(
         name for name in (normalize_name(file_name(f)) for f in pending.seadex_files) if name in video
     )
@@ -128,7 +128,7 @@ def unplaced_in_folder(
 
 
 class ImportAction(StrEnum):
-    """What `plan_import_files` decided for one entry in OUR map.
+    """What `plan_import_files` decided for one file in the file map.
 
     A `StrEnum` (so each member IS its rendered word, matching the
     `PendingImportState` / `QueueState` / `EpisodeFileStatus`
@@ -138,36 +138,36 @@ class ImportAction(StrEnum):
     """
 
     IMPORT = "import"
-    """POST a manual import for this file."""
+    """POST a ManualImport for this file."""
 
     SKIP_DONE = "skip_done"
-    """Not needed (every target already holds a recommended file), with no Sonarr rejection."""
+    """Not needed (each of its episodes already has a trusted file), with no Sonarr rejection."""
 
     SAMPLE = "sample"
-    """A sample (never our intended file)."""
+    """A sample (never an intended file)."""
 
     ALREADY = "already"
-    """Not needed, and Sonarr flagged an already-imported rejection."""
+    """Not needed, and Sonarr raised an already-imported rejection."""
 
     MISSING = "missing"
-    """Our map intends this file but it isn't on disk (surfaced, never silently skipped)."""
+    """The file map intends this file but it isn't in the folder (reported, never silently skipped)."""
 
 
 @dataclass(frozen=True, slots=True)
 class ImportDecision:
-    """One decision per entry in OUR authoritative map (the source of truth).
+    """One decision per file in the authoritative file map (the source of truth).
 
-    Candidates only supply the on-disk `path` and rejection flags (folded into `action`).
+    Candidates only supply the folder's `path` and their rejections (reduced to `action`).
     """
 
     normalized_name: str
     action: ImportAction
     path: str | None
-    """The on-disk path, supplied by the matched candidate."""
+    """The path in the folder, supplied by the matched candidate."""
 
     quality: QualityModel | None
     episode_ids: tuple[int, ...]
-    """The episode assignment, strictly from our map, never the candidate's own parse."""
+    """The episodes, strictly from the file map, never the candidate's parse."""
 
 
 def plan_import_files(
@@ -175,10 +175,10 @@ def plan_import_files(
     candidates_by_name: Mapping[str, CandidateFile],
     statuses: EpisodeStatuses,
 ) -> list[ImportDecision]:
-    """Decide, for each file in OUR map (never the candidates), whether to import it and onto which episodes.
+    """Decide, for each file in the file map (never the candidates), whether to import it and onto which episodes.
 
-    A mapped file Sonarr didn't find is `missing`, one no episode needs is `skip_done` or `already`, and a needed
-    one goes onto the episodes `EpisodeStatuses.import_ids` picks. One decision per map entry, in map order.
+    A file map file Sonarr didn't find is `missing`, one no episode needs is `skip_done` or `already`, and a needed
+    one goes onto the episodes `EpisodeStatuses.import_ids` returns. One decision per file, in file map order.
     """
 
     decisions: list[ImportDecision] = []
@@ -192,13 +192,13 @@ def plan_import_files(
             continue
         import_ids = statuses.import_ids(ep_ids)
         if not import_ids:
-            # No episode needs this file, so Sonarr's already-imported rejection agrees with us. Report `ALREADY`
+            # No episode needs this file, so Sonarr's already-imported rejection agrees with pearlarr. Report `ALREADY`
             # when Sonarr raised it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
             decisions.append(ImportDecision(name, action, candidate.path, None, ep_ids))
             continue
         # An episode still needs this file, so import it even when Sonarr says it's already imported. Sonarr says
-        # that about any file already on the episode, including the one we're replacing.
+        # that about any file already on the episode, including the one being replaced.
         decisions.append(
             ImportDecision(
                 name,

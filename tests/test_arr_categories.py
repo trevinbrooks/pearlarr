@@ -4,15 +4,15 @@
 Pins the per-category precedence (explicit config > the arr's own qBittorrent
 download client > blank) and the `""` opt-out, the LAZY fetch contract (none
 at construction, one at first use, memoized on success ONLY - a failed fetch
-is retried at the next use), the priority pick among several enabled clients,
+is retried at the next use), the priority choice among several enabled clients,
 the per-arr field names (`tvCategory`/`tvImportedCategory` vs
 `movieCategory`/`movieImportedCategory`), and the fail-open matrix: a fetch
-failure, a missing/disabled qBittorrent client, and blank/junk fields all
+failure, an absent/disabled qBittorrent client, and blank/junk fields all
 leave omitted categories blank. `is_unwatched` answers off the fetched
 clients first (a fetched blank is authoritative False), the
 configured grab on a failed fetch, and False when both are unknown.
 `watch` answers off the fetched clients only: every enabled qBittorrent
-client counts, a blank category or a missing client watches everything, and
+client counts, a blank category or an absent client watches everything, and
 a subcategory counts under its parent unless qBittorrent says its
 subcategories are off. Whatever could not be read answers `UNREAD`.
 """
@@ -171,7 +171,7 @@ def test_download_categories_waits_for_a_category_left_to_the_arrs_clients(
 
 
 def test_no_transport_stays_blank_and_fetchless() -> None:
-    # http=None (preview run, or missing connection keys): omitted categories
+    # sources=None (dry run, or absent connection keys): omitted categories
     # stay blank and the explicit value still passes through.
     resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category="anime"), None)
 
@@ -182,8 +182,8 @@ def test_no_transport_stays_blank_and_fetchless() -> None:
 @respx.mock
 def test_priority_beats_list_order_between_enabled_clients() -> None:
     # Two enabled qBittorrent clients: the lowest priority NUMBER wins even
-    # from behind; junk priority folds to 50 (last place), so a malformed
-    # record never outranks a clean one.
+    # from behind; junk priority converts to 50 (last place), so a malformed
+    # client never outranks a clean one.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
             download_client_json(sonarr_client_fields("junky", "junky-done"), priority="high"),
@@ -212,8 +212,8 @@ def test_equal_priorities_keep_list_order() -> None:
 
 @respx.mock
 def test_junk_enable_spellings_read_as_disabled() -> None:
-    # bool("false") / bool([0]) would be True: the lax fold reads both as
-    # disabled, so junk records never steal the pick from a clean sibling.
+    # bool("false") / bool([0]) would be True: the lax conversion reads both as
+    # disabled, so junk clients never steal the choice from a clean sibling.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
             download_client_json(sonarr_client_fields("stringly", "stringly-done"), enable="false"),
@@ -228,7 +228,7 @@ def test_junk_enable_spellings_read_as_disabled() -> None:
 
 @respx.mock
 def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> None:
-    # The miss is NOT memoized: the next use fetches again (an arr blip costs
+    # The failed fetch is NOT memoized: the next use fetches again (an arr blip costs
     # only the work racing it), and the one warning states the consequence.
     route = respx.get(f"{_URL}/api/v3/downloadclient")
     route.side_effect = [
@@ -246,14 +246,14 @@ def test_fetch_failure_fails_open_with_one_warning_and_retries_at_next_use() -> 
     ]
 
     assert resolver.post_import_category() == "sonarr-done"
-    assert resolver.grab_category() == "tv-sonarr"  # the healed fetch is memoized
+    assert resolver.grab_category() == "tv-sonarr"  # the recovered fetch is memoized
     assert route.call_count == 2
 
 
 @respx.mock
 def test_no_enabled_qbittorrent_client_fails_open_quietly_and_memoizes() -> None:
     # A disabled qBittorrent client and an enabled non-qBittorrent one both
-    # miss: blanks stay blank, quietly (a DEBUG breadcrumb, no hub warning) -
+    # count for nothing: blanks stay blank, quietly (a DEBUG line, no hub warning) -
     # and the successful fetch memoizes its negative answer.
     route = respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[
@@ -299,13 +299,13 @@ def test_is_unwatched_when_the_fetched_grab_category_differs() -> None:
     resolver, _ = _resolver()
 
     assert resolver.is_unwatched("sonarr-done") is True
-    assert resolver.is_unwatched("tv-sonarr") is False  # post == watched: the entry stays
+    assert resolver.is_unwatched("tv-sonarr") is False  # post == watched: the queue record stays
 
 
 @respx.mock
 def test_is_unwatched_fetched_blank_is_authoritative_false() -> None:
     # A blank TvCategory means Sonarr sees every torrent, so no move ever clears
-    # the entry - even when pearlarr's own grab category is configured.
+    # the queue record - even when pearlarr's grab category is configured.
     respx.get(f"{_URL}/api/v3/downloadclient").respond(
         json=[download_client_json([{"name": "tvCategory", "value": ""}])],
     )
@@ -343,7 +343,7 @@ def test_is_unwatched_without_transport_reads_the_configured_grab() -> None:
 
 
 def test_is_unwatched_explicit_blank_opt_out_is_false() -> None:
-    # `""` opts out of categories entirely: nothing is watched by our reckoning.
+    # `""` opts out of categories entirely: nothing is watched by pearlarr's reckoning.
     resolver = ArrCategoryResolver(Arr.SONARR, ArrSettings(torrent_category=""), None)
 
     assert resolver.is_unwatched("sonarr-done") is False
@@ -363,7 +363,7 @@ def test_is_unwatched_compares_exactly() -> None:
 
 @respx.mock
 def test_watch_goes_by_the_categories_the_clients_name() -> None:
-    # Torrents are added to `anime` and Sonarr watches `tv-sonarr`, so the run's own grabs are the unwatched ones.
+    # Torrents are added to `anime` and Sonarr watches `tv-sonarr`, so the run's grabs are the unwatched ones.
     _sonarr_watches_tv_sonarr()
     resolver, _ = _resolver(ArrSettings(torrent_category="anime"))
 

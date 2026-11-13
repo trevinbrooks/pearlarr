@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These reuse the seam module's private builders. Strict re-flags that and the repo disables it for tests.
-"""The import poll: one rescan per record, the command reads around the step-in, fresh episode reads, the kept scan."""
+# These reuse `test_strategy_contract`'s private builders. Strict re-reports that and the repo disables it for tests.
+"""Import poll: one rescan per pending import, command reads around auto imports, fresh episode reads, kept fetch."""
 
 import pytest
 
@@ -23,13 +23,13 @@ from .test_strategy_contract import (
 
 
 def _strategy(queue: list[QueueRecord], clock: FakeClock | None = None) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A strategy and its hooked fake under `queue`, the by-id scan serving the record's one file."""
+    """A strategy and its hooked fake under `queue`, the by-id fetch serving the pending import's one file."""
 
     return _make_sonarr_for_import(candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")], queue=queue, clock=clock)
 
 
 def _blocked_row() -> QueueRecord:
-    """The record's queue row in a state Sonarr won't progress."""
+    """The pending import's queue record in a state Sonarr won't progress."""
 
     return queue_record("ABC123", "importBlocked", status="warning")
 
@@ -41,13 +41,13 @@ def _process_pass(command_id: int, status: str) -> CommandResource:
 
 
 def _episode_with_torrent_file() -> list[SonarrEpisode]:
-    """The record's one target episode holding its own file."""
+    """The pending import's one episode with this torrent's file."""
 
     return [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
 
 def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A tracked record's strategy whose by-id scan starts a pass and leaves every later by-id scan failing."""
+    """A tracked pending import's strategy: the by-id fetch starts a ProcessMonitoredDownloads, later ones fail."""
 
     strat, sonarr = _strategy([_blocked_row()], clock)
 
@@ -60,7 +60,7 @@ def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy
 
 
 class TestRescanOnce:
-    """A lagging view gets one rescan per record per run, and none once Sonarr provably looked."""
+    """A lagging view gets one rescan per pending import per run, and none once Sonarr provably looked."""
 
     def test_pass_our_rescan_starts_defers_the_step_in(self) -> None:
         clock = FakeClock()
@@ -167,7 +167,7 @@ class TestRescanOnce:
 
 
 class TestStepInGuard:
-    """The command list read before the scan, right after it, and right before the POST."""
+    """The command list read before the fetch, right after it, and right before the POST."""
 
     def test_pass_started_during_the_scan_defers_the_step_in(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
@@ -411,7 +411,7 @@ class TestEpisodeReads:
 
 
 class TestKeptScan:
-    """A by-id scan from a blocked poll serves the record's next poll, once."""
+    """A by-id fetch from a blocked poll serves the pending import's next poll, once."""
 
     def test_blocked_poll_keeps_its_scan_for_the_next_poll(self) -> None:
         clock = FakeClock()

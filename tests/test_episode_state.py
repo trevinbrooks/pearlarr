@@ -1,5 +1,5 @@
 # pyright: strict
-"""Episode-file statuses and the per-target snapshot (never-overwrite, the trust map it reads)."""
+"""Episode-file statuses and the per-episode snapshot (never-overwrite, the trusted groups it reads)."""
 
 import pytest
 
@@ -21,10 +21,10 @@ from .builders import episode_snapshot, episode_statuses, pending_import, sonarr
 
 
 class TestEpisodeFileStatuses:
-    """`EpisodeSnapshot.statuses` judges each episode's file, and `EpisodeStatuses` answers from those judgments.
+    """`EpisodeSnapshot.statuses` classifies each episode's file, and `EpisodeStatuses` answers from those statuses.
 
-    `all_done` needs every status recommended, `needing_import` leaves out only the recommended ones, and
-    `import_ids` takes an episode holding a copy of our own along with a needing one.
+    `all_trusted` needs every status trusted, `needing_import` leaves out only the trusted ones, and
+    `import_ids` takes an episode that has a copy of this torrent's along with a needing one.
     """
 
     def test_absent_recommended_other_unknown(self) -> None:
@@ -50,7 +50,7 @@ class TestEpisodeFileStatuses:
 
     def test_dash_wrapped_group_counts_as_recommended(self) -> None:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
-        # guard must still match it against the recommended set built from "Aergia".
+        # guard must still match it against the trusted groups built from "Aergia".
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="-Aergia-")]
         aergia = normalize_group("Aergia")
         assert aergia is not None
@@ -58,9 +58,9 @@ class TestEpisodeFileStatuses:
         assert statuses.by_id == {5: EpisodeFileStatus.TRUSTED}
 
     def test_untagged_file_the_grab_identified_is_recommended(self) -> None:
-        # The planner declined to re-download this file because a pick's listed
+        # The planner declined to re-download this file because a preferred release's listed
         # size named it. The import must agree, or it copies over the very file
-        # the grab decision called ours - an untagged twin stays unidentifiable.
+        # the grab decision called owned - a no-group twin stays unidentifiable.
         episodes = [
             sonarr_ep(1, 1, ep_id=6, episode_file_id=60, release_group=None, size=600),
             sonarr_ep(1, 2, ep_id=7, episode_file_id=70, release_group=None),
@@ -74,9 +74,9 @@ class TestEpisodeFileStatuses:
         }
 
     def test_owned_claim_lapses_when_the_file_changed_size(self) -> None:
-        # The identification froze at grab time; a DIFFERENT untagged file
-        # landing mid-wait must not inherit the claim - honoring the id alone
-        # would mark an unverified file done and never send ours.
+        # The identification froze at grab time; a DIFFERENT no-group file
+        # arriving mid-wait must not inherit the claim - honoring the id alone
+        # would mark an unchecked file done and never send this torrent's.
         episodes = [sonarr_ep(1, 1, ep_id=6, episode_file_id=60, release_group=None, size=601)]
         snapshot = episode_snapshot(
             episodes=episode_index(episodes), trusted={"subgroup": None}, owned_episode_sizes={6: 600}
@@ -85,7 +85,7 @@ class TestEpisodeFileStatuses:
 
     def test_owned_claim_needs_a_readable_file_record(self) -> None:
         # A truthy episodeFileId with a null/empty episodeFile payload carries
-        # no size to verify against, so the claim is refused - not promoted
+        # no size to check against, so the claim is rejected - not promoted
         # sight-unseen onto a file record Sonarr couldn't even describe.
         ep = SonarrEpisode.model_validate({"id": 6, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 60})
         snapshot = episode_snapshot(
@@ -94,22 +94,22 @@ class TestEpisodeFileStatuses:
         assert snapshot.statuses([6], {}).by_id == {6: EpisodeFileStatus.UNKNOWN_GROUP}
 
     def test_own_group_file_at_a_listed_size_is_recommended(self) -> None:
-        # Our own group's file at a size a current listing carries is our copy
-        # (just imported, or an already-current episode of the pack).
+        # This torrent's group's file at a size a listing carries now is this torrent's copy
+        # (just imported, or an already-owned episode of the release).
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=1000)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": frozenset({1000})})
         assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.TRUSTED}
 
     def test_own_group_file_at_an_unlisted_size_is_replaced(self) -> None:
-        # A same-group file at a size NO current listing carries is the stale
-        # copy this grab replaces. Reading it as done would close the record
+        # A same-group file at a size NO listing carries now is the outdated
+        # copy this grab replaces. Reading it as done would close the pending import
         # with zero imports and strand the upgrade forever.
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": frozenset({1000})})
         assert snapshot.statuses([5], {}).by_id == {5: EpisodeFileStatus.OTHER_GROUP}
 
     def test_size_gate_off_for_a_name_trusted_group(self) -> None:
-        # A None trust value (an older record, or a blind listing, recorded no
+        # A None trust value (an older pending import, or a blind listing, recorded no
         # sizes) keeps the group-name-only behavior rather than replacing blindly.
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group="SubGroup", size=999)]
         snapshot = episode_snapshot(episodes=episode_index(episodes), trusted={"subgroup": None})
@@ -117,7 +117,7 @@ class TestEpisodeFileStatuses:
 
     @staticmethod
     def _holding(size: int, group: str | None = "SubGroup") -> EpisodeSnapshot:
-        """Episode 5 holding `group`'s file at `size`, our release listing 1000 and 2000, an untagged 2000 ours."""
+        """Episode 5 with `group`'s file at `size`, the torrent listing 1000 and 2000, a no-group 2000 owned."""
 
         episodes = [sonarr_ep(1, 1, ep_id=5, episode_file_id=50, release_group=group, size=size)]
         trusted: dict[str, frozenset[int] | None] = {"subgroup": frozenset({1000, 2000, 3000}), "other": None}
@@ -129,7 +129,7 @@ class TestEpisodeFileStatuses:
         )
 
     def test_own_file_not_the_intended_one_is_misplaced(self) -> None:
-        # Another listed file of our release sits where file 1000 belongs: the episode still lacks its own.
+        # Another listed file of this torrent's release sits where file 1000 belongs: the episode still lacks its own.
         assert self._holding(2000).status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
     def test_own_file_that_is_the_intended_one_is_recommended(self) -> None:
@@ -142,15 +142,15 @@ class TestEpisodeFileStatuses:
         assert self._holding(2000).statuses([5], {5: 1000}).by_id == {5: EpisodeFileStatus.MISPLACED}
 
     def test_own_file_at_an_unlisted_size_is_other_group(self) -> None:
-        # The stale-size check runs first: a size no listing carries is the copy this grab replaces.
+        # The outdated-size check runs first: a size no listing carries is the copy this grab replaces.
         assert self._holding(4000).status_of(5, 1000).status is EpisodeFileStatus.OTHER_GROUP
 
     def test_own_file_at_a_size_only_a_sibling_lists_is_recommended(self) -> None:
-        # 3000 is trusted through a sibling's listing: not one of our torrent's files, so not a misplaced one.
+        # 3000 is trusted through a sibling's listing: not one of this torrent's files, so not a misplaced one.
         assert self._holding(3000).status_of(5, 1000).status is EpisodeFileStatus.TRUSTED
 
     def test_a_trusted_groups_file_at_one_of_our_sizes_not_intended_here_is_misplaced(self) -> None:
-        # A same-files sibling lists byte-identical files, so its misfile is ours to repair too.
+        # A same-files sibling lists byte-identical files, so its misfile is pearlarr's to repair too.
         assert self._holding(2000, "Other").status_of(5, 1000).status is EpisodeFileStatus.MISPLACED
 
     def test_untagged_file_at_the_recorded_size_not_the_intended_one_is_misplaced(self) -> None:
@@ -242,7 +242,7 @@ class TestEpisodeFileStatuses:
         assert statuses.import_ids([1, 2]) == ()
 
     def test_holding_own_copy_is_the_targets_with_a_file_at_one_of_our_sizes(self) -> None:
-        # Episodes 1 and 3 are both done, but only episode 1's file is at one of our listed sizes.
+        # Episodes 1 and 3 are both done, but only episode 1's file is at one of this torrent's listed sizes.
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=300),
             sonarr_ep(1, 2, ep_id=2, episode_file_id=0),
@@ -277,7 +277,7 @@ def _series(
 
 
 class TestRecordSnapshot:
-    """`ImportSnapshot`: one series snapshot per claim series, the window indexes derived, each target routed."""
+    """`ImportSnapshot`: one series snapshot per claim series, the window indexes derived, each episode routed."""
 
     @staticmethod
     def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> ImportSnapshot:
@@ -294,7 +294,7 @@ class TestRecordSnapshot:
         return ImportSnapshot(pending, {7: first, 8: second}, by_claim or {})
 
     def test_statuses_judge_each_target_against_its_intended_size(self) -> None:
-        # Both episodes hold our file at 200, which is intended on episode 2 only.
+        # Both episodes have this torrent's file at 200, which is intended on episode 2 only.
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=200),
             sonarr_ep(1, 2, ep_id=2, episode_file_id=20, release_group="SubGroup", size=200),
@@ -315,7 +315,8 @@ class TestRecordSnapshot:
         }
 
     def test_statuses_note_the_targets_holding_a_copy_of_our_own(self) -> None:
-        # Episode 1 holds a file at one of our listed sizes, episode 2 one at another, and no snapshot judges 3.
+        # Episode 1 has a file at one of this torrent's listed sizes, episode 2 one at another, and no snapshot
+        # classifies 3.
         episodes = [
             sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup", size=200),
             sonarr_ep(1, 2, ep_id=2, episode_file_id=20, release_group="SubGroup", size=900),
@@ -327,7 +328,7 @@ class TestRecordSnapshot:
 
     def test_statuses_route_each_target_to_its_series(self) -> None:
         # Each id classifies under the series whose index holds it (the same group is trusted on one
-        # and not the other), target order is kept, and an id no index holds is absent.
+        # and not the other), input order is kept, and an id no index holds is absent.
         statuses = self._snapshot().file_map_statuses([2, 3, 1, 2], {})
 
         assert list(statuses.by_id.items()) == [
@@ -337,8 +338,8 @@ class TestRecordSnapshot:
         ]
 
     def test_a_claimed_id_is_judged_under_its_holding_claims_snapshot(self) -> None:
-        # Claim 1's window names id 1, so its own snapshot (the same index, the group untrusted) judges
-        # it ahead of the series' merged one. Id 2 routes to the lone unscoped claim 2, whose own snapshot
+        # Claim 1's window names id 1, so its own snapshot (the same index, the group untrusted) classifies
+        # it ahead of the series' merged one. Id 2 routes to claim 2, the only one with no window, whose own snapshot
         # is absent here, so it reads the series'.
         claim_snapshot = episode_snapshot(
             episodes=episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")])
@@ -356,7 +357,7 @@ class TestRecordSnapshot:
         assert self._snapshot().file_map_statuses([1], {}).by_id == {1: EpisodeFileStatus.TRUSTED}
 
     def test_route_names_the_first_scoped_claim_holding_the_id(self) -> None:
-        # Two windows hold id 2: the earlier claim judges it, as the placer's first window decides, so the
+        # Two windows hold id 2: the earlier claim classifies it, as the placer's first window decides, so the
         # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
         first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
         second = title_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
@@ -368,8 +369,8 @@ class TestRecordSnapshot:
         assert (snapshot.preowned(2), snapshot.preowned(3)) == (False, True)
 
     def test_route_judges_a_series_under_its_lone_unscoped_claim(self) -> None:
-        # One unscoped claim on series 7 judges every id its index holds. Two unscoped claims on series 8
-        # merge: their ids route to the series alone, and preowned reads off either of them.
+        # One claim with no window on series 7 classifies every id its index holds. Two claims with no window on
+        # series 8 merge: their ids route to the series alone, and preowned reads off either of them.
         only_claim = title_claim(al_id=1)
         pair = (title_claim(al_id=2, series_id=8), title_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
         snapshot = ImportSnapshot(pending_import(claims=(only_claim, *pair)), {7: _series(1), 8: _series(5)}, {})
@@ -379,8 +380,8 @@ class TestRecordSnapshot:
         assert snapshot.preowned(5) is True
 
     def test_an_overlapped_id_is_classified_under_the_first_claims_evidence(self) -> None:
-        # A's plan judged group G stale and B's picks carry it. Both windows hold id 2: judged under A, the
-        # G file on it still needs importing, where B's own snapshot calls its id 3 done.
+        # A's plan marked group G outdated and B's preferred releases carry it. Both windows hold id 2: classified
+        # under A, the G file on it still needs importing, where B's own snapshot calls its id 3 done.
         first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
         second = title_claim(al_id=2, ordered_episode_ids=[2, 3])
         by_claim = {1: _series(1, 2, 3, group="G"), 2: _series(1, 2, 3, group="G", trusted={"g": None})}

@@ -1,24 +1,24 @@
 # pyright: strict
-"""The composition root's unwind teardown: close the leg before reporting its death.
+"""The composition root's unwind teardown: close the arr run before reporting its death.
 
 `run_arrs` wraps each arr's body in an INNER `except BaseException` that emits
 `ArrRunFinished` and re-raises. Being inner, it runs during the unwind BEFORE the
-outer `except` arms log the leg-fatal error - so that error is a cycle-level fact
-rendered at column 0, never a detail indented inside whatever entry / item / boot
-step the leg happened to die in.
+outer `except` handlers log the arr-run-fatal error - so that error is a run-level fact
+rendered at column 0, never a detail indented inside whatever title / item / boot
+step the arr run happened to die in.
 
 These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - the
 error actually landing at column 0 - is pinned against the real renderer in
-`test_output_rich_renderer.TestUnwindPlacement`. The run tail's own boundary calls
+`test_output_rich_renderer.TestUnwindPlacement`. The boundary calls of the arr run's finish
 are pinned in `test_import_wait.TestFinalizeRunOrdering` / `TestFinalizeRunUnwind`.
-`ArrRunFinished` is emitted exactly once per leg: the tail emits on success, and
-bootstrap's inner handler emits only when the leg died first. The fold's close
-idempotency (`test_output_breadcrumbs`) and the renderer no-op
+`ArrRunFinished` is emitted exactly once per arr run: the finish emits on success, and
+bootstrap's inner handler emits only when the arr run died first. The open scopes' close
+idempotency (`test_output_scope_path`) and the renderer no-op
 (`TestUnwindPlacement`) remain as defense in depth.
 
 `ArrRunDeps.build` is the failure site: it is the earliest thing inside the inner
 try, so it also exercises the `deps is None` path - no reporter exists yet, which
-is why bootstrap must emit through the process hub seam rather than the reporter.
+is why bootstrap must emit through the process hub rather than the reporter.
 """
 
 import logging
@@ -44,7 +44,7 @@ from .builders import make_config
 from .fakes import RecordingHub
 
 # The message each scripted failure carries, so the adopted ERROR is identifiable
-# in the recorded stream (the clean arm logs `str(e)`, the traceback arm doesn't).
+# in the recorded stream (the clean handler logs `str(e)`, the traceback handler doesn't).
 _SCHEMA_ERROR = "cache.db was written by a newer Pearlarr"
 
 
@@ -110,7 +110,7 @@ def _run_failing_arr(
     app_logger: logging.Logger,
     exc: Exception,
 ) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr leg whose `ArrRunDeps.build` raises `exc`. Record the stream.
+    """Drive one Sonarr run whose `ArrRunDeps.build` raises `exc`. Record the stream.
 
     The real hub AND the real logging bridge are installed (production parity), so
     the composition root's `hub_note` ERROR lands in the same event stream as the
@@ -133,7 +133,7 @@ def _run_failing_arr(
 
 
 def _arr_run_fatal_error(recording: RecordingHub) -> tuple[int, Diagnostic]:
-    """Where the leg-fatal ERROR the except arms logged landed, and what it said."""
+    """Where the arr-run-fatal ERROR the except handlers logged ended up, and what it said."""
 
     return next(
         (i, event)
@@ -143,7 +143,7 @@ def _arr_run_fatal_error(recording: RecordingHub) -> tuple[int, Diagnostic]:
 
 
 class TestUnwindEmitsRunFinished:
-    """Every leg-fatal path closes the run before its error is reported."""
+    """Every arr-run-fatal path closes the run before its error is reported."""
 
     def test_clean_arm_closes_the_run_before_logging(
         self,
@@ -153,12 +153,12 @@ class TestUnwindEmitsRunFinished:
         completed, recording = _run_failing_arr(monkeypatch, app_logger, CacheSchemaError(_SCHEMA_ERROR))
 
         assert completed is False
-        # Exactly one close for the leg - the run tail never ran, so this is
+        # Exactly one close for the arr run - the arr run's finish never ran, so this is
         # bootstrap's defensive emit and nothing doubled it.
         assert recording.of_type(ArrRunFinished) == [ArrRunFinished(arr=Arr.SONARR)]
         error_at, error = _arr_run_fatal_error(recording)
         assert recording.events.index(ArrRunFinished(arr=Arr.SONARR)) < error_at
-        # The clean (no-traceback) arm's Diagnostic: the message, nothing captured.
+        # The clean (no-traceback) handler's Diagnostic: the message, nothing captured.
         assert error.message == _SCHEMA_ERROR
         assert error.trace is None
 
@@ -167,8 +167,8 @@ class TestUnwindEmitsRunFinished:
         monkeypatch: pytest.MonkeyPatch,
         app_logger: logging.Logger,
     ) -> None:
-        # The ordering is a property of the inner finally, not of which except arm
-        # catches: an unrecognized failure takes the "Unexpected error" arm and the
+        # The ordering is a property of the inner finally, not of which except handler
+        # catches: an unrecognized failure takes the "Unexpected error" handler and the
         # close still precedes it.
         completed, recording = _run_failing_arr(monkeypatch, app_logger, RuntimeError("boom"))
 
@@ -177,7 +177,7 @@ class TestUnwindEmitsRunFinished:
         error_at, error = _arr_run_fatal_error(recording)
         assert recording.events.index(ArrRunFinished(arr=Arr.SONARR)) < error_at
         assert "Unexpected error during Sonarr run" in error.message
-        assert error.trace is not None  # the exc_info arm carries its traceback
+        assert error.trace is not None  # the exc_info handler carries its traceback
 
 
 class _StubDeps:
@@ -202,7 +202,7 @@ class _FakeSonarrSync:
 
 
 class _FakeRunLoop:
-    """A run loop whose `run_arr` returns without emitting the tail's RunFinished."""
+    """A run loop whose `run_arr` returns without emitting the finish's ArrRunFinished."""
 
     def __init__(self, deps: ArrRunDeps, services: _FakeRunServices) -> None:
         del deps, services
@@ -242,12 +242,12 @@ def _run_completing_arr(
     monkeypatch: pytest.MonkeyPatch,
     app_logger: logging.Logger,
 ) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr leg that completes normally. Record the event stream.
+    """Drive one Sonarr run that completes normally. Record the event stream.
 
-    The construction seams are faked so the leg finishes without real deps: `build`
+    The construction interfaces are faked so the arr run finishes without real deps: `build`
     returns a close-only stub, and `ArrRunServices` / `ArrRunLoop` / `SonarrStrategy` are
     minimal no-ops. bootstrap lazy-imports the latter three INSIDE `run_arrs`, so the
-    source-module attributes are what the leg resolves.
+    source-module attributes are what the arr run resolves.
     """
 
     _write_config()
@@ -269,7 +269,7 @@ def _run_completing_arr(
 
 
 class TestCompletedArrRunSingleClose:
-    """A leg that returns normally adds no RunFinished of its own - the run tail owns it."""
+    """An arr run that returns normally adds no ArrRunFinished of its own - the arr run's finish owns it."""
 
     def test_completed_arr_run_emits_no_run_finished_from_bootstrap(
         self,
@@ -279,7 +279,7 @@ class TestCompletedArrRunSingleClose:
         completed, recording = _run_completing_arr(monkeypatch, app_logger)
 
         assert completed is True
-        # The unwind emit fires only on a dying leg. A normal return leaves the close
-        # to the run tail (faked to a no-op here). The real tail's emit is pinned in
+        # The unwind emit fires only on a dying arr run. A normal return leaves the close
+        # to the arr run's finish (faked to a no-op here). The real finish's emit is pinned in
         # test_import_wait.TestFinalizeRunOrdering, so zero here proves nothing doubled.
         assert recording.of_type(ArrRunFinished) == []

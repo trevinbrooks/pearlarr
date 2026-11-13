@@ -2,7 +2,7 @@
 
 `DiscordEmbed` carries a notification as typed data. `to_payload` is
 the single JSON-shaped boundary, where Discord's documented hard limits are
-enforced so an oversized notification degrades to a truncated embed instead of
+enforced so an oversized notification becomes a truncated embed instead of
 a 400 from the webhook.
 """
 
@@ -57,7 +57,7 @@ def _clamp(text: str, limit: int) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DiscordEmbed:
-    """One webhook embed, held as typed data until `to_payload`.
+    """One webhook embed, kept as typed data until `to_payload`.
 
     Each of `url`, `thumb_url`, and `image_url` is omitted from the payload
     when unset rather than sent as a null.

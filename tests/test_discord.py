@@ -1,7 +1,7 @@
 # pyright: strict
 """Tests for the Discord embed boundary.
 
-`DiscordEmbed.to_payload` is the single JSON-shaped seam - these pin the
+`DiscordEmbed.to_payload` is the single JSON-shaped boundary - these pin the
 omitted-when-unset optional keys, the field `inline` flag, and the clamping
 to Discord's hard limits - and `discord_push` is the pure POST that ships it
 (wire shape, errors propagate: containment lives in the Notifier).
@@ -94,7 +94,7 @@ def test_to_payload_carries_optional_keys_and_stamp() -> None:
         "url": PROJECT_URL,
         "icon_url": "https://releases.moe/favicon.png",
     }
-    # The inline flag rides each field row to the wire.
+    # The inline flag goes with each field row to the wire.
     assert payload["fields"] == [
         {"name": "n", "value": "v", "inline": False},
         {"name": "i", "value": "w", "inline": True},
@@ -186,7 +186,7 @@ def test_discord_push_posts_the_wrapped_embed() -> None:
     discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
 
     body = cast("dict[str, Json]", json.loads(route.calls.last.request.content))
-    # The wire shape: the Pearlarr display identity riding beside the embed.
+    # The wire shape: the Pearlarr display identity sent beside the embed.
     assert body["username"] == "Pearlarr"
     assert _str_at(body, "avatar_url").startswith("https://")
     embeds = body["embeds"]
@@ -202,7 +202,7 @@ def test_discord_push_posts_the_wrapped_embed() -> None:
 
 @respx.mock
 def test_discord_push_propagates_http_errors() -> None:
-    # A pure POST: an HTTP error status surfaces to the caller - the
+    # A pure POST: an HTTP error status reaches the caller - the
     # warn-and-swallow containment lives in Notifier._push, not here.
     respx.post("https://discord.example/hook").respond(status_code=400)
     embed = DiscordEmbed(author_name="a", title="t", color=1)

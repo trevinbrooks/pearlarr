@@ -1,14 +1,14 @@
-"""Arr-side activity detection between SeaDex passes.
+"""Arr-side activity detection between SeaDex checks.
 
-The cached-entry skip keys only on SeaDex's `updated_at`, so a file the arr
+The unchanged-title check keys only on SeaDex's `updated_at`, so a file the arr
 changed under an *unchanged* SeaDex entry (quality upgrade, manual grab,
-re-download after delete) would never be re-detected. Each run therefore polls
-the arr's `/api/v3/history/since` once, maps the file-state-changing records
-to touched item ids, and the run loop marks their AniList ids dirty, bypassing
-the skip for exactly those ids. An import of our own grab counts too: the arr
+re-download after delete) would never be re-detected. Each run therefore fetches
+the arr's `/api/v3/history/since` once, turns the file-state-changing history records
+into touched item ids, and the run loop marks their AniList ids dirty, bypassing
+the unchanged check for exactly those ids. An import of pearlarr's grab counts too: the arr
 may import only part of it.
 
-Pure scan logic: no imports from the run machinery (the loop injects the fetch
+Pure history-read logic: no imports from the run machinery (the loop injects the fetch
 callable), so the module stays cycle-free.
 """
 
@@ -22,9 +22,9 @@ from .arr_models import HistoryRecord
 from .cache import AbstractCacheStore, HistoryCheckpoint
 from .config import Arr
 
-# Re-query overlap behind the checkpoint (absorbs tz/clock skew between the arr
-# server and us) and the hard lookback cap on a history query: the reply is unpaged,
-# so a long-idle checkpoint or an old pending record would pull months of events.
+# Re-query overlap behind the checkpoint (covers tz/clock skew between the arr
+# server and pearlarr) and the hard lookback cap on a history query: the reply is unpaged,
+# so a long-idle checkpoint or an old pending import would pull months of events.
 HISTORY_QUERY_OVERLAP_HOURS = 26
 HISTORY_MAX_LOOKBACK_DAYS = 30
 
@@ -40,13 +40,13 @@ _HISTORY_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 @dataclass(frozen=True, slots=True)
 class ActivityRead:
-    """One scan's outcome: the touched item ids, or a re-scan-everything signal."""
+    """One read's outcome: the touched item ids, or a re-check-everything signal."""
 
     touched: frozenset[int]
     rescan_all: bool
     """Set when history coverage is broken (a checkpoint older than the lookback
     window, or an unreadable stored date), so the id cursor may have skipped file
-    changes. The caller must treat every entry as dirty once (`touched` is empty
+    changes. The caller must treat every title as dirty once (`touched` is empty
     then)."""
 
 
@@ -78,13 +78,13 @@ class _QueryWindow:
 
 @final
 class ArrActivityReader:
-    """One arr's per-run history scan + checkpoint advance.
+    """One arr's per-run history read + checkpoint advance.
 
-    `scan` reads the stored checkpoint, queries the overlapped window, dedups
+    `read` reads the stored checkpoint, queries the overlapped window, dedups
     on the id cursor and stashes the advanced checkpoint.
     `stage_checkpoint` stages it through the cache store. The run loop calls it
-    only when the pass covered the whole library, and it persists only at a
-    non-preview save point (so a dry run never advances the cursor).
+    only when the run covered the whole library, and it persists only at a
+    non-dry-run save point (so a dry run never advances the cursor).
     """
 
     def __init__(self, arr: Arr, cache_store: AbstractCacheStore, logger: logging.Logger) -> None:
@@ -99,15 +99,15 @@ class ArrActivityReader:
         *,
         now: datetime | None = None,
     ) -> ActivityRead:
-        """Scan the window since the checkpoint for arr-side file changes.
+        """Read the window since the checkpoint for arr-side file changes.
 
         A fetch failure (None) fails open: nothing dirty, the checkpoint untouched
-        so a coverage gap is re-detected next pass. An empty window stashes no
+        so a coverage gap is re-detected next run. An empty window stashes no
         checkpoint either. Broken coverage returns `rescan_all`, not a touched set.
 
         Args:
             fetch: The strategy's `history_since` (takes the ISO8601 query date).
-            now: Clock override (aware UTC). Defaults to `datetime.now(UTC)`.
+            now: Time override (aware UTC). Defaults to `datetime.now(UTC)`.
         """
 
         now = now if now is not None else datetime.now(UTC)
@@ -117,7 +117,7 @@ class ArrActivityReader:
         records = fetch(format_history_date(window.query_date))
         if records is None:
             # The fetch helper already warned (with the HTTP-level reason and the
-            # same consequence), so this stays a debug breadcrumb, not a second
+            # same consequence), so this stays a debug line, not a second
             # stacked warning.
             self._logger.debug(
                 f"Could not read {self._arr.capitalize()} history; skipping activity detection this run",
@@ -129,7 +129,7 @@ class ArrActivityReader:
         if fresh:
             newest = max(fresh, key=lambda record: record.id)
             # An empty date would collapse the next window to the overlap. Keep
-            # the old cursor and let the id dedup absorb the re-delivery.
+            # the old cursor and let the id dedup drop the re-delivery.
             if newest.date:
                 self._staged_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
         if window.rescan_all or not fresh:
@@ -153,12 +153,12 @@ class ArrActivityReader:
         query_date = min(parsed, now) - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS)
         if query_date < floor:
             # The clamp truncates the window: events between the true
-            # cursor and the floor are unreachable, so re-check everything.
+            # cursor and the floor are out of reach, so re-check everything.
             return _QueryWindow(floor, True)
         return _QueryWindow(query_date, False)
 
     def stage_checkpoint(self) -> None:
-        """Stage the advanced checkpoint, if the scan produced one."""
+        """Stage the advanced checkpoint, if the read produced one."""
 
         if self._staged_checkpoint is None:
             return
