@@ -40,7 +40,7 @@ from .output import (
 
 
 @dataclass(frozen=True, slots=True)
-class _CapstoneWindow:
+class _BootStart:
     """The capstone gate's window: opened at a section's first step, closed by `end_section`.
 
     Opening at the first step keeps the banner→step gap - which holds only
@@ -65,9 +65,9 @@ class BootFlow:
         self._data_dir = data_dir
         self._clock = clock
         self._steps = ScopeFactory(emit_to_hub, clock=clock)
-        self._section = BootScope(ScopeKind.BOOT_SECTION, "boot")
-        self._window: _CapstoneWindow | None = None
-        self._section_failed = False
+        self._boot_scope = BootScope(ScopeKind.BOOT_SECTION, "boot")
+        self._boot_start: _BootStart | None = None
+        self._step_failed = False
 
     def banner(self) -> None:
         """State the banner facts (version, data dir), then open the boot section.
@@ -77,7 +77,7 @@ class BootFlow:
         """
 
         emit_to_hub(PearlarrStarted(version=_app_version(), data_dir=self._data_dir))
-        self._section.open()
+        self._boot_scope.open()
 
     @contextlib.contextmanager
     def step(self, label: str) -> Generator[StepScope]:
@@ -87,47 +87,47 @@ class BootFlow:
         first). A failed step suppresses the section's capstone.
         """
 
-        self._section.open()
-        if self._window is None:
-            self._window = _CapstoneWindow(self._clock(), current_hub().counts.bound_mark())
+        self._boot_scope.open()
+        if self._boot_start is None:
+            self._boot_start = _BootStart(self._clock(), current_hub().counts.bound_mark())
         try:
             with self._steps.step(label) as scope:
                 yield scope
         except BaseException:
             # StepScope's __exit__ graduated the step FAILED. The section-level
             # verdict is ours (the scope knows nothing of the section).
-            self._section_failed = True
+            self._step_failed = True
             raise
 
-    def end_section(self) -> None:
+    def end_boot(self) -> None:
         """Cap the section: emit the capstone (when earned), close the scope mark.
 
         Calling this inside an open `step` body is unsupported.
         """
 
-        self._emit_capstone()
-        self._section.close()
-        self._window = None
-        self._section_failed = False
+        self._emit_boot_ready()
+        self._boot_scope.close()
+        self._boot_start = None
+        self._step_failed = False
 
     def close(self) -> None:
         """Final teardown (idempotent) - safety net if a section was left open."""
 
-        self.end_section()
+        self.end_boot()
 
-    def _emit_capstone(self) -> None:
+    def _emit_boot_ready(self) -> None:
         # No "ready" line on an empty or failed section, or one that recorded an
         # ERROR+ without raising (a refused arm mid-section): the error already
         # carries the meaning, and claiming "ready" after it would lie.
-        window = self._window
-        if window is None or self._section_failed:
+        start = self._boot_start
+        if start is None or self._step_failed:
             return
         # The mark carries the counter it was stamped on (a hub swap can't skew the
         # diff). Counts exclude file_only forensics, so only an ERROR+ a visible
         # surface could show suppresses the ready line.
-        if window.counts_mark.since().errors > 0:
+        if start.counts_mark.since().errors > 0:
             return
-        emit_to_hub(BootReady(elapsed_s=self._clock() - window.started_at))
+        emit_to_hub(BootReady(elapsed_s=self._clock() - start.started_at))
 
 
 def _app_version() -> str:

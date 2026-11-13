@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from .arr_models import ArrItem, HistoryRecord
 from .mappings import TitleMapping
 from .pending_import import PendingImport
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress
 
 
@@ -73,11 +73,11 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
         """Whether `prefetch_episodes` does real work. The run calls `prefetch_orders` only when it does."""
 
     @abstractmethod
-    def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressCallback | None = None) -> int:
         """Warm per-item network caches concurrently before the scan loop, returning how many were attempted."""
 
     @abstractmethod
-    def prefetch_orders(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, items: list[ItemT], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB episode orders of the series the run reads, returning how many were written.
 
         Runs after `prefetch_episodes`, only when `warms_episodes`.

@@ -55,7 +55,7 @@ from pearlarr.output.console_lines import ConsoleLine
 from pearlarr.output.recording import RecordingHub
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
-from pearlarr.progress import ProgressSink
+from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
@@ -270,11 +270,11 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         return False
 
     @override
-    def prefetch_episodes(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_episodes(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
         return 0
 
     @override
-    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
         return 0
 
     @override

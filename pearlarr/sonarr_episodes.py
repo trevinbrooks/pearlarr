@@ -20,7 +20,7 @@ from .config import AppConfig
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
 from .output import Accent, Severity, StyledValue, hub_note
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .releases import season_episode_key
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
@@ -199,7 +199,7 @@ class SonarrEpisodes:
             build_id_filters(fields, self._resolver, self.anibridge),
         )
 
-    def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.
 
         One sequential `/api/v3/episode` round-trip per processed series is the
@@ -292,7 +292,7 @@ class SonarrEpisodes:
             series_ids.append(item.id)
         return series_ids
 
-    def prefetch_orders(self, series_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, series_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB orders of the series (see `SkyHookGateway.prefetch`). Returns how many were written.
 
         A series missing from this run's library read is skipped: there is no TVDB id to ask for.

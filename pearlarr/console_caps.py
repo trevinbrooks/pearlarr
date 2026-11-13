@@ -55,7 +55,7 @@ def console_of(logger: logging.Logger) -> Console | None:
     return None
 
 
-def detect_capabilities(console: Console | None) -> ConsoleFeatures:
+def detect_features(console: Console | None) -> ConsoleFeatures:
     """Fold rich's derived console signals into our render capabilities.
 
     Reads rich's own folded flags (which already honor `NO_COLOR` / `TERM` /
@@ -97,10 +97,10 @@ class DetectedFeatures:
         """The cached probe for `console`. A new identity re-probes and replaces."""
 
         if console is None:
-            return detect_capabilities(None)
+            return detect_features(None)
         state = self._state
         if state is None or state[0] is not console:
-            state = (console, detect_capabilities(console))
+            state = (console, detect_features(console))
             self._state = state
         return state[1]
 

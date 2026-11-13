@@ -125,7 +125,7 @@ class RunReporter:
 
         self._post(fact)
 
-    def _ledger(self, state: TitleState, label: str) -> None:
+    def _emit_title_row(self, state: TitleState, label: str) -> None:
         """Close any open entry, then emit a scope-free (col-0) ledger row."""
 
         self._close_title_scope()
@@ -170,19 +170,19 @@ class RunReporter:
     def log_no_episodes(self, title: str) -> None:
         """Report a title whose mapping resolved no episodes, as a self-contained (col-0) ledger row."""
 
-        self._ledger(TitleState.NO_EPISODES, title)
+        self._emit_title_row(TitleState.NO_EPISODES, title)
 
     def log_arr_item_unmonitored(self, state: ArrRunState, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row)."""
 
         state.stats.unmonitored += 1
-        self._ledger(TitleState.UNMONITORED, item_title)
+        self._emit_title_row(TitleState.UNMONITORED, item_title)
 
     def log_no_anilist_mappings(self, state: ArrRunState, title: str) -> None:
         """Report a title with no AniList mappings (bumps the tally, emits its row)."""
 
         state.stats.no_mappings += 1
-        self._ledger(TitleState.NO_MAPPING, title)
+        self._emit_title_row(TitleState.NO_MAPPING, title)
 
     def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
@@ -218,7 +218,7 @@ class RunReporter:
     def _titled_row(self, state: TitleState, title: Title) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
 
-        self._ledger(state, title.name)
+        self._emit_title_row(state, title.name)
         if title.resolved:
             self.detail("anilist", StyledValue(str(title.al_id)))
 

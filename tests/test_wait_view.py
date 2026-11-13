@@ -91,8 +91,8 @@ def _finished_view(
 # --- factory / capability probe ------------------------------------------------
 
 
-def _make_view(logger: logging.Logger, *, poll_s: int, digest_interval: int = 300) -> HubWaitView:
-    view = make_wait_view(logger, poll_s=poll_s, digest_interval=digest_interval, kind=WaitKind.MONITOR)
+def _make_view(logger: logging.Logger, *, poll_s: int, progress_line_interval: int = 300) -> HubWaitView:
+    view = make_wait_view(logger, poll_s=poll_s, progress_line_interval=progress_line_interval, kind=WaitKind.MONITOR)
     assert isinstance(view, HubWaitView)
     return view
 
@@ -124,13 +124,13 @@ def test_factory_pulse_is_the_max_of_poll_and_digest_as_a_float() -> None:
     install_hub(recording.hub)
     logger = _quiet_logger()
 
-    _make_view(logger, poll_s=600, digest_interval=300).update(WaitSnapshot(()))  # the poll floor rules
-    _make_view(logger, poll_s=30, digest_interval=300).update(WaitSnapshot(()))  # the digest target rules
+    _make_view(logger, poll_s=600, progress_line_interval=300).update(WaitSnapshot(()))  # the poll floor rules
+    _make_view(logger, poll_s=30, progress_line_interval=300).update(WaitSnapshot(()))  # the digest target rules
 
     floor, target = recording.of_type(WaitStarted)
-    assert floor.pulse_s == 600.0
-    assert target.pulse_s == 300.0
-    assert type(floor.pulse_s) is float
+    assert floor.progress_line_s == 600.0
+    assert target.progress_line_s == 300.0
+    assert type(floor.progress_line_s) is float
 
 
 # --- the narrator's event grammar ------------------------------------------------
@@ -140,8 +140,8 @@ class TestHubWaitViewNarration:
     """The narrator's hub-event grammar, pinned through a real recording hub."""
 
     @staticmethod
-    def _view(*, pulse_s: float = 300.0, kind: WaitKind = WaitKind.MONITOR) -> HubWaitView:
-        return HubWaitView(_quiet_logger(), pulse_s=pulse_s, wants_download_progress=True, kind=kind)
+    def _view(*, progress_line_s: float = 300.0, kind: WaitKind = WaitKind.MONITOR) -> HubWaitView:
+        return HubWaitView(_quiet_logger(), progress_line_s=progress_line_s, wants_download_progress=True, kind=kind)
 
     def test_first_update_opens_starts_and_progresses_exactly_once(self) -> None:
         recording = RecordingHub()
@@ -155,7 +155,7 @@ class TestHubWaitViewNarration:
         (opened,) = recording.of_type(ScopeOpened)
         assert opened.scope.kind is ScopeKind.WAIT_REGION
         (started,) = recording.of_type(WaitStarted)
-        assert started == WaitStarted(total=2, pulse_s=300.0, kind=WaitKind.MONITOR, scope=opened.scope)
+        assert started == WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=opened.scope)
         assert recording.of_type(WaitProgress) == [WaitProgress(snapshot=first, scope=opened.scope)]
 
         # Later updates never re-open. The total stays the FIRST snapshot's.
@@ -371,7 +371,7 @@ def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch)
     logger.setLevel(logging.DEBUG)
     capture = CaptureHandler()
     logger.addHandler(capture)
-    view = HubWaitView(logger, pulse_s=300.0, wants_download_progress=True, kind=WaitKind.MONITOR)
+    view = HubWaitView(logger, progress_line_s=300.0, wants_download_progress=True, kind=WaitKind.MONITOR)
 
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))  # open+start+progress: the 3 allowed
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=35))  # progress raises -> swallowed

@@ -244,10 +244,10 @@ class WaitScope(_ScopeBase):
 
     _KIND_WORD: ClassVar[str] = "wait"
 
-    def __init__(self, emit: Emit, scope: ScopeId, total: int, *, pulse_s: float, kind: WaitKind) -> None:
+    def __init__(self, emit: Emit, scope: ScopeId, total: int, *, progress_line_s: float, kind: WaitKind) -> None:
         super().__init__(emit, "wait", scope)
         emit(ScopeOpened(scope=scope, label="wait"))
-        emit(WaitStarted(total=total, pulse_s=pulse_s, kind=kind, scope=scope))
+        emit(WaitStarted(total=total, progress_line_s=progress_line_s, kind=kind, scope=scope))
 
     def progress(self, snapshot: WaitSnapshot) -> None:
         if not self._open:
@@ -300,5 +300,7 @@ class ScopeFactory:
     def title(self, header: TitleHeader) -> TitleScope:
         return TitleScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
-    def wait(self, total: int, *, pulse_s: float, kind: WaitKind) -> WaitScope:
-        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s, kind=kind)
+    def wait(self, total: int, *, progress_line_s: float, kind: WaitKind) -> WaitScope:
+        return WaitScope(
+            self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, progress_line_s=progress_line_s, kind=kind
+        )

@@ -16,7 +16,7 @@ from .mappings import ExternalIds, TitleMapping
 from .output import hub_warn
 from .output.console_text import pluralize
 from .pending_import import OwnedAtGrab, PendingImport, added_at_of
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .radarr_client import AbstractRadarrClient, RadarrClient, collect_anime_movies
 from .releases import releases_to_grab
 from .stamps import parse_stamp_aware
@@ -108,14 +108,14 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         return False
 
     @override
-    def prefetch_episodes(self, items: list[RadarrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_episodes(self, items: list[RadarrItem], *, progress: ProgressCallback | None = None) -> int:
         """No-op: movies have no episode lists to warm. Returns 0 (warmed none)."""
 
         del items, progress
         return 0
 
     @override
-    def prefetch_orders(self, items: list[RadarrItem], *, progress: ProgressSink | None = None) -> int:
+    def prefetch_orders(self, items: list[RadarrItem], *, progress: ProgressCallback | None = None) -> int:
         """No-op: movies have no episode orders. Returns 0 (wrote none)."""
 
         del items, progress

@@ -60,7 +60,7 @@ from .output import (
 )
 from .output.bridge import install_bridge
 from .output.rich_renderer import RichRenderer
-from .output.subcommand_output import cli_surface
+from .output.subcommand_output import subcommand_hub
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 from .wait_types import ImportWaitMode
@@ -264,7 +264,7 @@ _JSON_HELP = "Emit machine-readable JSON events, one object per line"
 def show_paths(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Print the resolved data directory and the files within it."""
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         emit_to_hub(
             PathsShown(
@@ -304,7 +304,7 @@ def replay(
     # the hot --help / config / cache paths.
     from .replay import replay as run_replay
 
-    with cli_surface(False):
+    with subcommand_hub(False):
         return run_replay(capture)
 
 
@@ -374,7 +374,7 @@ def _prepare_data_dir(paths: AppPaths) -> None:
         _exit_data_dir_unwritable(paths.data_dir, e)
 
 
-def _console_seat(console_format: LogFormat, caps_cache: DetectedFeatures) -> Renderer:
+def _console_renderer(console_format: LogFormat, detected_features: DetectedFeatures) -> Renderer:
     """The hub's console seat for a cycle's RESOLVED format.
 
     rich gets the cockpit renderer (boot/scan/wait regions over the shared
@@ -385,7 +385,7 @@ def _console_seat(console_format: LogFormat, caps_cache: DetectedFeatures) -> Re
     # folded defensively for programmatic callers.
     console_format = resolve_console_format(console_format)
     if console_format == "rich":
-        return RichRenderer(caps_cache=caps_cache)
+        return RichRenderer(detected_features=detected_features)
     if console_format == "json":
         return JsonRenderer(sys.stdout)
     return PlainRenderer(sys.stdout)
@@ -410,21 +410,21 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
     only moment retention is known.
     """
 
-    file_sink = FileLogRenderer(paths.log_dir)
+    file_log_renderer = FileLogRenderer(paths.log_dir)
     try:
-        file_sink.probe()
+        file_log_renderer.probe()
     except OSError as e:
         _exit_data_dir_unwritable(paths.data_dir, e)
     # ONE caps cache shared across console-seat swaps: the seat and its
     # boot/wait regions must branch on the same probe.
-    caps_cache = DetectedFeatures()
+    detected_features = DetectedFeatures()
     hub = OutputHub(
-        [file_sink],
-        console_factory=partial(_console_seat, caps_cache=caps_cache),
+        [file_log_renderer],
+        console_factory=partial(_console_renderer, detected_features=detected_features),
     )
     install_hub(hub)
     install_bridge()
-    return hub, file_sink
+    return hub, file_log_renderer
 
 
 def _schedule_hours(config_path: str) -> float:
@@ -489,7 +489,7 @@ def run_scheduled(
 
     # The hub is per-process: installed once, BEFORE the loop - install the hub
     # before the logger, see _install_output_hub.
-    hub, file_sink = _install_output_hub(paths)
+    hub, file_log_renderer = _install_output_hub(paths)
 
     for run_number in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
@@ -517,7 +517,7 @@ def run_scheduled(
             [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
-            file_sink=file_sink,
+            file_log_renderer=file_log_renderer,
             log_level=log_level,
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
@@ -604,7 +604,7 @@ def run_single(
 
     # Install the hub before the logger - see _install_output_hub.
     console_format = _run_format(paths.config_file)
-    hub, file_sink = _install_output_hub(paths)
+    hub, file_log_renderer = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
     hub.begin_run(console_format=console_format, level=logger.level)
 
@@ -616,7 +616,7 @@ def run_single(
         arrs,
         paths=paths,
         logger=logger,
-        file_sink=file_sink,
+        file_log_renderer=file_log_renderer,
         explicit_selection=explicit_selection,
         dry_run=dry_run,
         import_wait_mode=import_wait_mode,
@@ -641,7 +641,7 @@ def config_init(
     # Install the cli surface first so every emit below renders through it. The
     # data-dir failures deliberately stay on the pre-hub stderr path (they also
     # fire pre-hub on the run path, where a hub_error would drop silently).
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         _prepare_data_dir(paths)
 
@@ -699,7 +699,7 @@ def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JS
     mean preview mode (nothing is grabbed).
     """
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         app_config = _run_config_action(paths.config_file, AppConfig.load)
         if app_config is None:
@@ -730,7 +730,7 @@ def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSO
     at the current version is left untouched.
     """
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
 
         # The boot rewrite runs under this same lock, so the two writers can
@@ -804,7 +804,7 @@ def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
     embedded in a URL/host is redacted, and unset secrets still show as `null`.
     """
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         app_config = _run_config_action(paths.config_file, AppConfig.load)
         if app_config is None:
@@ -829,7 +829,7 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
     replace or delete a previous good cache.backup.db.
     """
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
 
         if _echo_missing_cache(paths.cache_db):
@@ -872,7 +872,7 @@ def cache_restore(json_output: Annotated[bool, typer.Option("--json", help=_JSON
     sidecars are cleared so the restored snapshot isn't shadowed by them.
     """
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
 
         if _echo_missing(paths.cache_backup, what="backup", hint="run pearlarr cache backup first"):
@@ -900,7 +900,7 @@ def cache_restore(json_output: Annotated[bool, typer.Option("--json", help=_JSON
 def cache_remove(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Remove the cache database (cache.db and its WAL/SHM sidecars)."""
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
 
         if _echo_missing(paths.cache_db, what="cache database", hint="nothing to remove"):
@@ -921,7 +921,7 @@ def cache_remove(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
 def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         if _echo_missing_cache(paths.cache_db):
             return False
@@ -951,7 +951,7 @@ def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
 def cache_check(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
 
-    with cli_surface(json_output):
+    with subcommand_hub(json_output):
         paths = resolve_paths()
         if _echo_missing_cache(paths.cache_db):
             return False

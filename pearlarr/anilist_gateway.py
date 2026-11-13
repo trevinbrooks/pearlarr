@@ -30,7 +30,7 @@ from .anilist_client import (
 )
 from .cache import AbstractCacheStore, row_payload, stamp_is_fresh
 from .output.console_text import count_noun
-from .progress import ProgressSink
+from .progress import ProgressCallback
 from .stamps import stamp_of
 
 # How old a persisted AniList response gets before a run refetches it.
@@ -143,7 +143,7 @@ class AniListGateway:
         al_ids: Iterable[int],
         *,
         dry_run: bool,
-        progress: ProgressSink | None = None,
+        progress: ProgressCallback | None = None,
     ) -> int:
         """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
 

@@ -620,7 +620,7 @@ class TestFullStackSeams:
             pass
 
         logger.warning("config is readable by other users")
-        boot.end_section()
+        boot.end_boot()
         logger.warning("after the cockpit")
 
         lines = _console_text(stream).splitlines()

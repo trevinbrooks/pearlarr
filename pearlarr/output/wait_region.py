@@ -18,12 +18,12 @@ from .events import Phase, RowFinished, WaitFinished, WaitKind, WaitProgress, Wa
 from .live_region import LiveRegion
 from .wait_lines import (
     LiveModel,
-    PulseThrottle,
+    ProgressLineThrottle,
     RowModel,
     WaitEvent,
     live_model,
     row_finished_lines,
-    wait_pulse_line,
+    wait_progress_line,
     wait_start_line,
     wait_tally_lines,
 )
@@ -31,7 +31,7 @@ from ..console_caps import (
     ConsoleFeatures,
     DetectedFeatures,
     block_bar,
-    detect_capabilities,
+    detect_features,
     make_live,
     spinner_name,
 )
@@ -69,7 +69,7 @@ class _LiveFrame:
     def __init__(self, get_group: Callable[[], Group]) -> None:
         self._get_group = get_group
         self._failure: Exception | None = None
-        self._latched = False
+        self._failed = False
 
     def take_failure(self) -> Exception | None:
         """One-shot read of the latched render failure (None once collected)."""
@@ -84,8 +84,8 @@ class _LiveFrame:
         except Exception as exc:
             # NEVER log here: hub.emit off this Console-lock-holding refresh thread is an ABBA deadlock.
             # Latch the first failure per Live session: rich retries at 12.5 ticks/s, so a bug would spam.
-            if not self._latched:
-                self._latched = True
+            if not self._failed:
+                self._failed = True
                 self._failure = exc
             return
         yield group
@@ -97,7 +97,7 @@ class WaitRegion(LiveRegion):
 
     # The frame snapshot the refresh thread reads: features and layout are set once at Live start. Seeded by
     # _reset_frame, so __init__ and the per-pass/per-cycle resets can never drift apart.
-    _caps: ConsoleFeatures
+    _features: ConsoleFeatures
     _layout: _TableLayout
     _anchor: _FrameAnchor | None
     _live_frame: _LiveFrame | None
@@ -106,14 +106,14 @@ class WaitRegion(LiveRegion):
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: DetectedFeatures | None = None,
+        detected_features: DetectedFeatures | None = None,
         *,
         level_source: Callable[[], int],
         time_source: Callable[[], float],
     ) -> None:
-        super().__init__(console_source, caps_cache, level_source=level_source)
+        super().__init__(console_source, detected_features, level_source=level_source)
         self._time_source = time_source
-        self._throttle = PulseThrottle()
+        self._throttle = ProgressLineThrottle()
         # _reset_frame's teardown probe reads this.
         self._live_frame = None
         self._reset_frame()
@@ -123,21 +123,21 @@ class WaitRegion(LiveRegion):
         console = self._console_source()
         if console is None:
             return
-        features = self._caps_cache.for_console(console)
+        features = self._detected_features.for_console(console)
         match event:
             case WaitStarted():
-                # Back-to-back passes swap the frontier node in one step, so section_left never fires.
+                # Back-to-back passes swap the frontier node in one step, so scope_closed never fires.
                 # Do NOT start the Live here: it starts on the first live snapshot.
                 self._reset_frame()
                 self._kind = event.kind
-                self._throttle.arm(event.pulse_s)
+                self._throttle.start(event.progress_line_s)
                 if not features.can_redraw:
                     self._durable(console, [wait_start_line(event)])
             case WaitProgress(snapshot=snapshot):
                 if features.can_redraw:
                     self._advance_frame(console, features, snapshot)
                 elif self._throttle.fire(snapshot.elapsed_s):
-                    self._durable(console, [wait_pulse_line(snapshot)])
+                    self._durable(console, [wait_progress_line(snapshot)])
             case RowFinished():
                 self._durable(console, row_finished_lines(event, features))
             case WaitFinished():
@@ -161,7 +161,7 @@ class WaitRegion(LiveRegion):
         self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
             # The refresh thread reads these and the anchor, never the caps cache or the console.
-            self._caps = features
+            self._features = features
             self._layout = _TableLayout.for_width(features.width)
             self._spinner = Spinner(spinner_name(features), style="yellow")
             self._live = make_live(console)
@@ -193,8 +193,8 @@ class WaitRegion(LiveRegion):
         # The frame's lifetime is the Live slot's: a dangling one keeps _collect_frame_failure polling stale state.
         self._live_frame = None
         self._anchor = None
-        self._caps = detect_capabilities(None)
-        self._layout = _TableLayout.for_width(self._caps.width)
+        self._features = detect_features(None)
+        self._layout = _TableLayout.for_width(self._features.width)
         # A deliberate seed, never rendered: frames only anchor on WaitProgress, and the scope
         # emits WaitStarted (which overwrites this) before it can emit any progress.
         self._kind = WaitKind.MONITOR
@@ -206,7 +206,7 @@ class WaitRegion(LiveRegion):
         if anchor is None:
             return Group()
         offset = max(0.0, self._time_source() - anchor.pushed_at)
-        return self._frame(live_model(self._advance(anchor.snapshot, offset), self._caps, self._kind))
+        return self._frame(live_model(self._advance(anchor.snapshot, offset), self._features, self._kind))
 
     @staticmethod
     def _advance(snapshot: WaitSnapshot, offset: float) -> WaitSnapshot:
@@ -239,7 +239,7 @@ class WaitRegion(LiveRegion):
         line = Text(indent_string(""))
         line.append(model.left_text, style="bold")
         line.append("  ")
-        line.append(block_bar(model.overall_fraction, 12, self._caps))
+        line.append(block_bar(model.overall_fraction, 12, self._features))
         if model.right_text:
             line.append("  ")
             line.append(model.right_text, style="cyan")
@@ -291,14 +291,14 @@ class WaitRegion(LiveRegion):
 
     def _marker(self, phase: Phase) -> Text:
         if phase is Phase.DOWNLOADING:
-            return Text("↓" if self._caps.can_unicode else "v", style="cyan")
+            return Text("↓" if self._features.can_unicode else "v", style="cyan")
         if phase is Phase.IMPORTING:
-            return Text("∼" if self._caps.can_unicode else "~", style="yellow")
-        return Text("·" if self._caps.can_unicode else ".", style="grey50")
+            return Text("∼" if self._features.can_unicode else "~", style="yellow")
+        return Text("·" if self._features.can_unicode else ".", style="grey50")
 
     def _bar_or_status(self, row: RowModel, bar_width: int) -> Text:
         if row.show_bar:
-            return block_bar(row.fraction, bar_width, self._caps)
+            return block_bar(row.fraction, bar_width, self._features)
         return Text(row.status.ljust(bar_width)[:bar_width], style=self._status_style(row.phase))
 
     @staticmethod
@@ -306,5 +306,5 @@ class WaitRegion(LiveRegion):
         return "yellow" if phase is Phase.IMPORTING else "grey50"
 
     def _truncate(self, text: Text) -> Text:
-        text.truncate(self._caps.width, overflow="ellipsis")
+        text.truncate(self._features.width, overflow="ellipsis")
         return text

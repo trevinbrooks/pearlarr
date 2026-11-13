@@ -67,7 +67,7 @@ from .events import (
 )
 from .hub import Renderer
 from .scope_path import OpenScopes
-from .wait_lines import PulseThrottle, hand_import_names, hand_import_sentences
+from .wait_lines import ProgressLineThrottle, hand_import_names, hand_import_sentences
 from ..log import LOG_NAME
 from ..wait_types import OutcomeKind
 
@@ -97,7 +97,7 @@ class _Line:
     """One rendered text line."""
 
     severity: Severity
-    bracket: str | None
+    where: str | None
     message: str
     fields: tuple[Field, ...] = ()
     trace: str | None = None
@@ -142,9 +142,9 @@ def _logfmt(fields: tuple[Field, ...]) -> str:
 
 def _render_line(line: _Line, ts: str) -> str:
     parts = [ts, line.severity.name]
-    if line.bracket:
+    if line.where:
         # Escaped like the message: breadcrumb labels carry external titles (Arr/AniList).
-        parts.append(f"[{_flat(line.bracket)}]")
+        parts.append(f"[{_flat(line.where)}]")
     parts.append(_flat(line.message))
     if line.fields:
         parts.append(_logfmt(line.fields))
@@ -283,7 +283,7 @@ def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     )
 
 
-def _pulse_fact(event: WaitProgress) -> _Fact:
+def _wait_progress_fact(event: WaitProgress) -> _Fact:
     """The "still waiting" heartbeat's pure facts. The grammar sinks decide WHEN."""
 
     counts = event.snapshot.counts()
@@ -359,9 +359,9 @@ def _fields_added(row: GrabFact) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _placement_fields(event: Diagnostic, crumbs: OpenScopes) -> tuple[Field, ...]:
+def _placement_fields(event: Diagnostic, open_scopes: OpenScopes) -> tuple[Field, ...]:
     # Ambient placement is a guess. The record admits it (during=/placed=frontier).
-    during = crumbs.during()
+    during = open_scopes.during()
     if event.placed_by is PlacedBy.AMBIENT and during is not None:
         return (Field("during", during), Field("placed", "frontier"))
     return ()
@@ -413,7 +413,7 @@ def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
     )
 
 
-def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | None:
+def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact | None:
     """The exhaustive per-event table. None means the event has no rendered form."""
 
     match event:
@@ -473,7 +473,7 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
         case ArrRunFinished(arr=arr):
             return _Fact("run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
-            return _Fact("diagnostic", severity, message, _placement_fields(event, crumbs), None, origin)
+            return _Fact("diagnostic", severity, message, _placement_fields(event, open_scopes), None, origin)
         case PathsShown():
             return _Fact("paths_shown", severity, "resolved paths", _fields_paths_shown(event), None, "cli")
         case StarterConfigWritten(path=path):
@@ -515,11 +515,11 @@ _TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, ArrRunFin
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 
 
-def _scope_bracket(scope: ScopeId | None, crumbs: OpenScopes, fallback: str) -> str:
+def _scope_path_or(scope: ScopeId | None, open_scopes: OpenScopes, fallback: str) -> str:
     """The breadcrumb for a handle-carried ScopeId, or the fixed component word."""
 
     if scope is not None:
-        path = crumbs.path_for(scope)
+        path = open_scopes.path_for(scope)
         if path is not None:
             return path
     return fallback
@@ -534,28 +534,28 @@ def _summary_row_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
     return (*needs, *added)
 
 
-def _lines_of(event: Event, crumbs: OpenScopes, severity: Severity) -> tuple[_Line, ...]:
+def _lines_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> tuple[_Line, ...]:
     """The text grammar: the shared fact plus text-only decoration."""
 
     # Skip first: scope boundaries fire per entry on both grammar sinks, so building their facts just to drop
     # them is pure hot-path waste.
     if type(event) in _TEXT_SKIP:
         return ()
-    fact = _fact_of(event, crumbs, severity)
+    fact = _fact_of(event, open_scopes, severity)
     if fact is None:
         return ()
-    bracket = _scope_bracket(fact.scope, crumbs, fact.component)
+    where = _scope_path_or(fact.scope, open_scopes, fact.component)
     trace = event.trace.plain if isinstance(event, Diagnostic) and event.trace is not None else None
-    head = _Line(fact.severity, bracket, fact.message, fact.fields, trace)
+    head = _Line(fact.severity, where, fact.message, fact.fields, trace)
     if isinstance(event, ArrRunSummaryReady):
         return (head, *_summary_row_lines(event.summary))
     return (head,)
 
 
-def _json_of(event: Event, crumbs: OpenScopes, iso: str, severity: Severity) -> dict[str, JsonValue] | None:
+def _json_of(event: Event, open_scopes: OpenScopes, iso: str, severity: Severity) -> dict[str, JsonValue] | None:
     """The json shape: the shared fact plus json-only decoration, stable key order."""
 
-    fact = _fact_of(event, crumbs, severity)
+    fact = _fact_of(event, open_scopes, severity)
     if fact is None or type(event) in _JSON_SKIP:
         return None
     payload: dict[str, JsonValue] = {
@@ -570,7 +570,7 @@ def _json_of(event: Event, crumbs: OpenScopes, iso: str, severity: Severity) -> 
     if isinstance(event, Diagnostic):
         payload["origin"] = event.origin
     if fact.scope is not None:
-        path = crumbs.path_for(fact.scope)
+        path = open_scopes.path_for(fact.scope)
         if path is not None:
             payload["path"] = path
     for field in fact.fields:
@@ -602,7 +602,7 @@ def _reformat_iso(iso: str) -> str | None:
     return parsed.strftime(TS_FORMAT)
 
 
-def _envelope_bracket(payload: dict[str, JsonValue], event: str) -> str:
+def _envelope_where(payload: dict[str, JsonValue], event: str) -> str:
     """The bracket seed: `path`, else `component`, else `origin`, else the event name."""
 
     for key in ("path", "component", "origin"):
@@ -631,9 +631,9 @@ def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
         return None
 
     parts = [ts, level]
-    bracket = _envelope_bracket(payload, event)
-    if bracket:
-        parts.append(f"[{_flat(bracket)}]")
+    where = _envelope_where(payload, event)
+    if where:
+        parts.append(f"[{_flat(where)}]")
     parts.append(_flat(message))
     fields = tuple(Field(key, value) for key, value in payload.items() if key not in _ENVELOPE_KEYS)
     if fields:
@@ -670,7 +670,7 @@ class _LineRenderer(Renderer):
     """The shared sink chassis: admission, breadcrumb folding, per-second timestamps."""
 
     def __init__(self) -> None:
-        self._crumbs = OpenScopes()
+        self._open_scopes = OpenScopes()
         self._threshold: int = int(Severity.INFO)
 
     @override
@@ -680,11 +680,11 @@ class _LineRenderer(Renderer):
             if self._admits(event):
                 self._render(event, when, severity)
         finally:
-            self._crumbs.apply(event)
+            self._open_scopes.apply(event)
 
     @override
     def begin_run(self) -> None:
-        self._crumbs.reset()
+        self._open_scopes.reset()
         self._turn_over()
 
     @override
@@ -711,22 +711,22 @@ class _GrammarRenderer(_LineRenderer):
 
     def __init__(self) -> None:
         super().__init__()
-        self._pulse = PulseThrottle()
+        self._progress_line_throttle = ProgressLineThrottle()
         self._ts = _PerSecondMemo(lambda dt: dt.strftime(TS_FORMAT))
 
     @override
     def begin_run(self) -> None:
-        self._pulse.reset()
+        self._progress_line_throttle.reset()
         super().begin_run()
 
     @override
     def _render(self, event: Event, when: float, severity: Severity) -> None:
         if isinstance(event, WaitStarted):
-            self._pulse.arm(event.pulse_s)
+            self._progress_line_throttle.start(event.progress_line_s)
         if isinstance(event, WaitProgress):
-            lines = self._pulse_lines(event)
+            lines = self._progress_lines(event)
         else:
-            lines = _lines_of(event, self._crumbs, severity)
+            lines = _lines_of(event, self._open_scopes, severity)
         kept = tuple(line for line in lines if line.severity >= self._threshold)
         if not kept:
             return
@@ -734,14 +734,14 @@ class _GrammarRenderer(_LineRenderer):
         text = "\n".join(_render_line(line, ts) for line in kept) + "\n"
         self._write(text)
 
-    def _pulse_lines(self, event: WaitProgress) -> tuple[_Line, ...]:
+    def _progress_lines(self, event: WaitProgress) -> tuple[_Line, ...]:
         """The stateful throttle consult. The cadence advances regardless of level."""
 
-        if not self._pulse.fire(event.snapshot.elapsed_s):
+        if not self._progress_line_throttle.fire(event.snapshot.elapsed_s):
             return ()
-        fact = _pulse_fact(event)
-        bracket = _scope_bracket(fact.scope, self._crumbs, fact.component)
-        return (_Line(fact.severity, bracket, fact.message, fact.fields),)
+        fact = _wait_progress_fact(event)
+        where = _scope_path_or(fact.scope, self._open_scopes, fact.component)
+        return (_Line(fact.severity, where, fact.message, fact.fields),)
 
     def _write(self, text: str) -> None:
         raise NotImplementedError
@@ -880,7 +880,7 @@ class JsonRenderer(_LineRenderer):
     def _render(self, event: Event, when: float, severity: Severity) -> None:
         if self._effective(event, severity) < self._threshold:
             return
-        payload = _json_of(event, self._crumbs, self._iso.format(when), severity)
+        payload = _json_of(event, self._open_scopes, self._iso.format(when), severity)
         if payload is not None:
             self._stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
             self._stream.flush()

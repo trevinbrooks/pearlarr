@@ -92,7 +92,7 @@ class TestWaitCockpitLifecycle:
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(renderer, WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR))
+        _feed(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
         assert renderer._wait._live is None  # WaitStarted alone never opens the cockpit
 
         _feed(renderer, _progress(_dl("Show"), elapsed=0))
@@ -107,7 +107,7 @@ class TestWaitCockpitLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=2, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show A"), elapsed=0),
             RowFinished(label="Show A", outcome=Outcome.IMPORTED, files=8, waited_s=300),
         )
@@ -124,7 +124,11 @@ class TestWaitCockpitLifecycle:
         # the observable guarantee is a stopped Live WITH the tally present.
         renderer, stream = _live_renderer()
 
-        _feed(renderer, WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _progress(_dl("Show"), elapsed=0))
+        _feed(
+            renderer,
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            _progress(_dl("Show"), elapsed=0),
+        )
         live = renderer._wait._live
         assert live is not None and live.is_started
 
@@ -137,7 +141,7 @@ class TestWaitCockpitLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
             WaitFinished(imported=0, left=0, failed=0, elapsed_s=120, in_progress=0, kind=WaitKind.MONITOR),
         )
@@ -147,7 +151,11 @@ class TestWaitCockpitLifecycle:
     def test_begin_cycle_stops_the_live(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(renderer, WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _progress(_dl("Show"), elapsed=0))
+        _feed(
+            renderer,
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            _progress(_dl("Show"), elapsed=0),
+        )
         assert renderer._wait._live is not None
         assert renderer._wait._live_frame is not None
 
@@ -165,7 +173,7 @@ class TestNonLiveDigest:
 
         _feed(
             renderer,
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),  # the start snapshot never pulses
             _progress(_dl("Show"), elapsed=300),  # the first pulse
         )
@@ -182,7 +190,7 @@ class TestNonLiveDigest:
 
         _feed(
             renderer,
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
             _progress(_dl("Show"), elapsed=300),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
@@ -200,7 +208,7 @@ class TestNonLiveDigest:
 
         _feed(
             renderer,
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
         )
         out = _plain(stream)
@@ -217,7 +225,7 @@ class TestFrontierTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
         )
         live = renderer._wait._live
@@ -232,7 +240,7 @@ class TestFrontierTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
         )
         live = renderer._wait._live
@@ -249,7 +257,7 @@ class TestFrontierTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
         )
         first = renderer._wait._live
@@ -261,7 +269,7 @@ class TestFrontierTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT_TWO, label="wait"),
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
         )
         second = renderer._wait._live
@@ -275,7 +283,11 @@ class TestFrontierTeardown:
         renderer, stream = _live_renderer()
         renderer.set_level(logging.WARNING)
 
-        _feed(renderer, WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR), _progress(_dl("Show"), elapsed=0))
+        _feed(
+            renderer,
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            _progress(_dl("Show"), elapsed=0),
+        )
         assert renderer._wait._live is not None  # the cockpit is NOT level-gated
 
         _feed(
@@ -293,7 +305,7 @@ class TestFrontierTeardown:
 
         _feed(
             renderer,
-            WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=1),
             WaitFinished(imported=1, left=0, failed=0, elapsed_s=1, in_progress=0, kind=WaitKind.MONITOR),
@@ -311,27 +323,27 @@ class TestWaitRegionDirect:
 
     def test_section_left_no_ops_when_no_live_ever_started(self) -> None:
         region = self._region()
-        region.section_left()  # the non-TTY digest path never started a Live
+        region.scope_closed()  # the non-TTY digest path never started a Live
         assert region._live is None
-        region.section_left()  # idempotent
+        region.scope_closed()  # idempotent
         assert region._live is None
 
     def test_section_left_is_idempotent_after_a_live(self) -> None:
         region = self._region()
-        region.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
         region.handle(_progress(_dl("Show"), elapsed=0))
         live = region._live
         assert live is not None and live.is_started
 
-        region.section_left()
+        region.scope_closed()
         assert region._live is None and not live.is_started
-        region.section_left()  # idempotent
+        region.scope_closed()  # idempotent
         assert region._live is None
 
     def test_check_kind_threads_from_the_start_event_into_the_frame(self) -> None:
         # The frame must render the CHECK verb, never the reset seed's monitor wording.
         region = self._region()
-        region.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.CHECK))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.CHECK))
         region.handle(_progress(_dl("Show"), elapsed=5.0))
 
         frame = _render_group(region._current_group())
@@ -346,7 +358,7 @@ class TestWaitRegionDirect:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         importing = TorrentView(key="h", label="Copy", phase=Phase.IMPORTING, phase_elapsed_s=4.0)
-        region.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
         region.handle(WaitProgress(snapshot=WaitSnapshot((importing,), elapsed_s=10.0)))
 
         at_push = _render_group(region._current_group())
@@ -363,10 +375,10 @@ class TestWaitRegionDirect:
         region = self._region()
         download = TorrentView(key="d", label="Down", phase=Phase.DOWNLOADING, fraction=0.5)
         copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
-        region.handle(WaitStarted(total=2, pulse_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR))
         region.handle(WaitProgress(snapshot=WaitSnapshot((download, copying), elapsed_s=5.0)))
 
-        model = live_model(WaitSnapshot((download, copying), elapsed_s=5.0), region._caps, region._kind)
+        model = live_model(WaitSnapshot((download, copying), elapsed_s=5.0), region._features, region._kind)
         importing_cells = region._row_cells(next(r for r in model.rows if r.phase is Phase.IMPORTING))
         assert isinstance(importing_cells[0], Spinner)  # the shared animated marker
 
@@ -381,7 +393,7 @@ class TestWaitRegionDirect:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=60)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
-        region.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
         region.handle(WaitProgress(snapshot=WaitSnapshot((copying,), elapsed_s=5.0)))
 
         frame = _render_group(region._current_group())
@@ -434,7 +446,7 @@ def _latched_region(console: Console) -> tuple[WaitRegion, _LiveFrame]:
     """A region with an active Live whose frame builder raises on every tick."""
 
     region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: 0.0)
-    region.handle(WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR))
+    region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
     region.handle(_progress(_dl("Show"), elapsed=0))
     frame = _LiveFrame(_boom)
     region._live_frame = frame
@@ -467,13 +479,13 @@ def test_wait_region_reports_a_latched_failure_once_on_the_next_handle() -> None
 
 def test_wait_region_teardown_flushes_a_latched_failure() -> None:
     # A failure from the session's last ticks must not die with the frame: the
-    # teardown routes (section_left/close/reset) also collect the latch.
+    # teardown routes (scope_closed/close/reset) also collect the latch.
     recording = install_recording_hub()
     console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
     region, frame = _latched_region(console)
 
     assert list(frame.__rich_console__(console, console.options)) == []
-    region.section_left()
+    region.scope_closed()
 
     (report,) = [d for d in recording.of_type(Diagnostic) if d.message == "wait frame render failed"]
     assert report.severity is Severity.WARNING and report.file_only

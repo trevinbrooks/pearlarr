@@ -585,7 +585,7 @@ class WaitStarted:
     """The wait pass opened."""
 
     total: int
-    pulse_s: float
+    progress_line_s: float
     """The renderer's pulse throttle interval (`max(poll_s, digest_interval)`)."""
     kind: WaitKind
     scope: ScopeId | None = None

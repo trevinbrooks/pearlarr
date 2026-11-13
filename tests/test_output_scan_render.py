@@ -37,7 +37,7 @@ from pearlarr.output import (
     TitleRow,
 )
 from pearlarr.output.console_lines import ConsoleLine
-from pearlarr.output.console_text import KeyValue, SectionRule, StyledLine, TitledRule
+from pearlarr.output.console_text import KeyValue, SeparatorRule, StyledLine, TitledRule
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import (
     accent_style,
@@ -45,10 +45,10 @@ from pearlarr.output.scan_lines import (
     cap_reached_lines,
     grab_action_lines,
     item_started_lines,
-    ledger_row_lines,
     scan_started_lines,
     title_detail_lines,
     title_header_lines,
+    title_row_lines,
 )
 
 from .fakes import strip_ansi
@@ -146,13 +146,13 @@ class TestBuilders:
             (IGNORED_ROW, IGNORED_LINES),
             (NO_ENTRY_UNRESOLVED_ROW, NO_ENTRY_UNRESOLVED_LINES),
         ):
-            assert _as_lines(ledger_row_lines(event)) == expected
+            assert _as_lines(title_row_lines(event)) == expected
 
     def test_ledger_row_accents(self) -> None:
         plain = TitleRow(state=TitleState.CHECKING, label="Focal", accent=Accent.PLAIN)
-        assert ledger_row_lines(plain)[1].payload == StyledLine(style="")
+        assert title_row_lines(plain)[1].payload == StyledLine(style="")
         good = TitleRow(state=TitleState.IMPORTED, label="Done", accent=Accent.GOOD)
-        assert ledger_row_lines(good)[1].payload == StyledLine(style="green")
+        assert title_row_lines(good)[1].payload == StyledLine(style="green")
 
     def test_entry_headers(self) -> None:
         for event, expected in (
@@ -175,12 +175,12 @@ class TestBuilders:
 
     def test_entry_details(self) -> None:
         composed = (
-            _as_lines(ledger_row_lines(OUTAGE_ROW))
+            _as_lines(title_row_lines(OUTAGE_ROW))
             + _as_lines(title_detail_lines(OUTAGE_ANILIST_DETAIL))
             + _as_lines(title_detail_lines(OUTAGE_STATUS_DETAIL))
         )
         assert composed == OUTAGE_LINES
-        resolved = _as_lines(ledger_row_lines(NO_ENTRY_RESOLVED_ROW)) + _as_lines(
+        resolved = _as_lines(title_row_lines(NO_ENTRY_RESOLVED_ROW)) + _as_lines(
             title_detail_lines(NO_ENTRY_RESOLVED_DETAIL),
         )
         assert resolved == NO_ENTRY_RESOLVED_LINES
@@ -282,7 +282,7 @@ def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> li
                 case TitledRule(title=title, heavy=heavy):
                     out.append(("━" if heavy else "─") * width)
                     out.append(title)
-                case SectionRule(char=char):
+                case SeparatorRule(char=char):
                     out.append(("━" if "=" in char else "─") * width)
                 case KeyValue(tail=tail):
                     out.append(f"{message} {tail}" if tail else message)

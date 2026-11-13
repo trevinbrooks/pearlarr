@@ -14,7 +14,7 @@ from .console_text import (
     DETAIL_KEY_WIDTH,
     STATE_WIDTH,
     KeyValue,
-    SectionRule,
+    SeparatorRule,
     StyledLine,
     compact_duration,
     count_noun,
@@ -163,7 +163,7 @@ def wait_start_line(event: WaitStarted) -> ConsoleLine:
     return ConsoleLine(logging.INFO, event.kind.start_template.format(n=event.total, s=plural))
 
 
-def wait_pulse_line(snapshot: WaitSnapshot) -> ConsoleLine:
+def wait_progress_line(snapshot: WaitSnapshot) -> ConsoleLine:
     """One throttled "still waiting" aggregate pulse."""
 
     counts = snapshot.counts()
@@ -229,13 +229,13 @@ def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
     parts.append(long_duration(event.elapsed_s))
     head = event.kind.tally_head
     return [
-        ConsoleLine(logging.INFO, rule_string("-"), SectionRule(char="-")),
+        ConsoleLine(logging.INFO, rule_string("-"), SeparatorRule(char="-")),
         ConsoleLine(logging.INFO, indent_string(f"{head} · " + " · ".join(parts))),
     ]
 
 
 @final
-class PulseThrottle:
+class ProgressLineThrottle:
     """The "still waiting" pulse cadence."""
 
     __slots__ = ("_interval", "_next", "_skip_first")
@@ -245,7 +245,7 @@ class PulseThrottle:
         self._next = 0.0
         self._skip_first = False
 
-    def arm(self, interval_s: float) -> None:
+    def start(self, interval_s: float) -> None:
         self._interval = interval_s
         self._next = interval_s
         self._skip_first = True
@@ -338,7 +338,7 @@ def live_model(snapshot: WaitSnapshot, features: ConsoleFeatures, kind: WaitKind
 
 
 # Every non-terminal Phase, drift-pinned (test_output_wait_render ties it to set(Phase)).
-# _overflow_text and wait_pulse_line hand-list the same trio.
+# _overflow_text and wait_progress_line hand-list the same trio.
 _PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.AWAITING_FIRST_POLL: 2}
 
 

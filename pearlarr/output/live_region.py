@@ -27,20 +27,20 @@ class LiveRegion:
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: DetectedFeatures | None,
+        detected_features: DetectedFeatures | None,
         *,
         level_source: Callable[[], int],
     ) -> None:
         self._console_source = console_source
         # Production wiring (cli) shares ONE cache across the console seat's
         # regions so they branch on the same probe. None builds a private cache.
-        self._caps_cache = caps_cache if caps_cache is not None else DetectedFeatures()
+        self._detected_features = detected_features if detected_features is not None else DetectedFeatures()
         # The RichRenderer's level store, read live (no duplicate _level here).
         self._level_source = level_source
         self._live: Live | None = None
         self._spinner: Spinner | None = None
 
-    def section_left(self) -> None:
+    def scope_closed(self) -> None:
         """This region left the renderer's frontier: tear the live slot down.
 
         A safe no-op when no Live ever started, so the generalized
@@ -51,7 +51,7 @@ class LiveRegion:
 
     def begin_run(self) -> None:
         self._reset()
-        self._caps_cache.reset()
+        self._detected_features.reset()
 
     def close(self) -> None:
         self._stop_live()

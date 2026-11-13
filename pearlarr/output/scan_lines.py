@@ -14,7 +14,7 @@ from .console_text import (
     DETAIL_KEY_WIDTH,
     ConsoleRender,
     KeyValue,
-    SectionRule,
+    SeparatorRule,
     StyledLine,
     TitledRule,
     arr_item_noun,
@@ -145,7 +145,7 @@ def _detail_kv(
     return kv_line(payload, level=level)
 
 
-def _ledger_line(state: TitleState, label: str, style: str) -> ConsoleLine:
+def _title_row_line(state: TitleState, label: str, style: str) -> ConsoleLine:
     """A fixed-column ledger row, indent baked into the message."""
 
     return _info(indent_string(title_row_string(state, label), level=1), StyledLine(style=style))
@@ -177,7 +177,7 @@ def title_header_lines(event: TitleHeader) -> tuple[ConsoleLine, ...]:
         style = "green"
     else:
         style = "grey50"
-    lines = [_BLANK, _ledger_line(event.state, event.title, style)]
+    lines = [_BLANK, _title_row_line(event.state, event.title, style)]
     rows = [(label, value) for label, value in (("files", event.coverage), ("link", event.url)) if value]
     for idx, (label, value) in enumerate(rows):
         tail = "(marked incomplete on SeaDex)" if event.incomplete and idx == len(rows) - 1 else None
@@ -185,10 +185,10 @@ def title_header_lines(event: TitleHeader) -> tuple[ConsoleLine, ...]:
     return tuple(lines)
 
 
-def ledger_row_lines(event: TitleRow) -> tuple[ConsoleLine, ...]:
+def title_row_lines(event: TitleRow) -> tuple[ConsoleLine, ...]:
     """A self-contained ledger row (unmonitored / no mapping / ignored / ...)."""
 
-    return _BLANK, _ledger_line(event.state, event.label, accent_style(event.accent))
+    return _BLANK, _title_row_line(event.state, event.label, accent_style(event.accent))
 
 
 def title_detail_lines(event: TitleDetail) -> tuple[ConsoleLine, ...]:
@@ -414,7 +414,7 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
     if tip is not None:
         lines.append(_info(indent_string(tip, level=1), StyledLine(style="grey50")))
 
-    lines.append(_info(rule_string("="), SectionRule("=")))
+    lines.append(_info(rule_string("="), SeparatorRule("=")))
     return tuple(lines)
 
 
@@ -431,7 +431,7 @@ def scan_event_lines(event: ScanEvent) -> tuple[ConsoleLine, ...]:
         case TitleDetail():
             return title_detail_lines(event)
         case TitleRow():
-            return ledger_row_lines(event)
+            return title_row_lines(event)
         case ReleaseSkipped():
             return release_skipped_lines(event)
         case GrabFailed():

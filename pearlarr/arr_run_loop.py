@@ -177,7 +177,7 @@ class ArrRunLoop:
             strategy.prefetch_episodes(all_items)
 
         # Tear the cockpit down before the scan logs anything, or it reflows above a stale spinner.
-        boot.end_section()
+        boot.end_boot()
 
         self._reporter.log_arr_start(arr, n_items)
 

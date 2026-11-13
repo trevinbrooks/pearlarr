@@ -11,7 +11,7 @@ import io
 
 from rich.console import Console
 
-from pearlarr.console_caps import DetectedFeatures, detect_capabilities
+from pearlarr.console_caps import DetectedFeatures, detect_features
 
 
 def _console(width: int = 100) -> Console:
@@ -24,7 +24,7 @@ def test_same_console_identity_returns_the_cached_probe() -> None:
 
     first = cache.for_console(console)
 
-    # detect_capabilities builds a fresh value per call, so an `is` hit proves
+    # detect_features builds a fresh value per call, so an `is` hit proves
     # the second lookup never re-probed.
     assert cache.for_console(console) is first
 
@@ -55,5 +55,5 @@ def test_no_console_takes_the_constant_path_without_touching_the_cache() -> None
     console = _console()
     cached = cache.for_console(console)
 
-    assert cache.for_console(None) == detect_capabilities(None)
+    assert cache.for_console(None) == detect_features(None)
     assert cache.for_console(console) is cached

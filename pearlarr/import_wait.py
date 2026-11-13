@@ -550,7 +550,7 @@ class ImportWaitManager:
             view = make_wait_view(
                 self.logger,
                 poll_s=self.imports.poll_interval,
-                digest_interval=self.imports.digest_interval,
+                progress_line_interval=self.imports.digest_interval,
                 kind=wait_pass.kind,
             )
         try:

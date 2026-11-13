@@ -54,7 +54,7 @@ from pearlarr.output import (
     TitleHeader,
     TitleRow,
 )
-from pearlarr.output.console_text import ConsoleRender, KeyValue, SectionRule, StyledLine, TitledRule, group_highlight
+from pearlarr.output.console_text import ConsoleRender, KeyValue, SeparatorRule, StyledLine, TitledRule, group_highlight
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import AnotherTitlesCounts, SeadexDict
@@ -432,7 +432,7 @@ CAP_REACHED_LINES: tuple[Line, ...] = (
 
 # --- run summaries ------------------------------------------------------------------------
 
-_RULE_LINE: Line = (_I, "=" * 80, SectionRule(char="="))
+_RULE_LINE: Line = (_I, "=" * 80, SeparatorRule(char="="))
 
 PRIVATE_ONLY_TIP = (
     "  Tip: manually grab private releases or set private_releases: fallback to automatically grab public alternatives."
