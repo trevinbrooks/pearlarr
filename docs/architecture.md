@@ -49,9 +49,9 @@ flowchart LR
 | Grabbing | `grab_pipeline`, `torrent_service` | tracker page parsing, qBittorrent adds, per-release outcomes |
 | Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
-| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_fold`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
+| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse` | mapping a release's files onto episodes at grab time, the series' SeaDex listings and size identities it uses, and the Sonarr `/parse` cache the placement reads |
 | State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending-record seam over the store |
-| Output | `output/*`, `log`, `console_caps`, `boot_flow` | the event hub, renderers, the always-on file log |
+| Output | `output/*`, `log`, `console_features`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
 | Reporting | `reporter`, `arr_run_state` | each leg's state and tally, the run summary and needs-action rows |
 

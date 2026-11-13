@@ -106,7 +106,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from ._orders import pass_other_orders
-from ._run_passes import (
+from ._sequence_passes import (
     MIN_TITLE_HITS,
     pass_misnumbered_specials,
     pass_sequence,

@@ -30,7 +30,7 @@ from .config import (
     redact_userinfo,
     write_starter_config,
 )
-from .console_caps import DetectedFeatures
+from .console_features import DetectedFeatures
 from .log import LogLevel, resolve_console_format, setup_logger
 from .output import (
     CacheBackedUp,

@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.live import Live
 
 from pearlarr.config import Arr
-from pearlarr.console_caps import ConsoleFeatures
+from pearlarr.console_features import ConsoleFeatures
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     ArrRunFinished,

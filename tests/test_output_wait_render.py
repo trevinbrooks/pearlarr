@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from pearlarr.console_caps import ConsoleFeatures, detect_features
+from pearlarr.console_features import ConsoleFeatures, detect_features
 from pearlarr.output import (
     Phase,
     RowFinished,

@@ -32,7 +32,7 @@ import pytest
 from rich.console import Console
 
 from pearlarr.config import LogFormat
-from pearlarr.console_caps import console_of
+from pearlarr.console_features import console_of
 from pearlarr.log import RichConsoleHandler, apply_log_level, mark_hub_console_owner, setup_logger
 from pearlarr.output import (
     Diagnostic,
