@@ -218,7 +218,7 @@ class EntryHeader:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryDetail:
+class TitleDetail:
     """A labeled line inside an entry block."""
 
     label: str
@@ -304,7 +304,7 @@ class RecommendedGroup:
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseName:
+class ReleaseLabel:
     """A torrent name and its release group."""
 
     name: str
@@ -323,8 +323,8 @@ class GrabAction:
 
     status: GrabStatus
     groups: tuple[RecommendedGroup, ...]
-    added: tuple[ReleaseName, ...]
-    in_qbit: tuple[ReleaseName, ...]
+    added: tuple[ReleaseLabel, ...]
+    in_qbit: tuple[ReleaseLabel, ...]
     waiting_to_import: bool = False
     scope: ScopeId | None = None
 
@@ -773,7 +773,7 @@ type Event = (
     | ScanStarted
     | ItemStarted
     | EntryHeader
-    | EntryDetail
+    | TitleDetail
     | TitleRow
     | ReleaseSkipped
     | GrabFailed
@@ -815,7 +815,7 @@ def severity_of(event: Event) -> Severity:
     match event:
         case Diagnostic(severity=severity):
             return severity
-        case EntryDetail(severity=severity):
+        case TitleDetail(severity=severity):
             return severity
         case ReleaseSkipped(reason=reason):
             return reason.severity

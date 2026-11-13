@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.live import Live
 
 from pearlarr.config import Arr
-from pearlarr.console_caps import Capabilities
+from pearlarr.console_caps import ConsoleFeatures
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     BootReady,
@@ -42,10 +42,10 @@ from pearlarr.output import (
 )
 from pearlarr.output.boot_region import (
     BootRegion,
-    format_step_secs,
     graduation_line,
     ready_line,
     slow_line,
+    step_seconds,
 )
 from pearlarr.wait_types import OutcomeKind
 
@@ -62,8 +62,8 @@ def _opened(scope: ScopeId = _SECTION) -> ScopeOpened:
     return ScopeOpened(scope=scope, label="boot")
 
 
-_ASCII_CAPS = Capabilities(live=False, color=False, unicode=False, width=80, height=24)
-_UNICODE_CAPS = Capabilities(live=False, color=True, unicode=True, width=100, height=40)
+_ASCII_CAPS = ConsoleFeatures(can_redraw=False, can_color=False, can_unicode=False, width=80, height=24)
+_UNICODE_CAPS = ConsoleFeatures(can_redraw=False, can_color=True, can_unicode=True, width=100, height=40)
 
 
 def _started(label: str, serial: int = 1) -> BootStepStarted:
@@ -89,7 +89,7 @@ def _finished(
 
 def _renderer(*, width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     # legacy_windows pinned: Windows CI auto-detects a legacy console, which
-    # would drop the caps to ASCII glyphs and break the unicode assertions.
+    # would drop the features to ASCII glyphs and break the unicode assertions.
     stream = io.StringIO()
     console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     return RichRenderer(lambda: console), stream
@@ -127,9 +127,9 @@ def test_slow_line_ellipsis_degrades_to_ascii_dots() -> None:
 
 
 def test_format_step_secs_bands() -> None:
-    assert format_step_secs(0.024) == "0.02s"
-    assert format_step_secs(15.34) == "15.3s"
-    assert format_step_secs(64.0) == "1m 04s"
+    assert step_seconds(0.024) == "0.02s"
+    assert step_seconds(15.34) == "15.3s"
+    assert step_seconds(64.0) == "1m 04s"
     assert ready_line(1.27) == "  ready in 1.27s"
 
 
@@ -395,10 +395,10 @@ class TestBootRegion:
 # --- the pure spinner-frame builder ---------------------------------------------------
 
 
-def _frame(label: str, caps: Capabilities, fraction: float | None, detail: str | None) -> str:
+def _frame(label: str, features: ConsoleFeatures, fraction: float | None, detail: str | None) -> str:
     region = BootRegion(lambda: None, level_source=lambda: logging.INFO)
     region._label = label
-    return region._frame_text(caps, fraction, detail).plain
+    return region._frame_text(features, fraction, detail).plain
 
 
 class TestFrameText:

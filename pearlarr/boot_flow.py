@@ -28,11 +28,11 @@ from typing import final
 
 from .output import (
     BootReady,
+    BootScope,
     CountsMark,
     RunStarted,
     ScopeFactory,
     ScopeKind,
-    ScopeMark,
     StepScope,
     current_hub,
     emit_to_hub,
@@ -65,7 +65,7 @@ class BootFlow:
         self._data_dir = data_dir
         self._clock = clock
         self._steps = ScopeFactory(emit_to_hub, clock=clock)
-        self._section = ScopeMark(ScopeKind.BOOT_SECTION, "boot")
+        self._section = BootScope(ScopeKind.BOOT_SECTION, "boot")
         self._window: _CapstoneWindow | None = None
         self._section_failed = False
 

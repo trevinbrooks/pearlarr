@@ -201,10 +201,10 @@ def make_wait_view(
     """The production narrator, probed off the logger's console."""
 
     console = console_of(logger)
-    caps = detect_capabilities(console)
+    features = detect_capabilities(console)
     return HubWaitView(
         logger,
         pulse_s=float(max(poll_s, digest_interval)),
-        wants_telemetry=console is not None and caps.live,
+        wants_telemetry=console is not None and features.can_redraw,
         kind=kind,
     )

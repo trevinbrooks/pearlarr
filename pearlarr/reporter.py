@@ -15,7 +15,6 @@ from .output import (
     CountsMark,
     CountsSource,
     Emit,
-    EntryDetail,
     EntryFact,
     EntryHeader,
     GrabAction,
@@ -28,7 +27,7 @@ from .output import (
     NeedsActionCause,
     NeedsActionFact,
     RecommendedGroup,
-    ReleaseName,
+    ReleaseLabel,
     ReleaseSkipped,
     RunSummaryReady,
     ScanFinished,
@@ -36,6 +35,7 @@ from .output import (
     ScopeFactory,
     Severity,
     StyledValue,
+    TitleDetail,
     TitleRow,
     TitleScope,
 )
@@ -118,7 +118,7 @@ class RunReporter:
     def detail(self, label: str, value: StyledValue, *, severity: Severity = Severity.INFO) -> None:
         """The ONE entry-detail path: routes through the open scope, else scope-free."""
 
-        self._post(EntryDetail(label=label, value=value, severity=severity))
+        self._post(TitleDetail(label=label, value=value, severity=severity))
 
     def post(self, fact: ReleaseSkipped | GrabFailed) -> None:
         """The ONE path for the typed release-level facts: via the open entry scope, else scope-free."""
@@ -326,15 +326,15 @@ class RunReporter:
         if not results:
             return
 
-        # A release neither qBittorrent nor its tracker page named has no name, and `ReleaseName.display` falls back
+        # A release neither qBittorrent nor its tracker page named has no name, and `ReleaseLabel.display` falls back
         # to its group.
-        added: list[ReleaseName] = []
-        downloading: list[ReleaseName] = []
+        added: list[ReleaseLabel] = []
+        downloading: list[ReleaseLabel] = []
         for r in results:
             if r.added:
-                added.append(ReleaseName(r.name or "", r.group))
+                added.append(ReleaseLabel(r.name or "", r.group))
             elif r.outcome is AddStatus.ALREADY_IN_QBIT:
-                downloading.append(ReleaseName(r.name or "", r.group))
+                downloading.append(ReleaseLabel(r.name or "", r.group))
 
         # `added` first, so a preview says "would add" only for a title it would add something for.
         if not added:

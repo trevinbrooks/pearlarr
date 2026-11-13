@@ -8,19 +8,19 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
-from .console_lines import LegacyLine
+from .console_lines import ConsoleLine
 from .console_text import (
     DETAIL_INDENT,
     DETAIL_KEY_WIDTH,
     STATE_WIDTH,
-    KvLine,
+    KeyValue,
     SectionRule,
     StyledLine,
     compact_duration,
     count_noun,
-    format_elapsed,
     human_bytes,
     indent_string,
+    long_duration,
     rule_string,
 )
 from .events import (
@@ -42,7 +42,7 @@ from ..tvdb_orders import order_display_name
 from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
-    from ..console_caps import Capabilities
+    from ..console_caps import ConsoleFeatures
 
 type WaitEvent = WaitStarted | WaitProgress | RowFinished | WaitFinished
 
@@ -143,7 +143,7 @@ def graduation_tail(event: RowFinished) -> str:
         if event.files:
             parts.append(count_noun(event.files, "file"))
         if event.waited_s >= 1.0:
-            parts.append(format_elapsed(event.waited_s))
+            parts.append(long_duration(event.waited_s))
         return " · ".join(parts)
     if outcome.category is OutcomeKind.IN_PROGRESS:
         return "checked again next run"
@@ -156,65 +156,65 @@ def graduation_tail(event: RowFinished) -> str:
 # --- the durable ledger-line builders (the rich console's scrollback) ----------------
 
 
-def wait_start_line(event: WaitStarted) -> LegacyLine:
+def wait_start_line(event: WaitStarted) -> ConsoleLine:
     """The non-TTY digest's opening line, worded by the pass kind."""
 
     plural = "" if event.total == 1 else "s"
-    return LegacyLine(logging.INFO, event.kind.start_template.format(n=event.total, s=plural))
+    return ConsoleLine(logging.INFO, event.kind.start_template.format(n=event.total, s=plural))
 
 
-def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
+def wait_pulse_line(snapshot: WaitSnapshot) -> ConsoleLine:
     """One throttled "still waiting" aggregate pulse."""
 
     counts = snapshot.counts()
     message = indent_string(
         f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
         f"{counts[Phase.IMPORTING]} importing · {counts[Phase.AWAITING_FIRST_POLL]} queued · "
-        f"{format_elapsed(snapshot.elapsed_s)}",
+        f"{long_duration(snapshot.elapsed_s)}",
     )
-    return LegacyLine(logging.INFO, message)
+    return ConsoleLine(logging.INFO, message)
 
 
-def _detail(key: str, value: str, style: str | None = None) -> KvLine:
+def _detail(key: str, value: str, style: str | None = None) -> KeyValue:
     """A labeled row under a ledger row: the key in the gutter, the value under the row's label."""
 
-    return KvLine(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
+    return KeyValue(key=key, value=value, key_width=_ROW_KEY_WIDTH, value_style=style, indent=DETAIL_INDENT, sep="")
 
 
-def _held_back_details(held: LeftForHandImport, caps: Capabilities, style: str) -> list[KvLine]:
+def _held_back_details(held: LeftForHandImport, features: ConsoleFeatures, style: str) -> list[KeyValue]:
     """The rows under a held-back ledger row: the reason, when the order explains it, then `_MAX_FILE_ROWS` files."""
 
-    rows: list[KvLine] = []
+    rows: list[KeyValue] = []
     if held.explained_by_order:
         reason = textwrap.wrap(_order_only_reason(held), width=_REASON_WIDTH)
         rows += [_detail("" if row else "reason", text, style) for row, text in enumerate(reason)]
     names = held_back_names(held, sep="  ")
     rows += [_detail("" if row else "files", name) for row, name in enumerate(names[:_MAX_FILE_ROWS])]
     if len(names) > _MAX_FILE_ROWS:
-        rows.append(_detail("", f"{'…' if caps.unicode else '...'} +{len(names) - _MAX_FILE_ROWS} more"))
+        rows.append(_detail("", f"{'…' if features.can_unicode else '...'} +{len(names) - _MAX_FILE_ROWS} more"))
     return rows
 
 
-def wait_graduation_lines(event: RowFinished, caps: Capabilities) -> list[LegacyLine]:
+def wait_graduation_lines(event: RowFinished, features: ConsoleFeatures) -> list[ConsoleLine]:
     """A finished torrent's durable ledger line (glyph + word + label + coda), then its held-back files' rows.
 
     Every line is at `severity_of`'s level.
     """
 
     level = int(severity_of(event))
-    style = event.outcome.style if caps.color else ""
-    glyph = event.outcome.glyph(use_unicode=caps.unicode)
+    style = event.outcome.style if features.can_color else ""
+    glyph = event.outcome.glyph(use_unicode=features.can_unicode)
     line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
     tail = graduation_tail(event)
     if tail:
         line += f"  ({tail})"
     return [
-        LegacyLine(level, indent_string(line), StyledLine(style=style)),
-        *(kv_line(detail, level=level) for detail in _held_back_details(event.left_for_hand_import, caps, style)),
+        ConsoleLine(level, indent_string(line), StyledLine(style=style)),
+        *(kv_line(detail, level=level) for detail in _held_back_details(event.left_for_hand_import, features, style)),
     ]
 
 
-def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
+def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
     """The closing wait summary. `[]` when nothing graduated."""
 
     if event.imported == 0 and event.pending == 0 and event.deferred == 0 and event.failed == 0:
@@ -226,11 +226,11 @@ def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
         parts.append(f"{event.deferred} left")
     if event.failed:
         parts.append(f"{event.failed} failed")
-    parts.append(format_elapsed(event.elapsed_s))
+    parts.append(long_duration(event.elapsed_s))
     head = event.kind.tally_head
     return [
-        LegacyLine(logging.INFO, rule_string("-"), SectionRule(char="-")),
-        LegacyLine(logging.INFO, indent_string(f"{head} · " + " · ".join(parts))),
+        ConsoleLine(logging.INFO, rule_string("-"), SectionRule(char="-")),
+        ConsoleLine(logging.INFO, indent_string(f"{head} · " + " · ".join(parts))),
     ]
 
 
@@ -301,30 +301,30 @@ class LiveModel:
     overflow: str = ""
 
 
-def live_model(snapshot: WaitSnapshot, caps: Capabilities, kind: WaitKind) -> LiveModel:
+def live_model(snapshot: WaitSnapshot, features: ConsoleFeatures, kind: WaitKind) -> LiveModel:
     """Reduce a snapshot to a bounded, ordered cockpit frame."""
 
     in_flight = [t for t in snapshot.torrents if t.phase is not Phase.FINISHED]
     in_flight.sort(key=_row_sort_key)
 
-    budget = max(MIN_LIVE_ROWS, min(MAX_LIVE_ROWS, caps.height - _RESERVED_ROWS))
+    budget = max(MIN_LIVE_ROWS, min(MAX_LIVE_ROWS, features.height - _RESERVED_ROWS))
     visible = in_flight[:budget]
     hidden = in_flight[budget:]
 
-    spark = caps.unicode and caps.width >= MIN_SPARK_WIDTH
+    spark = features.can_unicode and features.width >= MIN_SPARK_WIDTH
     rows = tuple(_row_model(t, spark=spark) for t in visible)
     overflow = _overflow_text(hidden)
 
     counts = snapshot.counts()
     left = f"{kind.live_verb} {snapshot.done()}/{snapshot.total()}"
-    arrow = "↓" if caps.unicode else "dl"
-    meta: list[str] = [format_elapsed(snapshot.elapsed_s)]
+    arrow = "↓" if features.can_unicode else "dl"
+    meta: list[str] = [long_duration(snapshot.elapsed_s)]
     agg_speed = _aggregate_speed(snapshot)
     if agg_speed:
         meta.append(f"{arrow} {human_bytes(agg_speed)}/s")
     agg_eta = _aggregate_eta(snapshot, agg_speed)
     if agg_eta is not None:
-        meta.append(f"{_compact_eta(agg_eta)} left")
+        meta.append(f"{_rough_eta(agg_eta)} left")
     if counts[Phase.IMPORTING]:
         meta.append(f"{counts[Phase.IMPORTING]} importing")
 
@@ -363,12 +363,12 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             fraction=clamp01(torrent.fraction),
             count=f"{round(clamp01(torrent.fraction) * 100)}%",
             speed=rate,
-            time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
+            time="" if torrent.eta_s is None else _rough_eta(torrent.eta_s),
             size="" if torrent.bytes_total is None else human_bytes(torrent.bytes_total),
             show_bar=True,
         )
     if torrent.phase is Phase.IMPORTING:
-        elapsed = format_elapsed(torrent.phase_elapsed_s)
+        elapsed = long_duration(torrent.phase_elapsed_s)
         if torrent.import_total:
             # An import has no download rate, hence no speed cell.
             return RowModel(
@@ -447,7 +447,7 @@ def sparkline(samples: tuple[int, ...]) -> str:
     return "".join(_SPARK_CHARS[round(sample / peak * top)] for sample in samples)
 
 
-def _compact_eta(seconds: float) -> str:
+def _rough_eta(seconds: float) -> str:
     """A short `~` ETA, e.g. `"~2m"` / `"~1h05m"` / `"~40s"`."""
 
     return f"~{compact_duration(seconds)}"

@@ -8,28 +8,27 @@ from typing import Final, NamedTuple, assert_never
 
 from rich.text import Text
 
-from .console_lines import LegacyLine
+from .console_lines import ConsoleLine
 from .console_text import (
     DETAIL_INDENT,
     DETAIL_KEY_WIDTH,
     ConsoleRender,
-    KvLine,
+    KeyValue,
     SectionRule,
     StyledLine,
     TitledRule,
     arr_item_noun,
     count_noun,
     entry_string,
-    format_elapsed,
     group_highlight,
     indent_string,
     kv_string,
+    long_duration,
     rule_string,
 )
 from .events import (
     Accent,
     CapReached,
-    EntryDetail,
     EntryHeader,
     GrabAction,
     GrabFact,
@@ -42,6 +41,7 @@ from .events import (
     RunSummaryReady,
     ScanStarted,
     SkipReason,
+    TitleDetail,
     TitleRow,
     TitleState,
     severity_of,
@@ -51,7 +51,7 @@ type ScanEvent = (
     ScanStarted
     | ItemStarted
     | EntryHeader
-    | EntryDetail
+    | TitleDetail
     | TitleRow
     | ReleaseSkipped
     | GrabFailed
@@ -61,7 +61,7 @@ type ScanEvent = (
 )
 
 
-_BLANK = LegacyLine(logging.INFO, "")
+_BLANK = ConsoleLine(logging.INFO, "")
 
 _SUMMARY_KEY_WIDTH: Final = 12
 _BLOCK_KEY_WIDTH: Final = 7
@@ -112,15 +112,15 @@ def accent_style(accent: Accent) -> str:
     assert_never(accent)
 
 
-def _info(message: str, payload: ConsoleRender) -> LegacyLine:
-    return LegacyLine(logging.INFO, message, payload)
+def _info(message: str, payload: ConsoleRender) -> ConsoleLine:
+    return ConsoleLine(logging.INFO, message, payload)
 
 
-def kv_line(payload: KvLine, *, level: int = logging.INFO) -> LegacyLine:
+def kv_line(payload: KeyValue, *, level: int = logging.INFO) -> ConsoleLine:
     """One kv line: the KvLine payload plus the exact `kv_string` message it renders."""
 
     message = kv_string(payload.key, payload.value, key_width=payload.key_width, indent=payload.indent, sep=payload.sep)
-    return LegacyLine(level, message, payload)
+    return ConsoleLine(level, message, payload)
 
 
 def _detail_kv(
@@ -130,10 +130,10 @@ def _detail_kv(
     value_style: str | None,
     level: int = logging.INFO,
     tail: str | None = None,
-) -> LegacyLine:
+) -> ConsoleLine:
     """An entry-detail line (the colon-less gutter kv indented under an entry block)."""
 
-    payload = KvLine(
+    payload = KeyValue(
         key=key,
         value=value,
         key_width=DETAIL_KEY_WIDTH,
@@ -145,7 +145,7 @@ def _detail_kv(
     return kv_line(payload, level=level)
 
 
-def _ledger_line(state: TitleState, label: str, style: str) -> LegacyLine:
+def _ledger_line(state: TitleState, label: str, style: str) -> ConsoleLine:
     """A fixed-column ledger row, indent baked into the message."""
 
     return _info(indent_string(entry_string(state, label), level=1), StyledLine(style=style))
@@ -154,21 +154,21 @@ def _ledger_line(state: TitleState, label: str, style: str) -> LegacyLine:
 # --- the builders, one per event family ---------------------------------------------
 
 
-def scan_started_lines(event: ScanStarted) -> tuple[LegacyLine, ...]:
+def scan_started_lines(event: ScanStarted) -> tuple[ConsoleLine, ...]:
     """The run banner: a blank, then the heavy titled rule."""
 
     banner = f"Starting Pearlarr ({event.arr.capitalize()}) for {arr_item_noun(event.arr, event.total)}"
     return _BLANK, _info(banner, TitledRule(title=banner, heavy=True))
 
 
-def item_started_lines(event: ItemStarted) -> tuple[LegacyLine, ...]:
+def item_started_lines(event: ItemStarted) -> tuple[ConsoleLine, ...]:
     """A per-item header: a blank, then the light titled rule."""
 
     header = f"[{event.index}/{event.total}] {event.arr.capitalize()}: {event.title}"
     return _BLANK, _info(header, TitledRule(title=header))
 
 
-def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
+def entry_header_lines(event: EntryHeader) -> tuple[ConsoleLine, ...]:
     """An entry block's head (ledger row plus files/link rows), the incomplete note riding the last row."""
 
     if event.state is TitleState.CHECKING:
@@ -185,13 +185,13 @@ def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
     return tuple(lines)
 
 
-def ledger_row_lines(event: TitleRow) -> tuple[LegacyLine, ...]:
+def ledger_row_lines(event: TitleRow) -> tuple[ConsoleLine, ...]:
     """A self-contained ledger row (unmonitored / no mapping / ignored / ...)."""
 
     return _BLANK, _ledger_line(event.state, event.label, accent_style(event.accent))
 
 
-def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
+def entry_detail_lines(event: TitleDetail) -> tuple[ConsoleLine, ...]:
     """One labeled detail line under an entry. PLAIN renders a style-less kv."""
 
     return (
@@ -230,7 +230,7 @@ def _skip_text(event: ReleaseSkipped) -> str:
     assert_never(event.reason)
 
 
-def release_skipped_lines(event: ReleaseSkipped) -> tuple[LegacyLine, ...]:
+def release_skipped_lines(event: ReleaseSkipped) -> tuple[ConsoleLine, ...]:
     """A per-release "skipped" detail row, level keyed on the reason's severity."""
 
     return (
@@ -243,7 +243,7 @@ def release_skipped_lines(event: ReleaseSkipped) -> tuple[LegacyLine, ...]:
     )
 
 
-def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
+def grab_failed_lines(event: GrabFailed) -> tuple[ConsoleLine, ...]:
     """A contained grab failure's "failed" row, at `severity_of`'s level."""
 
     return (
@@ -256,10 +256,10 @@ def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
     )
 
 
-def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
+def grab_action_lines(event: GrabAction) -> tuple[ConsoleLine, ...]:
     """The per-title action block: status, recommended groups, per-release rows."""
 
-    lines: list[LegacyLine] = []
+    lines: list[ConsoleLine] = []
     match event.status:
         case GrabStatus.ADDING:
             lines.append(_detail_kv("status", "adding SeaDex's recommended release", value_style=None))
@@ -280,15 +280,15 @@ def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
     return tuple(lines)
 
 
-def cap_reached_lines(event: CapReached) -> tuple[LegacyLine, ...]:
+def cap_reached_lines(event: CapReached) -> tuple[ConsoleLine, ...]:
     """The cap line names the setting, not the cap value."""
 
     del event
     return (_info(_CAP_MESSAGE, StyledLine(style="yellow")),)
 
 
-def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> LegacyLine:
-    return kv_line(KvLine(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
+def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> ConsoleLine:
+    return kv_line(KeyValue(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
 
 
 class SummaryRow(NamedTuple):
@@ -303,7 +303,7 @@ def _summary_block(
     title: str,
     title_style: str | None,
     rows: Iterable[SummaryRow],
-) -> Iterator[LegacyLine]:
+) -> Iterator[ConsoleLine]:
     """A summary per-entry block: title at indent 2, labeled rows at indent 3."""
 
     yield _info(indent_string(title, level=2), StyledLine(style=title_style or ""))
@@ -311,13 +311,13 @@ def _summary_block(
         if not row.value:
             continue
         yield kv_line(
-            KvLine(
+            KeyValue(
                 key=row.label, value=row.value, key_width=_BLOCK_KEY_WIDTH, value_style=row.accent, indent=3, sep=""
             ),
         )
 
 
-def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
+def _needs_block(item: NeedsActionFact) -> Iterator[ConsoleLine]:
     rows = [
         SummaryRow("files", item.coverage, "grey50"),
         SummaryRow("group", item.group, "yellow"),
@@ -327,7 +327,7 @@ def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
     yield from _summary_block(item.title or "(unknown title)", "yellow", rows)
 
 
-def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
+def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[ConsoleLine]:
     # A dry run dims the whole block (group accent included) so the would-be grabs don't read as real.
     torrent_value = group_highlight(
         item.name,
@@ -343,7 +343,7 @@ def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
     yield from _summary_block(item.title or "(unknown title)", "grey50" if dry_run else None, rows)
 
 
-def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
+def run_summary_lines(event: RunSummaryReady) -> tuple[ConsoleLine, ...]:
     """The end-of-run scoreboard: checked / needs-action / added tallies plus the closing section rule."""
 
     summary = event.summary
@@ -354,7 +354,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     if summary.dry_run_note is not None:
         rule_title += f"   (DRY RUN - {summary.dry_run_note})"
 
-    lines: list[LegacyLine] = [
+    lines: list[ConsoleLine] = [
         _BLANK,
         # The DRY RUN note rides the rule title only. The message stays plain (the text surfaces carry
         # dry_run/note as structured fields via _fact_of).
@@ -408,7 +408,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
         ),
     )
     if summary.elapsed_s is not None:
-        lines.append(_summary_kv("elapsed", format_elapsed(summary.elapsed_s)))
+        lines.append(_summary_kv("elapsed", long_duration(summary.elapsed_s)))
 
     tip = _TIP_TEXTS.get(summary.tip) if summary.tip is not None else None
     if tip is not None:
@@ -418,7 +418,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     return tuple(lines)
 
 
-def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
+def scan_event_lines(event: ScanEvent) -> tuple[ConsoleLine, ...]:
     """Dispatch one scan event to its builder (the seats' single entry point)."""
 
     match event:
@@ -428,7 +428,7 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
             return item_started_lines(event)
         case EntryHeader():
             return entry_header_lines(event)
-        case EntryDetail():
+        case TitleDetail():
             return entry_detail_lines(event)
         case TitleRow():
             return ledger_row_lines(event)

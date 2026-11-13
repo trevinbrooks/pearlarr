@@ -52,7 +52,7 @@ def _render_group(group: Group) -> str:
     """A group's plain rendering - what one refresh tick would draw."""
 
     # legacy_windows pinned here and file-wide: Windows CI auto-detects a
-    # legacy console, dropping the caps to ASCII and breaking glyph asserts.
+    # legacy console, dropping the features to ASCII and breaking glyph asserts.
     stream = io.StringIO()
     Console(file=stream, force_terminal=True, legacy_windows=False, width=100).print(group)
     return strip_ansi(stream.getvalue())
@@ -193,7 +193,7 @@ class TestNonLiveDigest:
 
     def test_failed_graduation_survives_a_raised_level(self) -> None:
         # P6: the graduation line carries severity_of's category-based level,
-        # so a FAILED outcome renders at ERROR through render_legacy_lines'
+        # so a FAILED outcome renders at ERROR through render_console_lines'
         # WARNING gate while the INFO wait lines around it vanish.
         renderer, stream = _live_renderer(width=40)
         renderer.set_level(logging.WARNING)

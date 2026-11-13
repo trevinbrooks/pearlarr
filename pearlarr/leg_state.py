@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import qbittorrentapi
 
 from .config import Arr
-from .output import CountsMark, SeverityCounts
+from .output import CountsMark, SeverityCounter
 from .pending_import import PendingImport, TitleNames
 from .releases import GrabHold
 from .wait_types import ImportWaitMode, PendingImportState
@@ -198,7 +198,7 @@ class ArrRunState:
     """The arr item under scan, the display fallback for its ids when AniList names none."""
     started_monotonic: float | None = None
     """Run clock (monotonic, so an NTP or DST step cannot move it)."""
-    counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
+    counts_mark: CountsMark = field(default_factory=lambda: SeverityCounter().bound_mark())
     """Stamped at run start and diffed for the summary's issues row (an unstamped ctx diffs to zero)."""
     grabbed_this_run: dict[str, PendingImport] = field(default_factory=dict[str, PendingImport])
     """Records written THIS run, keyed by infohash for the run-list writes. The durable copies live in

@@ -80,7 +80,7 @@ class TestHandlerGraph:
     """
 
     def test_plain_attaches_no_handler_at_all(self, build: _Builder) -> None:
-        # Level-only configuration: the hub's LineRenderer owns plain stdout and
+        # Level-only configuration: the hub's PlainRenderer owns plain stdout and
         # the FileLogRenderer owns the file. The bridge is the only record path.
         logger = build("plain")
         assert _non_bridge_handlers(logger) == []
@@ -97,7 +97,7 @@ class TestHandlerGraph:
         assert isinstance(handlers[0], RichConsoleHandler)
 
     def test_no_file_handler_and_no_filters_anywhere(self, build: _Builder) -> None:
-        # The FileLogRenderer owns the file. SeverityCounts owns the tallies.
+        # The FileLogRenderer owns the file. SeverityCounter owns the tallies.
         logger = build("rich")
         assert not any(isinstance(h, logging.FileHandler) for h in logger.handlers)
         assert logger.filters == []

@@ -30,7 +30,7 @@ from pearlarr.output import (
     Renderer,
     RunStarted,
     Severity,
-    SeverityCounts,
+    SeverityCounter,
     SeverityTally,
     emit_to_hub,
     hub_note,
@@ -867,7 +867,7 @@ def test_the_same_once_key_from_different_origins_both_pass() -> None:
 
 
 def test_severity_counts_mark_and_delta() -> None:
-    counts = SeverityCounts()
+    counts = SeverityCounter()
     counts.record(Severity.WARNING)
     mark = counts.mark()
 
@@ -885,10 +885,10 @@ def test_severity_counts_mark_and_delta() -> None:
 def test_bound_mark_diffs_only_its_own_counter() -> None:
     """A CountsMark carries its counter: records on ANOTHER counter never skew since()."""
 
-    counts = SeverityCounts()
+    counts = SeverityCounter()
     mark = counts.bound_mark()
 
-    other = SeverityCounts()
+    other = SeverityCounter()
     other.record(Severity.ERROR)
     assert mark.since() == SeverityTally()
 

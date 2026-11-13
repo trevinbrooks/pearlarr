@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Final
 
 from .events import Diagnostic, Event, Severity
-from .hub import OutputHub, SeverityCounts
+from .hub import OutputHub, SeverityCounter
 from .trace import CapturedTrace
 from ..log import LOG_NAME
 
@@ -55,19 +55,19 @@ def hub_error(message: str, *, exc: BaseException | None = None) -> None:
     hub_note(message, severity=Severity.ERROR, exc=exc)
 
 
-def hub_file_only(message: str, *, severity: Severity = Severity.INFO) -> None:
+def note_to_file_log(message: str, *, severity: Severity = Severity.INFO) -> None:
     """A first-party diagnostic routed past the console surfaces to the file log alone."""
 
     emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, file_only=True))
 
 
-def hub_file_records(severity: Severity) -> bool:
+def file_log_admits(severity: Severity) -> bool:
     """Whether the file log admits `severity` - the text surfaces take the raw configured level; the rich console has its own floor."""
 
     return current_hub().level <= int(severity)
 
 
-def hub_counts() -> SeverityCounts:
+def hub_counts() -> SeverityCounter:
     """The process hub's severity counts, resolved at call time (emit_to_hub's twin)."""
 
     return current_hub().counts

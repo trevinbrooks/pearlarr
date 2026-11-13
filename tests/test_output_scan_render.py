@@ -19,7 +19,6 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     Accent,
     Diagnostic,
-    EntryDetail,
     EntryHeader,
     GrabAction,
     GrabStatus,
@@ -34,10 +33,11 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     StyledValue,
+    TitleDetail,
     TitleRow,
 )
-from pearlarr.output.console_lines import LegacyLine
-from pearlarr.output.console_text import KvLine, SectionRule, StyledLine, TitledRule
+from pearlarr.output.console_lines import ConsoleLine
+from pearlarr.output.console_text import KeyValue, SectionRule, StyledLine, TitledRule
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import (
     accent_style,
@@ -120,7 +120,7 @@ from .test_scan_parity import (
 )
 
 
-def _as_lines(lines: tuple[LegacyLine, ...]) -> tuple[Line, ...]:
+def _as_lines(lines: tuple[ConsoleLine, ...]) -> tuple[Line, ...]:
     return tuple((line.level, line.message, line.payload) for line in lines)
 
 
@@ -170,7 +170,7 @@ class TestBuilders:
         event = EntryHeader(state=TitleState.CHECKING, title="Frieren", coverage="S01 E01-E28", incomplete=True)
         last = entry_header_lines(event)[-1]
         assert last.message == "    files     S01 E01-E28"
-        assert isinstance(last.payload, KvLine)
+        assert isinstance(last.payload, KeyValue)
         assert last.payload.tail == "(marked incomplete on SeaDex)"
 
     def test_entry_details(self) -> None:
@@ -187,7 +187,7 @@ class TestBuilders:
         assert _as_lines(entry_detail_lines(NO_RELEASES_DETAIL)) == NO_RELEASES_LINES
 
     def test_entry_detail_carries_its_severity_and_tail(self) -> None:
-        event = EntryDetail(
+        event = TitleDetail(
             label="status",
             value=StyledValue("size mismatch", Accent.CAUTION),
             severity=Severity.WARNING,
@@ -196,7 +196,7 @@ class TestBuilders:
         (line,) = entry_detail_lines(event)
         assert line.level == logging.WARNING
         assert line.message == "    status    size mismatch"
-        assert line.payload == KvLine(
+        assert line.payload == KeyValue(
             key="status",
             value="size mismatch",
             key_width=9,
@@ -284,7 +284,7 @@ def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> li
                     out.append(title)
                 case SectionRule(char=char):
                     out.append(("━" if "=" in char else "─") * width)
-                case KvLine(tail=tail):
+                case KeyValue(tail=tail):
                     out.append(f"{message} {tail}" if tail else message)
                 case StyledLine() | None:
                     out.append(message)
@@ -331,7 +331,7 @@ class TestRichRendererScanArm:
     def test_warning_detail_renders_at_warning_level(self) -> None:
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
-        detail = EntryDetail(
+        detail = TitleDetail(
             label="status", value=StyledValue("size mismatch", Accent.CAUTION), severity=Severity.WARNING
         )
         renderer.handle(detail, 0.0)

@@ -31,7 +31,6 @@ from pearlarr.leg_state import ArrRunState, ArrRunStats, GrabbedRow, NeedsAction
 from pearlarr.output import (
     Accent,
     CapReached,
-    EntryDetail,
     EntryHeader,
     Event,
     GrabAction,
@@ -42,19 +41,20 @@ from pearlarr.output import (
     LegTally,
     NeedsActionCause,
     RecommendedGroup,
-    ReleaseName,
+    ReleaseLabel,
     ReleaseSkipped,
     RunSummaryReady,
     ScanStarted,
     ScopeClosed,
     ScopeOpened,
     Severity,
-    SeverityCounts,
+    SeverityCounter,
     SkipReason,
     StyledValue,
+    TitleDetail,
     TitleRow,
 )
-from pearlarr.output.console_text import ConsoleRender, KvLine, SectionRule, StyledLine, TitledRule, group_highlight
+from pearlarr.output.console_text import ConsoleRender, KeyValue, SectionRule, StyledLine, TitledRule, group_highlight
 from pearlarr.output.events import TitleState
 from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
 from pearlarr.releases import ElsewhereCounts, SeadexDict
@@ -102,19 +102,19 @@ def _styled(message: str, style: str) -> Line:
 def _detail(message: str, key: str, value: str, style: str | None = "grey50", tail: str | None = None) -> Line:
     """An entry-detail row: the colon-less gutter kv at indent 2, key width 9."""
 
-    return (_I, message, KvLine(key=key, value=value, key_width=9, value_style=style, indent=2, sep="", tail=tail))
+    return (_I, message, KeyValue(key=key, value=value, key_width=9, value_style=style, indent=2, sep="", tail=tail))
 
 
 def _srow(message: str, key: str, value: str, style: str | None = None) -> Line:
     """A summary scoreboard row: "key : value" at indent 1, key width 12."""
 
-    return (_I, message, KvLine(key=key, value=value, key_width=12, value_style=style, indent=1))
+    return (_I, message, KeyValue(key=key, value=value, key_width=12, value_style=style, indent=1))
 
 
 def _brow(message: str, key: str, value: str | Text, style: str) -> Line:
     """A summary per-entry block row: gutter kv at indent 3, key width 7."""
 
-    return (_I, message, KvLine(key=key, value=value, key_width=7, value_style=style, indent=3, sep=""))
+    return (_I, message, KeyValue(key=key, value=value, key_width=7, value_style=style, indent=3, sep=""))
 
 
 def _torrent_text(name: str | None, group: str, *, dry: bool) -> str | Text:
@@ -238,8 +238,8 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
 # --- titled entries with detail continuations (outage skip / no entry) ----------------
 
 OUTAGE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
-OUTAGE_ANILIST_DETAIL = EntryDetail(label="anilist", value=StyledValue("1"))
-OUTAGE_STATUS_DETAIL = EntryDetail(label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
+OUTAGE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
+OUTAGE_STATUS_DETAIL = TitleDetail(label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 OUTAGE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  skipped     Cached Show", "grey50"),
@@ -250,7 +250,7 @@ OUTAGE_LINES: tuple[Line, ...] = (
 )
 
 NO_ENTRY_RESOLVED_ROW = TitleRow(state=TitleState.NO_ENTRY, label="Resolved Title")
-NO_ENTRY_RESOLVED_DETAIL = EntryDetail(label="anilist", value=StyledValue("42"))
+NO_ENTRY_RESOLVED_DETAIL = TitleDetail(label="anilist", value=StyledValue("42"))
 NO_ENTRY_RESOLVED_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  no entry    Resolved Title", "grey50"),
@@ -298,7 +298,7 @@ PENDING_IMPORTED_LINES = _pending_lines(_styled("  imported    My Show · SubGro
 
 # --- entry details -----------------------------------------------------------------------
 
-NO_RELEASES_DETAIL = EntryDetail(label="status", value=StyledValue("no suitable releases on SeaDex", Accent.DIM))
+NO_RELEASES_DETAIL = TitleDetail(label="status", value=StyledValue("no suitable releases on SeaDex", Accent.DIM))
 NO_RELEASES_LINES: tuple[Line, ...] = (
     _detail("    status    no suitable releases on SeaDex", "status", "no suitable releases on SeaDex"),
 )
@@ -308,8 +308,8 @@ NO_RELEASES_LINES: tuple[Line, ...] = (
 _FRESH_GROUPS = (RecommendedGroup(name="GroupA", tags=("HDR",)), RecommendedGroup(name="GroupB"))
 # The name-less second release (a hashless/private torrent) falls back to its group.
 _FRESH_ADDED = (
-    ReleaseName(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
-    ReleaseName(name="", group="GroupB"),
+    ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+    ReleaseLabel(name="", group="GroupB"),
 )
 
 ACTION_FRESH = GrabAction(status=GrabStatus.ADDING, groups=_FRESH_GROUPS, added=_FRESH_ADDED, in_qbit=())
@@ -345,7 +345,7 @@ ACTION_DRY_LINES: tuple[Line, ...] = (
     _detail("    would add GroupB", "would add", "GroupB", style="green"),
 )
 
-_DOWNLOADING = (ReleaseName(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),)
+_DOWNLOADING = (ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),)
 _ONE_GROUP = (RecommendedGroup(name="GroupA", tags=("HDR",)),)
 
 ACTION_DOWNLOADING_WAITING = GrabAction(
@@ -400,7 +400,7 @@ ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
 ACTION_MIXED = GrabAction(
     status=GrabStatus.ADDING,
     groups=_FRESH_GROUPS,
-    added=(ReleaseName(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
+    added=(ReleaseLabel(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
     in_qbit=_DOWNLOADING,
 )
 ACTION_MIXED_LINES: tuple[Line, ...] = (
@@ -787,7 +787,7 @@ class _Harness:
         # The parity lines come from the recorded EVENTS below, never from log records.
         self.events: list[Event] = []
         # The summary's issues row diffs this bound counter (scripted directly).
-        self.counts = SeverityCounts()
+        self.counts = SeverityCounter()
         self.reporter = RunReporter(
             emit=self.events.append,
             counts=lambda: self.counts,
@@ -945,7 +945,7 @@ class TestDetailParity:
 def _xdetail(level: int, message: str, key: str, value: str, style: str) -> Line:
     """An external detail row at the site's own level (else exactly `_detail`'s shape)."""
 
-    return (level, message, KvLine(key=key, value=value, key_width=9, value_style=style, indent=2, sep=""))
+    return (level, message, KeyValue(key=key, value=value, key_width=9, value_style=style, indent=2, sep=""))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1142,7 +1142,7 @@ class TestExternalDetailParity:
         assert harness.lines() == tuple(site.golden for site in self.FACT_SITES)
 
     def test_reporter_detail_reproduces_the_goldens(self) -> None:
-        # The real reporter emits EntryDetail events. The shipped builders
+        # The real reporter emits TitleDetail events. The shipped builders
         # re-derive the exact (level, message, payload) lines the sites pinned.
         harness = _Harness()
 
@@ -1400,7 +1400,7 @@ class TestScopeLifecycle:
         harness.reporter.log_no_seadex_releases(ArrRunState(arr=Arr.SONARR))
 
         assert not any(isinstance(e, ScopeOpened) for e in harness.events)
-        detail = next(e for e in harness.events if isinstance(e, EntryDetail))
+        detail = next(e for e in harness.events if isinstance(e, TitleDetail))
         assert detail.scope is None
 
     def test_cap_closes_the_open_entry(self) -> None:

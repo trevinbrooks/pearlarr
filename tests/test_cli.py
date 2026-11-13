@@ -62,10 +62,10 @@ from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
-    _console_format,
+    _configured_format,
     _console_seat,
     _handle_sigterm,
-    _resolved_format,
+    _run_format,
     _schedule_hours,
     _trust_os_certificates,
     cache_backup,
@@ -83,7 +83,7 @@ from pearlarr.cli import (
 )
 from pearlarr.config import AppConfig, Arr, ArrTarget, LogFormat, template_path
 from pearlarr.config_migrations import CONFIG_VERSION
-from pearlarr.console_caps import CapsCache
+from pearlarr.console_caps import DetectedFeatures
 from pearlarr.log import LOG_NAME, HubBridgeBase, LogLevel, RichConsoleHandler, apply_log_level, setup_logger
 from pearlarr.output import (
     CycleStarted,
@@ -1160,7 +1160,7 @@ class TestConsoleFormat:
 
     def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
         missing = tmp_path / "config.yml"
-        assert _console_format(str(missing)) == "auto"
+        assert _configured_format(str(missing)) == "auto"
         # No template-copy side effect: load_shared_config owns the first-run copy.
         assert not missing.exists()
 
@@ -1168,17 +1168,17 @@ class TestConsoleFormat:
         path = tmp_path / "config.yml"
         # Case-folded by the config validator, like log_level.
         path.write_text("advanced:\n  log_format: JSON\n", encoding="utf-8")
-        assert _console_format(str(path)) == "json"
+        assert _configured_format(str(path)) == "json"
 
     def test_invalid_config_folds_to_auto(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yml"
         path.write_text("advanced:\n  log_format: fancy\n", encoding="utf-8")
-        assert _console_format(str(path)) == "auto"
+        assert _configured_format(str(path)) == "auto"
 
     def test_malformed_yaml_folds_to_auto(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yml"
         path.write_text("advanced: [unclosed\n", encoding="utf-8")
-        assert _console_format(str(path)) == "auto"
+        assert _configured_format(str(path)) == "auto"
 
 
 class TestResolvedFormat:
@@ -1189,16 +1189,16 @@ class TestResolvedFormat:
 
     def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", io.StringIO())
-        assert _resolved_format(str(tmp_path / "config.yml")) == "plain"  # missing config -> auto -> plain
+        assert _run_format(str(tmp_path / "config.yml")) == "plain"  # missing config -> auto -> plain
 
     def test_auto_folds_to_rich_on_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", TtyStringIO())
-        assert _resolved_format(str(tmp_path / "config.yml")) == "rich"
+        assert _run_format(str(tmp_path / "config.yml")) == "rich"
 
     def test_a_configured_format_passes_through_unfolded(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yml"
         path.write_text("advanced:\n  log_format: json\n", encoding="utf-8")
-        assert _resolved_format(str(path)) == "json"
+        assert _run_format(str(path)) == "json"
 
 
 def _drive_representative(hub: OutputHub) -> None:
@@ -1231,7 +1231,7 @@ class TestHubSeats:
         monkeypatch.setattr(sys, "stdout", stream)
         hub = OutputHub(
             [FileLogRenderer(str(log_dir))],
-            console_factory=partial(_console_seat, caps_cache=CapsCache()),
+            console_factory=partial(_console_seat, caps_cache=DetectedFeatures()),
         )
         hub.begin_run(console_format=console_format, level=level)
         return hub, stream

@@ -12,7 +12,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from .console_lines import LegacyLine, render_legacy_lines
+from .console_lines import ConsoleLine, render_console_lines
 from .console_text import INDENT, indent_string
 from .events import Phase, RowFinished, WaitFinished, WaitKind, WaitProgress, WaitSnapshot, WaitStarted
 from .live_region import LiveRegion
@@ -28,8 +28,8 @@ from .wait_lines import (
     wait_tally_lines,
 )
 from ..console_caps import (
-    Capabilities,
-    CapsCache,
+    ConsoleFeatures,
+    DetectedFeatures,
     block_bar,
     detect_capabilities,
     make_live,
@@ -95,9 +95,9 @@ class _LiveFrame:
 class WaitRegion(LiveRegion):
     """The wait cockpit: the animated in-flight table plus its durable scrollback lines."""
 
-    # The frame snapshot the refresh thread reads: caps and layout are set once at Live start. Seeded by
+    # The frame snapshot the refresh thread reads: features and layout are set once at Live start. Seeded by
     # _reset_frame, so __init__ and the per-pass/per-cycle resets can never drift apart.
-    _caps: Capabilities
+    _caps: ConsoleFeatures
     _layout: _TableLayout
     _anchor: _FrameAnchor | None
     _live_frame: _LiveFrame | None
@@ -106,7 +106,7 @@ class WaitRegion(LiveRegion):
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: CapsCache | None = None,
+        caps_cache: DetectedFeatures | None = None,
         *,
         level_source: Callable[[], int],
         time_source: Callable[[], float],
@@ -123,7 +123,7 @@ class WaitRegion(LiveRegion):
         console = self._console_source()
         if console is None:
             return
-        caps = self._caps_cache.for_console(console)
+        features = self._caps_cache.for_console(console)
         match event:
             case WaitStarted():
                 # Back-to-back passes swap the frontier node in one step, so section_left never fires.
@@ -131,15 +131,15 @@ class WaitRegion(LiveRegion):
                 self._reset_frame()
                 self._kind = event.kind
                 self._throttle.arm(event.pulse_s)
-                if not caps.live:
+                if not features.can_redraw:
                     self._durable(console, [wait_start_line(event)])
             case WaitProgress(snapshot=snapshot):
-                if caps.live:
-                    self._advance_frame(console, caps, snapshot)
+                if features.can_redraw:
+                    self._advance_frame(console, features, snapshot)
                 elif self._throttle.fire(snapshot.elapsed_s):
                     self._durable(console, [wait_pulse_line(snapshot)])
             case RowFinished():
-                self._durable(console, wait_graduation_lines(event, caps))
+                self._durable(console, wait_graduation_lines(event, features))
             case WaitFinished():
                 # Teardown before summary: stop the Live first so the tally prints to clean scrollback.
                 self._stop_live()
@@ -152,18 +152,18 @@ class WaitRegion(LiveRegion):
         self._reset_frame()
         self._throttle.reset()
 
-    def _durable(self, console: Console, lines: list[LegacyLine]) -> None:
+    def _durable(self, console: Console, lines: list[ConsoleLine]) -> None:
         # LOGGER-parity gating: at a configured WARNING the wait INFO lines vanish from the console as from the file.
-        render_legacy_lines(console, lines, self._level_source())
+        render_console_lines(console, lines, self._level_source())
 
-    def _advance_frame(self, console: Console, caps: Capabilities, snapshot: WaitSnapshot) -> None:
+    def _advance_frame(self, console: Console, features: ConsoleFeatures, snapshot: WaitSnapshot) -> None:
         # Atomic swap: one assignment, so the refresh thread never reads a torn anchor.
         self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
             # The refresh thread reads these and the anchor, never the caps cache or the console.
-            self._caps = caps
-            self._layout = _TableLayout.for_width(caps.width)
-            self._spinner = Spinner(spinner_name(caps), style="yellow")
+            self._caps = features
+            self._layout = _TableLayout.for_width(features.width)
+            self._spinner = Spinner(spinner_name(features), style="yellow")
             self._live = make_live(console)
             self._live.start()
             # Updated once: from here the producer only swaps the anchor, and rich re-renders between polls.
@@ -291,10 +291,10 @@ class WaitRegion(LiveRegion):
 
     def _marker(self, phase: Phase) -> Text:
         if phase is Phase.DOWNLOADING:
-            return Text("↓" if self._caps.unicode else "v", style="cyan")
+            return Text("↓" if self._caps.can_unicode else "v", style="cyan")
         if phase is Phase.IMPORTING:
-            return Text("∼" if self._caps.unicode else "~", style="yellow")
-        return Text("·" if self._caps.unicode else ".", style="grey50")
+            return Text("∼" if self._caps.can_unicode else "~", style="yellow")
+        return Text("·" if self._caps.can_unicode else ".", style="grey50")
 
     def _bar_or_status(self, row: RowModel, bar_width: int) -> Text:
         if row.show_bar:

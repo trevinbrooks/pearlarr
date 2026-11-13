@@ -37,11 +37,11 @@ from pearlarr.leg_state import ArrRunState, NeedsActionKind, PerTitleState
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
-    EntryDetail,
     GrabFailed,
     ReleaseSkipped,
     Severity,
     SkipReason,
+    TitleDetail,
     install_hub,
     severity_of,
 )
@@ -812,7 +812,7 @@ class TestGrabAndCacheAtTheCap:
 
         pipeline.grab_and_cache(self._request(42, one_release_dict(srg="RG", infohash="h1")))
 
-        statuses = [d.value.text for d in recording.of_type(EntryDetail) if d.label == "status"]
+        statuses = [d.value.text for d in recording.of_type(TitleDetail) if d.label == "status"]
         assert statuses == ["held by the run cap; grabbed next run"]
 
 

@@ -18,7 +18,7 @@ from rich.spinner import Spinner
 from .events import Diagnostic, Severity
 from .runtime import emit_to_hub
 from .trace import CapturedTrace
-from ..console_caps import CapsCache
+from ..console_caps import DetectedFeatures
 
 
 class LiveRegion:
@@ -27,14 +27,14 @@ class LiveRegion:
     def __init__(
         self,
         console_source: Callable[[], Console | None],
-        caps_cache: CapsCache | None,
+        caps_cache: DetectedFeatures | None,
         *,
         level_source: Callable[[], int],
     ) -> None:
         self._console_source = console_source
         # Production wiring (cli) shares ONE cache across the console seat's
         # regions so they branch on the same probe. None builds a private cache.
-        self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
+        self._caps_cache = caps_cache if caps_cache is not None else DetectedFeatures()
         # The RichRenderer's level store, read live (no duplicate _level here).
         self._level_source = level_source
         self._live: Live | None = None
