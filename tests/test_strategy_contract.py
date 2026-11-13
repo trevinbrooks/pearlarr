@@ -285,11 +285,11 @@ class _FakeRunServices(ArrRunServices):
     def filter_seadex_downloads(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrFiles,
+        arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         del ep_list
-        self.filter_downloads_calls.append((seadex_dict, arr_releases))
+        self.filter_downloads_calls.append((seadex_dict, arr_files))
         if self._filter_downloads_result is not None:
             return self._filter_downloads_result
         return grab_plan(seadex_dict)
@@ -4265,7 +4265,7 @@ class TestRadarrProcessAlIdSeam:
         assert self._interactive_call_count(interactive=False, n_groups=2) == 0
 
 
-class TestRadarrReleases:
+class TestRadarrFiles:
     """radarr_files accumulates sizes per group and never hard-errors."""
 
     def test_multiple_distinct_groups_kept_not_errored(self) -> None:
@@ -4308,7 +4308,7 @@ class TestRadarrReleases:
         assert strat.radarr_files(7) == ArrFiles(no_group=(500, 0))
 
 
-class TestSonarrReleases:
+class TestSonarrFiles:
     """sonarr_files feeds the planner's untagged pass nothing."""
 
     def test_untagged_episode_files_never_reach_untagged(self) -> None:
@@ -4318,18 +4318,18 @@ class TestSonarrReleases:
         # both would count twice and could then never be owned.
         episodes = make_sonarr_episodes()
 
-        releases = episodes.sonarr_files(
+        files = episodes.sonarr_files(
             [
                 sonarr_ep(1, 1, ep_id=101, release_group=None, size=700),
                 sonarr_ep(1, 2, ep_id=102, release_group="RG", size=800),
             ]
         )
 
-        assert releases == ArrFiles(by_group={"RG": (800,)})
-        assert releases.no_group == ()
+        assert files == ArrFiles(by_group={"RG": (800,)})
+        assert files.no_group == ()
 
 
-class TestArrReleasesRecord:
+class TestArrFiles:
     """The record's own contract: deep-frozen, hashable, one shared fold."""
 
     def test_tagged_detaches_and_rejects_mutation(self) -> None:

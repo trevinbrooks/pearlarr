@@ -509,7 +509,7 @@ class GrabPlanner:
     def plan(
         self,
         seadex_dict: SeadexDict,
-        arr_releases: ArrFiles,
+        arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Filter torrents by release group.
@@ -525,7 +525,7 @@ class GrabPlanner:
         # per-URL matchers. A tagged key is truthy, so the None guard only
         # narrows the type (`normalize_group` returns a str for truthy input).
         arr_sizes_by_norm: dict[str, list[int]] = {}
-        for arr_rg, sizes in arr_releases.by_group.items():
+        for arr_rg, sizes in arr_files.by_group.items():
             if (norm := normalize_group(arr_rg)) is not None:
                 arr_sizes_by_norm.setdefault(norm, []).extend(sizes)
 
@@ -568,7 +568,7 @@ class GrabPlanner:
         # multiset owns the copy, which counts as an on-disk overlap - a
         # sibling pick must hold exactly as it would had the copy kept its tag.
         # None (the common tagged library) skips the per-url compares entirely.
-        untagged_counter = _no_group_counter((*arr_releases.no_group, *untagged_by_key.values()))
+        untagged_counter = _no_group_counter((*arr_files.no_group, *untagged_by_key.values()))
         any_release_owned = any_release_owned or (
             untagged_counter is not None
             and any(
@@ -581,7 +581,7 @@ class GrabPlanner:
         ctx = _PlanContext(
             # Pre-rendered so the un-normalized names stay out of the
             # matchers' decision scope (they feed only debug lines).
-            arr_groups_label=arr_releases.groups_label() if debug_on else "",
+            arr_groups_label=arr_files.groups_label() if debug_on else "",
             arr_sizes_by_norm=arr_sizes_by_norm,
             any_release_owned=any_release_owned,
             sonarr_by_key=sonarr_by_key,

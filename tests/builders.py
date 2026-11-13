@@ -1112,7 +1112,7 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
-def arr_releases(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
+def arr_files(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
     """The episodes' files folded per tagged group, as `sonarr_files` reports them."""
 
     return ArrFiles.from_files(
