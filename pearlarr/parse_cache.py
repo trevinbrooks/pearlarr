@@ -1,7 +1,7 @@
 """The Sonarr parse cache's rows: one file name's whole `/parse`, its freshness, and the unmatched parse's expiry.
 
-`ParseCacheRows` is bound once on `ArrRunDeps`, so the planner's sweep and the pending
-import update builder read one `ParsedFileInfo` per file under one freshness rule.
+`ParseCacheRows` is bound once on `ArrRunDeps`, and `SonarrParseCache` reads one
+`ParsedFileInfo` per file through it under one freshness rule.
 """
 
 from collections.abc import Mapping
@@ -32,8 +32,8 @@ class ParseFreshness(NamedTuple):
     """The freshness cutoffs for one batch of parses, computed once per call.
 
     Bundles the values the parse-cache freshness check and writes thread
-    together. One is opened per call (the planner's sweep, the pending import
-    update build) and passed down to `ParseCacheRows`.
+    together. One is opened per `SonarrParseCache.parsed_files` call and passed
+    down to `ParseCacheRows`.
     """
 
     now_str: str
@@ -130,8 +130,8 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
 class ParseCacheRows:
     """The parse cache's rows: fresh-only reads and shape-owning writes over `cache_store`.
 
-    Bound once on `ArrRunDeps` and shared by the planner's sweep and the pending import
-    update builder, so the two read one parse per file and a stale row is absent for both.
+    Bound once on `ArrRunDeps` and read through `SonarrParseCache`, so a file has one parse
+    and a stale row is absent.
     """
 
     def __init__(self, cache_store: AbstractCacheStore) -> None:

@@ -2482,7 +2482,7 @@ class TestFinalizeRunUnwind:
     """A raise in the finish leaves `arr_run_finished` to bootstrap's unwind emit.
 
     The scan is already closed either way, so the arr-run-fatal error the composition
-    root logs can never render inside a leftover title (Band D review finding #7). The
+    root logs can never render inside a leftover title. The
     finally spans the whole finish, so a raise still saves - the run's staged writes
     survive rather than rolling back when bootstrap closes the store.
     """

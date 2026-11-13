@@ -4,7 +4,7 @@
 # rotation stamp format, _BACKUP_STAMP_FORMAT).
 """Tests for the shared text grammar + text renderers (`output.line_renderers`).
 
-Golden-pin the `ts LEVEL [path] message k=v` grammar (the file-log contract),
+Golden-pin the `ts LEVEL [where] message k=v` grammar (the file-log contract),
 the quoting/escape rules, scope path labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
 the throttled "still waiting" progress line, dated-backup rotation + retention pruning +
@@ -507,7 +507,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
 
 
 def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
-    # P6: severity_of(RowFinished) is category-based, so a FAILED
+    # severity_of(RowFinished) is category-based, so a FAILED
     # outcome line (ERROR) survives a raised file level while a success drops.
     renderer = FileLogRenderer(str(tmp_path))
     renderer.set_level(logging.WARNING)

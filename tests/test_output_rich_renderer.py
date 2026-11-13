@@ -158,7 +158,7 @@ class TestUnwindPlacement:
         assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
-        # The negative control - Band D review finding #7, the state Band E closes.
+        # The negative control: what the unwind's ArrRunFinished prevents.
         renderer, stream = _renderer()
 
         _feed(
@@ -240,7 +240,7 @@ class TestFloors:
         assert str(text.style) == "grey50"
 
     def test_threshold_table(self) -> None:
-        """S4: first-party keeps console_level semantics. Third-party floors at WARNING unless the configured level is DEBUG."""
+        """First-party keeps console_level semantics. Third-party floors at WARNING unless the configured level is DEBUG."""
 
         assert diagnostic_threshold(logging.INFO, first_party=True) == logging.INFO
         assert diagnostic_threshold(logging.ERROR, first_party=True) == logging.INFO

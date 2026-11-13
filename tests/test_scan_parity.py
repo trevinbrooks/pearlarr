@@ -1397,7 +1397,7 @@ class TestScopeLifecycle:
         assert action.scope == opened.scope
 
     def test_fresh_reporter_has_no_open_entry(self) -> None:
-        # A3: _title_scope starts None on a fresh reporter, so the first current-title
+        # _title_scope starts None on a fresh reporter, so the first current-title
         # detail (no header before it) opens no scope and goes scope-free.
         harness = _Harness()
         harness.reporter.log_no_seadex_releases(ArrRunState(arr=Arr.SONARR))

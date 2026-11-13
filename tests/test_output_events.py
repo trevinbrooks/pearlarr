@@ -3,7 +3,7 @@
 
 Pin the value model (frozen, equality-comparable facts), the severity mapping
 that drives counts and renderer floors, and the single ArrRunStats -> ArrRunTally
-conversion site (S10: never two hand-maintained field lists).
+conversion site (never two hand-maintained field lists).
 """
 
 import dataclasses

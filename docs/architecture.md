@@ -145,5 +145,5 @@ Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comm
 - `pearlarr/mappings.py` - an empty tvdb_mappings dict is still EPISODE_RANGES. A truthiness check would fall back to the Anime-IDs season offset and over-grab.
 - `pearlarr/planner.py` - a fallback never replaces an owned copy of the preferred private release. Those same-files groups grab nothing and warn every run.
 - `pearlarr/releases.py` - a release's pending import is keyed by the torrent that has its files in qBittorrent, which is SeaDex's torrent unless a cross-seed was already there. The wait and the import read it by that key.
-- `pearlarr/sonarr_state.py` - only a CLEAN importPending defers to Sonarr. A warning/error-flagged one is a failed Sonarr import attempt it won't reliably retry, so waiting would burn the readiness deadline.
+- `pearlarr/sonarr_state.py` - only a CLEAN importPending is left to Sonarr. One Sonarr marked with a warning or error is a failed import attempt it won't reliably retry, so waiting would only burn the import clock.
 <!-- /gen:invariants -->

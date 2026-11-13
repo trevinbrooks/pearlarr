@@ -20,7 +20,7 @@ Pins the contract:
   keeps the legacy branches, so records can never vanish.
 * The invalid-level complaint fires AFTER handler attach: on a rich console
   with no owner the legacy badge renders it. Under plain/json it arrives as a
-  hub Diagnostic through the bridge (advisor #17's early-record path).
+  hub Diagnostic through the bridge (the early-record path).
 """
 
 import io

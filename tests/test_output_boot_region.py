@@ -260,7 +260,7 @@ class TestBootRegion:
             assert renderer._boot._live is None and not live.is_started
 
     def test_run_finished_arr_run_boundary_evicts_the_live_and_the_next_arr_run_starts_fresh(self) -> None:
-        # G4: within one scheduled run each arr run ends with ArrRunFinished (never a
+        # Within one scheduled run each arr run ends with ArrRunFinished (never a
         # begin_run). The arr run's close must evict the boot Live so the next arr run's boot
         # scope starts a FRESH slot - a leaked Live would be reused (leftover region,
         # nested on rich's live stack), so the load-bearing pin is object identity.
