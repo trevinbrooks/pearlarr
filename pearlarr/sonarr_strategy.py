@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import override
 
 from . import coverage as _coverage
-from .arr_models import HistoryRecord, SonarrItem
+from .arr_models import HistoryRecord, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
 from .config import Arr
@@ -323,7 +323,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         update["coverage"] = coverage
         update["url"] = sd_url
 
-        sonarr_releases = self._episodes.get_sonarr_releases(ep_list=ep_list)
+        self._report_missing_episodes(ep_list)
+        sonarr_releases = self._episodes.sonarr_files(ep_list=ep_list)
 
         self.logger.debug(
             f"Sonarr release {pluralize(sonarr_releases.group_count(), 'group')}: {sonarr_releases.groups_label()}"
@@ -430,6 +431,17 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 ),
             ),
         )
+
+    def _report_missing_episodes(self, ep_list: list[SonarrEpisode]) -> None:
+        """Report the title's episodes that have no file."""
+
+        missing = _coverage.episodes_from_ep_list(ep_list, missing_only=True)
+        if missing:
+            # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
+            # a count, so it's clear what's absent. Fall back to the count if the
+            # episodes can't be condensed.
+            missing_coverage = _coverage.coverage_string(missing)
+            self._services.log_missing_episodes(missing_coverage or f"{len(missing)}/{len(ep_list)}")
 
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
         """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""

@@ -154,7 +154,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         update["url"] = sd_url
         update["coverage"] = ""
 
-        radarr_releases = self.get_radarr_releases(
+        radarr_releases = self.radarr_files(
             radarr_movie_id=item.id,
         )
 
@@ -300,11 +300,11 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             self.anibridge,
         )
 
-    def get_radarr_releases(
+    def radarr_files(
         self,
         radarr_movie_id: int,
     ) -> ArrFiles:
-        """Fold the movie's existing files into an `ArrReleases`."""
+        """Fold the movie's existing files into an `ArrFiles`."""
 
         # A movie can carry several files (an upgrade or a multi-edition), so every size is kept.
         return ArrFiles.from_files(

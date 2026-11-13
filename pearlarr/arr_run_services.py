@@ -29,7 +29,7 @@ from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_va
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .mappings import ExternalIds, MappingResolver, ResolvedMappings, TitleMapping
 from .notify import Notifier
-from .output import emit_to_hub, hub_counts
+from .output import Accent, StyledValue, emit_to_hub, hub_counts
 from .parse_cache import ParseCacheRows
 from .pending_import_store import PendingImportStore
 from .planner import GrabPlan, GrabPlanner
@@ -672,6 +672,10 @@ class ArrRunServices:
     def log_arr_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._state, item_title)
+
+    def log_missing_episodes(self, missing: str) -> None:
+        """Log the open title's episodes that have no file (delegates to RunReporter)."""
+        self._reporter.detail("missing", StyledValue(missing, Accent.CAUTION))
 
     def open_title_block(
         self,

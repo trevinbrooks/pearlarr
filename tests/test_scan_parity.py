@@ -1119,7 +1119,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # sonarr_episodes.get_sonarr_releases: missing-episode coverage.
+        # arr_run_services.log_missing_episodes: missing-episode coverage.
         _DetailSite(
             "missing",
             StyledValue("S01 E12", Accent.CAUTION),

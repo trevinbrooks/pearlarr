@@ -703,7 +703,7 @@ class ScriptedEpisodes:
             raise ValueError("ambiguous")
         return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(al_id)
 
-    def get_sonarr_releases(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
+    def sonarr_files(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
         """No release is on disk."""
 
         del ep_list

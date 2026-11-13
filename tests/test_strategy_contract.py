@@ -52,7 +52,7 @@ from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
-from pearlarr.output import Severity
+from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
 from pearlarr.pending_import import (
     FileEpisodeMap,
     OwnedAtGrab,
@@ -101,6 +101,7 @@ from .builders import (
     make_logger,
     make_radarr_sync,
     make_release,
+    make_run_deps,
     make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
@@ -208,6 +209,7 @@ class _FakeRunServices(ArrRunServices):
         self.al_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
         self.unmonitored_titles: list[str] = []
+        self.missing_episodes: list[str] = []
         self.log_al_title_calls: list[str] = []
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
@@ -324,6 +326,10 @@ class _FakeRunServices(ArrRunServices):
         self.unmonitored_titles.append(item_title)
 
     @override
+    def log_missing_episodes(self, missing: str) -> None:
+        self.missing_episodes.append(missing)
+
+    @override
     def open_title_block(self, title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
         self.log_al_title_calls.append(title)
@@ -347,6 +353,14 @@ def test_fake_overrides_the_full_public_surface() -> None:
     }
     overridden = {name for name in vars(_FakeRunServices) if not name.startswith("_")}
     assert surface - lifecycle <= overridden
+
+
+def test_the_hub_logs_missing_episodes_as_a_caution_detail() -> None:
+    recording = install_recording_hub()
+
+    ArrRunServices(make_run_deps(), Arr.SONARR).log_missing_episodes("S01 E02")
+
+    assert recording.of_type(TitleDetail) == [TitleDetail("missing", StyledValue("S01 E02", Accent.CAUTION))]
 
 
 class _ScriptedListings:
@@ -569,6 +583,20 @@ class TestProcessAlIdThreadsServices:
         assert run.unmonitored_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
+
+    def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
+        run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
+        window = [sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)]
+        strat = make_bare_instance(
+            SonarrStrategy,
+            _services=run,
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=window)),
+            _config=make_config(sleep_time=0),
+            logger=make_logger(),
+        )
+
+        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        assert run.missing_episodes == ["S01 E02"]
 
     def test_sonarr_all_invalid_selection_routes_to_shared_skip(self) -> None:
         # The interactive pick rejected every token: the strategy must route to
@@ -4238,7 +4266,7 @@ class TestRadarrProcessAlIdSeam:
 
 
 class TestRadarrReleases:
-    """get_radarr_releases accumulates sizes per group and never hard-errors."""
+    """radarr_files accumulates sizes per group and never hard-errors."""
 
     def test_multiple_distinct_groups_kept_not_errored(self) -> None:
         # VU3: 2 distinct groups no longer raise (which skipped the movie every run).
@@ -4246,7 +4274,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (100,), "B": (200,)})
+        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (100,), "B": (200,)})
 
     def test_same_group_sizes_accumulate(self) -> None:
         # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
@@ -4254,7 +4282,7 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (100, 200)})
+        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (100, 200)})
 
     def test_untagged_files_fold_to_untagged_sizes(self) -> None:
         # No {None: [None]} placeholder and no null key: untagged files carry
@@ -4262,13 +4290,13 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group=None, size=100), MovieFile(release_group="A", size=200)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(by_group={"A": (200,)}, no_group=(100,))
+        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (200,)}, no_group=(100,))
 
     def test_no_files_returns_empty_record(self) -> None:
         radarr = _FakeRadarr([])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles()
+        assert strat.radarr_files(7) == ArrFiles()
 
     def test_untagged_unreadable_size_folds_to_zero(self) -> None:
         # An unreadable untagged size folds to 0, which disqualifies the whole
@@ -4277,11 +4305,11 @@ class TestRadarrReleases:
         radarr = _FakeRadarr([MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)])
         strat = make_bare_instance(RadarrStrategy, radarr=radarr)
 
-        assert strat.get_radarr_releases(7) == ArrFiles(no_group=(500, 0))
+        assert strat.radarr_files(7) == ArrFiles(no_group=(500, 0))
 
 
 class TestSonarrReleases:
-    """get_sonarr_releases feeds the planner's untagged pass nothing."""
+    """sonarr_files feeds the planner's untagged pass nothing."""
 
     def test_untagged_episode_files_never_reach_untagged(self) -> None:
         # PIN: an untagged episode file contributes NOTHING to the record - it
@@ -4290,7 +4318,7 @@ class TestSonarrReleases:
         # both would count twice and could then never be owned.
         episodes = make_sonarr_episodes()
 
-        releases = episodes.get_sonarr_releases(
+        releases = episodes.sonarr_files(
             [
                 sonarr_ep(1, 1, ep_id=101, release_group=None, size=700),
                 sonarr_ep(1, 2, ep_id=102, release_group="RG", size=800),

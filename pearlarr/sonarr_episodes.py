@@ -12,14 +12,13 @@ import concurrent.futures
 import hashlib
 from collections.abc import Iterable
 
-from . import coverage as _coverage
 from .anibridge import TvdbMappings, season_holds
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
 from .config import AppConfig
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
-from .output import Accent, Severity, StyledValue, hub_note
+from .output import Severity, hub_note
 from .progress import ProgressCallback
 from .releases import season_episode_key
 from .sonarr_client import AbstractSonarrClient
@@ -121,7 +120,7 @@ class SonarrEpisodes:
 
         Args:
             deps: The shared collaborators (config/mappings/AniList
-                gateway/reporter/SkyHook order gateway are unpacked off it).
+                gateway/SkyHook order gateway are unpacked off it).
             sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
             services: The services hub. `prefetch` calls into it to
@@ -136,7 +135,6 @@ class SonarrEpisodes:
         # Episode counts / formats resolve through the gateway (shared with the
         # engine), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
-        self._reporter = deps.reporter
         self._skyhook = deps.skyhook
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
@@ -454,7 +452,7 @@ class SonarrEpisodes:
                     anidb_final_ep_list.append(ep)
 
             # These episodes are read-only from here on (coverage,
-            # get_sonarr_releases, and the planner only read them), so we
+            # sonarr_files, and the planner only read them), so we
             # return references into the shared cache rather than cloning.
             final_ep_list = anidb_final_ep_list
 
@@ -520,22 +518,11 @@ class SonarrEpisodes:
 
         return final_ep_list[ep_offset : episode_count + ep_offset]
 
-    def get_sonarr_releases(
+    def sonarr_files(
         self,
         ep_list: list[SonarrEpisode],
     ) -> ArrFiles:
-        """Fold the episodes' existing files into an `ArrReleases`, reporting missing episodes."""
-
-        missing = _coverage.episodes_from_ep_list(ep_list, missing_only=True)
-        if missing:
-            # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
-            # a count, so it's clear what's absent. Fall back to the count if the
-            # episodes can't be condensed.
-            missing_coverage = _coverage.coverage_string(missing)
-            self._reporter.detail(
-                "missing",
-                StyledValue(missing_coverage or f"{len(missing)}/{len(ep_list)}", Accent.CAUTION),
-            )
+        """Fold the episodes' existing files into an `ArrFiles`."""
 
         # keep_no_group=False: untagged episode files ride the episode list
         # into the planner's identity pass instead (pinned).
