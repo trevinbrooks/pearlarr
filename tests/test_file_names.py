@@ -1,5 +1,5 @@
 # pyright: strict
-"""Reading file names without Sonarr: the episode range a name spells, and which dotted number is its count."""
+"""Reading file names without Sonarr: the episode range a name spells, and which dotted number is its name number."""
 
 from typing import ClassVar
 
@@ -14,14 +14,14 @@ _FULLWIDTH_100 = "\uff11\uff10\uff10"
 
 
 def _read(name: str, series: str = "", anilist: tuple[str, ...] = ()) -> tuple[int | None, tuple[int, ...]]:
-    """The member number (None when unnumbered) and the bare numbers of one name read under the entry's titles."""
+    """The name number (None without one) and the standalone numbers of one name read under the title's names."""
 
     read = split_names([name], TitleNameWords.of(TitleNames(series, anilist)))[name]
     return read.member.number if read.member is not None else None, read.standalone_numbers
 
 
 class TestDottedNumber:
-    """The scene-dotted count: the number before the quality words, never one in the title or a codec."""
+    """The scene-dotted name number: the number before the quality words, never one in the title's name or a codec."""
 
     @pytest.mark.parametrize(
         "name",
@@ -200,7 +200,7 @@ class TestDottedNumber:
 
 
 class TestSeasonTail:
-    """A name ending in "Season N": a season token when plain, the count behind an ordinal or a hyphen."""
+    """A name ending in "Season N": a season token when plain, the name number behind an ordinal or a hyphen."""
 
     @pytest.mark.parametrize(
         "name",
@@ -237,7 +237,7 @@ class TestSeasonTail:
 
 
 class TestReadNames:
-    """A pack's lone-S set: "S1", "S2", "S3" behind one prefix count its specials; anything less says a season."""
+    """A torrent's lone-S set: "S1", "S2", "S3" behind one prefix number its specials. Anything less says a season."""
 
     _EPISODES: ClassVar[list[str]] = [f"[grp] Show - {n:02d} (BD 1080p).mkv" for n in (1, 2, 3, 4)]
 
@@ -277,14 +277,14 @@ class TestReadNames:
 
 
 class TestMiddleNumber:
-    """The " - NN - " count between a title and an episode title."""
+    """The " - NN - " name number between a title's name and an episode title."""
 
     def test_a_second_middle_segment_is_a_title_number_and_no_count(self) -> None:
         assert split_name("COG x CLAN - 277 - 10 - 1 = [WEBDL-1080p].mkv").member is None
 
 
 class TestPaddedCounts:
-    """A count of four digits: padded behind a zero, or past the thousandth episode."""
+    """A name number of four digits: padded behind a zero, or past the thousandth episode."""
 
     @pytest.mark.parametrize(
         ("name", "number"),
@@ -302,7 +302,7 @@ class TestPaddedCounts:
 
 
 class TestBareNumbers:
-    """Every count standing alone in a name, less a codec's number in the quality tail."""
+    """Every number standing alone in a name, less a codec's number in the quality tail."""
 
     @pytest.mark.parametrize(
         ("name", "numbers"),
@@ -355,7 +355,7 @@ class TestRangeKey:
 
 
 class TestDecimalTail:
-    """A trailing number behind a digit and a dot is a decimal's fraction, not a count; a "v2.1" is version 2."""
+    """A trailing number behind a digit and a dot is a decimal's fraction, not a name number. A "v2.1" is version 2."""
 
     @pytest.mark.parametrize(
         "name",
@@ -385,7 +385,7 @@ class TestDecimalTail:
 
 
 class TestTitledRead:
-    """The entry's titles tell their own numbers apart from the count: a name opening with one counts past it."""
+    """The title's names tell their numbers apart from the name number: a name opening with one is numbered past it."""
 
     @pytest.mark.parametrize(
         ("name", "series", "anilist", "number", "bare"),
@@ -410,13 +410,14 @@ class TestTitledRead:
             ("Show - 01.10.bit.mkv", "Show", (), 1, ()),
             ("[grp] Chef Prince! - 14 END [1080p].mkv", "Chef Prince!", (), 14, ()),
             ("[grp] Was That a Penguin? - 13 END [1080p].mkv", "Was That a Penguin?", (), 13, ()),
-            # a bracket behind the count, nested or not, a source word or a quality word there end it like the stem
+            # a bracket behind the name number, nested or not, a source word or a quality word there end it like the
+            # stem
             ("Drawing Sensei - 01 [1920x1080 - AVC - [PCM, ja]].mkv", "Drawing Sensei", (), 1, ()),
             ("[grp] Osaka Spirit - 50 (Osaka Spirit: Jill (OVA)) [1080p].mkv", "Osaka Spirit", (), 50, ()),
             ("Tinman.009.01.DVDRip.x264-grp.mkv", "Tinman 009", (), 1, ()),
             ("Zap.Pilot.100.018.PROPER.1080p.WEB-grp.mkv", "Zap Pilot 100", (), 18, (18,)),
             ("Zap.Pilot.100.018.Hi10P.1080p.WEB-grp.mkv", "Zap Pilot 100", (), 18, (18,)),
-            # a form counted by the title's own digits: nothing was counted, the count behind the title is
+            # a form numbered by the digits in the title's name: no name number was read, the one behind the name is
             ("Tinman.009.10.1080p.WEB.H.264-grp.mkv", "Tinman 009", (), 10, ()),
             (
                 "Steel.Armor.Titan.0083.Comet.Archive.10.1080p.mkv",
@@ -442,14 +443,14 @@ class TestTitledRead:
     @pytest.mark.parametrize(
         ("name", "series", "anilist", "number"),
         [
-            # the label hangs off the title's ordinal: the count follows it
+            # the label hangs off the AniList name's ordinal: the name number follows it
             (
                 "[grp] Kimi no Chef Academy 4th Season - 25 END [1080p].mkv",
                 "My Chef Academy",
                 ("Kimi no Chef Academy 4th Season",),
                 25,
             ),
-            # a number right behind the label is the label's: a season, no count
+            # a number right behind the label is the label's: a season, no name number
             ("[BD Menu 01] Silver Harbor Lights - Season 01 [2021].mkv", "Silver Harbor Lights", (), None),
             ("[PV 03] Kasane - The Hidden Parts - Season 01 [2023].mkv", "Kasane: The Hidden Parts", (), None),
             ("Warden II Season 02.mkv", "Warden", ("Warden II",), None),
@@ -502,10 +503,10 @@ class TestTitledRead:
             ),
             ("Zappu.Pairotto.Hyaku.S02.Ep05.1080p.WEB.H.264-grp.mkv", "Zap Pilot 100", ("Zap Pilot 100 II",)),
             ("Show.101.The.12.Realms.1080p.WEB-grp.mkv", "The 12 Realms", ()),
-            # the title's number alone, or its words past the number alone, open nothing
+            # the series' name's number alone, or its words past the number alone, open nothing
             ("0083.10.1080p.BluRay.x264-GRP.mkv", "Steel Armor Titan 0083: Comet Archive", ()),
             ("Comet.Archive.10.1080p.BluRay.x264-GRP.mkv", "Steel Armor Titan 0083: Comet Archive", ()),
-            # a name with no word opens no title
+            # a file name with no word opens with no title's name
             ("&.mkv", "Steel Armor Titan", ()),
         ],
     )
@@ -543,9 +544,9 @@ class TestTitledRead:
             ("My Chef Academy Episode 2.mkv", "My Chef Academy", ("My Chef Academy Season 2",), 2),
             ("[grp] Kimi no Chef Academy - 2 [1080p].mkv", "Kimi no Chef Academy 2", (), 2),
             ("[grp] Drawman - 3 [1080p].mkv", "Drawman.", ("Drawman. 3",), 3),
-            # the count behind the title outranks the set-off one
+            # the name number behind the title's name outranks the set-off one
             ("Kimi no Chef Academy - 2 - 05.mkv", "My Chef Academy", ("Kimi no Chef Academy 2",), 5),
-            # the title alone, its number written as the title writes it: no count
+            # the title's name alone, its number written as the name writes it: no name number
             ("[grp] Kimi no Chef Academy 2 [1080p].mkv", "My Chef Academy", ("Kimi no Chef Academy 2",), None),
             ("[grp] Kimi no Chef Academy 2 [1080p].mkv", "Kimi no Chef Academy 2", (), None),
             ("[grp] Drawman. 3 [1080p].mkv", "Drawman.", ("Drawman. 3",), None),
@@ -609,7 +610,8 @@ class TestTitledRead:
             ("[grp] Show - 05 CR WEB-DL 1080p.mkv", "Show", (), 5),
             ("[grp] Show - 05 Uncensored Version [1080p].mkv", "Show", (), 5),
             ("[grp] Show - 05 VOSTFR Hardsub [1080p].mkv", "Show", (), 5),
-            # the tag runs to the count's end or not at all: a title's word behind it, and the own special's mark
+            # the tag runs to the name number's end or not at all: an episode title's word behind it, and the
+            # special's mark
             ("[grp] Show - 12 TV Station Blues [1080p].mkv", "Show", (), None),
             ("[Brid] Brass;Door - 23 β - Open the Hidden Path [A81C39E5].mkv", "Brass;Door", (), None),
             ("[grp] BX8 the Eternity - Episode 01 Preview [1080p].mkv", "BX8 the Eternity", (), None),
@@ -653,12 +655,12 @@ class TestTitledRead:
         assert _read(name, "Show", ("Silvertail", "Comet X"))[0] is None
 
     def test_a_read_with_a_number_already_keeps_it(self) -> None:
-        # "002" is the count, and no "Pixie Saga 2".
+        # "002" is the name number, and no "Pixie Saga 2".
         assert _read("[Fenwick] Pixie Saga - 002.mkv", "Pixie Saga", ("Pixie Saga 2",)) == (2, (2,))
         assert _read("Show 12 - 05.mkv", "Show") == (5, ())
-        # the count past the title equals the title's number: counted past it, it stands
+        # the name number past the title's name equals the name's number: read past it, it stands
         assert _read("Tinman 009 - 009.mkv", "Tinman 009") == (9, (9,))
-        # a season the title counts in words is no digit of the title's: the form's count stands
+        # a season the AniList name numbers in words is no digit of the name's: the form's name number stands
         assert _read("[grp] Meet A Star - 4 [1080p].mkv", "Meet A Star", ("Meet A Star IV",)) == (4, ())
 
     @pytest.mark.parametrize(
@@ -698,12 +700,13 @@ class TestTitledRead:
         assert _read("Tinman 009 - 009.mkv", "Tinman 009") == (9, (9,))
         assert _read("Zap Pilot 100 - 05.mkv", "Zap Pilot 100") == (5, ())
         assert _read("Zap Pilot 100 - 05.mkv") == (5, (100,))
-        # a count before the title ("[0802]" of a leading absolute) is no title's: it stays
+        # a number before the title's name ("[0802]" of a leading absolute) is not the name's: it stays
         assert _read("[0802] Sea Atlas - Garmo 66.mkv", "Sea Atlas") == (None, (802,))
         assert _read("[101] Quillfox - Title.mkv", "Quillfox") == (None, (101,))
-        # a group tag's number ("[XYZ-2223]") counts nothing: the count behind a season word stays the member's
+        # a group tag's number ("[XYZ-2223]") numbers nothing: the name number behind a season word stays the numbered
+        # name's
         assert _read("[XYZ-2223] Hana to Kaze S2 - 05 [1080p].mkv", "Hana to Kaze") == (5, ())
-        # a title read short, with words between it and the count
+        # a title's name read short, with words between it and the number
         assert _read("Wisp.100.Lantern.Keepers.of.the.Moor.12.1080p.WEB.H264-grp.mkv", "Wisp 100") == (None, ())
 
     @pytest.mark.parametrize(
@@ -711,7 +714,7 @@ class TestTitledRead:
         [
             ("[0802] Sea Atlas - Garmo 66.mkv", None),
             ("[0167] Sea Atlas - 100 Against 1.mkv", None),
-            # a label's number, a count behind a two-digit tag, and a count with nothing counted before it stand
+            # a label's number, a number behind a two-digit tag, and a number with no name number before it stand
             ("[0802] Sea Atlas - Episode 66.mkv", 66),
             ("[44] Sea Atlas - 17 Times 2.mkv", 2),
             ("Sea Atlas - Garmo 66.mkv", 66),
@@ -768,7 +771,8 @@ class TestTitledRead:
             ),
             ("Pocketbeast - 10,000,000 Reasons.mkv", "Pocketbeast", 10, ("0", "0", "reasons")),
             ("Sea Atlas - 20 Years' Worth of Wishes.mkv", "Sea Atlas", 20, ("years", "worth", "of", "wishes")),
-            # counted, or unnumbered with no count behind the title: no titled count, and the words as before
+            # with a name number, or without one and no number behind the title's name: no episode title's number, and
+            # the words as before
             ("[grp] Show - 12 MULTi [1080p].mkv", "Show", None, ("multi",)),
             ("[101] Quillfox - Title.mkv", "Quillfox", None, ("quillfox", "title")),
         ],
@@ -790,7 +794,7 @@ class TestTitledRead:
             ("seeker", "seeker"),
         )
         assert TitleNameWords.of(TitleNames()).titles == ()
-        # words that only count a season are no title: "2nd Season" left of its bracket would open any "2.01"
+        # words that only number a season are no title's name: "2nd Season" left of its bracket would open any "2.01"
         assert TitleNameWords.of(TitleNames("[Ame no Hi]", ("[Ame no Hi] 2nd Season",))).titles == (
             ("ame", "no", "hi", "2"),
             ("ame", "no", "hi"),

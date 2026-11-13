@@ -1,5 +1,5 @@
 # pyright: strict
-"""`specials_by_date`: when a title's mapped specials give way to the ones AniList's dates and episode length pick."""
+"""`specials_by_date`: when a title's mapped specials give way to the ones AniList's dates and episode length choose."""
 
 from datetime import date
 
@@ -97,7 +97,7 @@ def test_two_parts_aired_on_one_day_replace_the_mapped_special() -> None:
 
 
 def test_a_two_episode_title_takes_the_specials_on_its_first_and_last_dates() -> None:
-    # Three 45-minute specials air between the dates, so the count alone picks nothing. The special on the last
+    # Three 45-minute specials air between the dates, so the count alone chooses nothing. The special on the last
     # date is numbered before the one on the first date.
     airing = AniListAiring(start=_PREMIERE, end=date(2020, 11, 28), episodes=2, duration=45)
     last, between, first = _special(2, "2020-11-28", 45), _special(3, "2020-10-10", 45), _special(4, "2020-08-29", 45)
@@ -115,7 +115,7 @@ def test_a_two_episode_title_takes_the_specials_on_its_first_and_last_dates() ->
     ],
 )
 def test_the_first_and_last_specials_may_air_a_day_off_their_dates(first_aired: str, last_aired: str) -> None:
-    # Two more 45-minute specials aired in between, so the count alone picks nothing.
+    # Two more 45-minute specials aired in between, so the count alone chooses nothing.
     airing = AniListAiring(start=_PREMIERE, end=date(2020, 11, 28), episodes=2, duration=45)
     first, last = _special(2, first_aired, 45), _special(5, last_aired, 45)
     between = [_special(3, "2020-10-10", 45), _special(4, "2020-10-24", 45)]
@@ -146,7 +146,7 @@ def test_the_first_and_last_dates_pick_only_for_a_two_episode_title() -> None:
 
 
 def test_one_special_near_both_dates_is_no_pair() -> None:
-    # The title ran over two days, and the one 45-minute special aired within a day of both.
+    # The title aired over two days, and the one 45-minute special aired within a day of both.
     airing = AniListAiring(start=_PREMIERE, end=date(2020, 8, 30), episodes=2, duration=45)
 
     assert specials_by_date([_SHORT], [_SHORT, _special(2, "2020-08-29", 45)], airing) is None

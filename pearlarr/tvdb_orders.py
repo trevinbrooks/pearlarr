@@ -1,4 +1,4 @@
-"""TVDB episode orders: the records the SkyHook cache stores per series and the view placement reads."""
+"""TVDB episode orders: the answers the SkyHook cache stores per series and the view placement reads."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -14,7 +14,7 @@ _DISPLAY_NAMES: Mapping[str, str] = MappingProxyType(
 
 
 def order_display_name(order: str) -> str:
-    """An order's type name as a message prints it (`dvd` as "DVD"). A type with no entry prints as stored."""
+    """An order's type name as a message prints it (`dvd` as "DVD"). A type with no display name prints as stored."""
 
     return _DISPLAY_NAMES.get(order, order)
 
@@ -41,14 +41,14 @@ class CachedOrders:
     """One series' cached orders, replaced whole on each fetch."""
 
     fetched_at: str
-    """When the record was fetched, in `stamps.STAMP_FORMAT`."""
+    """When the answer was fetched, in `stamps.STAMP_FORMAT`."""
 
     fresh_until: str
-    """When the record is due for a refetch, in `stamps.STAMP_FORMAT`."""
+    """When the answer is due for a refetch, in `stamps.STAMP_FORMAT`."""
 
     orders: Mapping[str, tuple[OrderRow, ...]]
     """Order type name (`official`, `dvd`, `alternate`, ...) -> its rows. An order is empty when SkyHook lists it but
-    sent no usable rows for it, and the map is empty when SkyHook doesn't have the series."""
+    sent no usable rows for it, and `orders` is empty when SkyHook doesn't have the series."""
 
     sonarr_counts: Mapping[str, int] | None
     """Sonarr's episode count per order it listed at fetch time, every listed order kept, SkyHook's or not. None
@@ -60,7 +60,7 @@ class CachedOrders:
             object.__setattr__(self, "sonarr_counts", MappingProxyType(dict(self.sonarr_counts)))
 
     def to_json(self) -> dict[str, Any]:
-        """The record as the cache stores it, each row a `[season, episode, tvdb_id, absolute]` array."""
+        """The answer as the cache stores it, each row a `[season, episode, tvdb_id, absolute]` array."""
 
         return {
             "fetched_at": self.fetched_at,
@@ -71,7 +71,7 @@ class CachedOrders:
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> Self | None:
-        """Rebuild a stored record, or None when it doesn't have the stored shape (the series then refetches)."""
+        """Rebuild a stored answer, or None when it doesn't have the stored shape (the series then refetches)."""
 
         try:
             orders = {name: tuple(OrderRow(*row) for row in rows) for name, rows in raw["orders"].items()}
@@ -99,7 +99,7 @@ class SonarrSeriesOrders:
 
 
 class OrderTranslation(NamedTuple):
-    """How to read a series Sonarr numbers by a non-official order back into aired numbering."""
+    """How to read a series Sonarr numbers by a non-official order back into the aired order."""
 
     order_name: str
     """The order the series is set to."""

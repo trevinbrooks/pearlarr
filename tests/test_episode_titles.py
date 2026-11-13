@@ -1,5 +1,5 @@
 # pyright: strict
-"""The series' episode titles folded into words beyond the series title."""
+"""The series' episode titles folded into words beyond the series' name."""
 
 from collections.abc import MutableMapping
 from typing import cast
@@ -13,7 +13,7 @@ from .builders import series_index
 
 
 class TestEpisodeTitlesOf:
-    """`EpisodeTitles.of` folds an index's titles into read-only groupings."""
+    """`EpisodeTitles.of` converts an index's episode titles into read-only groupings."""
 
     def test_the_groupings_are_read_only(self) -> None:
         index = series_index(

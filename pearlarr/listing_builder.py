@@ -1,4 +1,4 @@
-"""Pure functions that turn a series' SeaDex entries into per-torrent listings and size identities."""
+"""Pure functions that turn a series' SeaDex entries into per-torrent listings and episodes by size."""
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -16,24 +16,24 @@ from .video_files import is_video_candidate
 
 @dataclass(frozen=True, slots=True)
 class ListedTitle:
-    """One entry of the series: its SeaDex record, its episode window, and its special aliases."""
+    """One title of the series: its SeaDex entry, its episode window, and its special aliases."""
 
     entry: EntryRecord
-    """The entry's SeaDex record."""
+    """The title's SeaDex entry."""
 
     window: TitleWindow | None
-    """The entry's window, None if its episodes couldn't be read."""
+    """The title's window, None if its episodes couldn't be read."""
 
     special_aliasing: SpecialAliasing | None
-    """The entry's specials aliases and their TMDB show (`TitleMapping.special_aliasing`), None when it has none."""
+    """The title's special aliases and their TMDB show (`TitleMapping.special_aliasing`), None when it has none."""
 
 
 def build_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> FetchedListings:
-    """Build the series' `FetchedListings` from its entries.
+    """Build the series' `FetchedListings` from its titles.
 
-    Each infohash gets the windows of the entries that list it and the union of their special aliases
-    (`_torrent_listing`), and the size identities come from `single_episode_sizes`. An unread window marks its hashes
-    and the identities unread. A size or a TMDB number that two entries map differently is dropped.
+    Each infohash gets the windows of the titles whose entries list it and the union of their special aliases
+    (`_torrent_listing`), and the episodes by size come from `single_episode_sizes`. An unread window marks its hashes
+    and the episodes by size unread. A size or a TMDB number that two titles give differently is dropped.
     """
 
     by_hash: dict[str, list[ListedTitle]] = {}
@@ -46,9 +46,9 @@ def build_listings(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -
 
 
 def _torrent_listing(titles: Sequence[ListedTitle]) -> TorrentListing | None:
-    """The entries' windows and the union of their special aliases, or None if any window is unread.
+    """The titles' windows and the union of their special aliases, or None if any window is unread.
 
-    When the entries pair against different TMDB shows, the hash gets no aliases.
+    When the titles pair against different TMDB shows, the hash gets no aliases.
     """
 
     windows: list[TitleWindow] = []
@@ -65,7 +65,7 @@ def _torrent_listing(titles: Sequence[ListedTitle]) -> TorrentListing | None:
 
 
 def _series_episode_by_size(titles: Sequence[ListedTitle], ignore_tags: frozenset[str]) -> EpisodeBySize | None:
-    """The size identities of every entry, or None if any window is unread."""
+    """The episodes by size of every title, or None if any window is unread."""
 
     pairs: list[tuple[int, int]] = []
     for title in titles:
@@ -81,7 +81,7 @@ def single_episode_sizes(
     """Yield `(size, episode)` for each torrent with exactly one video file, when the entry covers one episode.
 
     All trackers count, since the size identifies the file wherever it's served. Torrents with an ignored tag
-    are skipped, because the release filter never offers them.
+    are left out, because the release filter never offers them.
     """
 
     if len(window.ordered_episode_ids) != 1:
@@ -91,6 +91,6 @@ def single_episode_sizes(
         if carries_ignored_tag(torrent, ignore_tags):
             continue
         videos = [f.size for f in torrent.files if is_video_candidate(file_name(f.name))]
-        # SeaDex lists an unknown size as 0, so skip it.
+        # SeaDex lists an unknown size as 0, so leave it out.
         if len(videos) == 1 and videos[0] > 0:
             yield videos[0], ep_id

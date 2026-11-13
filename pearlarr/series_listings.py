@@ -1,4 +1,4 @@
-"""Reads every SeaDex entry of a series once per run and folds them into torrent listings and size identities."""
+"""Reads every SeaDex entry of a series once per run and turns them into torrent listings and episodes by size."""
 
 from collections.abc import Callable
 
@@ -13,14 +13,15 @@ from .sonarr_episodes import SonarrEpisodes
 class SeriesListings:
     """Reads every SeaDex entry of a series into a `FetchedListings`, once per series per run.
 
-    The caller passes the series' resolved mappings, the ignored entries set apart: an ignored entry still lists
-    its own files, and its window is flagged so `ordered_windows` runs it after the kept windows of the same kind
+    The caller passes the series' resolved mappings, the ignored titles set apart: an ignored title's entry still
+    lists its files, and its window is flagged so `ordered_windows` puts it after the kept windows of the same kind
     (season or specials).
-    Prefetched entries come from the gateway's cache. Anything else, an ignored entry among them, costs a request.
+    Prefetched entries come from the gateway's cache. Anything else, an ignored title's entry among them, costs a
+    request.
 
-    Each collaborator serves `_read`: `seadex` gives each entry's record, `episodes` its window and AniList episode
-    count, `ignore_tags` the torrents the size identities skip, and `names` the entry's titles for its window (the
-    title ladder the entry's own run uses). All four hold for the run, so they come in at construction.
+    Each collaborator serves `_read`: `seadex` gives each title's entry, `episodes` its window and AniList episode
+    count, `ignore_tags` the torrents the episodes by size leave out, and `names` the title's names for its window
+    (the ones the title's check uses). All four hold for the run, so they come in at construction.
     """
 
     def __init__(
@@ -37,7 +38,7 @@ class SeriesListings:
         self._reads: dict[int, FetchedListings | None] = {}
 
     def reset(self) -> None:
-        """Forget this run's reads. Called at run start, alongside the episode cache reset."""
+        """Forget this run's listings. Called at run start, alongside the episode cache reset."""
 
         self._reads = {}
 
@@ -45,8 +46,8 @@ class SeriesListings:
         """The series' listings (see `build_listings`), or None when SeaDex is unreachable.
 
         Only the first call in a run reads anything. Later calls return the same result, whatever `resolved` they
-        pass. An entry with an ambiguous AniDB id is skipped (its own run reports the error), and the identities
-        still count as read.
+        pass. A title with an ambiguous AniDB id is left out (its check reports the error), and the episodes by
+        size still count as read.
         """
 
         if series_id not in self._reads:
@@ -54,9 +55,9 @@ class SeriesListings:
         return self._reads[series_id]
 
     def _read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
-        """Read each entry's record, window, and special aliases, then fold them.
+        """Read each title's entry, window, and special aliases, then build the listings from them.
 
-        An entry whose episode list comes back empty keeps a window with no ids.
+        A title whose episode list comes back empty keeps a window with no ids.
         """
 
         listed: list[ListedTitle] = []
