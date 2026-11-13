@@ -129,7 +129,7 @@ class TestWaitBuilders:
     """Builder edge cases the goldens miss: zero tallies, per-kind wording, graduation style/level by outcome."""
 
     def test_zero_graduation_tally_is_empty(self) -> None:
-        finished = WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=42.0, pending=0, kind=WaitKind.MONITOR)
+        finished = WaitFinished(imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR)
         assert wait_tally_lines(finished) == []
 
     @pytest.mark.parametrize(
@@ -158,7 +158,7 @@ class TestWaitBuilders:
     )
     def test_tally_head_and_pending_bucket_by_kind(self, kind: WaitKind, expected: str) -> None:
         pending = 2 if kind is WaitKind.CHECK else 0
-        finished = WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60.0, pending=pending, kind=kind)
+        finished = WaitFinished(imported=1, left=0, failed=0, elapsed_s=60.0, in_progress=pending, kind=kind)
         assert wait_tally_lines(finished)[1].message == expected
 
     def test_graduation_style_is_dropped_without_color(self) -> None:

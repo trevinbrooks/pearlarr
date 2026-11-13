@@ -17,7 +17,6 @@ from pearlarr.output import (
     BootStepStarted,
     CycleStarted,
     Diagnostic,
-    EntryHeader,
     Event,
     ItemStarted,
     OpenScopes,
@@ -30,6 +29,7 @@ from pearlarr.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    TitleHeader,
     WaitKind,
     WaitStarted,
 )
@@ -227,7 +227,7 @@ def test_content_events_never_move_the_fold() -> None:
     entry_nodes = fold.nodes()
 
     fold.apply(Diagnostic(severity=Severity.WARNING, message="w"))
-    fold.apply(EntryHeader(state=TitleState.CHECKING, title="A", scope=_ENTRY))
+    fold.apply(TitleHeader(state=TitleState.CHECKING, title="A", scope=_ENTRY))
     assert fold.nodes() == entry_nodes
 
 

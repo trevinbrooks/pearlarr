@@ -33,7 +33,7 @@ from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, EntryHeader, Severity, SeverityCounter
+from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounter, TitleHeader
 from pearlarr.output.events import TitleState
 from pearlarr.output.recording import RecordingHub
 from pearlarr.progress import ProgressSink
@@ -132,7 +132,7 @@ def _services(*, qbit: object = None, **overrides: object) -> ArrRunServices:
         qbit=qbit,
         _filter=_FakeBound(),
         _grab_pipeline=_FakeBound(),
-        _records=_FakeBound(),
+        _pending_imports=_FakeBound(),
         _reporter=_FakeReporter(),
         **overrides,
     )
@@ -345,7 +345,7 @@ def _kept(path: Path, keys: list[int]) -> list[int]:
 
     reopened = CacheStore.load(str(path), config_hash="")
     try:
-        return [key for key in keys if reopened.get_entry(Arr.SONARR, key) is not None]
+        return [key for key in keys if reopened.get_cached_title(Arr.SONARR, key) is not None]
     finally:
         reopened.close()
 
@@ -434,7 +434,7 @@ class TestRunStartKeepsPendingRecords:
     def test_a_years_old_record_survives_the_run_start_and_is_reported(self, logger: logging.Logger) -> None:
         store = FakeCacheStore()
         old = pending_import(infohash="h", series_id=1, added_at="2000-01-01 00:00:00")
-        store.put_pending(Arr.SONARR, old.infohash, old.to_json())
+        store.put_pending_import_row(Arr.SONARR, old.infohash, old.to_json())
         services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
         manager = make_import_wait_manager(cache_store=store)
         engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=manager)
@@ -442,8 +442,8 @@ class TestRunStartKeepsPendingRecords:
 
         _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None), ImportWaitMode.BLOCKING)
 
-        assert set(store.get_pending(Arr.SONARR)) == {"h"}
-        assert [(h.state, h.title) for h in recording.of_type(EntryHeader)] == [(TitleState.QUEUED, old.display_label)]
+        assert set(store.get_pending_import_rows(Arr.SONARR)) == {"h"}
+        assert [(h.state, h.title) for h in recording.of_type(TitleHeader)] == [(TitleState.QUEUED, old.display_label)]
 
 
 class _GrabRecorder(_FakeBound):

@@ -33,7 +33,7 @@ from .boundary import coerce_int
 from .mapping_store import (
     AniBridgeAliasHit,
     AniBridgeAliasRow,
-    AniBridgeEntryRow,
+    AniBridgeMappingRow,
     AniBridgeRangeRow,
     AniBridgeRows,
     AniBridgeXrefRow,
@@ -91,7 +91,7 @@ class TvdbShowMaps(NamedTuple):
 
 
 @dataclass
-class AniBridgeRecord:
+class AniBridgeTitle:
     """The per-AniList record built incrementally while parsing the graph.
 
     One record accumulates every external id and season->episode-range map an
@@ -286,7 +286,7 @@ class AniBridge:
         self._store: MappingStore | None = None
 
         # AniList id (int) -> the record of the ids/episode-maps it points to
-        self.by_anilist: dict[int, AniBridgeRecord] = {}
+        self.by_anilist: dict[int, AniBridgeTitle] = {}
 
         # Reverse indexes: external id -> set of AniList ids
         self.tvdb_index: dict[int, set[int]] = defaultdict(set)
@@ -346,19 +346,19 @@ class AniBridge:
             The `AniBridgeRows` row lists for `MappingStore.replace_anibridge`.
         """
 
-        entries: list[AniBridgeEntryRow] = []
+        entries: list[AniBridgeMappingRow] = []
         ranges: list[AniBridgeRangeRow] = []
         alias_rows: list[AniBridgeAliasRow] = []
-        for anilist_id, record in self.by_anilist.items():
+        for anilist_id, title in self.by_anilist.items():
             entries.append(
-                AniBridgeEntryRow(
+                AniBridgeMappingRow(
                     anilist_id=anilist_id,
-                    anidb_id=record.anidb_id,
-                    imdb_id=_first(record.imdb_ids),
-                    tmdb_movie_id=_first(record.tmdb_movie_ids),
+                    anidb_id=title.anidb_id,
+                    imdb_id=_first(title.imdb_ids),
+                    tmdb_movie_id=_first(title.tmdb_movie_ids),
                 ),
             )
-            for tvdb_id, seasons in record.tvdb_shows.items():
+            for tvdb_id, seasons in title.tvdb_shows.items():
                 for season, range_list in seasons.items():
                     if not range_list:
                         # Present-but-empty season: see the NULL start_ep marker
@@ -367,7 +367,7 @@ class AniBridge:
                         continue
                     for start, end in range_list:
                         ranges.append(AniBridgeRangeRow(anilist_id, tvdb_id, season, start, end))
-            for tvdb_id, (tmdb_id, aliases) in record.special_aliasing.items():
+            for tvdb_id, (tmdb_id, aliases) in title.special_aliasing.items():
                 alias_rows.extend(
                     AniBridgeAliasRow(anilist_id, tvdb_id, tmdb_id, tmdb_number, tvdb_number)
                     for tmdb_number, tvdb_number in aliases.items()
@@ -423,18 +423,18 @@ class AniBridge:
             except ValueError:
                 continue
 
-            record = AniBridgeRecord()
+            title = AniBridgeTitle()
 
             for target, ep_map in targets.items():
-                self._add_target(record, anilist_id, target, ep_map)
-            record.special_aliasing = _special_aliasing(targets)
+                self._add_target(title, anilist_id, target, ep_map)
+            title.special_aliasing = _special_aliasing(targets)
 
-            self.by_anilist[anilist_id] = record
+            self.by_anilist[anilist_id] = title
 
         # Filter only now that the loop is done: `_unshared_aliasing` reads every other record of the show.
-        for anilist_id, record in self.by_anilist.items():
-            if record.special_aliasing:
-                record.special_aliasing = self._unshared_aliasing(anilist_id, record.special_aliasing)
+        for anilist_id, title in self.by_anilist.items():
+            if title.special_aliasing:
+                title.special_aliasing = self._unshared_aliasing(anilist_id, title.special_aliasing)
 
     def _unshared_aliasing(
         self, anilist_id: int, aliasing: Mapping[int, SpecialAliasing]
@@ -460,7 +460,7 @@ class AniBridge:
 
     def _add_target(
         self,
-        record: AniBridgeRecord,
+        title: AniBridgeTitle,
         anilist_id: int,
         target: str,
         ep_map: dict[str, str],
@@ -468,7 +468,7 @@ class AniBridge:
         """Fold a single target descriptor into an AniList record.
 
         Args:
-            record: The AniList record being built
+            title: The AniList record being built
             anilist_id: AniList id owning this record
             target: Target descriptor (e.g. "tvdb_show:74796:s2")
             ep_map: {source_range: target_range} for this target
@@ -477,16 +477,16 @@ class AniBridge:
         provider, pid, scope = _parse_descriptor(target)
 
         if provider == "anidb":
-            if record.anidb_id is None:
+            if title.anidb_id is None:
                 anidb_id = coerce_int(pid)
                 if anidb_id is not None:
-                    record.anidb_id = anidb_id
+                    title.anidb_id = anidb_id
 
         elif provider == "tvdb_show":
             external_id = coerce_int(pid)
             if external_id is None:
                 return
-            seasons = record.tvdb_shows.setdefault(external_id, {})
+            seasons = title.tvdb_shows.setdefault(external_id, {})
             self.tvdb_index[external_id].add(anilist_id)
 
             season = _parse_season(scope)
@@ -504,15 +504,15 @@ class AniBridge:
         elif provider == "tmdb_movie":
             movie_id = coerce_int(pid)
             if movie_id is not None:
-                record.tmdb_movie_ids.append(movie_id)
+                title.tmdb_movie_ids.append(movie_id)
                 self.tmdb_movie_index[movie_id].add(anilist_id)
 
         elif provider in ("imdb_movie", "imdb_show") and pid:
-            record.imdb_ids.append(pid)
+            title.imdb_ids.append(pid)
             self.imdb_index[pid].add(anilist_id)
 
     @staticmethod
-    def _entry_dict(
+    def _raw_mapping(
         *,
         anidb_id: int | None,
         imdb_id: str | None,
@@ -527,19 +527,19 @@ class AniBridge:
         the typed domain.
         """
 
-        entry: dict[str, Any] = {
+        raw: dict[str, Any] = {
             "anidb_id": anidb_id,
             "imdb_id": imdb_id,
             "tmdb_movie_id": tmdb_movie_id,
             "source": "anibridge",
         }
         if tvdb is not None:
-            entry["tvdb_mappings"] = tvdb.tvdb_mappings
+            raw["tvdb_mappings"] = tvdb.tvdb_mappings
             if tvdb.special_aliasing is not None:
-                entry["special_aliasing"] = tvdb.special_aliasing
-        return entry
+                raw["special_aliasing"] = tvdb.special_aliasing
+        return raw
 
-    def _consumer_entry(
+    def _raw_mapping_for(
         self,
         anilist_id: int,
         tvdb_id: int | None = None,
@@ -553,14 +553,14 @@ class AniBridge:
         along only when the record's specials also pair for that show.
         """
 
-        record = self.by_anilist[anilist_id]
+        title = self.by_anilist[anilist_id]
         tvdb = None
-        if tvdb_id is not None and tvdb_id in record.tvdb_shows:
-            tvdb = TvdbShowMaps(record.tvdb_shows[tvdb_id], record.special_aliasing.get(tvdb_id))
-        return self._entry_dict(
-            anidb_id=record.anidb_id,
-            imdb_id=_first(record.imdb_ids),
-            tmdb_movie_id=_first(record.tmdb_movie_ids),
+        if tvdb_id is not None and tvdb_id in title.tvdb_shows:
+            tvdb = TvdbShowMaps(title.tvdb_shows[tvdb_id], title.special_aliasing.get(tvdb_id))
+        return self._raw_mapping(
+            anidb_id=title.anidb_id,
+            imdb_id=_first(title.imdb_ids),
+            tmdb_movie_id=_first(title.tmdb_movie_ids),
             tvdb=tvdb,
         )
 
@@ -613,12 +613,12 @@ class AniBridge:
             aliasing_by_anilist = _aliasing_by_anilist(store.anibridge_aliases_for(id_kind, external_id, tvdb_id))
 
         result: AniBridgeLookup = {}
-        for row in store.anibridge_entries_for(id_kind, external_id):
+        for row in store.anibridge_mappings_for(id_kind, external_id):
             tvdb = None
             if tvdb_id is not None:
                 tvdb_mappings = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))
                 tvdb = TvdbShowMaps(tvdb_mappings, aliasing_by_anilist.get(row.anilist_id))
-            result[row.anilist_id] = self._entry_dict(
+            result[row.anilist_id] = self._raw_mapping(
                 anidb_id=row.anidb_id,
                 imdb_id=row.imdb_id,
                 tmdb_movie_id=row.tmdb_movie_id,
@@ -633,7 +633,7 @@ class AniBridge:
             return self._sql_lookup("tvdb", tvdb_id, tvdb_id=tvdb_id)
 
         return {
-            anilist_id: self._consumer_entry(anilist_id, tvdb_id=tvdb_id)
+            anilist_id: self._raw_mapping_for(anilist_id, tvdb_id=tvdb_id)
             for anilist_id in self.tvdb_index.get(tvdb_id, ())
         }
 
@@ -643,7 +643,7 @@ class AniBridge:
         if self._store is not None:
             return self._sql_lookup("tmdb_movie", tmdb_id)
 
-        return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
+        return {anilist_id: self._raw_mapping_for(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 
     def lookup_by_imdb(self, imdb_id: str) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id (e.g. "tt0094625")."""
@@ -651,4 +651,4 @@ class AniBridge:
         if self._store is not None:
             return self._sql_lookup("imdb", imdb_id)
 
-        return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.imdb_index.get(imdb_id, ())}
+        return {anilist_id: self._raw_mapping_for(anilist_id) for anilist_id in self.imdb_index.get(imdb_id, ())}

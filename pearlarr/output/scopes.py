@@ -19,7 +19,6 @@ from .events import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
@@ -32,6 +31,7 @@ from .events import (
     ScopeOpened,
     Severity,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     WaitFinished,
     WaitKind,
@@ -49,7 +49,7 @@ type Emit = Callable[[Event], None]
 
 type CountsSource = Callable[[], SeverityCounter]
 
-type EntryFact = TitleDetail | TitleRow | ReleaseSkipped | GrabFailed | GrabAction
+type TitleEvent = TitleDetail | TitleRow | ReleaseSkipped | GrabFailed | GrabAction
 
 
 @final
@@ -91,7 +91,7 @@ class BootScope:
         self._scope = None
 
 
-def _describe_fact(fact: EntryFact) -> str:
+def _describe_fact(fact: TitleEvent) -> str:
     """A compact one-line description of a demoted fact (for the late diagnostic)."""
 
     match fact:
@@ -216,12 +216,12 @@ class TitleScope(_ScopeBase):
 
     _KIND_WORD: ClassVar[str] = "entry"
 
-    def __init__(self, emit: Emit, scope: ScopeId, header: EntryHeader) -> None:
+    def __init__(self, emit: Emit, scope: ScopeId, header: TitleHeader) -> None:
         super().__init__(emit, header.title, scope)
         emit(ScopeOpened(scope=scope, label=header.title))
         emit(replace(header, scope=scope))
 
-    def post(self, fact: EntryFact) -> None:
+    def post(self, fact: TitleEvent) -> None:
         """Emit an entry-block fact stamped with this scope's id (demotes when stale)."""
 
         if not self._open:
@@ -297,7 +297,7 @@ class ScopeFactory:
     def step(self, label: str) -> StepScope:
         return StepScope(self._emit, self._ids.mint(ScopeKind.BOOT_STEP), label, self._clock)
 
-    def entry(self, header: EntryHeader) -> TitleScope:
+    def title(self, header: TitleHeader) -> TitleScope:
         return TitleScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
     def wait(self, total: int, *, pulse_s: float, kind: WaitKind) -> WaitScope:

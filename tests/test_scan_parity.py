@@ -33,14 +33,13 @@ from pearlarr.output import (
     ArrRunSummary,
     ArrRunTally,
     CapReached,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
     GrabStatus,
+    GroupLabel,
     ItemStarted,
     NeedsActionCause,
-    RecommendedGroup,
     ReleaseLabel,
     ReleaseSkipped,
     RunSummaryReady,
@@ -52,6 +51,7 @@ from pearlarr.output import (
     SkipReason,
     StyledValue,
     TitleDetail,
+    TitleHeader,
     TitleRow,
 )
 from pearlarr.output.console_text import ConsoleRender, KeyValue, SectionRule, StyledLine, TitledRule, group_highlight
@@ -184,7 +184,7 @@ IGNORED_TITLED_LINES: tuple[Line, ...] = (
 
 # --- entry headers (row + coverage/link continuation) ---------------------------------
 
-CHECKING_FULL = EntryHeader(
+CHECKING_FULL = TitleHeader(
     state=TitleState.CHECKING,
     title="Frieren",
     al_id=1,
@@ -204,7 +204,7 @@ CHECKING_FULL_LINES: tuple[Line, ...] = (
     ),
 )
 
-CHECKING_URL_ONLY = EntryHeader(
+CHECKING_URL_ONLY = TitleHeader(
     state=TitleState.CHECKING,
     title="Perfect Blue",
     al_id=1,
@@ -216,7 +216,7 @@ CHECKING_URL_ONLY_LINES: tuple[Line, ...] = (
     _detail("    link      https://releases.moe/437", "link", "https://releases.moe/437"),
 )
 
-CACHED_FULL = EntryHeader(
+CACHED_FULL = TitleHeader(
     state=TitleState.UNCHANGED,
     title="Cached Show",
     coverage="S01 E01-E12",
@@ -229,7 +229,7 @@ CACHED_FULL_LINES: tuple[Line, ...] = (
     _detail("    link      https://releases.moe/20997", "link", "https://releases.moe/20997"),
 )
 
-CACHED_BARE = EntryHeader(state=TitleState.UNCHANGED, title="Bare Show")
+CACHED_BARE = TitleHeader(state=TitleState.UNCHANGED, title="Bare Show")
 CACHED_BARE_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  unchanged   Bare Show", "grey50"),
@@ -274,8 +274,8 @@ NO_ENTRY_UNRESOLVED_LINES: tuple[Line, ...] = (
 _PENDING_KWARGS = {"title": "My Show", "window_coverage": "S01 E01-E13", "url": "https://releases.moe/1"}
 
 
-def _pending_header(state: TitleState) -> EntryHeader:
-    return EntryHeader(state=state, title="My Show · SubGroup", coverage="S01 E01-E13", url="https://releases.moe/1")
+def _pending_header(state: TitleState) -> TitleHeader:
+    return TitleHeader(state=state, title="My Show · SubGroup", coverage="S01 E01-E13", url="https://releases.moe/1")
 
 
 def _pending_lines(row: Line) -> tuple[Line, ...]:
@@ -305,7 +305,7 @@ NO_RELEASES_LINES: tuple[Line, ...] = (
 
 # --- action blocks -----------------------------------------------------------------------
 
-_FRESH_GROUPS = (RecommendedGroup(name="GroupA", tags=("HDR",)), RecommendedGroup(name="GroupB"))
+_FRESH_GROUPS = (GroupLabel(name="GroupA", tags=("HDR",)), GroupLabel(name="GroupB"))
 # The name-less second release (a hashless/private torrent) falls back to its group.
 _FRESH_ADDED = (
     ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
@@ -346,7 +346,7 @@ ACTION_DRY_LINES: tuple[Line, ...] = (
 )
 
 _DOWNLOADING = (ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),)
-_ONE_GROUP = (RecommendedGroup(name="GroupA", tags=("HDR",)),)
+_ONE_GROUP = (GroupLabel(name="GroupA", tags=("HDR",)),)
 
 ACTION_DOWNLOADING_WAITING = GrabAction(
     status=GrabStatus.ALREADY_DOWNLOADING,
@@ -883,12 +883,12 @@ class TestEntryHeaderParity:
 
     def test_cached_full_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 1)
+        harness.reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 1)
         assert harness.lines() == CACHED_FULL_LINES
 
     def test_cached_without_coverage_or_url_renders_just_the_row(self) -> None:
         harness = _Harness(store=_seeded_store())
-        harness.reporter.log_cached_entry(ArrRunState(arr=Arr.SONARR), 2)
+        harness.reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 2)
         assert harness.lines() == CACHED_BARE_LINES
 
     def test_pending_snapshots(self) -> None:
@@ -900,7 +900,7 @@ class TestEntryHeaderParity:
             (PendingImportState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
             harness.events.clear()
-            harness.reporter.log_pending_snapshot(state, pending, pending.claims[0].series_id)
+            harness.reporter.log_pending_import(state, pending, pending.claims[0].series_id)
             assert harness.lines() == expected
 
 
@@ -976,7 +976,7 @@ class TestExternalDetailParity:
     """
 
     FACT_SITES: tuple[_FactSite, ...] = (
-        # grab_pipeline._add_one_url: a private-only release.
+        # grab_pipeline._grab_release: a private-only release.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.PRIVATE_ONLY, url="https://x/1"),
             _xdetail(
@@ -987,7 +987,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._add_one_url: a tracker outside the configured tracker list.
+        # grab_pipeline._grab_release: a tracker outside the configured tracker list.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED, url="https://x/1"),
             _xdetail(
@@ -998,7 +998,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._add_one_url: a tracker with no parser yet.
+        # grab_pipeline._grab_release: a tracker with no parser yet.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.UNSUPPORTED_TRACKER, url="https://x/1"),
             _xdetail(
@@ -1009,7 +1009,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a pack whose file numbers disagree, or a specials pack numbered another way.
+        # grab_pipeline._may_grab: a pack whose file numbers disagree, or a specials pack numbered another way.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.MISNUMBERED, url="https://x/1"),
             _xdetail(
@@ -1020,7 +1020,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a pack whose file titles contradict its numbers, none of it placed.
+        # grab_pipeline._may_grab: a pack whose file titles contradict its numbers, none of it placed.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TITLE_REFUTED, url="https://x/1"),
             _xdetail(
@@ -1031,7 +1031,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a url whose files place under another title, some of them on none.
+        # grab_pipeline._may_grab: a url whose files place under another title, some of them on none.
         _FactSite(
             ReleaseSkipped(
                 group="GroupA",
@@ -1048,7 +1048,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: a url whose one file is another title's.
+        # grab_pipeline._may_grab: a url whose one file is another title's.
         _FactSite(
             ReleaseSkipped(
                 group="GroupA",
@@ -1065,7 +1065,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._screen_url: the listing the placement judges a pack by could not be read.
+        # grab_pipeline._may_grab: the listing the placement judges a pack by could not be read.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.INPUT_UNREAD, url="https://x/1"),
             _xdetail(
@@ -1076,7 +1076,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._add_one_url: a contained grab failure.
+        # grab_pipeline._grab_release: a contained grab failure.
         _FactSite(
             GrabFailed(group="GroupA", url="https://x/1", error="tracker down"),
             _xdetail(
@@ -1349,7 +1349,7 @@ class TestScopeLifecycle:
         assert isinstance(second_open, ScopeOpened) and second_open.label == "Second"
         assert isinstance(second_close, ScopeClosed) and second_close.scope == second_open.scope
         # Every header carries the id of the scope opened immediately before it.
-        headers = [e for e in harness.events if isinstance(e, EntryHeader)]
+        headers = [e for e in harness.events if isinstance(e, TitleHeader)]
         assert [h.scope for h in headers] == [first_open.scope, second_open.scope]
 
     def test_bare_titled_rows_open_no_scope(self) -> None:

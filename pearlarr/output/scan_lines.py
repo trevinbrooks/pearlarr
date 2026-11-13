@@ -19,17 +19,16 @@ from .console_text import (
     TitledRule,
     arr_item_noun,
     count_noun,
-    entry_string,
     group_highlight,
     indent_string,
     kv_string,
     long_duration,
     rule_string,
+    title_row_string,
 )
 from .events import (
     Accent,
     CapReached,
-    EntryHeader,
     GrabAction,
     GrabFact,
     GrabFailed,
@@ -42,6 +41,7 @@ from .events import (
     ScanStarted,
     SkipReason,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     TitleState,
     severity_of,
@@ -50,7 +50,7 @@ from .events import (
 type ScanEvent = (
     ScanStarted
     | ItemStarted
-    | EntryHeader
+    | TitleHeader
     | TitleDetail
     | TitleRow
     | ReleaseSkipped
@@ -148,7 +148,7 @@ def _detail_kv(
 def _ledger_line(state: TitleState, label: str, style: str) -> ConsoleLine:
     """A fixed-column ledger row, indent baked into the message."""
 
-    return _info(indent_string(entry_string(state, label), level=1), StyledLine(style=style))
+    return _info(indent_string(title_row_string(state, label), level=1), StyledLine(style=style))
 
 
 # --- the builders, one per event family ---------------------------------------------
@@ -168,7 +168,7 @@ def item_started_lines(event: ItemStarted) -> tuple[ConsoleLine, ...]:
     return _BLANK, _info(header, TitledRule(title=header))
 
 
-def entry_header_lines(event: EntryHeader) -> tuple[ConsoleLine, ...]:
+def title_header_lines(event: TitleHeader) -> tuple[ConsoleLine, ...]:
     """An entry block's head (ledger row plus files/link rows), the incomplete note riding the last row."""
 
     if event.state is TitleState.CHECKING:
@@ -191,7 +191,7 @@ def ledger_row_lines(event: TitleRow) -> tuple[ConsoleLine, ...]:
     return _BLANK, _ledger_line(event.state, event.label, accent_style(event.accent))
 
 
-def entry_detail_lines(event: TitleDetail) -> tuple[ConsoleLine, ...]:
+def title_detail_lines(event: TitleDetail) -> tuple[ConsoleLine, ...]:
     """One labeled detail line under an entry. PLAIN renders a style-less kv."""
 
     return (
@@ -426,10 +426,10 @@ def scan_event_lines(event: ScanEvent) -> tuple[ConsoleLine, ...]:
             return scan_started_lines(event)
         case ItemStarted():
             return item_started_lines(event)
-        case EntryHeader():
-            return entry_header_lines(event)
+        case TitleHeader():
+            return title_header_lines(event)
         case TitleDetail():
-            return entry_detail_lines(event)
+            return title_detail_lines(event)
         case TitleRow():
             return ledger_row_lines(event)
         case ReleaseSkipped():

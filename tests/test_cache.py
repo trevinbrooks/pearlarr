@@ -25,7 +25,7 @@ from pearlarr.cache import (
     CacheSchemaError,
     CacheStore,
     HistoryCheckpoint,
-    record_payload,
+    row_payload,
     stamp_is_fresh,
 )
 from pearlarr.config import Arr
@@ -48,8 +48,8 @@ CHECKSUM = "0123456789abcdef0123456789abcdef"
 def _entry_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
     """The entry's stored name via `get_entry` (None when the row is absent)."""
 
-    entry = store.get_entry(arr, al_id)
-    return None if entry is None else entry.name
+    cached = store.get_cached_title(arr, al_id)
+    return None if cached is None else cached.name
 
 
 def _raise_os_replace(*_args: object, **_kwargs: object) -> None:
@@ -64,10 +64,10 @@ def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
     raise sqlite3.OperationalError("database is locked")
 
 
-def _row(record: PendingImport) -> dict[str, Any]:
+def _row(pending: PendingImport) -> dict[str, Any]:
     """The record as the store's JSON column reads it back (tuples as lists)."""
 
-    return json.loads(json.dumps(record.to_json()))
+    return json.loads(json.dumps(pending.to_json()))
 
 
 def _open(tmp_path: Path) -> contextlib.closing[CacheStore]:
@@ -81,7 +81,7 @@ class TestSchemaAndDescriptor:
         with _open(tmp_path) as store:
             # Nothing on disk yet, and reads work against the empty in-memory schema.
             assert not (tmp_path / "cache.db").exists()
-            assert store.get_entry(Arr.SONARR, 7) is None
+            assert store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_descriptor_persists_version_and_checksum(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -242,14 +242,14 @@ def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
     return blob
 
 
-def _assert_round_trips(records: dict[str, dict[str, Any]]) -> None:
+def _assert_round_trips(rows: dict[str, dict[str, Any]]) -> None:
     """Every migrated blob re-serializes byte-for-byte as a record, plus empty sizes and its unplaced listed files.
 
     The listed files the blob neither mapped nor excluded come back as its hand imports with no order-only keys, and
     no row is a cross-seed.
     """
 
-    for infohash, blob in records.items():
+    for infohash, blob in rows.items():
         rebuilt = PendingImport.from_json(blob, guards={}).to_json()
         unplaced: list[str] = [
             name
@@ -297,7 +297,7 @@ class TestSchemaVersionGate:
 
     def test_v0_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
         # The scenario the gate exists for: a db from before `fallback_satisfied`
-        # shipped must be ALTERed current instead of crashing get_entry every run.
+        # shipped must be ALTERed current instead of crashing get_cached_title every run.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
         raw.executescript(_V0_SCHEMA)
@@ -308,10 +308,10 @@ class TestSchemaVersionGate:
         install_hub(recording.hub)  # conftest teardown restores the default
 
         with _open(tmp_path) as store:
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.name == "Frieren"
-            assert entry.fallback_satisfied is False  # backfilled column default
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.name == "Frieren"
+            assert cached.fallback_satisfied is False  # backfilled column default
         # The upgrade committed at load time - durable even though the run's own
         # staged writes were rolled back by close().
         assert _user_version(db) == SCHEMA_VERSION
@@ -333,7 +333,7 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            assert store.get_entry(Arr.SONARR, 7) is None  # reads work post-upgrade
+            assert store.get_cached_title(Arr.SONARR, 7) is None  # reads work post-upgrade
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v1_pending_imports_walk_the_chain_to_torrent_records(self, tmp_path: Path) -> None:
@@ -358,7 +358,7 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            pending = store.get_pending(Arr.SONARR)
+            pending = store.get_pending_import_rows(Arr.SONARR)
             assert set(pending) == {"legacy", "tagged"}
             # The sentinel-keyed legacy row rehydrates as a claim with al_id 0.
             legacy = PendingImport.from_json(pending["legacy"], guards={})
@@ -368,8 +368,8 @@ class TestSchemaVersionGate:
             assert claim_al_ids(tagged) == (9,)
             assert tagged.series_ids == (6,)
             # The folded rows behave exactly like modern records: keyed by hash, dropped by hash.
-            store.drop_pending(Arr.SONARR, "legacy")
-            assert set(store.get_pending(Arr.SONARR)) == {"tagged"}
+            store.drop_pending_import_row(Arr.SONARR, "legacy")
+            assert set(store.get_pending_import_rows(Arr.SONARR)) == {"tagged"}
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v2_guard_backfill_latest_added_at_wins(self, tmp_path: Path) -> None:
@@ -400,7 +400,7 @@ class TestSchemaVersionGate:
                 ),
             }
             # The divergent per-record copies are gone for good.
-            assert all("guards" not in rec for rec in store.get_pending(Arr.SONARR).values())
+            assert all("guards" not in rec for rec in store.get_pending_import_rows(Arr.SONARR).values())
         assert _user_version(db) == SCHEMA_VERSION
 
     def test_v2_guard_backfill_skips_ineligible_records(self, tmp_path: Path) -> None:
@@ -423,7 +423,10 @@ class TestSchemaVersionGate:
         with _open(tmp_path) as store:
             assert store.get_guards(Arr.SONARR) == {}
             assert store.get_guards(Arr.RADARR) == {}
-            stripped = [*store.get_pending(Arr.SONARR).values(), *store.get_pending(Arr.RADARR).values()]
+            stripped = [
+                *store.get_pending_import_rows(Arr.SONARR).values(),
+                *store.get_pending_import_rows(Arr.RADARR).values(),
+            ]
             assert len(stripped) == 4
             assert all("guards" not in rec for rec in stripped)
 
@@ -507,8 +510,8 @@ class TestSchemaVersionGate:
         _seed_v4_db(db, [("sonarr", "ABCD", 22, json.dumps(second)), ("sonarr", "abcd", 11, json.dumps(first))])
 
         with _open(tmp_path) as store:
-            records = store.get_pending(Arr.SONARR)
-            assert records == {
+            rows = store.get_pending_import_rows(Arr.SONARR)
+            assert rows == {
                 "abcd": {
                     "infohash": "abcd",
                     "release_group": "Grp",
@@ -545,7 +548,7 @@ class TestSchemaVersionGate:
                     "awaiting_cleanup": True,
                 },
             }
-            _assert_round_trips(records)
+            _assert_round_trips(rows)
             assert _columns(db, "pending_imports") == ["arr", "infohash", "record"]
         assert _user_version(db) == SCHEMA_VERSION
 
@@ -569,8 +572,8 @@ class TestSchemaVersionGate:
         )
 
         with _open(tmp_path) as store:
-            sonarr = store.get_pending(Arr.SONARR)
-            radarr = store.get_pending(Arr.RADARR)
+            sonarr = store.get_pending_import_rows(Arr.SONARR)
+            radarr = store.get_pending_import_rows(Arr.RADARR)
             assert PendingImport.from_json(sonarr["h"], guards={}).awaiting_cleanup is False
             assert claim_al_ids(PendingImport.from_json(sonarr["h"], guards={})) == (11, 22)
             assert PendingImport.from_json(radarr["h"], guards={}).awaiting_cleanup is True
@@ -598,10 +601,10 @@ class TestSchemaVersionGate:
         )
 
         with _open(tmp_path) as store:
-            records = store.get_pending(Arr.SONARR)
-            assert records["k"]["added_at"] == "2026-07-02 00:00:00"
-            assert records["j"]["added_at"] == ""
-            _assert_round_trips(records)
+            rows = store.get_pending_import_rows(Arr.SONARR)
+            assert rows["k"]["added_at"] == "2026-07-02 00:00:00"
+            assert rows["j"]["added_at"] == ""
+            _assert_round_trips(rows)
 
     def test_v4_legacy_ids_fold_into_the_claims_window(self, tmp_path: Path) -> None:
         # A row from before the ordered window (no `ordered_episode_ids`) claims
@@ -621,17 +624,17 @@ class TestSchemaVersionGate:
         _seed_v4_db(db, [("sonarr", "old", 3, json.dumps(legacy)), ("sonarr", "new", 4, json.dumps(windowed))])
 
         with _open(tmp_path) as store:
-            records = store.get_pending(Arr.SONARR)
-            assert all("episode_ids" not in record for record in records.values())
-            old = PendingImport.from_json(records["old"], guards={})
+            rows = store.get_pending_import_rows(Arr.SONARR)
+            assert all("episode_ids" not in row for row in rows.values())
+            old = PendingImport.from_json(rows["old"], guards={})
             assert old.claims[0].ordered_episode_ids == (1, 2, 3)
             assert old.claims[0].names == TitleNames()
             # The fold carries the map verbatim and only derives the window from it. The record drops the zero.
-            assert records["old"]["file_episode_map"] == {"a.mkv": [2, 0]}
+            assert rows["old"]["file_episode_map"] == {"a.mkv": [2, 0]}
             assert dict(old.file_episode_map) == {"a.mkv": (2,)}
-            new = PendingImport.from_json(records["new"], guards={})
+            new = PendingImport.from_json(rows["new"], guards={})
             assert new.claims[0].ordered_episode_ids == (9, 8)
-            _assert_round_trips({"new": records["new"]})
+            _assert_round_trips({"new": rows["new"]})
 
     def test_v4_unscoped_row_stays_unscoped_and_carries_its_names_verbatim(self, tmp_path: Path) -> None:
         # An unscoped v4 claim (an empty window, no legacy list) claims nothing off
@@ -642,11 +645,11 @@ class TestSchemaVersionGate:
         _seed_v4_db(db, [("sonarr", "u", 5, json.dumps(unscoped))])
 
         with _open(tmp_path) as store:
-            records = store.get_pending(Arr.SONARR)
-            (claim,) = records["u"]["claims"]
+            rows = store.get_pending_import_rows(Arr.SONARR)
+            (claim,) = rows["u"]["claims"]
             assert claim["ordered_episode_ids"] == []
             assert claim["names"] == {"series": "Series"}
-            assert PendingImport.from_json(records["u"], guards={}).claims[0].names == TitleNames(series="Series")
+            assert PendingImport.from_json(rows["u"], guards={}).claims[0].names == TitleNames(series="Series")
 
     def test_v4_migration_is_a_no_op_on_reopen(self, tmp_path: Path) -> None:
         # The migrated db reopens as found: same records, no step announced, and
@@ -655,13 +658,13 @@ class TestSchemaVersionGate:
         db = tmp_path / "cache.db"
         _seed_v4_db(db, [("sonarr", "h", 11, json.dumps(_v4_blob("h", 11)))])
         with _open(tmp_path) as migrated:
-            records = migrated.get_pending(Arr.SONARR)
+            rows = migrated.get_pending_import_rows(Arr.SONARR)
         assert _user_version(db) == SCHEMA_VERSION
 
         recording = RecordingHub()
         install_hub(recording.hub)  # conftest teardown restores the default
         with _open(tmp_path) as reopened:
-            assert reopened.get_pending(Arr.SONARR) == records
+            assert reopened.get_pending_import_rows(Arr.SONARR) == rows
         assert recording.of_type(Diagnostic) == []
 
         folded = tmp_path / "folded.db"
@@ -669,13 +672,13 @@ class TestSchemaVersionGate:
         raw.executescript(_V1_PENDING_SCHEMA)  # the (arr, infohash) PK: v5's shape too
         raw.execute(
             "INSERT INTO pending_imports (arr, infohash, record) VALUES ('sonarr', 'h', jsonb(?))",
-            (json.dumps(records["h"]),),
+            (json.dumps(rows["h"]),),
         )
         raw.execute("PRAGMA user_version=4")
         raw.commit()
         raw.close()
         with contextlib.closing(CacheStore.load(str(folded), config_hash=CHECKSUM)) as store:
-            assert store.get_pending(Arr.SONARR) == records
+            assert store.get_pending_import_rows(Arr.SONARR) == rows
         assert _user_version(folded) == SCHEMA_VERSION
 
     def test_v5_entries_gain_a_season_type_column_left_null(self, tmp_path: Path) -> None:
@@ -690,9 +693,9 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            entry = store.get_entry(Arr.SONARR, 2)
-            assert entry is not None
-            assert (entry.name, entry.season_type) == ("Frieren", None)
+            cached = store.get_cached_title(Arr.SONARR, 2)
+            assert cached is not None
+            assert (cached.name, cached.season_type) == ("Frieren", None)
             store.put_tvdb_orders(1, _ORDERS)
             assert store.get_tvdb_orders(1) == _ORDERS
         assert _user_version(db) == SCHEMA_VERSION
@@ -711,9 +714,9 @@ class TestSchemaVersionGate:
         raw.close()
 
         with _open(tmp_path) as store:
-            entry = store.get_entry(Arr.SONARR, 2)
-            assert entry is not None
-            assert (entry.name, entry.url) == ("Frieren", "u")
+            cached = store.get_cached_title(Arr.SONARR, 2)
+            assert cached is not None
+            assert (cached.name, cached.url) == ("Frieren", "u")
         assert _user_version(db) == SCHEMA_VERSION
         assert _columns(db, "torrent_hashes") == []
 
@@ -747,9 +750,9 @@ class TestEntries:
             store.update_cached_title(Arr.SONARR, 7, {"name": "Title", "url": "u"})
             # A later update with only one field must not wipe the others.
             store.update_cached_title(Arr.SONARR, 7, {"coverage": "S01"})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert (cached.name, cached.url, cached.coverage) == ("Title", "u", "S01")
 
     def test_clear_entry_stamp_clears_the_timestamp_and_nothing_else(self, tmp_path: Path) -> None:
         stamped: CachedTitleUpdate = {"name": "Title", "url": "u", "updated_at": datetime(2021, 6, 5)}
@@ -759,25 +762,25 @@ class TestEntries:
 
             store.uncache_title(Arr.SONARR, 7)
 
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert (entry.updated_at, entry.name, entry.url) == (None, "Title", "u")
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert (cached.updated_at, cached.name, cached.url) == (None, "Title", "u")
             # The other arr's row for the same id keeps its timestamp.
-            other = store.get_entry(Arr.RADARR, 7)
+            other = store.get_cached_title(Arr.RADARR, 7)
             assert other is not None
             assert other.updated_at == "2021-06-05 00:00:00"
 
     def test_clear_entry_stamp_adds_no_row(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.uncache_title(Arr.SONARR, 7)
-            assert store.get_entry(Arr.SONARR, 7) is None
+            assert store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.updated_at == "2021-06-05 04:03:02"
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.updated_at == "2021-06-05 04:03:02"
 
     def test_arrs_are_isolated(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -793,16 +796,16 @@ class TestEntries:
                 7,
                 {"name": "Title", "url": "u", "coverage": "S01", "updated_at": datetime(2021, 6, 5, 4, 3, 2)},
             )
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert (entry.name, entry.url, entry.coverage, entry.updated_at) == (
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert (cached.name, cached.url, cached.coverage, cached.updated_at) == (
                 "Title",
                 "u",
                 "S01",
                 "2021-06-05 04:03:02",
             )
             # A missing row reads back as None, not an all-None record.
-            assert store.get_entry(Arr.SONARR, 999) is None
+            assert store.get_cached_title(Arr.SONARR, 999) is None
 
 
 class TestFallbackSatisfied:
@@ -812,14 +815,14 @@ class TestFallbackSatisfied:
         with _open(tmp_path) as store:
             # A row written without the key reads back False (NOT NULL DEFAULT 0)...
             store.update_cached_title(Arr.SONARR, 7, {"name": "Title"})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.fallback_satisfied is False
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.fallback_satisfied is False
             # ...and a written True reads back as a real bool, not the stored int.
             store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.fallback_satisfied is True
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.fallback_satisfied is True
 
     def test_persists_across_save_and_reopen(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
@@ -827,23 +830,23 @@ class TestFallbackSatisfied:
             store.save(preview=False)
 
         with _open(tmp_path) as reopened:
-            entry = reopened.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.fallback_satisfied is True
+            cached = reopened.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.fallback_satisfied is True
 
     def test_partial_update_preserves_until_rewritten(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": True})
             # A partial merge that omits the key must not clear the marker...
             store.update_cached_title(Arr.SONARR, 7, {"coverage": "S01"})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.fallback_satisfied is True
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.fallback_satisfied is True
             # ...but a supplied False overwrites it.
             store.update_cached_title(Arr.SONARR, 7, {"fallback_satisfied": False})
-            entry = store.get_entry(Arr.SONARR, 7)
-            assert entry is not None
-            assert entry.fallback_satisfied is False
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.fallback_satisfied is False
 
 
 class TestPreviewGate:
@@ -878,7 +881,7 @@ class TestPreviewGate:
 
         with _open(tmp_path) as reopened:
             assert _entry_name(reopened, 7) == "Original"  # not "Changed"
-            assert reopened.get_entry(Arr.SONARR, 8) is None  # never added
+            assert reopened.get_cached_title(Arr.SONARR, 8) is None  # never added
 
 
 class TestSelectionDigest:
@@ -944,11 +947,11 @@ class TestRecordFreshness:
     """The persisted-record readers: the payload half and the stamp half, split apart."""
 
     def test_record_payload_wants_a_non_empty_object(self) -> None:
-        assert record_payload(None, "data") is None
-        assert record_payload({"fetched_at": "2026-06-26 12:00:00"}, "data") is None
-        assert record_payload({"data": {}}, "data") is None
-        assert record_payload({"data": [{"x": 1}]}, "data") is None
-        assert record_payload({"data": {"x": 1}}, "data") == {"x": 1}
+        assert row_payload(None, "data") is None
+        assert row_payload({"fetched_at": "2026-06-26 12:00:00"}, "data") is None
+        assert row_payload({"data": {}}, "data") is None
+        assert row_payload({"data": [{"x": 1}]}, "data") is None
+        assert row_payload({"data": {"x": 1}}, "data") == {"x": 1}
 
     def test_stamp_is_fresh_parses_and_compares(self) -> None:
         cutoff = datetime(2026, 6, 20)
@@ -1009,44 +1012,44 @@ class TestPendingImports:
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
             rec = _row(pending_import(infohash="h1", al_id=3, series_id=5))
-            store.put_pending(Arr.SONARR, "h1", rec)
-            store.put_pending(Arr.RADARR, "h2", {"infohash": "h2"})
-            assert store.get_pending(Arr.SONARR) == {"h1": rec}
-            assert store.get_pending(Arr.RADARR) == {"h2": {"infohash": "h2"}}
+            store.put_pending_import_row(Arr.SONARR, "h1", rec)
+            store.put_pending_import_row(Arr.RADARR, "h2", {"infohash": "h2"})
+            assert store.get_pending_import_rows(Arr.SONARR) == {"h1": rec}
+            assert store.get_pending_import_rows(Arr.RADARR) == {"h2": {"infohash": "h2"}}
             # The keyed reads see only their own arr's row.
-            assert store.get_pending_record(Arr.SONARR, "h1") == rec
-            assert store.get_pending_record(Arr.RADARR, "h1") is None
+            assert store.get_pending_import_row(Arr.SONARR, "h1") == rec
+            assert store.get_pending_import_row(Arr.RADARR, "h1") is None
 
-            store.drop_pending(Arr.SONARR, "h1")
-            assert store.get_pending(Arr.SONARR) == {}
-            assert store.get_pending_record(Arr.SONARR, "h1") is None
+            store.drop_pending_import_row(Arr.SONARR, "h1")
+            assert store.get_pending_import_rows(Arr.SONARR) == {}
+            assert store.get_pending_import_row(Arr.SONARR, "h1") is None
             # Dropping a missing key is a no-op.
-            store.drop_pending(Arr.SONARR, "nope")
+            store.drop_pending_import_row(Arr.SONARR, "nope")
 
     def test_one_record_per_torrent_replaced_whole(self, tmp_path: Path) -> None:
         # One torrent listed on two AniList entries is ONE row carrying both
         # claims: a re-put under the hash replaces the record whole (never a
         # second row), and the drop takes every claim with it.
         with _open(tmp_path) as store:
-            store.put_pending(Arr.SONARR, "h", _row(pending_import(infohash="h", al_id=11, series_id=5)))
+            store.put_pending_import_row(Arr.SONARR, "h", _row(pending_import(infohash="h", al_id=11, series_id=5)))
             both = _row(
                 pending_import(
                     infohash="h",
                     claims=(entry_claim(al_id=11, series_id=5), entry_claim(al_id=22, series_id=5)),
                 )
             )
-            store.put_pending(Arr.SONARR, "h", both)
-            assert store.get_pending(Arr.SONARR) == {"h": both}
+            store.put_pending_import_row(Arr.SONARR, "h", both)
+            assert store.get_pending_import_rows(Arr.SONARR) == {"h": both}
             assert store.stats().pending_imports == 1
 
-            store.drop_pending(Arr.SONARR, "h")
-            assert store.get_pending(Arr.SONARR) == {}
+            store.drop_pending_import_row(Arr.SONARR, "h")
+            assert store.get_pending_import_rows(Arr.SONARR) == {}
 
     def test_other_arr_holds_matches_the_key_exactly(self, tmp_path: Path) -> None:
         # Every record key is the lowercase infohash, so the other arr's row is
         # found by exact key and never by case fold.
         with _open(tmp_path) as store:
-            store.put_pending(Arr.RADARR, "abcd", {"infohash": "abcd"})
+            store.put_pending_import_row(Arr.RADARR, "abcd", {"infohash": "abcd"})
 
             assert store.other_arr_holds(Arr.SONARR, "abcd") is True
             assert store.other_arr_holds(Arr.SONARR, "ABCD") is False
@@ -1057,15 +1060,15 @@ class TestPendingImports:
         # an arr's own record never counts, a missing hash reads False, and the
         # other arr's row flips the answer for as long as it lives.
         with _open(tmp_path) as store:
-            store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=11).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=11).to_json())
 
             assert store.other_arr_holds(Arr.SONARR, "h") is False
             assert store.other_arr_holds(Arr.RADARR, "h") is True
             assert store.other_arr_holds(Arr.SONARR, "other") is False
 
-            store.put_pending(Arr.RADARR, "h", {"infohash": "h"})
+            store.put_pending_import_row(Arr.RADARR, "h", {"infohash": "h"})
             assert store.other_arr_holds(Arr.SONARR, "h") is True
-            store.drop_pending(Arr.RADARR, "h")
+            store.drop_pending_import_row(Arr.RADARR, "h")
             assert store.other_arr_holds(Arr.SONARR, "h") is False
 
     def test_get_pending_for_series_matches_any_claim_in_sql(self, tmp_path: Path) -> None:
@@ -1080,22 +1083,22 @@ class TestPendingImports:
                     claims=(entry_claim(al_id=6, series_id=5), entry_claim(al_id=7, series_id=9)),
                 )
             )
-            store.put_pending(Arr.SONARR, "a", a)
-            store.put_pending(Arr.SONARR, "b", b)
-            store.put_pending(Arr.SONARR, "c", c)
-            store.put_pending(Arr.SONARR, "t", both)
+            store.put_pending_import_row(Arr.SONARR, "a", a)
+            store.put_pending_import_row(Arr.SONARR, "b", b)
+            store.put_pending_import_row(Arr.SONARR, "c", c)
+            store.put_pending_import_row(Arr.SONARR, "t", both)
             # A claim with no series id, and a record with no claims: never matched.
-            store.put_pending(Arr.SONARR, "d", {"infohash": "d", "claims": [{"al_id": 4}]})
-            store.put_pending(Arr.SONARR, "e", {"infohash": "e"})
+            store.put_pending_import_row(Arr.SONARR, "d", {"infohash": "d", "claims": [{"al_id": 4}]})
+            store.put_pending_import_row(Arr.SONARR, "e", {"infohash": "e"})
 
             # Only records with a claim on the series come back. The integer series_id binds directly.
-            assert store.get_pending_for_series(Arr.SONARR, 5) == {"a": a, "b": b, "t": both}
-            assert store.get_pending_for_series(Arr.SONARR, 9) == {"c": c, "t": both}
-            assert store.get_pending_for_series(Arr.SONARR, 404) == {}
+            assert store.get_pending_import_rows_for_series(Arr.SONARR, 5) == {"a": a, "b": b, "t": both}
+            assert store.get_pending_import_rows_for_series(Arr.SONARR, 9) == {"c": c, "t": both}
+            assert store.get_pending_import_rows_for_series(Arr.SONARR, 404) == {}
 
             # Fresh per call: a drop is reflected immediately (no stale snapshot).
-            store.drop_pending(Arr.SONARR, "a")
-            assert store.get_pending_for_series(Arr.SONARR, 5) == {"b": b, "t": both}
+            store.drop_pending_import_row(Arr.SONARR, "a")
+            assert store.get_pending_import_rows_for_series(Arr.SONARR, 5) == {"b": b, "t": both}
 
 
 class TestGuardFacts:
@@ -1103,8 +1106,10 @@ class TestGuardFacts:
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.put_pending(Arr.SONARR, "hs", pending_import(infohash="hs", al_id=7).to_json())
-            store.put_pending(Arr.RADARR, "hr", pending_import(infohash="hr", al_id=7, series_id=0).to_json())
+            store.put_pending_import_row(Arr.SONARR, "hs", pending_import(infohash="hs", al_id=7).to_json())
+            store.put_pending_import_row(
+                Arr.RADARR, "hr", pending_import(infohash="hr", al_id=7, series_id=0).to_json()
+            )
             facts = OwnedAtGrab(
                 entry_groups=("SubsPlease", "Erai-raws"),
                 stale_groups=("HorribleSubs",),
@@ -1121,7 +1126,7 @@ class TestGuardFacts:
         # The fix's write semantic: a re-seed overwrites the entry's single row
         # whole, so no two reads can ever see divergent evidence for one entry.
         with _open(tmp_path) as store:
-            store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
             store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("Old",)))
             newest = OwnedAtGrab(entry_groups=("New",), stale_groups=("Old",))
             store.put_guards(Arr.SONARR, 7, newest)
@@ -1137,11 +1142,11 @@ class TestGuardFacts:
             store.put_guards(Arr.SONARR, 7, facts)
             assert store.get_guards(Arr.SONARR) == {}
 
-            store.put_pending(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
             assert store.get_guards(Arr.SONARR) == {7: facts}
 
             # The last record dropping re-orphans the row: stored, no longer read.
-            store.drop_pending(Arr.SONARR, "h")
+            store.drop_pending_import_row(Arr.SONARR, "h")
             assert store.get_guards(Arr.SONARR) == {}
             assert store.stats().guard_facts == 1
 
@@ -1155,7 +1160,7 @@ class TestGuardFacts:
             store.put_guards(Arr.SONARR, 8, eight)
             store.put_guards(Arr.SONARR, 9, OwnedAtGrab(entry_groups=("C",)))
             shared = pending_import(infohash="h", claims=(entry_claim(al_id=7), entry_claim(al_id=8, series_id=8)))
-            store.put_pending(Arr.SONARR, "h", shared.to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", shared.to_json())
 
             assert store.get_guards(Arr.SONARR) == {7: seven, 8: eight}
 
@@ -1276,20 +1281,20 @@ class TestRunLifecycle:
             )
             store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
             carried = _row(pending_import(infohash="aaa", al_id=7, series_id=5))
-            store.put_pending(Arr.SONARR, "aaa", carried)
+            store.put_pending_import_row(Arr.SONARR, "aaa", carried)
             store.save(preview=False)  # the run's commit, so the close's rollback has nothing to undo
 
         # Run 2: reopen -> cache hit, carried-over pending.
         with _open(tmp_path) as again:
             stamped_under = make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5))
-            assert cached_as_done(again.get_entry(Arr.SONARR, 7), stamped_under)
-            assert again.get_pending(Arr.SONARR) == {"aaa": carried}
+            assert cached_as_done(again.get_cached_title(Arr.SONARR, 7), stamped_under)
+            assert again.get_pending_import_rows(Arr.SONARR) == {"aaa": carried}
             # A completed import is dropped, and that drop persists across a save.
-            again.drop_pending(Arr.SONARR, "aaa")
+            again.drop_pending_import_row(Arr.SONARR, "aaa")
             again.save(preview=False)
 
         with _open(tmp_path) as final:
-            assert final.get_pending(Arr.SONARR) == {}
+            assert final.get_pending_import_rows(Arr.SONARR) == {}
 
 
 class TestMaintenance:
@@ -1392,7 +1397,7 @@ class TestCorruptStore:
 
         # Must NOT raise - fail open to a fresh store.
         with _open(tmp_path) as store:
-            assert store.get_entry(Arr.SONARR, 7) is None
+            assert store.get_cached_title(Arr.SONARR, 7) is None
             store.update_cached_title(Arr.SONARR, 7, {"name": "Recovered"})
             store.save(preview=False)
 

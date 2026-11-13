@@ -80,7 +80,7 @@ class TorrentNames:
             titled = lead.title
             episode_by_title = titled.ep_id if titled is not None and carriers[lead.words] == 1 else None
             # An extras word that belongs to the entry's titles or the name's episode title marks no extra.
-            shield = ground.entry_words | frozenset(titled.words if titled is not None else ())
+            shield = ground.all_name_words | frozenset(titled.words if titled is not None else ())
             extra = not readings[name].key_confirmed and is_extras_name(name, shield)
             by_name[name] = NameTitle(reads[name], episode_by_title, lead.leading_title_ids, extra)
         return cls(by_name, episode_titles)

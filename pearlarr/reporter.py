@@ -6,7 +6,7 @@ from typing import ClassVar
 from seadex import EntryRecord
 
 from .anilist_gateway import AniListGateway
-from .arr_run_state import ArrRunState, Title, resolve_entry_title
+from .arr_run_state import ArrRunState, Title, title_from_names
 from .cache import AbstractCacheStore
 from .config import Arr
 from .output import (
@@ -18,15 +18,13 @@ from .output import (
     CountsMark,
     CountsSource,
     Emit,
-    EntryFact,
-    EntryHeader,
     GrabAction,
     GrabFailed,
     GrabStatus,
+    GroupLabel,
     ItemStarted,
     NeedsActionCause,
     NeedsActionFact,
-    RecommendedGroup,
     ReleaseLabel,
     ReleaseSkipped,
     RunSummaryReady,
@@ -36,6 +34,8 @@ from .output import (
     Severity,
     StyledValue,
     TitleDetail,
+    TitleEvent,
+    TitleHeader,
     TitleRow,
     TitleScope,
 )
@@ -80,38 +80,38 @@ class RunReporter:
         self.cache_store = cache_store
         self.anilist = anilist
         # The entry block currently open, None between entries. Boundaries and sibling rows close it first.
-        self._entry: TitleScope | None = None
+        self._title_scope: TitleScope | None = None
 
     # --- entry-scope lifecycle + emit helpers --------------------------------
 
-    def _close_entry(self) -> None:
+    def _close_title_scope(self) -> None:
         """Close the open entry scope, if any (idempotent)."""
 
-        if self._entry is not None:
-            self._entry.close()
-            self._entry = None
+        if self._title_scope is not None:
+            self._title_scope.close()
+            self._title_scope = None
 
-    def _open_entry(self, header: EntryHeader) -> None:
+    def _open_title_scope(self, header: TitleHeader) -> None:
         """Close any open entry, then open a fresh one carrying its header."""
 
-        self._close_entry()
-        self._entry = self._scopes.entry(header)
+        self._close_title_scope()
+        self._title_scope = self._scopes.title(header)
 
-    def _block(self, header: EntryHeader) -> None:
+    def _block(self, header: TitleHeader) -> None:
         """Emit a self-contained entry block: open its scope, then close it."""
 
-        self._open_entry(header)
-        self._close_entry()
+        self._open_title_scope(header)
+        self._close_title_scope()
 
-    def _post(self, fact: EntryFact) -> None:
+    def _post(self, fact: TitleEvent) -> None:
         """Post an entry fact on the open scope, else emit it scope-free.
 
         The scope-free arm is load-bearing, not defensive: the titled-row paths post details after `_ledger`
         closed the entry.
         """
 
-        if self._entry is not None:
-            self._entry.post(fact)
+        if self._title_scope is not None:
+            self._title_scope.post(fact)
         else:
             self._emit(fact)
 
@@ -128,7 +128,7 @@ class RunReporter:
     def _ledger(self, state: TitleState, label: str) -> None:
         """Close any open entry, then emit a scope-free (col-0) ledger row."""
 
-        self._close_entry()
+        self._close_title_scope()
         self._emit(TitleRow(state, label))
 
     # --- run / item boundaries -----------------------------------------------
@@ -136,7 +136,7 @@ class RunReporter:
     def log_arr_start(self, arr: Arr, n_items: int) -> None:
         """Announce the start of the run (the per-arr scan-open boundary)."""
 
-        self._close_entry()
+        self._close_title_scope()
         self._emit(ScanStarted(arr=arr, total=n_items))
 
     def log_arr_item_start(
@@ -148,7 +148,7 @@ class RunReporter:
     ) -> None:
         """Announce the start of one Arr item (closes the previous item/entry)."""
 
-        self._close_entry()
+        self._close_title_scope()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
 
     # The two close boundaries carry no `log_` prefix: they state a boundary rather than report one, and no
@@ -156,13 +156,13 @@ class RunReporter:
     def scan_finished(self, arr: Arr) -> None:
         """Close the scan and its open entry (the per-arr scan-close boundary)."""
 
-        self._close_entry()
+        self._close_title_scope()
         self._emit(ScanFinished(arr=arr))
 
     def run_finished(self, arr: Arr) -> None:
         """Close the run (the leg-close boundary). bootstrap emits it on unwind."""
 
-        self._close_entry()
+        self._close_title_scope()
         self._emit(ArrRunFinished(arr=arr))
 
     # --- self-contained ledger rows ------------------------------------------
@@ -191,7 +191,7 @@ class RunReporter:
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(TitleState.IGNORED, resolve_entry_title(al_id, (), ctx.arr_title))
+        self._titled_row(TitleState.IGNORED, title_from_names(al_id, (), ctx.arr_title))
 
     def log_no_sd_entry(self, ctx: ArrRunState, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
@@ -204,8 +204,8 @@ class RunReporter:
 
         ctx.stats.seadex_unreachable += 1
         # The stored name wins: a prior run resolved it, so no lookup is needed.
-        entry = self.cache_store.get_entry(ctx.arr, al_id)
-        title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
+        cached = self.cache_store.get_cached_title(ctx.arr, al_id)
+        title = self._display_title(ctx, al_id, cached.name if cached is not None else None)
         self._titled_row(TitleState.SKIPPED, title)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
@@ -213,7 +213,7 @@ class RunReporter:
     def _display_title(self, ctx: ArrRunState, al_id: int, stored: str | None) -> Title:
         """The entry's label: the stored name, else AniList, else the arr's own title, else the id form."""
 
-        return resolve_entry_title(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
+        return title_from_names(al_id, (stored,) if stored else self.anilist.titles(al_id), ctx.arr_title)
 
     def _titled_row(self, state: TitleState, title: Title) -> None:
         """A ledger row for an id with no entry block, the id repeated only when the row shows a title."""
@@ -238,12 +238,12 @@ class RunReporter:
 
         # Remembered so grab_releases and the summary can attribute what they grab, and show the files we
         # mapped from the Arr even when a release's own file list can't be parsed.
-        ctx.per_title.current_title = title
-        ctx.per_title.current_url = sd_entry.url
-        ctx.per_title.current_coverage = coverage
+        ctx.per_title.title_name = title
+        ctx.per_title.entry_url = sd_entry.url
+        ctx.per_title.entry_coverage = coverage
 
-        self._open_entry(
-            EntryHeader(
+        self._open_title_scope(
+            TitleHeader(
                 TitleState.CHECKING,
                 title,
                 al_id=sd_entry.anilist_id,
@@ -253,47 +253,47 @@ class RunReporter:
             ),
         )
 
-    def log_cached_entry(self, ctx: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, ctx: ArrRunState, al_id: int) -> None:
         """Emit a cached entry's self-contained block, read from the cache record."""
 
         ctx.stats.unchanged += 1
 
-        entry = self.cache_store.get_entry(ctx.arr, al_id)
-        title = self._display_title(ctx, al_id, entry.name if entry is not None else None)
+        cached = self.cache_store.get_cached_title(ctx.arr, al_id)
+        title = self._display_title(ctx, al_id, cached.name if cached is not None else None)
 
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
-            EntryHeader(
+            TitleHeader(
                 TitleState.UNCHANGED,
                 title.name,
                 al_id=al_id,
-                coverage=entry.coverage if entry is not None else None,
-                url=entry.url if entry is not None else None,
+                coverage=cached.coverage if cached is not None else None,
+                url=cached.url if cached is not None else None,
             ),
         )
 
     # MISSING and ERRORED have no ledger vocabulary, so they render nothing inline.
-    _PENDING_ENTRY_STATES: ClassVar[dict[PendingImportState, TitleState]] = {
+    _TITLE_STATE_FOR_PENDING_IMPORT: ClassVar[dict[PendingImportState, TitleState]] = {
         PendingImportState.DOWNLOADING: TitleState.QUEUED,
         PendingImportState.DOWNLOADED: TitleState.DOWNLOADED,
         PendingImportState.IMPORTED: TitleState.IMPORTED,
     }
 
-    def log_pending_snapshot(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:
+    def log_pending_import(self, state: PendingImportState, pending: PendingImport, series_id: int) -> None:
         """Emit a carried-over pending record's self-contained block inline in the series block.
 
         The header reads the record's claim on `series_id`. Bumps no counter: the engine owns the
         drop and count bookkeeping.
         """
 
-        entry_state = self._PENDING_ENTRY_STATES.get(state)
-        if entry_state is None:
+        title_state = self._TITLE_STATE_FOR_PENDING_IMPORT.get(state)
+        if title_state is None:
             return
         claim = pending.claim_for(series_id)
         # Row style is renderer policy keyed on state, so the producer passes no style.
         self._block(
-            EntryHeader(
-                entry_state,
+            TitleHeader(
+                title_state,
                 pending.display_label,
                 coverage=claim.window_coverage,
                 url=claim.url,
@@ -346,9 +346,9 @@ class RunReporter:
 
         # Tag is a StrEnum, so sorting is by value.
         groups = tuple(
-            RecommendedGroup(name=srg, tags=tuple(sorted(map(str, srg_item.tags))))
-            for srg, srg_item in seadex_dict.items()
-            if any(u.to_grab for u in srg_item.releases.values())
+            GroupLabel(name=srg, tags=tuple(sorted(map(str, group_releases.tags))))
+            for srg, group_releases in seadex_dict.items()
+            if any(u.to_grab for u in group_releases.releases.values())
         )
 
         self._post(
@@ -366,7 +366,7 @@ class RunReporter:
 
         # Close the entry first: the cap line is a run-level fact and the capped title logs nothing further, so a
         # still-open entry frontier would misplace it under that title.
-        self._close_entry()
+        self._close_title_scope()
         self._emit(CapReached(cap=cap))
 
     # --- summary boundary ----------------------------------------------------
@@ -379,7 +379,7 @@ class RunReporter:
     def log_run_summary(self, ctx: ArrRunState, *, preview: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard."""
 
-        self._close_entry()
+        self._close_title_scope()
 
         # The mark carries the counter it was stamped on, so this diff can never read a different hub.
         since = ctx.counts_mark.since()

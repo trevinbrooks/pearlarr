@@ -106,7 +106,7 @@ class PendingImportState(StrEnum):
     """The torrent is gone from qBittorrent. The record is dropped."""
 
 
-def classify_pending(
+def classify_pending_import(
     wait_outcome: "TorrentStatus | None",
     all_done: bool,
 ) -> PendingImportState:
@@ -390,7 +390,7 @@ class Outcome(Enum):
 
 # Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, MISSING) leave the store,
 # so a wait pass folds every record it leaves resident through exactly this table.
-PENDING_STATE_FOR_OUTCOME: dict[Outcome, PendingImportState] = {
+PENDING_IMPORT_STATE_FOR_OUTCOME: dict[Outcome, PendingImportState] = {
     Outcome.STILL_DOWNLOADING: PendingImportState.DOWNLOADING,
     Outcome.DOWNLOAD_TIMED_OUT: PendingImportState.DOWNLOADING,
     Outcome.NOT_CHECKED: PendingImportState.DOWNLOADING,

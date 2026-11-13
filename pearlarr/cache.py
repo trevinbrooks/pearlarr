@@ -165,7 +165,7 @@ def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _PendingV4:
+class _PendingImportV4:
     """One v4 `pending_imports` row narrowed once: the per-entry record shape before the torrent-level fold."""
 
     al_id: int
@@ -188,7 +188,7 @@ class _PendingV4:
     awaiting_cleanup: bool
 
     @classmethod
-    def from_row(cls, raw: dict[str, Any]) -> "_PendingV4":
+    def from_row(cls, raw: dict[str, Any]) -> "_PendingImportV4":
         """Narrow a stored v4 dict with the defaults its reader applied."""
 
         return cls(
@@ -236,7 +236,7 @@ class _PendingV4:
         }
 
 
-def _fold_v4_rows(infohash: str, rows: Sequence[_PendingV4]) -> dict[str, Any]:
+def _fold_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str, Any]:
     """One torrent's v4 rows (`al_id` order) as the v5 record: the first row's facts, the maps unioned."""
 
     first = rows[0]
@@ -267,11 +267,11 @@ def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
 
     if not _has_column(conn, "pending_imports", "al_id"):
         return
-    grouped: dict[tuple[str, str], list[_PendingV4]] = {}
+    grouped: dict[tuple[str, str], list[_PendingImportV4]] = {}
     for arr, infohash, rec_json in conn.execute(
         "SELECT arr, LOWER(infohash), json(record) FROM pending_imports ORDER BY arr, LOWER(infohash), al_id",
     ):
-        grouped.setdefault((arr, infohash), []).append(_PendingV4.from_row(json.loads(rec_json)))
+        grouped.setdefault((arr, infohash), []).append(_PendingImportV4.from_row(json.loads(rec_json)))
     conn.execute(
         "CREATE TABLE pending_imports_v5 ("
         "arr TEXT NOT NULL, infohash TEXT NOT NULL, record BLOB NOT NULL, "
@@ -338,20 +338,20 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         hub_note(f"Upgraded cache database schema v{step} -> v{step + 1}")
 
 
-def record_payload(record: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
+def row_payload(row: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
     """The non-empty payload object a persisted record holds under `key`, else None."""
 
-    if not isinstance(record, dict):
+    if not isinstance(row, dict):
         return None
-    payload = record.get(key)
+    payload = row.get(key)
     return payload if is_json_obj(payload) and payload else None
 
 
-def stamp_is_fresh(record: dict[str, Any], cutoff: datetime) -> bool:
+def stamp_is_fresh(row: dict[str, Any], cutoff: datetime) -> bool:
     """True if the record's `fetched_at` parses and is at or after `cutoff`."""
 
     try:
-        return parse_stamp(record.get("fetched_at", "")) >= cutoff
+        return parse_stamp(row.get("fetched_at", "")) >= cutoff
     except (TypeError, ValueError):
         return False
 
@@ -397,7 +397,7 @@ class HistoryCheckpoint:
     """The per-arr autoincrement id, for strict `record.id > last_id` dedup across the re-query overlap."""
 
 
-_ENTRY_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
+_CACHED_TITLE_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
 
 
 class _JsonTable(NamedTuple):
@@ -450,7 +450,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def vouch_selection(self, arr: Arr, digest: str) -> None: ...
     @abstractmethod
-    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
+    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
     @abstractmethod
     def update_cached_title(self, arr: Arr, al_id: int, update: CachedTitleUpdate) -> None: ...
     @abstractmethod
@@ -460,25 +460,25 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None: ...
     @abstractmethod
-    def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None: ...
+    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None: ...
     @abstractmethod
     def evict_anilist_meta(self, cutoff: datetime) -> int: ...
     @abstractmethod
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None: ...
     @abstractmethod
-    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None: ...
+    def put_sonarr_parse(self, filename: str, row: dict[str, Any]) -> None: ...
     @abstractmethod
     def evict_sonarr_parse(self, cutoff: datetime) -> int: ...
     @abstractmethod
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]: ...
+    def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]: ...
     @abstractmethod
-    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None: ...
+    def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None: ...
     @abstractmethod
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]: ...
+    def get_pending_import_rows_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]: ...
     @abstractmethod
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
+    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None: ...
     @abstractmethod
-    def drop_pending(self, arr: Arr, infohash: str) -> None: ...
+    def drop_pending_import_row(self, arr: Arr, infohash: str) -> None: ...
     @abstractmethod
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool: ...
     @abstractmethod
@@ -488,7 +488,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None: ...
     @abstractmethod
-    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None: ...
+    def put_tvdb_orders(self, tvdb_id: int, row: CachedOrders) -> None: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -626,7 +626,7 @@ class CacheStore(AbstractCacheStore):
     # -- per-entry records (entries) ------------------------------------------
 
     @override
-    def get_entry(self, arr: Arr, al_id: int) -> CachedTitle | None:
+    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
         """An entry's row in one query, or None."""
 
         row = self._conn.execute(
@@ -654,11 +654,11 @@ class CacheStore(AbstractCacheStore):
         if isinstance(updated_at, datetime):
             details["updated_at"] = stamp_of(updated_at)
 
-        supplied = [c for c in _ENTRY_COLUMNS if c in details]
+        supplied = [c for c in _CACHED_TITLE_COLUMNS if c in details]
         if not supplied:
             return
         # One upsert, not INSERT-then-UPDATE: an existing row updates ONLY the supplied columns (partial merge).
-        # The names come from the closed _ENTRY_COLUMNS tuple, so the interpolation is safe.
+        # The names come from the closed _CACHED_TITLE_COLUMNS tuple, so the interpolation is safe.
         cols = ", ".join(supplied)
         placeholders = ", ".join("?" for _ in supplied)
         assignments = ", ".join(f"{c} = excluded.{c}" for c in supplied)
@@ -694,7 +694,7 @@ class CacheStore(AbstractCacheStore):
         ).fetchone()
         return json.loads(row[0]) if row else None
 
-    def _json_put(self, block: _JsonTable, key: tuple[int | str, ...], record: dict[str, Any]) -> None:
+    def _json_put(self, block: _JsonTable, key: tuple[int | str, ...], row: dict[str, Any]) -> None:
         """Upsert a record into a JSONB block (staged, persisted at a save point)."""
 
         cols = ", ".join(block.key_cols)
@@ -702,10 +702,10 @@ class CacheStore(AbstractCacheStore):
         self._conn.execute(
             f"INSERT INTO {block.table} ({cols}, record) VALUES ({placeholders}, jsonb(?)) "
             f"ON CONFLICT ({cols}) DO UPDATE SET record = excluded.record",
-            (*key, json.dumps(record)),
+            (*key, json.dumps(row)),
         )
 
-    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[str, dict[str, Any]]:
+    def _pending_import_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[str, dict[str, Any]]:
         """Deserialize a `SELECT infohash, json(record)` pending-imports query, keyed by infohash."""
 
         return {infohash: json.loads(rec_json) for infohash, rec_json in self._conn.execute(sql, params)}
@@ -737,10 +737,10 @@ class CacheStore(AbstractCacheStore):
         return self._json_get(_ANILIST_META, (al_id,))
 
     @override
-    def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
+    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None:
         """Upsert an AniList-meta record (staged, persisted at a save point)."""
 
-        self._json_put(_ANILIST_META, (al_id,), record)
+        self._json_put(_ANILIST_META, (al_id,), row)
 
     # -- Sonarr parse cache (JSONB + TTL) ------------------------------------
 
@@ -751,46 +751,46 @@ class CacheStore(AbstractCacheStore):
         return self._json_get(_SONARR_PARSE, (filename,))
 
     @override
-    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
+    def put_sonarr_parse(self, filename: str, row: dict[str, Any]) -> None:
         """Upsert a Sonarr parse record (staged, persisted at a save point)."""
 
-        self._json_put(_SONARR_PARSE, (filename,), record)
+        self._json_put(_SONARR_PARSE, (filename,), row)
 
     # -- pending imports -----------------------------------------------------
 
     @override
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
+    def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]:
         """All pending-import records for an arr, keyed by infohash (snapshot)."""
 
-        return self._pending_rows(
+        return self._pending_import_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
             (_arr_key(arr),),
         )
 
     @override
-    def get_pending_record(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
+    def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
         """One torrent's stored record, or None."""
 
         return self._json_get(_PENDING_IMPORTS, (_arr_key(arr), infohash))
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+    def get_pending_import_rows_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
         """The records with a claim on one Sonarr `series_id`, keyed by infohash."""
 
-        return self._pending_rows(
+        return self._pending_import_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND EXISTS ("
             "SELECT 1 FROM json_each(record, '$.claims') WHERE value ->> 'series_id' = ?)",
             (_arr_key(arr), series_id),
         )
 
     @override
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
+    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
         """Upsert one torrent's record (staged, persisted at a save point)."""
 
-        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
+        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), row)
 
     @override
-    def drop_pending(self, arr: Arr, infohash: str) -> None:
+    def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
         """Delete one torrent's record."""
 
         self._conn.execute("DELETE FROM pending_imports WHERE arr = ? AND infohash = ?", (_arr_key(arr), infohash))
@@ -834,10 +834,10 @@ class CacheStore(AbstractCacheStore):
         return None if raw is None else CachedOrders.from_json(raw)
 
     @override
-    def put_tvdb_orders(self, tvdb_id: int, record: CachedOrders) -> None:
+    def put_tvdb_orders(self, tvdb_id: int, row: CachedOrders) -> None:
         """Replace the series' stored orders (staged, persisted at a save point)."""
 
-        self._json_put(_TVDB_ORDERS, (tvdb_id,), record.to_json())
+        self._json_put(_TVDB_ORDERS, (tvdb_id,), row.to_json())
 
     # -- history checkpoints --------------------------------------------------
 

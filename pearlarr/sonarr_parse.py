@@ -35,7 +35,7 @@ class SonarrParseCache:
         self.sonarr = sonarr
         self._config = deps.config
         self.cache_store = deps.cache_store
-        self.records = deps.parse_cache_rows
+        self.rows = deps.parse_cache_rows
         self.logger = deps.logger
 
     def _parse_for(self, f: str, *, window: ParseFreshness) -> ParsedFileInfo | None:
@@ -44,7 +44,7 @@ class SonarrParseCache:
         None is a transport miss (not cached, re-queried on demand).
         """
 
-        info = self.records.read(f, window=window)
+        info = self.rows.read(f, window=window)
         if info is not None:
             return info
         info = self.sonarr.parse(f)
@@ -52,7 +52,7 @@ class SonarrParseCache:
             return None
         # Cache the result (unmatched parses are series-fp pinned so they
         # aren't re-parsed every run) before acting on it.
-        self.records.write(f, info, window=window)
+        self.rows.write(f, info, window=window)
         if not info.matched_episodes:
             self.logger.debug(f"Sonarr could not parse episode for {f}")
         return info
@@ -67,7 +67,7 @@ class SonarrParseCache:
         if workers <= 1:
             return
 
-        pending = [f for f in names if not self.records.is_fresh(f, window=window)]
+        pending = [f for f in names if not self.rows.is_fresh(f, window=window)]
 
         if len(pending) <= 1:
             return
@@ -86,7 +86,7 @@ class SonarrParseCache:
         for name, result in results:
             if result is None:  # request failed: don't cache a transient miss
                 continue
-            self.records.write(name, result, window=window)
+            self.rows.write(name, result, window=window)
 
     def parsed_files(
         self,
@@ -115,8 +115,8 @@ class SonarrParseCache:
         # Each url's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
         listed = {
             url: [(f, release.file_sizes[idx]) for idx, f in indexed_video_files(release.files)]
-            for release_group_item in seadex_dict.values()
-            for url, release in release_group_item.releases.items()
+            for group_releases in seadex_dict.values()
+            for url, release in group_releases.releases.items()
         }
         self._warm_parse_cache(list(dict.fromkeys(f for files in listed.values() for f, _ in files)), window=window)
         return {

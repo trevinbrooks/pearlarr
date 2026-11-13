@@ -37,7 +37,6 @@ from .events import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
@@ -55,6 +54,7 @@ from .events import (
     Severity,
     StarterConfigWritten,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     WaitFinished,
     WaitProgress,
@@ -122,7 +122,7 @@ class CliTextRenderer(Renderer):
                 | BootReady()
                 | ScanStarted()
                 | ItemStarted()
-                | EntryHeader()
+                | TitleHeader()
                 | TitleDetail()
                 | TitleRow()
                 | ReleaseSkipped()

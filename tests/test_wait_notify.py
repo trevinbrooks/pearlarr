@@ -308,7 +308,7 @@ def _notice(
     return GrabNotice(
         arr=arr,
         arr_title=arr_title,
-        entry_title=entry_title,
+        title_name=entry_title,
         entry=entry if entry is not None else make_entry_record(),
         thumb_url=thumb_url,
         banner_url=banner_url,

@@ -22,9 +22,9 @@ from .pairs import unambiguous
 from .pending_import import OwnedAtGrab, SizeMatchedEpisode
 from .releases import (
     EpisodeKey,
-    EpisodeRecord,
     GroupReleases,
     Release,
+    ReleaseEpisode,
     SeadexDict,
     normalize_rg,
     season_episode_key,
@@ -122,7 +122,7 @@ def _doubled_sizes(
 
 
 def get_episode_keys(
-    all_episodes: Iterable[EpisodeRecord],
+    all_episodes: Iterable[ReleaseEpisode],
 ) -> set[tuple[int | None, int | None]]:
     """Build the set of (season, episode) keys an episode list covers.
 
@@ -264,14 +264,14 @@ def episode_coverage(
 
     blanket: set[str] = set()
     by_key: dict[EpisodeKey, set[str]] = {}
-    for seadex_rg, seadex_rg_item in seadex_dict.items():
+    for seadex_rg, group_releases in seadex_dict.items():
         # Index by the normalized name so the membership checks in
         # `plan` are case- and dash-insensitive.
         seadex_rg_normalized = normalize_rg(seadex_rg)
         if seadex_rg_normalized is None:
             continue
 
-        for release in seadex_rg_item.releases.values():
+        for release in group_releases.releases.values():
             seadex_episodes = release.episodes
 
             # A url none of whose files placed on this entry proves nothing
@@ -376,7 +376,7 @@ def _episode_identities(
 
 
 @dataclass(frozen=True, slots=True)
-class _MatchContext:
+class _PlanContext:
     """Per-entry invariants for the URL match loop.
 
     Computed once per entry in `filter_by_release_group` and shared by both
@@ -406,7 +406,7 @@ class _MatchContext:
     debug_on: bool
 
 
-def _window_in_place(ctx: _MatchContext, seadex_norm: str | None, listed_sizes: Collection[int]) -> bool:
+def _window_in_place(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: Collection[int]) -> bool:
     """Whether every episode of the window holds the group's file at a listed size, or a covering pick's file."""
 
     for key in ctx.sonarr_by_key:
@@ -434,7 +434,7 @@ class _GroupVerdicts(NamedTuple):
     """Groups with an attributed file at a size no sized listing carries."""
 
 
-def _group_verdicts(seadex_dict: SeadexDict, ctx: _MatchContext) -> _GroupVerdicts:
+def _group_verdicts(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupVerdicts:
     """Judge each pick group's on-disk copy by size evidence: `(current, stale)` names.
 
     Disk-centric: a group is CURRENT only when every on-disk file attributed to
@@ -578,7 +578,7 @@ class GrabPlanner:
             )
         )
 
-        ctx = _MatchContext(
+        ctx = _PlanContext(
             # Pre-rendered so the un-normalized names stay out of the
             # matchers' decision scope (they feed only debug lines).
             arr_groups_label=arr_releases.groups_label() if debug_on else "",
@@ -592,22 +592,22 @@ class GrabPlanner:
             debug_on=debug_on,
         )
 
-        for seadex_rg, seadex_rg_item in seadex_dict.items():
+        for seadex_rg, group_releases in seadex_dict.items():
             self.logger.debug(f"Filtering for release group {seadex_rg}")
 
-            for release in seadex_rg_item.releases.values():
+            for release in group_releases.releases.values():
                 # A pack the placement refused is judged by what its window holds, never by its numbers.
                 if release.hand_import:
-                    self._match_url_refused(ctx, seadex_rg, release)
+                    self._plan_left_for_hand_import(ctx, seadex_rg, release)
                     continue
 
                 # A url none of whose files placed on this entry (numberless names, a
                 # held run, another season's pack) is judged by release group and size.
                 if not release.episodes:
-                    self._match_url_no_episodes(ctx, seadex_rg, release)
+                    self._plan_by_group_and_size(ctx, seadex_rg, release)
                     continue
 
-                self._match_url_episodes(ctx, seadex_rg, release)
+                self._plan_by_episodes(ctx, seadex_rg, release)
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring a public group)
@@ -631,9 +631,9 @@ class GrabPlanner:
             ),
         )
 
-    def _match_url_no_episodes(
+    def _plan_by_group_and_size(
         self,
-        ctx: _MatchContext,
+        ctx: _PlanContext,
         seadex_rg: str,
         release: Release,
     ) -> None:
@@ -649,7 +649,7 @@ class GrabPlanner:
         url = release.url
 
         # Match by the normalized name (like the per-episode path). The merged
-        # size index was built once per entry (see _MatchContext). A blank pick
+        # size index was built once per entry (see _PlanContext). A blank pick
         # name is no name - it can only match by untagged-copy ownership below.
         seadex_norm = normalize_rg(seadex_rg)
         if seadex_norm is not None and seadex_norm in ctx.arr_sizes_by_norm:
@@ -699,9 +699,9 @@ class GrabPlanner:
                 f"SeaDex group already overlaps them - not flagging {url}",
             )
 
-    def _match_url_episodes(
+    def _plan_by_episodes(
         self,
-        ctx: _MatchContext,
+        ctx: _PlanContext,
         seadex_rg: str,
         release: Release,
     ) -> None:
@@ -847,9 +847,9 @@ class GrabPlanner:
             )
             release.plan_grab(upgrade=True)
 
-    def _match_url_refused(
+    def _plan_left_for_hand_import(
         self,
-        ctx: _MatchContext,
+        ctx: _PlanContext,
         seadex_rg: str,
         release: Release,
     ) -> None:
@@ -961,14 +961,14 @@ class GrabPlanner:
         # release wrong (a stale size, or a file on too many episodes), so an
         # unflagged public group in this set is NOT owned and may be promoted in
         # its place. Without it, promotion would re-download owned content.
-        upgrade_pending = any(u.is_upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
+        any_upgrade = any(u.is_upgrade for rg in flagged for u in seadex_dict[rg].releases.values())
 
         if len(public_flagged) == 0:
             # Only an unflagged preferred public group in THIS same-files set
             # can be promoted in its place (a flagged one would have taken the
             # keeper branch below). A public group covering OTHER files never
             # stands in, so the search is per-set, never per-entry.
-            if upgrade_pending:
+            if any_upgrade:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
                     skips.notices.append(_promotion_notice(flagged, "private-only", promoted))
@@ -983,7 +983,7 @@ class GrabPlanner:
             # fallback must not replace: mark the stale hold for the summary row.
             # Invariant: a fallback substitute never replaces an owned copy of the
             # preferred private release - those sets hold and warn every run.
-            if upgrade_pending and any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names):
+            if any_upgrade and any(_is_fallback_group(seadex_dict[rg]) for rg in same_files.names):
                 reason = (
                     "private-only; your copy is outdated (its file size no longer matches the release) "
                     "and only a fallback covers it"
@@ -1012,7 +1012,7 @@ class GrabPlanner:
             # No fully-addable group: when the private flags are upgrades over
             # held files, an unflagged public group covering this set still grabs
             # cleanly, so promote it rather than degrading to an add-time refusal.
-            if upgrade_pending:
+            if any_upgrade:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
                     skips.notices.append(_promotion_notice(flagged, "remaining files private-only", promoted))
@@ -1124,12 +1124,12 @@ class GrabPlanner:
             for key in get_episode_keys(u.episodes)
         }
         for u in rescuable:
-            url_keys = get_episode_keys(u.episodes)
-            if url_keys <= survivor_keys:
+            release_keys = get_episode_keys(u.episodes)
+            if release_keys <= survivor_keys:
                 continue
             self.logger.debug(f"Re-flagging {u.url}: no surviving release covers its episodes")
             u.plan_grab()
-            survivor_keys |= url_keys
+            survivor_keys |= release_keys
 
     @staticmethod
     def get_any_to_download(seadex_dict: SeadexDict) -> bool:

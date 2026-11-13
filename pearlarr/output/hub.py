@@ -218,7 +218,7 @@ class OutputHub:
         self._counts = SeverityCounter()
         self._level = int(Severity.INFO)
         self._closed = False
-        self._pending: deque[tuple[Event, float]] = deque()
+        self._event_queue: deque[tuple[Event, float]] = deque()
         # The popped event currently fanning out (baton holder only): the unwind
         # flush re-dispatches it, so an interrupt mid-dispatch can't lose it.
         self._in_flight: tuple[Event, float] | None = None
@@ -288,7 +288,7 @@ class OutputHub:
                 if key in self._once_keys:
                     return
             when = self._clock()
-            if isinstance(event, Diagnostic) and len(self._pending) >= QUEUE_CAP:
+            if isinstance(event, Diagnostic) and len(self._event_queue) >= QUEUE_CAP:
                 # Shed ONLY diagnostics - the unbounded bridge-fed class. Structural/
                 # scan events are O(library) and can't themselves overflow the cap, so
                 # its memory bound survives while fold inputs are never lost. A
@@ -300,7 +300,7 @@ class OutputHub:
                     self._counts.record(severity_of(event))
                 if not self._overflowing:
                     self._overflowing = True
-                    self._pending.append((self._overflow_note(), when))
+                    self._event_queue.append((self._overflow_note(), when))
             else:
                 if key is not None:
                     self._once_keys.add(key)
@@ -308,7 +308,7 @@ class OutputHub:
                 # never inflate the issues row or suppress the capstone.
                 if not (isinstance(event, Diagnostic) and event.file_only):
                     self._counts.record(severity_of(event))
-                self._pending.append((event, when))
+                self._event_queue.append((event, when))
             if self._drainer is not None:
                 return
         self._drain()
@@ -358,13 +358,13 @@ class OutputHub:
         while True:
             with self._lock:
                 self._in_flight = None
-                if self._closed or not self._pending:
-                    self._pending.clear()
+                if self._closed or not self._event_queue:
+                    self._event_queue.clear()
                     self._overflowing = False
                     self._drainer = None
                     self._idle.notify_all()
                     return
-                event, when = self._pending.popleft()
+                event, when = self._event_queue.popleft()
                 self._in_flight = (event, when)
                 armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
             self._dispatch(event, when, armed)
@@ -505,8 +505,8 @@ class OutputHub:
                 self._closed = True
                 # Dispatching under the lock is safe here: file sinks never touch
                 # the Console lock (begin_run's rotation is the precedent).
-                while self._pending:
-                    event, when = self._pending.popleft()
+                while self._event_queue:
+                    event, when = self._event_queue.popleft()
                     for sub in file_subs:
                         if sub.strikes < self._strike_limit:
                             with contextlib.suppress(Exception):

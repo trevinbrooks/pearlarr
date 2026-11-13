@@ -28,7 +28,7 @@ class SkyHookGateway:
 
         self._client = client
         self._cache = cache_store
-        self._records: dict[int, CachedOrders | None] = {}
+        self._answers: dict[int, CachedOrders | None] = {}
 
     @property
     def unreachable(self) -> bool:
@@ -53,11 +53,11 @@ class SkyHookGateway:
         due = [facts for facts in series if self._due(facts, now)]
         written = 0
         for done, facts in enumerate(due, start=1):
-            record = self._fetch_series(facts, now)
-            if record is None:
+            answer = self._fetch_series(facts, now)
+            if answer is None:
                 break
-            self._cache.put_tvdb_orders(facts.tvdb_id, record)
-            self._records[facts.tvdb_id] = record
+            self._cache.put_tvdb_orders(facts.tvdb_id, answer)
+            self._answers[facts.tvdb_id] = answer
             self._cache.save(preview=preview)
             written += 1
             if progress is not None:
@@ -67,9 +67,9 @@ class SkyHookGateway:
     def cached_orders(self, tvdb_id: int) -> CachedOrders | None:
         """The series' stored record at any age, or None when it has never been fetched."""
 
-        if tvdb_id not in self._records:
-            self._records[tvdb_id] = self._cache.get_tvdb_orders(tvdb_id)
-        return self._records[tvdb_id]
+        if tvdb_id not in self._answers:
+            self._answers[tvdb_id] = self._cache.get_tvdb_orders(tvdb_id)
+        return self._answers[tvdb_id]
 
     def other_orders(self, tvdb_id: int) -> OrdersByName:
         """Every stored order of the series except official, empty orders left out."""
@@ -79,7 +79,7 @@ class SkyHookGateway:
             return NO_ORDERS
         return MappingProxyType({name: rows for name, rows in stored.orders.items() if name != AIRED_ORDER and rows})
 
-    def has_record(self, tvdb_id: int) -> bool:
+    def has_cached_answer(self, tvdb_id: int) -> bool:
         """Whether the series has a stored record, even one with no orders."""
 
         return self.cached_orders(tvdb_id) is not None

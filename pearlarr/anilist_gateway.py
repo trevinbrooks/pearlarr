@@ -28,7 +28,7 @@ from .anilist_client import (
     media_from_body,
     media_from_node,
 )
-from .cache import AbstractCacheStore, record_payload, stamp_is_fresh
+from .cache import AbstractCacheStore, row_payload, stamp_is_fresh
 from .output.console_text import count_noun
 from .progress import ProgressSink
 from .stamps import stamp_of
@@ -98,13 +98,13 @@ class AniListGateway:
 
         cutoff = datetime.now() - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         loaded = 0
-        for al_id, record in self._cache.iter_anilist_meta():
-            payload = record_payload(record, "data")
+        for al_id, answer in self._cache.iter_anilist_meta():
+            payload = row_payload(answer, "data")
             if payload is None:
                 continue
             self.al_cache[al_id] = payload
             # A stale record still serves: refetch, never drop. An unreadable stamp counts as aged.
-            if not stamp_is_fresh(record, cutoff) or lacks_air_dates(payload):
+            if not stamp_is_fresh(answer, cutoff) or lacks_air_dates(payload):
                 self._stale.add(al_id)
             loaded += 1
 

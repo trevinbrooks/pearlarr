@@ -225,9 +225,9 @@ class TestPrefetch:
 
         assert client.batch_calls == [[1, 2]]
         # Returned: rewritten with a fresh stamp, the count serves again.
-        record = store.get_anilist_meta(1)
-        assert record is not None
-        assert record["fetched_at"] >= before
+        answer = store.get_anilist_meta(1)
+        assert answer is not None
+        assert answer["fetched_at"] >= before
         assert gateway.episode_count(1) == 12
         # Not returned: still served from memory this run, but evicted from disk.
         assert store.get_anilist_meta(2) is None

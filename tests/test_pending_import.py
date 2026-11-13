@@ -540,13 +540,13 @@ class TestPendingImportRoundTrip:
         assert rebuilt.order_only == {}
 
     def test_a_row_without_hand_import_files_leaves_its_unplaced_listed_files_for_a_hand_import(self) -> None:
-        record = pending_import(
+        pending = pending_import(
             file_episode_map={"show - 01 [1080p].mkv": [101]},
             excluded_files=("Show - 03 [1080p].mkv",),
             seadex_files=("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv", "Show - 03 [1080p].mkv"),
             hand_import_files=("show - 02 [1080p].mkv",),
         )
-        raw = record.to_json()
+        raw = pending.to_json()
         del raw["hand_import_files"]
         raw["identified"] = dict[str, int]()
 

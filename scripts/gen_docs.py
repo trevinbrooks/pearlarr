@@ -663,7 +663,7 @@ _SPECIMEN_TIME = "2026-01-01T18:00:00+00:00"
 _SPECIMEN_EPOCH = 1_767_290_400.0
 
 _BOOT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.BOOT_STEP, serial=1)
-_ENTRY_SCOPE = ev.ScopeId(kind=ev.ScopeKind.ENTRY, serial=2)
+_TITLE_SCOPE = ev.ScopeId(kind=ev.ScopeKind.ENTRY, serial=2)
 _WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT_REGION, serial=3)
 
 
@@ -811,44 +811,44 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             message="AniList rate limited - waiting 30s before retrying",
             origin="anilist",
         ),
-        ev.ScopeOpened(scope=_ENTRY_SCOPE, label="Sousou no Frieren"),
-        ev.EntryHeader(
+        ev.ScopeOpened(scope=_TITLE_SCOPE, label="Sousou no Frieren"),
+        ev.TitleHeader(
             state=TitleState.CHECKING,
             title="Sousou no Frieren",
             al_id=154587,
             coverage="S01",
             url="https://seadex.moe/154587/",
-            scope=_ENTRY_SCOPE,
+            scope=_TITLE_SCOPE,
         ),
         ev.TitleDetail(
             label="status",
             value=ev.StyledValue("missing episodes"),
             tail="S01E27-E28",
-            scope=_ENTRY_SCOPE,
+            scope=_TITLE_SCOPE,
         ),
-        ev.TitleRow(state=TitleState.UNCHANGED, label="Sousou no Frieren", scope=_ENTRY_SCOPE),
+        ev.TitleRow(state=TitleState.UNCHANGED, label="Sousou no Frieren", scope=_TITLE_SCOPE),
         ev.ReleaseSkipped(
             group="Vodes",
             tracker="AnimeBytes",
             reason=ev.SkipReason.PRIVATE_ONLY,
             url="https://seadex.moe/108/",
-            scope=_ENTRY_SCOPE,
+            scope=_TITLE_SCOPE,
         ),
         ev.GrabFailed(
             group="SubsPlease",
             url="https://nyaa.si/view/1734567",
             error="qBittorrent rejected the torrent",
-            scope=_ENTRY_SCOPE,
+            scope=_TITLE_SCOPE,
         ),
         ev.GrabAction(
             status=ev.GrabStatus.ADDING,
-            groups=(ev.RecommendedGroup(name="SubsPlease", tags=("best",)),),
+            groups=(ev.GroupLabel(name="SubsPlease", tags=("best",)),),
             added=(ev.ReleaseLabel(name="[SubsPlease] Sousou no Frieren", group="SubsPlease"),),
             in_qbit=(),
             waiting_to_import=True,
-            scope=_ENTRY_SCOPE,
+            scope=_TITLE_SCOPE,
         ),
-        ev.ScopeClosed(scope=_ENTRY_SCOPE),
+        ev.ScopeClosed(scope=_TITLE_SCOPE),
         ev.CapReached(cap=25),
         ev.ScanFinished(arr=Arr.SONARR),
         ev.RunSummaryReady(summary=summary),
@@ -863,7 +863,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             scope=_WAIT_SCOPE,
         ),
         ev.WaitFinished(
-            imported=1, deferred=0, failed=0, elapsed_s=430.0, pending=0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE
+            imported=1, left=0, failed=0, elapsed_s=430.0, in_progress=0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE
         ),
         ev.ScopeClosed(scope=_WAIT_SCOPE),
         ev.ArrRunFinished(arr=Arr.SONARR),

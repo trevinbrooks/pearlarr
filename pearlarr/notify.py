@@ -101,7 +101,7 @@ class GrabNotice:
 
     arr: Arr
     arr_title: str
-    entry_title: str
+    title_name: str
     """The entry's display title (AniList's when it resolved), the embed's title."""
     entry: EntryRecord
     """The SeaDex entry whole (url / notes / comparisons / incomplete flag)."""
@@ -131,7 +131,7 @@ def _md_escape(text: str) -> str:
     return text
 
 
-def _arr_title_redundant(arr_title: str, entry_title: str) -> bool:
+def _arr_title_redundant(arr_title: str, title_name: str) -> bool:
     """True when the Arr title repeats what the entry title already says.
 
     The two are near-duplicates for most entries: identical up to case or
@@ -144,8 +144,8 @@ def _arr_title_redundant(arr_title: str, entry_title: str) -> bool:
     def norm(title: str) -> str:
         return title.replace("’", "'").replace("‘", "'").casefold().strip()
 
-    arr, entry = norm(arr_title), norm(entry_title)
-    return entry.startswith(arr) and (len(entry) == len(arr) or not entry[len(arr)].isalnum())
+    arr, title = norm(arr_title), norm(title_name)
+    return title.startswith(arr) and (len(title) == len(arr) or not title[len(arr)].isalnum())
 
 
 def _notes_block(notes: str) -> str:
@@ -178,7 +178,7 @@ def _grab_notes(notice: GrabNotice) -> str:
     """
 
     parts: list[str] = []
-    if not _arr_title_redundant(notice.arr_title, notice.entry_title):
+    if not _arr_title_redundant(notice.arr_title, notice.title_name):
         parts.append(f"-# {_md_escape(notice.arr_title)}")
     if notes := _notes_block(notice.entry.notes):
         parts.append(notes)
@@ -231,12 +231,12 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
 
     outcome_by_group = {r.group: r.outcome for r in notice.results}
     blocks: list[_GroupBlock] = []
-    for srg, srg_item in notice.seadex_dict.items():
-        release_lines = [_release_line(u) for u in srg_item.releases.values() if u.to_grab]
+    for srg, group_releases in notice.seadex_dict.items():
+        release_lines = [_release_line(u) for u in group_releases.releases.values() if u.to_grab]
         if not release_lines:
             continue
-        if srg_item.tags:
-            release_lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
+        if group_releases.tags:
+            release_lines.append("-# " + " · ".join(sorted(str(tag) for tag in group_releases.tags)))
 
         add_outcome = outcome_by_group.get(srg)
         if add_outcome is AddStatus.ADDED:
@@ -287,7 +287,7 @@ def _grab_embed(notice: GrabNotice) -> DiscordEmbed:
         fields.append(EmbedField(name="", value=notes))
     return DiscordEmbed(
         author_name=f"{notice.arr.capitalize()} · SeaDex grab",
-        title=notice.entry_title,
+        title=notice.title_name,
         color=COLOR_GRAB,
         url=notice.entry.url or None,
         description=description,

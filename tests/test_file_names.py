@@ -692,7 +692,7 @@ class TestTitledRead:
         ground = TitleNameWords.of(TitleNames("Show Town", ("Machi Show",)))
 
         assert ground.series_words == {"show", "town"}
-        assert ground.entry_words == {"show", "town", "machi"}
+        assert ground.all_name_words == {"show", "town", "machi"}
 
     def test_the_titles_numbers_leave_the_bare_numbers_only(self) -> None:
         assert _read("Tinman 009 - 009.mkv", "Tinman 009") == (9, (9,))

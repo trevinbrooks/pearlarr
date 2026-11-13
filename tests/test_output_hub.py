@@ -700,7 +700,7 @@ def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
     hub = OutputHub([survivor])
     other = threading.Thread(target=lambda: None)
     with hub._lock:
-        hub._pending.append((_EVENT, 0.0))
+        hub._event_queue.append((_EVENT, 0.0))
         hub._drainer = other
 
     hub._drain()

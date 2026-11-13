@@ -114,7 +114,7 @@ class TestWaitCockpitLifecycle:
         live = renderer._wait._live
         assert live is not None and live.is_started  # the cockpit is still active
 
-        _feed(renderer, WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=300, pending=0, kind=WaitKind.MONITOR))
+        _feed(renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.MONITOR))
         out = _plain(stream)
         assert "✔ imported    Show A  (8 files · 5m 00s)" in out  # graduated to durable scrollback
         assert "wait complete · 1 imported · 5m 00s" in out
@@ -128,7 +128,7 @@ class TestWaitCockpitLifecycle:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=150, pending=0, kind=WaitKind.MONITOR))
+        _feed(renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=150, in_progress=0, kind=WaitKind.MONITOR))
         assert renderer._wait._live is None and not live.is_started
         assert "wait complete · 1 imported · 2m 30s" in _plain(stream)
 
@@ -139,7 +139,7 @@ class TestWaitCockpitLifecycle:
             renderer,
             WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
-            WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=120, pending=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=0, left=0, failed=0, elapsed_s=120, in_progress=0, kind=WaitKind.MONITOR),
         )
         assert renderer._wait._live is None
         assert "wait complete" not in _plain(stream)
@@ -186,7 +186,7 @@ class TestNonLiveDigest:
             _progress(_dl("Show"), elapsed=0),
             _progress(_dl("Show"), elapsed=300),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
-            WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60, pending=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.MONITOR),
         )
         assert _plain(stream).strip() == ""
         assert renderer._wait._live is None
@@ -281,7 +281,7 @@ class TestFrontierTeardown:
         _feed(
             renderer,
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
-            WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=60, pending=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.MONITOR),
         )
         assert renderer._wait._live is None
         out = _plain(stream)
@@ -296,7 +296,7 @@ class TestFrontierTeardown:
             WaitStarted(total=1, pulse_s=300.0, kind=WaitKind.MONITOR),
             _progress(_dl("Show"), elapsed=0),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=1),
-            WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1, pending=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=1, in_progress=0, kind=WaitKind.MONITOR),
         )
         assert renderer._wait._live is None
 

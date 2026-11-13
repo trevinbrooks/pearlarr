@@ -250,10 +250,10 @@ class TestHubWaitViewNarration:
         assert recording.of_type(WaitFinished) == [
             WaitFinished(
                 imported=1,
-                deferred=1,
+                left=1,
                 failed=1,
                 elapsed_s=200.0,
-                pending=1,
+                in_progress=1,
                 kind=WaitKind.MONITOR,
                 scope=opened.scope,
             ),
@@ -288,7 +288,7 @@ class TestHubWaitViewNarration:
         (opened,) = recording.of_type(ScopeOpened)
         assert recording.of_type(WaitFinished) == [
             WaitFinished(
-                imported=0, deferred=0, failed=0, elapsed_s=42.0, pending=0, kind=WaitKind.MONITOR, scope=opened.scope
+                imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR, scope=opened.scope
             ),
         ]
         assert len(recording.of_type(ScopeClosed)) == 1

@@ -77,7 +77,7 @@ class GrabRequest:
     al_id: int
     arr_title: str
     """The arr item's own title (the notification's byline when it adds information)."""
-    entry_title: str
+    title_name: str
     """The entry's display title: AniList's, else the arr's, else the id form."""
     entry: EntryRecord
     """The SeaDex entry whole: the notification renders its url, notes, comparison links, and incomplete flag."""
@@ -117,7 +117,7 @@ class GrabPipeline:
         *,
         deps: "ArrRunDeps",
         ctx: ArrRunState,
-        records: PendingImportStore,
+        pending_imports: PendingImportStore,
     ) -> None:
         self._config = deps.config
         self._planner = deps.planner
@@ -129,7 +129,7 @@ class GrabPipeline:
         self.logger = deps.logger
         self.qbit = deps.qbit
         # The hub's record seam, which the hub binds each run.
-        self._records = records
+        self._pending_imports = pending_imports
         # Rebound each run by bind_arr_run to the same ctx the engine holds, so the grab bookkeeping stays in sync.
         self._ctx = ctx
 
@@ -164,15 +164,15 @@ class GrabPipeline:
         n_torrents_added = 0
         results: list[GrabResult] = []
 
-        for srg, srg_item in req.seadex_dict.items():
-            for release in srg_item.releases.values():
-                if not self._screen_url(srg, release):
+        for srg, group_releases in req.seadex_dict.items():
+            for release in group_releases.releases.values():
+                if not self._may_grab(srg, release):
                     continue
                 if self._cap_reached():
                     self._hold_capped(release, req)
                     continue
 
-                add_result = self._add_one_url(srg, release, req)
+                add_result = self._grab_release(srg, release, req)
                 if add_result is None:
                     continue
 
@@ -183,7 +183,7 @@ class GrabPipeline:
 
         return n_torrents_added, results
 
-    def _screen_url(self, srg: str, release: Release) -> bool:
+    def _may_grab(self, srg: str, release: Release) -> bool:
         """Whether a SeaDex url may be grabbed: flagged, public, on a selected tracker with a parser, and not held.
 
         A refused url posts its skip line and flags the title.
@@ -237,9 +237,9 @@ class GrabPipeline:
             self._ctx.stats.held_by_cap += 1
         seed = self._seed_for(release, req)
         if seed is not None and (joined := seed.joined()) is not None:
-            self._records.save_with_claim(joined, seed.claim)
+            self._pending_imports.save_with_claim(joined, seed.claim)
 
-    def _add_one_url(
+    def _grab_release(
         self,
         srg: str,
         release: Release,
@@ -261,12 +261,12 @@ class GrabPipeline:
         if result.outcome is AddStatus.ADDED:
             # Prefer the release's own parsed file list, falling back to the entry-level coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
-            coverage_str = _coverage.coverage_string(release.episodes) or self._ctx.per_title.current_coverage
+            coverage_str = _coverage.coverage_string(release.episodes) or self._ctx.per_title.entry_coverage
             self._ctx.stats.added.append(
                 GrabbedRow(
-                    title=self._ctx.per_title.current_title,
+                    title=self._ctx.per_title.title_name,
                     coverage=coverage_str,
-                    url=self._ctx.per_title.current_url,
+                    url=self._ctx.per_title.entry_url,
                     name=result.name,
                     group=srg,
                 ),
@@ -298,21 +298,21 @@ class GrabPipeline:
         if seed is None:
             return
         if result.outcome is AddStatus.ADDED:
-            self._records.insert_fresh(seed.record_at(now_stamp(), fresh=True), seed.claim)
+            self._pending_imports.insert_fresh(seed.pending_import_at(now_stamp(), fresh=True), seed.claim)
             return
-        record = seed.record_at(_reacquire_stamp(result.added_on), fresh=False)
-        self._records.save_with_claim(record, seed.claim)
-        if record.infohash not in self._ctx.grabbed_this_run:
-            self._ctx.reacquired_keys.add(record.infohash)
+        pending = seed.pending_import_at(_reacquire_stamp(result.added_on), fresh=False)
+        self._pending_imports.save_with_claim(pending, seed.claim)
+        if pending.infohash not in self._ctx.grabbed_this_run:
+            self._ctx.reacquired_keys.add(pending.infohash)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRow:
         """A needs-action record for the current title."""
 
         return NeedsActionRow(
-            title=self._ctx.per_title.current_title,
-            coverage=self._ctx.per_title.current_coverage,
+            title=self._ctx.per_title.title_name,
+            coverage=self._ctx.per_title.entry_coverage,
             group=", ".join(dict.fromkeys(groups)),
-            url=self._ctx.per_title.current_url,
+            url=self._ctx.per_title.entry_url,
             reason=reason,
             kind=kind,
         )
@@ -486,7 +486,7 @@ class GrabPipeline:
                 GrabNotice(
                     arr=self._ctx.arr,
                     arr_title=req.arr_title,
-                    entry_title=req.entry_title,
+                    title_name=req.title_name,
                     entry=req.entry,
                     thumb_url=anilist_thumb,
                     banner_url=anilist_banner,

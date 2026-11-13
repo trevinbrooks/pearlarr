@@ -79,7 +79,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
 
     # hashA carries TWO claims spanning two series: the series filter and the guard
     # join must both walk every claim, in the fake exactly as in SQLite's json_each.
-    store.put_pending(
+    store.put_pending_import_row(
         Arr.SONARR,
         "hashA",
         pending_import(
@@ -87,10 +87,14 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             claims=(entry_claim(al_id=7, series_id=7, title="A"), entry_claim(al_id=9, series_id=8, title="A2")),
         ).to_json(),
     )
-    store.put_pending(Arr.SONARR, "hashB", pending_import(infohash="hashB", al_id=8, series_id=8, title="B").to_json())
+    store.put_pending_import_row(
+        Arr.SONARR, "hashB", pending_import(infohash="hashB", al_id=8, series_id=8, title="B").to_json()
+    )
     # A Radarr record on hashA, so `other_arr_holds` answers differently per arr: a
     # fake ignoring the arr narrowing cannot match both.
-    store.put_pending(Arr.RADARR, "hashA", pending_import(infohash="hashA", al_id=7, series_id=0, title="AR").to_json())
+    store.put_pending_import_row(
+        Arr.RADARR, "hashA", pending_import(infohash="hashA", al_id=7, series_id=0, title="AR").to_json()
+    )
 
     # Guard rows: a same-id re-put (latest wins, al 7 has a live claim), al 9 live
     # only through hashA's second claim, plus an orphan sonarr row and a radarr row
@@ -122,22 +126,22 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
 
     stats = store.stats()
     return {
-        "entry_s7": store.get_entry(Arr.SONARR, 7),
-        "entry_r99": store.get_entry(Arr.RADARR, 99),
-        "entry_missing": store.get_entry(Arr.SONARR, 4242),
-        "entry_cleared": store.get_entry(Arr.SONARR, 8),
-        "entry_wrong_arr": store.get_entry(Arr.RADARR, 7),
+        "entry_s7": store.get_cached_title(Arr.SONARR, 7),
+        "entry_r99": store.get_cached_title(Arr.RADARR, 99),
+        "entry_missing": store.get_cached_title(Arr.SONARR, 4242),
+        "entry_cleared": store.get_cached_title(Arr.SONARR, 8),
+        "entry_wrong_arr": store.get_cached_title(Arr.RADARR, 7),
         "anilist_7": store.get_anilist_meta(7),
         "anilist_all": dict(store.iter_anilist_meta()),
         "sonarr_parse_fresh": store.get_sonarr_parse("fresh.mkv"),
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
-        "pending_sonarr": store.get_pending(Arr.SONARR),
-        "pending_record_hasha": store.get_pending_record(Arr.SONARR, "hashA"),
-        "pending_record_wrong_arr": store.get_pending_record(Arr.RADARR, "hashB"),
-        "pending_record_missing": store.get_pending_record(Arr.SONARR, "nope"),
-        "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
-        "pending_series8": store.get_pending_for_series(Arr.SONARR, 8),
-        "pending_series_missing": store.get_pending_for_series(Arr.SONARR, 4242),
+        "pending_sonarr": store.get_pending_import_rows(Arr.SONARR),
+        "pending_record_hasha": store.get_pending_import_row(Arr.SONARR, "hashA"),
+        "pending_record_wrong_arr": store.get_pending_import_row(Arr.RADARR, "hashB"),
+        "pending_record_missing": store.get_pending_import_row(Arr.SONARR, "nope"),
+        "pending_series7": store.get_pending_import_rows_for_series(Arr.SONARR, 7),
+        "pending_series8": store.get_pending_import_rows_for_series(Arr.SONARR, 8),
+        "pending_series_missing": store.get_pending_import_rows_for_series(Arr.SONARR, 4242),
         "other_arr_sonarr": store.other_arr_holds(Arr.SONARR, "hashA"),
         "other_arr_radarr": store.other_arr_holds(Arr.RADARR, "hashA"),
         "other_arr_own_only": store.other_arr_holds(Arr.SONARR, "hashB"),
@@ -187,17 +191,17 @@ def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
 
 
 # The three blocks the real store round-trips through JSON on both ends. Each carries
-# a claim on `_ISO_SID` so the pending block's get_pending_for_series filter matches the record.
+# a claim on `_ISO_SID` so the pending block's get_pending_import_rows_for_series filter matches the record.
 # guard_facts is deliberately absent: the scribble check needs raw mutable dicts and
 # `OwnedAtGrab` is frozen (isolation by construction), so `_apply_ops` covers it instead.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
     _JsonbBlock(
         "pending",
-        put=lambda s, r: s.put_pending(Arr.SONARR, _ISO_KEY, r),
-        get=lambda s: s.get_pending_record(Arr.SONARR, _ISO_KEY),
+        put=lambda s, r: s.put_pending_import_row(Arr.SONARR, _ISO_KEY, r),
+        get=lambda s: s.get_pending_import_row(Arr.SONARR, _ISO_KEY),
         iter_records=lambda s: [
-            *s.get_pending(Arr.SONARR).values(),
-            *s.get_pending_for_series(Arr.SONARR, _ISO_SID).values(),
+            *s.get_pending_import_rows(Arr.SONARR).values(),
+            *s.get_pending_import_rows_for_series(Arr.SONARR, _ISO_SID).values(),
         ],
     ),
     _JsonbBlock(
@@ -242,11 +246,11 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
     Mutating the dict handed to `put` afterwards, or any dict returned by `get` / `iter`, must not reach the store.
     """
 
-    record: dict[str, Any] = {"claims": [{"series_id": _ISO_SID}], "title": "orig", "nested": {"k": "v"}}
-    block.put(store, record)
+    row: dict[str, Any] = {"claims": [{"series_id": _ISO_SID}], "title": "orig", "nested": {"k": "v"}}
+    block.put(store, row)
 
     # write side: mutate the caller's own dict after the put.
-    _scribble(record, "leaked-via-put")
+    _scribble(row, "leaked-via-put")
     after_put = _assert_pristine(block.get(store), block.name)
 
     # read side (get): mutate the returned copy.
@@ -283,8 +287,8 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
         assert fake.evict_anilist_meta(_CUTOFF) == real.evict_anilist_meta(_CUTOFF) == 2
         assert fake.evict_sonarr_parse(_CUTOFF) == real.evict_sonarr_parse(_CUTOFF) == 1
 
-        fake.drop_pending(Arr.SONARR, "hashA")
-        real.drop_pending(Arr.SONARR, "hashA")
+        fake.drop_pending_import_row(Arr.SONARR, "hashA")
+        real.drop_pending_import_row(Arr.SONARR, "hashA")
 
         # save is a no-op for the fake and stages+promotes for the real. Neither must
         # disturb the observable reads that follow.

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from pearlarr.boundary import Json
 
 # The Frieren entry (AniList 154587): PMR is the SeaDex best, LostYears the alternative.
-_ENTRY_ID = 154587
+_FRIEREN_AL_ID = 154587
 _BEST_GROUP = "PMR"
 _ALT_GROUP = "LostYears"
 
@@ -61,7 +61,7 @@ _VIEWER = "https://discohook.app/viewer"
 def _notice(groups: Sequence[str]) -> GrabNotice:
     """The sample grab notice, restricted to `groups` (each one grabbed cleanly)."""
 
-    entry = SeaDexEntry().from_id(_ENTRY_ID)
+    entry = SeaDexEntry().from_id(_FRIEREN_AL_ID)
     picks = [t for t in entry.torrents if t.tracker is Tracker.NYAA and t.release_group in groups]
     seadex_dict = {
         t.release_group: GroupReleases(
@@ -82,7 +82,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
     return GrabNotice(
         arr=Arr.SONARR,
         arr_title="Frieren: Beyond Journey's End",  # Sonarr's title (verified via Skyhook)
-        entry_title="Frieren: Beyond Journey’s End",  # AniList english title (what the gateway returns)
+        title_name="Frieren: Beyond Journey’s End",  # AniList english title (what the gateway returns)
         entry=entry,
         # AniList cover + banner for 154587, verified live.
         thumb_url="https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx154587-qQTzQnEJJ3oB.jpg",

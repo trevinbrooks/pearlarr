@@ -21,7 +21,7 @@ from .anilist_gateway import AniListGateway
 from .arr_categories import ArrCategoryResolver, CategorySources
 from .arr_http import ARR_REQUEST_TIMEOUT_S, ArrHttp, make_arr_client
 from .arr_models import ArrFiles, SonarrEpisode
-from .arr_run_state import ArrRunState, PerTitleState, Title, is_dry_run, resolve_entry_title
+from .arr_run_state import ArrRunState, PerTitleState, Title, is_dry_run, title_from_names
 from .boot_flow import BootFlow
 from .cache import AbstractCacheStore, CachedTitle, CachedTitleUpdate, CacheStore
 from .clock import Clock, SystemClock
@@ -326,7 +326,7 @@ class ArrRunServices:
         self.arr = arr
 
         # Whether matching preferences moved since a prior full pass vouched for
-        # this arr's cached verdicts. `_skippable_entry` then re-checks every
+        # this arr's cached verdicts. `_unchanged_cached_title` then re-checks every
         # cached entry, and the run loop re-vouches once a full sweep finishes.
         self._selection_stale = deps.cache_store.selection_changed(arr, deps.config.selection_hash())
 
@@ -347,9 +347,9 @@ class ArrRunServices:
         # placeholder ctx. bind_arr_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
         # The one pending-record seam, shared by the grab pipeline, the strategies, and the wait manager.
-        self._records = PendingImportStore(deps.cache_store)
-        self._records.bind_arr_run(self._ctx)
-        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, records=self._records)
+        self._pending_imports = PendingImportStore(deps.cache_store)
+        self._pending_imports.bind_arr_run(self._ctx)
+        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx, pending_imports=self._pending_imports)
 
     @property
     def ctx(self) -> ArrRunState:
@@ -385,17 +385,17 @@ class ArrRunServices:
         self._dirty_al_ids.clear()
         self._filter.bind_arr_run(state)
         self._grab_pipeline.bind_arr_run(state)
-        self._records.bind_arr_run(state)
+        self._pending_imports.bind_arr_run(state)
         # Radarr imports its own downloads, and so does Sonarr with the wait off.
         self._torrents.bind_arr_run(
             pearlarr_imports=self.arr is Arr.SONARR and state.import_wait_mode is not ImportWaitMode.OFF
         )
 
     @property
-    def records(self) -> PendingImportStore:
+    def pending_imports(self) -> PendingImportStore:
         """The one pending-record seam bound to the current run, shared by the strategies and the wait manager."""
 
-        return self._records
+        return self._pending_imports
 
     def title_needs_check(self, al_id: int) -> bool:
         """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip gates.
@@ -410,9 +410,9 @@ class ArrRunServices:
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
         if isinstance(sd_entry, SeaDexMiss):
             return False
-        return self._skippable_entry(al_id, sd_entry) is None
+        return self._unchanged_cached_title(al_id, sd_entry) is None
 
-    def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
+    def _unchanged_cached_title(self, al_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
         """The cached row iff the per-id loop may skip this id. None re-processes.
 
         The single decision BOTH cache gates share: `al_id_needs_scan` picks
@@ -427,12 +427,12 @@ class ArrRunServices:
 
         if self._config.seadex.ignore_seadex_update_times or self._selection_stale or al_id in self._dirty_al_ids:
             return None
-        entry = self.cache_store.get_entry(self._ctx.arr, al_id)
-        if entry is None or not entry.cached_under(sd_entry.updated_at):
+        cached = self.cache_store.get_cached_title(self._ctx.arr, al_id)
+        if cached is None or not cached.cached_under(sd_entry.updated_at):
             return None
-        if entry.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
+        if cached.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
             return None
-        return entry
+        return cached
 
     def mark_dirty(self, al_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last pass.
@@ -477,7 +477,7 @@ class ArrRunServices:
         `new_cache_details` writes the result back. `log_al_title` opens the block with it.
         """
 
-        return resolve_entry_title(al_id, self._anilist.titles(al_id), self._ctx.arr_title)
+        return title_from_names(al_id, self._anilist.titles(al_id), self._ctx.arr_title)
 
     def new_cache_details(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The seed record a processed id accumulates into.
@@ -628,8 +628,8 @@ class ArrRunServices:
         one-time url backfill, never on the common already-backfilled path.
         """
 
-        entry = self._skippable_entry(al_id, sd_entry)
-        if entry is None:
+        cached = self._unchanged_cached_title(al_id, sd_entry)
+        if cached is None:
             # A forced re-check finds the row already stamped with SeaDex's current update time. Left so, a check
             # that ends in a failed grab, a hold or an error would leave the title skipped as cached from then on.
             self.cache_store.uncache_title(self._ctx.arr, al_id)
@@ -638,14 +638,14 @@ class ArrRunServices:
         # One-time backfills merged into a single write: the url + coverage an older record lacks,
         # and the name a record written while AniList was unreachable lacks.
         backfill: CachedTitleUpdate = {}
-        if not entry.url:
+        if not cached.url:
             backfill["url"] = sd_entry.url
             backfill["coverage"] = coverage()
-        if not entry.name and (name := self.resolve_title(al_id).anilist):
+        if not cached.name and (name := self.resolve_title(al_id).anilist):
             backfill["name"] = name
         if backfill:
             self._update_cache(al_id=al_id, update=backfill)
-        self._reporter.log_cached_entry(self._ctx, al_id)
+        self._reporter.log_cached_title(self._ctx, al_id)
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> None:

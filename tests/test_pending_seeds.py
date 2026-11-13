@@ -27,7 +27,7 @@ from pearlarr.grab_placement import (
 from pearlarr.parse_cache import parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
-from pearlarr.releases import EpisodeRecord, SeadexDict
+from pearlarr.releases import ReleaseEpisode, SeadexDict
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import now_stamp
 
@@ -77,23 +77,23 @@ def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrStrategy:
 def _build(
     strat: SonarrStrategy,
     seadex_dict: SeadexDict,
-    entry: TitleFacts,
+    facts: TitleFacts,
     *,
     scope: GrabbingTitle | None = None,
 ) -> dict[str, PendingImportUpdate]:
     """Place the entry's files under `scope` (by default the strat's whole series), then fold the seeds."""
 
-    series = strat._episodes.cached_episodes(entry.series_id) or []
+    series = strat._episodes.cached_episodes(facts.series_id) or []
     scope = scope or _scope(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_hash="")
     placed = EntryPlacements.place(scope, files, dict.fromkeys(files, new_torrent(scope)))
-    return build_pending_seeds(seadex_dict, placed, entry)
+    return build_pending_seeds(seadex_dict, placed, facts)
 
 
 def _record(seed: PendingImportUpdate) -> PendingImport:
     """The seed persisted at the grab stamp, for the views only the record has (its label, its targets)."""
 
-    return seed.record_at(_ADDED_AT, fresh=True)
+    return seed.pending_import_at(_ADDED_AT, fresh=True)
 
 
 def _scope(ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None) -> GrabbingTitle:
@@ -131,7 +131,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
             scope=_scope(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
         )
 
@@ -144,9 +144,9 @@ class TestBuildPendingSeeds:
         assert claim.title == "Show"
         assert claim.names == TitleNames("Show", ("Show", "Shou"))
         assert seed.pending_import is None
-        record = seed.record_at(_ADDED_AT, fresh=True)
-        assert record.added_at == _ADDED_AT
-        assert record.claims == (claim,)
+        pending = seed.pending_import_at(_ADDED_AT, fresh=True)
+        assert pending.added_at == _ADDED_AT
+        assert pending.claims == (claim,)
         assert dict(seed.file_map) == {normalize_name("Show - 01.mkv"): (101,)}
         assert seed.facts.seadex_files == ("Show - 01.mkv",)
         # The claim's own episode slice, for the wait/notification label, and the window it is judged under.
@@ -174,7 +174,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {}
@@ -192,7 +192,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(
+            facts=entry_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept"), stale_groups=("Stale",)),
             ),
         )
@@ -215,7 +215,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert seeds["h1"].facts.release_sizes == (1000, 50)
@@ -250,7 +250,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(
+            facts=entry_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept")),
             ),
         )
@@ -272,7 +272,7 @@ class TestBuildPendingSeeds:
                         size=[2000],
                         infohash="h1",
                         download=True,
-                        episodes=[EpisodeRecord(season=1, episode=2, size=2000)],
+                        episodes=[ReleaseEpisode(season=1, episode=2, size=2000)],
                     ),
                 },
             ),
@@ -281,7 +281,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(
+            facts=entry_facts(
                 guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 1000),)),
             ),
         )
@@ -310,7 +310,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -335,7 +335,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
             scope=_scope([], series),
         )
 
@@ -359,7 +359,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
             scope=_scope(ep_list, []),
         )
 
@@ -395,7 +395,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
             scope=_scope(ep_list, series),
         )
 
@@ -418,7 +418,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {}
@@ -449,7 +449,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -482,7 +482,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         seed = seeds["h1"]
@@ -510,7 +510,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S02 E06"
@@ -529,7 +529,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat({}, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert set(seeds) == {"h1"}
@@ -556,7 +556,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert _record(seeds["h1"]).display_label == f"Show{SEP}RG{SEP}S01 E01"
@@ -577,7 +577,7 @@ class TestBuildPendingSeeds:
         seeds = _build(
             _strat({}, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert seeds == {}
@@ -610,7 +610,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -638,7 +638,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -657,7 +657,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01-02.mkv"): (101, 102)}
@@ -677,7 +677,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, series),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
             scope=_scope(ep_list, series),
         )
 
@@ -707,7 +707,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {normalize_name("Show - 13v2.mkv"): (213,)}
@@ -737,7 +737,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -764,7 +764,7 @@ class TestSeedGuards:
         seeds = _build(
             _strat(parses, ep_list),
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -795,7 +795,7 @@ class TestParseWriteFeedsSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {normalize_name("Show - 01.mkv"): (101,)}
@@ -824,7 +824,7 @@ class TestParseWriteFeedsSeeds:
         seeds = _build(
             strat,
             seadex_dict,
-            entry=entry_facts(),
+            facts=entry_facts(),
         )
 
         assert dict(seeds["h1"].file_map) == {}

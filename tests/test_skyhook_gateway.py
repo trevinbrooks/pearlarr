@@ -157,7 +157,7 @@ def test_a_series_skyhook_does_not_have_is_stored_without_orders_for_a_week() ->
     stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert stored.orders == {}
-    assert gateway.has_record(_SERIES) is True
+    assert gateway.has_cached_answer(_SERIES) is True
     assert _fresh_days(gateway) == 7
 
 
@@ -176,7 +176,7 @@ def test_a_series_the_outage_cut_off_still_has_no_record() -> None:
     gateway = _gateway({}, failing=frozenset({(_SERIES, AIRED_ORDER)}))
 
     assert _fetches(gateway) == 0
-    assert gateway.has_record(_SERIES) is False
+    assert gateway.has_cached_answer(_SERIES) is False
 
 
 def test_an_outage_mid_series_keeps_the_stale_record_and_serves_it() -> None:

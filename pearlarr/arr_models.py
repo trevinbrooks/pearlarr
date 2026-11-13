@@ -424,15 +424,15 @@ def _lift_from_data(data: object, key: str, field: str) -> object:
 
     if not isinstance(data, dict):
         return data
-    record = cast("dict[str, Any]", data)
-    raw_data = record.get("data")
-    if field in record or not isinstance(raw_data, dict):
-        return record
+    raw = cast("dict[str, Any]", data)
+    raw_data = raw.get("data")
+    if field in raw or not isinstance(raw_data, dict):
+        return raw
     wanted = key.casefold()
     for name, value in cast("dict[str, Any]", raw_data).items():
         if name.casefold() == wanted and isinstance(value, str):
-            return {**record, field: value}
-    return record
+            return {**raw, field: value}
+    return raw
 
 
 class SonarrHistoryRecord(HistoryRecord):
@@ -558,7 +558,7 @@ class CommandBody(WireModel):
     files: list[ManualImportFile] | None = None
 
 
-def _int_entries(value: object) -> object:
+def _ints_only(value: object) -> object:
     """Fold an episode-id array: keep the int entries, fold junk/None to ()."""
 
     if isinstance(value, list):
@@ -574,7 +574,7 @@ class CommandFile(ApiModel):
     download_id: LenientStr = Field(default=None, validation_alias="downloadId")
     """The primary match key, absent for a folder or season-pack import."""
     series_id: ZeroInt = Field(default=0, validation_alias="seriesId")
-    episode_ids: Annotated[tuple[int, ...], BeforeValidator(_int_entries)] = Field(
+    episode_ids: Annotated[tuple[int, ...], BeforeValidator(_ints_only)] = Field(
         default=(),
         validation_alias="episodeIds",
     )

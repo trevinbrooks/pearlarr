@@ -622,7 +622,7 @@ class ImportExecutor:
                     if series_id is None:
                         unrouted.append(decision.basename)
                     else:
-                        files.append(self._build_file_entry(decision, context, series_id))
+                        files.append(self._build_import_file(decision, context, series_id))
                 case _:
                     self.logger.debug(f"{decision.action.name}: {decision.basename}")
 
@@ -763,7 +763,7 @@ class ImportExecutor:
             self._scratch.quality_defs = self.sonarr.quality_definitions()
         return self._scratch.quality_defs
 
-    def _build_file_entry(
+    def _build_import_file(
         self,
         decision: ImportDecision,
         context: _ImportContext,
@@ -801,7 +801,7 @@ class ImportExecutor:
                 f"{content_path}: could not confidently resolve quality for {base} - importing as Unknown "
                 "(re-grab risk)"
             )
-        entry = ManualImportFile(
+        import_file = ManualImportFile(
             path=path,
             seriesId=series_id,
             episodeIds=list(decision.episode_ids),
@@ -812,10 +812,10 @@ class ImportExecutor:
         if context.scan.omit_download_id:
             # Left UNSET so the exclude_unset dump omits the key entirely (never null) and Execute takes the
             # untracked branch. For a dead-tracked download the tracked tail dereferences its null ImportItem.
-            return entry
+            return import_file
         # model_copy marks the key set so it reaches the wire. Uppercased because Sonarr matches its tracked
         # downloads case-sensitively, and an unmatched import leaves the queue record open to a re-import.
-        return entry.model_copy(update={"downloadId": pending.infohash.upper()})
+        return import_file.model_copy(update={"downloadId": pending.infohash.upper()})
 
 
 @dataclass(frozen=True, slots=True)
@@ -891,10 +891,10 @@ class _Attempt:
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds."""
 
-    def __init__(self, records: PendingImportStore, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
+    def __init__(self, pending_imports: PendingImportStore, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
         """Bind the run's record seam and the composed collaborators (the logger is the executor's)."""
 
-        self._records = records
+        self._pending_imports = pending_imports
         self._episodes = episodes
         self._executor = executor
         self.logger = executor.logger
@@ -1028,13 +1028,13 @@ class ImportReconciler:
     ) -> _SeedStatuses:
         """Classify `targets` under each claim's guards over the given episode lists, with the bar counts."""
 
-        guards = self._records.guards()
+        guards = self._pending_imports.guards()
         votes: dict[int, GrabbedGroups] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
             index = episode_index(lists[series_id], self._episodes.orders_for(series_id))
             # Unfiltered: a cleanup-flagged sibling's files are on disk, so dropping it would loosen the guard.
-            siblings = self._records.imports_for_series(series_id, guards).values()
+            siblings = self._pending_imports.imports_for_series(series_id, guards).values()
             votes[series_id] = GrabbedGroups(pending.own_group, tuple(record.own_group for record in siblings))
             by_series[series_id] = EpisodeSnapshot.guarded(index, pending.guards_for(series_id), votes[series_id])
         by_claim = {
@@ -1046,5 +1046,5 @@ class ImportReconciler:
         snapshot = ImportSnapshot(pending, by_series, by_claim)
         statuses = snapshot.map_statuses(targets, pending.file_episode_map)
         preowned = sum(1 for ep_id in targets if snapshot.preowned(ep_id))
-        recommended = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.TRUSTED)
-        return _SeedStatuses(snapshot, statuses, max(0, recommended - preowned), len(targets) - preowned)
+        trusted = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.TRUSTED)
+        return _SeedStatuses(snapshot, statuses, max(0, trusted - preowned), len(targets) - preowned)

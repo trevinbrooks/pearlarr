@@ -20,7 +20,6 @@ from pearlarr.output import (
     ArrRunTally,
     BootStepFinished,
     Diagnostic,
-    EntryHeader,
     GrabFact,
     GrabFailed,
     ItemStarted,
@@ -37,6 +36,7 @@ from pearlarr.output import (
     SkipReason,
     StyledValue,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     severity_of,
 )
@@ -47,7 +47,7 @@ from pearlarr.wait_types import Outcome, OutcomeKind
 
 
 def test_events_are_frozen() -> None:
-    header = EntryHeader(state=TitleState.CHECKING, title="Frieren")
+    header = TitleHeader(state=TitleState.CHECKING, title="Frieren")
     field_name = "title"
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(header, field_name, "other")

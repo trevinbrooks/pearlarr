@@ -104,8 +104,8 @@ def _untitled(info: ParsedFileInfo) -> dict[str, object]:
     return {"fetched_at": _stamp(1), "parse": parse}
 
 
-def _fresh(record: dict[str, object], *, series_hash: str = "fp") -> bool:
-    return _parse_is_fresh(record, window=_window(series_hash))
+def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
+    return _parse_is_fresh(row, window=_window(series_hash))
 
 
 class TestSeriesFingerprint:
@@ -164,31 +164,31 @@ class TestParseRecords:
         return ParseCacheRows(store), store
 
     def test_round_trip_keeps_the_matched_ids(self) -> None:
-        records, _ = self._records()
+        rows, _ = self._records()
         info = ParsedFileInfo(
             season_number=1,
             episode_numbers=(1,),
             matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
         )
 
-        records.write("show - 01.mkv", info, window=_window())
+        rows.write("show - 01.mkv", info, window=_window())
 
-        assert records.read("show - 01.mkv", window=_window()) == info
+        assert rows.read("show - 01.mkv", window=_window()) == info
 
     def test_unmatched_write_is_pinned_to_the_fingerprint(self) -> None:
-        records, store = self._records()
+        rows, store = self._records()
 
-        records.write("show - 01.mkv", _UNMATCHED, window=_window("fp"))
+        rows.write("show - 01.mkv", _UNMATCHED, window=_window("fp"))
 
         row = store.get_sonarr_parse("show - 01.mkv")
         assert row is not None
         assert row["series_fp"] == "fp"
-        assert records.read("show - 01.mkv", window=_window("other")) is None
+        assert rows.read("show - 01.mkv", window=_window("other")) is None
 
     def test_matched_write_carries_no_fingerprint(self) -> None:
-        records, store = self._records()
+        rows, store = self._records()
 
-        records.write("show - 01.mkv", _matched(1, 1), window=_window("fp"))
+        rows.write("show - 01.mkv", _matched(1, 1), window=_window("fp"))
 
         row = store.get_sonarr_parse("show - 01.mkv")
         assert row is not None
@@ -208,10 +208,10 @@ class TestParseRecords:
     def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
         # The model would read the missing title as "", so the key decides, inside the TTL.
         store = FakeCacheStore(sonarr_parse={"show - 01.mkv": _untitled(_matched(1, 1))})
-        records = ParseCacheRows(store)
+        rows = ParseCacheRows(store)
 
-        assert not records.is_fresh("show - 01.mkv", window=_window())
-        assert records.read("show - 01.mkv", window=_window()) is None
+        assert not rows.is_fresh("show - 01.mkv", window=_window())
+        assert rows.read("show - 01.mkv", window=_window()) is None
 
 
 class TestFetchWorkers:
@@ -661,7 +661,7 @@ class TestParsedFilesUnmatchedCache:
             sonarr=sonarr,
             _config=make_config(sleep_time=sleep_time),
             cache_store=store,
-            records=ParseCacheRows(store),
+            rows=ParseCacheRows(store),
             logger=make_logger(),
         )
         return parse, sonarr

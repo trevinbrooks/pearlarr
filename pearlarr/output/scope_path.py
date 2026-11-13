@@ -37,7 +37,6 @@ from .events import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFailed,
@@ -56,6 +55,7 @@ from .events import (
     ScopeOpened,
     StarterConfigWritten,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     WaitFinished,
     WaitProgress,
@@ -134,7 +134,7 @@ class OpenScopes:
                 | BootStepProgressed()
                 | BootStepSlow()
                 | BootReady()
-                | EntryHeader()
+                | TitleHeader()
                 | TitleDetail()
                 | TitleRow()
                 | ReleaseSkipped()

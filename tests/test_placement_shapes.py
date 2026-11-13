@@ -20,7 +20,7 @@ from pearlarr.file_paths import normalize_name
 from pearlarr.grab_placement import ListedFile, place_release
 from pearlarr.pending_import import TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
-from pearlarr.releases import EpisodeRecord
+from pearlarr.releases import ReleaseEpisode
 
 from .builders import new_torrent, seed_scope
 
@@ -152,8 +152,8 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
     assignment = placement.assignment
     assert assignment.placed == {normalize_name(name): ids for name, ids in case.expected.items()}
     assert {p.name for p in assignment.excluded} == {normalize_name(name) for name in case.expected_excluded}
-    assert list(placement.records) == [
-        EpisodeRecord(
+    assert list(placement.episodes) == [
+        ReleaseEpisode(
             scope.series_index.by_id[ep_id].season_number, scope.series_index.by_id[ep_id].episode_number, size
         )
         for size, name in enumerate(case.parses, start=1)

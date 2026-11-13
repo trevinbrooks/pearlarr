@@ -667,7 +667,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
         preowned_episode_ids=(),
         claimed_coverage=None,
     )
-    record = PendingImport(
+    pending = PendingImport(
         infohash=_INFOHASH,
         release_group=_GROUP,
         is_dual_audio=False,
@@ -681,7 +681,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     )
     store = CacheStore.load(str(cache_path), config_hash=checksum)
     try:
-        store.put_pending(Arr.SONARR, record.infohash, record.to_json())
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         store.save(preview=False)
     finally:
         store.close()
@@ -692,7 +692,7 @@ def _pending_after(cache_path: Path, checksum: str) -> frozenset[str]:
 
     store = CacheStore.load(str(cache_path), config_hash=checksum)
     try:
-        return frozenset(store.get_pending(Arr.SONARR))
+        return frozenset(store.get_pending_import_rows(Arr.SONARR))
     finally:
         store.close()
 

@@ -16,7 +16,7 @@ from pearlarr.wait_types import (
     PendingImportState,
     TorrentStatus,
     TorrentTelemetry,
-    classify_pending,
+    classify_pending_import,
     sanitize_torrent_telemetry,
 )
 
@@ -103,21 +103,21 @@ class TestClassifyPending:
     """`classify_pending` folds a poll's outcome + the files-present flag into a state."""
 
     def test_missing(self) -> None:
-        assert classify_pending(TorrentStatus.GONE, False) is PendingImportState.GONE
+        assert classify_pending_import(TorrentStatus.GONE, False) is PendingImportState.GONE
 
     def test_errored(self) -> None:
-        assert classify_pending(TorrentStatus.ERRORED, False) is PendingImportState.ERRORED
+        assert classify_pending_import(TorrentStatus.ERRORED, False) is PendingImportState.ERRORED
 
     def test_still_downloading_is_queued(self) -> None:
-        assert classify_pending(None, False) is PendingImportState.DOWNLOADING
+        assert classify_pending_import(None, False) is PendingImportState.DOWNLOADING
 
     def test_complete_and_files_present_is_imported(self) -> None:
-        assert classify_pending(TorrentStatus.COMPLETE, True) is PendingImportState.IMPORTED
+        assert classify_pending_import(TorrentStatus.COMPLETE, True) is PendingImportState.IMPORTED
 
     def test_complete_without_files_is_importing(self) -> None:
         # The copy is still in flight -> downloaded, never imported, until the
         # files are verified present.
-        assert classify_pending(TorrentStatus.COMPLETE, False) is PendingImportState.DOWNLOADED
+        assert classify_pending_import(TorrentStatus.COMPLETE, False) is PendingImportState.DOWNLOADED
 
 
 class TestSanitizeTorrentTelemetry:

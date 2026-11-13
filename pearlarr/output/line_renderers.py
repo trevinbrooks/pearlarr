@@ -32,7 +32,6 @@ from .events import (
     CycleStarted,
     Diagnostic,
     EffectiveConfigShown,
-    EntryHeader,
     Event,
     GrabAction,
     GrabFact,
@@ -59,6 +58,7 @@ from .events import (
     SkipReason,
     StarterConfigWritten,
     TitleDetail,
+    TitleHeader,
     TitleRow,
     WaitFinished,
     WaitProgress,
@@ -215,7 +215,7 @@ def _fields_item_started(event: ItemStarted) -> tuple[Field, ...]:
     )
 
 
-def _fields_entry_header(event: EntryHeader) -> tuple[Field, ...]:
+def _fields_title_header(event: TitleHeader) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.title)]
     if event.al_id is not None:
         fields.append(Field("al_id", event.al_id))
@@ -276,8 +276,8 @@ def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     return (
         Field("kind", event.kind.name.lower()),
         Field("imported", event.imported),
-        Field("pending", event.pending),
-        Field("deferred", event.deferred),
+        Field("pending", event.in_progress),
+        Field("deferred", event.left),
         Field("failed", event.failed),
         Field("elapsed_s", event.elapsed_s),
     )
@@ -335,27 +335,27 @@ def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _fields_needs_action(record: NeedsActionFact) -> tuple[Field, ...]:
-    fields: list[Field] = [Field("title", record.title or "(unknown title)")]
-    if record.coverage:
-        fields.append(Field("files", record.coverage))
-    fields.append(Field("group", record.group))
-    fields.append(Field("reason", record.reason))
-    fields.append(Field("kind", record.cause.name.lower()))
-    if record.url:
-        fields.append(Field("link", record.url))
+def _fields_needs_action(row: NeedsActionFact) -> tuple[Field, ...]:
+    fields: list[Field] = [Field("title", row.title or "(unknown title)")]
+    if row.coverage:
+        fields.append(Field("files", row.coverage))
+    fields.append(Field("group", row.group))
+    fields.append(Field("reason", row.reason))
+    fields.append(Field("kind", row.cause.name.lower()))
+    if row.url:
+        fields.append(Field("link", row.url))
     return tuple(fields)
 
 
-def _fields_added(record: GrabFact) -> tuple[Field, ...]:
-    fields: list[Field] = [Field("title", record.title or "(unknown title)")]
-    if record.coverage:
-        fields.append(Field("files", record.coverage))
-    fields.append(Field("group", record.group))
-    if record.name:
-        fields.append(Field("torrent", record.name))
-    if record.url:
-        fields.append(Field("link", record.url))
+def _fields_added(row: GrabFact) -> tuple[Field, ...]:
+    fields: list[Field] = [Field("title", row.title or "(unknown title)")]
+    if row.coverage:
+        fields.append(Field("files", row.coverage))
+    fields.append(Field("group", row.group))
+    if row.name:
+        fields.append(Field("torrent", row.name))
+    if row.url:
+        fields.append(Field("link", row.url))
     return tuple(fields)
 
 
@@ -444,8 +444,8 @@ def _fact_of(event: Event, crumbs: OpenScopes, severity: Severity) -> _Fact | No
             return _Fact("scan_started", severity, "starting", fields, None, "scan")
         case ItemStarted():
             return _Fact("item_started", severity, "item", _fields_item_started(event), None, "scan")
-        case EntryHeader(scope=scope, state=state):
-            return _Fact("entry_header", severity, str(state), _fields_entry_header(event), scope, "entry")
+        case TitleHeader(scope=scope, state=state):
+            return _Fact("entry_header", severity, str(state), _fields_title_header(event), scope, "entry")
         case TitleDetail(scope=scope, label=label, value=value, tail=tail):
             fields = (Field("note", tail),) if tail is not None else ()
             return _Fact("entry_detail", severity, f"{label}: {value.text}", fields, scope, "entry")
@@ -525,12 +525,12 @@ def _scope_bracket(scope: ScopeId | None, crumbs: OpenScopes, fallback: str) -> 
     return fallback
 
 
-def _record_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
+def _summary_row_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
     needs = tuple(
-        _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(record))
-        for record in summary.tally.needs_action
+        _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(row))
+        for row in summary.tally.needs_action
     )
-    added = tuple(_Line(Severity.INFO, "summary", "added", _fields_added(record)) for record in summary.tally.added)
+    added = tuple(_Line(Severity.INFO, "summary", "added", _fields_added(row)) for row in summary.tally.added)
     return (*needs, *added)
 
 
@@ -548,7 +548,7 @@ def _lines_of(event: Event, crumbs: OpenScopes, severity: Severity) -> tuple[_Li
     trace = event.trace.plain if isinstance(event, Diagnostic) and event.trace is not None else None
     head = _Line(fact.severity, bracket, fact.message, fact.fields, trace)
     if isinstance(event, RunSummaryReady):
-        return (head, *_record_lines(event.summary))
+        return (head, *_summary_row_lines(event.summary))
     return (head,)
 
 
@@ -578,9 +578,9 @@ def _json_of(event: Event, crumbs: OpenScopes, iso: str, severity: Severity) -> 
     if isinstance(event, RunSummaryReady):
         tally = event.summary.tally
         payload["needs_action_records"] = [
-            dict[str, JsonValue](_fields_needs_action(record)) for record in tally.needs_action
+            dict[str, JsonValue](_fields_needs_action(row)) for row in tally.needs_action
         ]
-        payload["added_records"] = [dict[str, JsonValue](_fields_added(record)) for record in tally.added]
+        payload["added_records"] = [dict[str, JsonValue](_fields_added(row)) for row in tally.added]
     if isinstance(event, Diagnostic) and event.trace is not None:
         payload["exc"] = event.trace.plain
     return payload
@@ -782,7 +782,7 @@ class FileLogRenderer(_GrammarRenderer):
         super().__init__()
         self._dir = log_dir
         self._file: TextIO | None = None
-        self._rotate_pending = False
+        self._rotate_due = False
 
     @property
     def path(self) -> str:
@@ -805,7 +805,7 @@ class FileLogRenderer(_GrammarRenderer):
     @override
     def _turn_over(self) -> None:
         self._close_file()
-        self._rotate_pending = True
+        self._rotate_due = True
 
     @override
     def _write(self, text: str) -> None:
@@ -816,9 +816,9 @@ class FileLogRenderer(_GrammarRenderer):
     def _open_if_needed(self) -> TextIO:
         if self._file is None:
             os.makedirs(self._dir, exist_ok=True)
-            if self._rotate_pending:
+            if self._rotate_due:
                 self._rotate()
-                self._rotate_pending = False
+                self._rotate_due = False
                 mode = "w"
             else:
                 mode = "a"

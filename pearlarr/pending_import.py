@@ -591,7 +591,9 @@ def added_at_of(raw: dict[str, Any]) -> str:
     return stamp if isinstance(stamp, str) else ""
 
 
-def hydrate_pending(rows: Mapping[str, dict[str, Any]], guards: Mapping[int, OwnedAtGrab]) -> dict[str, PendingImport]:
+def load_pending_imports(
+    rows: Mapping[str, dict[str, Any]], guards: Mapping[int, OwnedAtGrab]
+) -> dict[str, PendingImport]:
     """Rehydrate stored rows into records, keyed by infohash, each claim fed its entry's guard row."""
 
     return {key: PendingImport.from_json(raw, guards=guards) for key, raw in rows.items()}

@@ -333,7 +333,7 @@ class SonarrEpisodes:
 
         return self._anilist.episode_count(al_id)
 
-    def entries_unread(self, al_ids: Iterable[int]) -> bool:
+    def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
         """Whether AniList left any of the entries unread (`AniListGateway.unread`)."""
 
         return any(self._anilist.air_dates_unread(al_id) for al_id in al_ids)
@@ -347,7 +347,7 @@ class SonarrEpisodes:
         return any(
             (facts := self._order_facts.get(sid)) is not None
             and facts.tvdb_id > 0
-            and not self._skyhook.has_record(facts.tvdb_id)
+            and not self._skyhook.has_cached_answer(facts.tvdb_id)
             for sid in series_ids
         )
 

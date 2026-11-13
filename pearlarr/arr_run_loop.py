@@ -46,7 +46,7 @@ class ArrRunLoop:
         # Its dry_run=False and OFF wait mode keep every preview and pending-import path a safe no-op before run_arr.
         self._ctx = services.ctx
 
-        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, records=services.records)
+        self._wait_manager = ImportWaitManager(deps=deps, ctx=self._ctx, pending_imports=services.pending_imports)
         self.bind_arr_run(self._ctx)
 
     def bind_arr_run(self, state: ArrRunState) -> None:
@@ -300,9 +300,9 @@ class ArrRunLoop:
                     if check is not None:
                         self._ctx.stats.imported += check.carried_over_imported
                 # This owns the tally's `imported` bump: the snapshot's verified imports land in
-                # `pending_states`, the passes report theirs on their carried-over result rows.
+                # `pending_import_states`, the passes report theirs on their carried-over result rows.
                 self._ctx.stats.imported += sum(
-                    1 for state in self._ctx.pending_states.values() if state is PendingImportState.IMPORTED
+                    1 for state in self._ctx.pending_import_states.values() if state is PendingImportState.IMPORTED
                 )
                 self._wait_manager.tally_carried_over_into_stats()
 

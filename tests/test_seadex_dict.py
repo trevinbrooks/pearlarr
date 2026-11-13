@@ -602,7 +602,7 @@ class TestInteractivePick:
         capsys.readouterr()  # drain the picker's terminal rows
 
         # Nothing persisted: the title must resurface (and re-prompt) next run.
-        assert cache.get_entry(Arr.RADARR, al_id) is None
+        assert cache.get_cached_title(Arr.RADARR, al_id) is None
 
 
 def test_file_size_cover_folds_listings_with_elementwise_max() -> None:

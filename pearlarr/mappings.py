@@ -49,7 +49,7 @@ from .paths import resolve_paths
 from .progress import ProgressSink
 from .web_client import failure_detail
 
-type AnimeIdsRecord = dict[str, Any]
+type AnimeIdsRawMapping = dict[str, Any]
 """One Kometa Anime-IDs record (`{field: value}`).
 
 A loosely-shaped producer dict: a flat record carrying mixed-typed fields
@@ -59,7 +59,7 @@ A loosely-shaped producer dict: a flat record carrying mixed-typed fields
 object, so it stays a loose `dict[str, Any]` like `AniBridgeEntry`.
 """
 
-type AnimeIdsMap = dict[str, AnimeIdsRecord]
+type AnimeIdsMap = dict[str, AnimeIdsRawMapping]
 """The parsed Kometa Anime-IDs JSON: `{name -> record}` (~16k entries)."""
 
 
@@ -150,7 +150,7 @@ def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
     return (-1 if season is None else season, 0 if epoffset is None else epoffset)
 
 
-def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeRawMapping) -> TitleMapping:
+def _mapping_from_raw(anilist_id: int, raw: AnimeIdsRawMapping | AniBridgeRawMapping) -> TitleMapping:
     """Build a `MappingEntry` from a producer's raw dict.
 
     The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
@@ -176,7 +176,7 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeRawMapping) 
     )
 
 
-def _entry_from_anime_row(row: AnimeIdRow) -> TitleMapping:
+def _mapping_from_anime_id_row(row: AnimeIdRow) -> TitleMapping:
     """Build a `MappingEntry` from a stored `AnimeIdRow`.
 
     The SQL twin of `_entry_from_raw` for Kometa records: a row never
@@ -195,7 +195,7 @@ def _entry_from_anime_row(row: AnimeIdRow) -> TitleMapping:
     )
 
 
-def _is_degraded_anibridge(entry: TitleMapping) -> bool:
+def _is_degraded_anibridge(mapping: TitleMapping) -> bool:
     """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
 
     Such an entry carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
@@ -205,7 +205,7 @@ def _is_degraded_anibridge(entry: TitleMapping) -> bool:
     incl. an empty `{}`) is NOT degraded.
     """
 
-    return entry.source is MappingSource.ANIBRIDGE and entry.tvdb_mappings is None
+    return mapping.source is MappingSource.ANIBRIDGE and mapping.tvdb_mappings is None
 
 
 class ExternalIds(NamedTuple):
@@ -245,7 +245,7 @@ class ResolvedMappings:
     kind."""
 
     @property
-    def every_entry(self) -> dict[int, TitleMapping]:
+    def kept_and_ignored(self) -> dict[int, TitleMapping]:
         """The kept and the ignored entries together, in AniList id order, for the series' listing read."""
 
         return dict(sorted({**self.kept, **self.ignored}.items()))
@@ -303,25 +303,25 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
     """
 
     rows: list[AnimeIdRow] = []
-    for record in anime_mappings.values():
+    for raw in anime_mappings.values():
         # A present-but-null JSON value (`"tvdb_season": null`) would reach the
         # NOT NULL `tvdb_season` / `tvdb_epoffset` columns and raise an
         # IntegrityError that aborts the whole populate (then the :memory:
         # fail-open re-parses the same data and re-raises, taking down the entire
         # run). The shared helper folds it to the same sentinel an absent key gets.
-        season, epoffset = _coalesce_season_epoffset(record)
+        season, epoffset = _coalesce_season_epoffset(raw)
         rows.append(
             AnimeIdRow(
                 # NULL anilist_id is kept here but filtered out at query time. The
                 # field is typed int per that IS NOT NULL contract, so cast the
                 # producer's nullable value (it rides through as a stored NULL).
-                anilist_id=cast("int", record.get("anilist_id")),
-                tvdb_id=record.get("tvdb_id"),
+                anilist_id=cast("int", raw.get("anilist_id")),
+                tvdb_id=raw.get("tvdb_id"),
                 tvdb_season=season,
                 tvdb_epoffset=epoffset,
-                tmdb_movie_id=record.get("tmdb_movie_id"),
-                imdb_id=record.get("imdb_id"),
-                anidb_id=record.get("anidb_id"),
+                tmdb_movie_id=raw.get("tmdb_movie_id"),
+                imdb_id=raw.get("imdb_id"),
+                anidb_id=raw.get("anidb_id"),
             ),
         )
     return rows
@@ -809,10 +809,10 @@ class MappingResolver(KnownExternalIds):
             # since the entry value is unused for movies and overriding would
             # silently flip the documented "AniBridge is primary" precedence.
             if self._anime_enabled:
-                for al_id, entry in self.mappings_from_anime_ids(ids).items():
+                for al_id, mapping in self.mappings_from_anime_ids(ids).items():
                     existing = anilist_mappings.get(al_id)
                     if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
-                        anilist_mappings[al_id] = entry
+                        anilist_mappings[al_id] = mapping
 
             # Set aside any AniList ids configured to be ignored.
             ignored = {
@@ -855,7 +855,7 @@ class MappingResolver(KnownExternalIds):
         def merge(column: IdKind, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 if row.anilist_id not in anilist_mappings:
-                    anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
+                    anilist_mappings[row.anilist_id] = _mapping_from_anime_id_row(row)
 
         if ids.tvdb is not None:
             merge("tvdb_id", ids.tvdb)
@@ -890,9 +890,9 @@ class MappingResolver(KnownExternalIds):
         # Add any AniList IDs the indexes resolve for the supplied ids, without
         # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
         def merge(found: AniBridgeLookup) -> None:
-            for anilist_id, entry in found.items():
+            for anilist_id, mapping in found.items():
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, entry)
+                    anilist_mappings[anilist_id] = _mapping_from_raw(anilist_id, mapping)
 
         if ids.tvdb is not None:
             merge(anibridge.lookup_by_tvdb(ids.tvdb))
