@@ -1,6 +1,6 @@
-# Copy to docker-compose.yml (or fold into an existing stack) and adjust.
+# Copy to docker-compose.yml (or merge into an existing stack) and adjust.
 # First run: `mkdir -p ./config` yourself - a bind-mount dir auto-created by
-# Docker is root-owned, and the container will refuse to start against it.
+# Docker is root-owned, and the container will not start against it.
 # One-off commands: `docker compose run --rm pearlarr run single --sonarr`.
 services:
 
@@ -17,7 +17,7 @@ services:
     volumes:
       - ./config:/config               # config.yml, caches and logs, all in one dir
     restart: unless-stopped
-    # A blocking imports.wait_mode can hold a run for up to imports.download_timeout.
+    # A blocking imports.wait_mode can keep a run going for up to imports.download_timeout.
     # Give SIGTERM room before Docker's 10s default SIGKILLs a mid-import run.
     # stop_grace_period: 1h
 

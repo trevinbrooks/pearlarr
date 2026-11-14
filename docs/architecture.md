@@ -5,18 +5,18 @@ It covers the run lifecycle, the subsystems, the decisions behind the complex on
 
 ## The run, end to end
 
-A run is one sweep over every configured arr: a single `pearlarr run single`, or one cycle of the scheduled loop.
-`cli.py` is the command surface. It resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrStrategy`/`RadarrStrategy`).
+A run is one sweep over every configured arr: a single `pearlarr run single`, or one scheduled run.
+`cli.py` defines the commands. It resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrStrategy`/`RadarrStrategy`).
 
 For one arr:
 
-1. builds the runtime dependencies (`ArrRunDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache.
+1. builds the runtime dependencies (`ArrRunDeps`): the arr client, the shared HTTP clients, qBittorrent (or dry runs only when credentials are absent), the SQLite cache.
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph.
 3. checks each title whose SeaDex entry changed since it was cached: plans which releases to grab (the planner), leaves out what the arr already owns, and grabs the rest (the grab pipeline).
-4. notifies (Discord embed per grab), records the decisions in the cache, and prints the run summary.
-5. optionally waits on downloads (`imports.wait_mode`): a blocking wait on Sonarr that lets Sonarr import first and steps in with a manual import where it cannot, or a single end-of-run check that imports whatever already finished and classifies the rest for the summary.
+4. notifies (Discord embed per grab), stores the decisions in the cache, and prints the run summary.
+5. optionally waits on downloads (`imports.wait_mode`): a blocking wait on Sonarr that lets Sonarr import first and uses an auto import where it cannot, or a deferred wait pass at the end of the run that imports whatever already finished and classifies the rest for the summary.
 
-Scheduled mode wraps that in a loop: one cycle runs every configured arr, then sleeps `schedule.interval_hours`. The config is re-read each cycle.
+Scheduled mode wraps that in a loop: each scheduled run goes through every configured arr, then the loop sleeps `schedule.interval_hours`. The config is re-read for each scheduled run.
 
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
@@ -32,7 +32,7 @@ flowchart LR
     GRAB --> QBIT[qBittorrent]
     GRAB --> CACHE[(cache.db)]
     GRAB --> NOTIFY[notifier<br/>Discord + webhook]
-    RUN --> WAIT[wait pass +<br/>manual import]
+    RUN --> WAIT[wait pass +<br/>auto import]
     WAIT --> ARR
     WAIT --> QBIT
     RUN --> OUT[output hub<br/>console + file log]
@@ -47,7 +47,7 @@ flowchart LR
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
 | Grabbing | `grab_pipeline`, `torrent_service` | tracker page parsing, qBittorrent adds, per-release outcomes |
-| Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned manual import, the per-file plan and its quality key |
+| Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned auto import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
 | Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse` | placing a release's files on episodes at grab time, the series' SeaDex listings and size matches it uses, and the Sonarr `/parse` cache the placement reads |
 | State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending import store |
@@ -57,13 +57,13 @@ flowchart LR
 
 ## Design notes
 
-Compact records of the load-bearing decisions: what was decided, why, and what was rejected.
+Compact notes on the load-bearing decisions: what was decided, why, and what was rejected.
 Notes are appended, not rewritten, so the reasoning trail survives.
 
 ### Planner: to-grab marks over same-files groups
 
 The planner marks each of an entry's releases to grab or not, in place, resolving conflicts per *same-files group* (release groups covering identical files).
-Private-only sets are resolved by promotion: when the arr's copy is outdated (a size mismatch, or one file on too many episodes, shows an upgrade is pending), the best public release covering the same files is promoted. With no upgrade pending nothing is promoted, since a public group not marked to grab may be one the arr owns, and the set warns as private-only. When only a fallback could replace an *owned* copy of the preferred private release, the title grabs nothing and warns instead: grabbing owned content again is never correct.
+Private-only sets are resolved by promotion: when the arr's copy is outdated (a size mismatch, or one file on too many episodes, shows an upgrade is due), the best public release covering the same files is promoted. With no upgrade due nothing is promoted, since a public group not marked to grab may be one the arr owns, and the set warns as private-only. When only a fallback could replace an *owned* copy of the preferred private release, the title grabs nothing and warns instead: grabbing owned content again is never correct.
 Dropped groups mark to grab again any public release whose episodes no remaining group covers (group-atomic drops must not lose episodes).
 A full per-release planner redesign was prototyped and rejected: it re-derives the same same-files groups with more state and no behavioral win.
 
@@ -74,19 +74,19 @@ Raw `logging.*` calls are banned (lint + an AST canary test). The one sanctioned
 Why: renderer failures are contained (a broken progress view cannot kill a run), the file grammar stays byte-stable, and tests assert on recorded events instead of scraping strings.
 Rejected alternatives, after a five-proposal design debate: pure logging with formatters (loses lifecycle/reflow control), a document model (over-general), scoped emitters without a hub (no single containment point).
 
-### Cache: SQLite with staged writes and a preview gate
+### Cache: SQLite with staged writes and a dry-run gate
 
-Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(dry_run=...)` commits only for real runs. Preview mode discards everything.
+Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(dry_run=...)` commits only for real runs. A dry run discards everything.
 A run saves after the AniList prefetch, after each title, and once more at the end. It never saves mid-title, where paired writes (a pending import and its guard row) may be half done.
 A fresh store starts in memory and is promoted to disk via the SQLite backup API plus an atomic rename, so a half-written `cache.db` cannot exist.
 Reads fail open (a corrupt cache re-evaluates titles instead of aborting), and a file lock keeps concurrent runs from interleaving.
 The predecessor `cache.json` was rejected for having no atomicity, no partial-failure story, and no queryable schema.
 
-### Manual import: our mapping is authoritative
+### Auto import: Pearlarr's mapping is authoritative
 
-The wait pass treats Sonarr's *episode files and queue* as ground truth for what landed, but never trusts Sonarr's candidate parse for what a file *is*: the AniList-derived episode mapping assigns files to episodes (`ordered_episode_ids`), because SeaDex releases routinely carry specials and orderings Sonarr misparses.
-The import places nothing. It imports the map the grab placed, plus the files Sonarr's history placed for a download no scan saw, and reports a file on disk the map lacks: a warned skip, an unmatched outcome, or a file the grab left for a hand import.
-Sonarr is always given the chance to import first. The manual import only steps in for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
+The wait pass treats Sonarr's *episode files and queue* as ground truth for what was imported, but never trusts Sonarr's candidate parse for what a file *is*: the AniList-derived episode mapping assigns files to episodes (`ordered_episode_ids`), because SeaDex releases routinely carry specials and orderings Sonarr misparses.
+The import places nothing. It imports the map the grab placed, plus the files Sonarr's history placed for a download no scan saw, and reports a file on disk the map lacks: a warned skip, an unplaced outcome, or a file the grab left for a hand import.
+Sonarr is always given the chance to import first. The auto import only runs for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
 Two kinds of untracked download are never served by id: one Sonarr's history marks imported, failed, or ignored, and a torrent in a category none of Sonarr's qBittorrent clients watch. For those the import reads the download's folder instead and leaves the download id out. Every import from a folder copies under `imports.import_mode: auto`.
 Rejected: reusing Sonarr's manual-import candidates as the mapping source, the exact misparse the feature exists to correct.
 
@@ -95,21 +95,21 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source, the e
 | Term | Meaning |
 | --- | --- |
 | title | One anime as AniList lists it, known by its AniList ID. A series is often several titles: each season, the specials, a movie. |
-| entry | What SeaDex holds for one title: its notes and its releases. |
+| entry | What SeaDex has for one title: its notes and its releases. |
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
-| import | The arr (or Pearlarr's manual import) moving finished files into the library. |
+| import | The arr (or Pearlarr's auto import) moving finished files into the library. |
 | pending import | A torrent Pearlarr added whose files Sonarr hasn't imported yet. |
 | window | The episodes of one title in its Sonarr series. A torrent's files are placed against one window at a time. |
 | listing | Every title SeaDex lists a torrent under. Its files are placed against each of those titles' windows in turn, regular seasons before specials. |
 | claim | One title's part of a pending import: which episodes are that title's, so the files placed on them import for it. |
 | numbered sequence | A torrent's files whose names are the same up to their number, in number order (`Show - 01`, `Show - 02`). Where two versions share a number, the higher version is in the sequence. |
 | verdict | What the placer decided for one file under one window: the episodes it goes on and how they were found, or why it goes on none. A verdict is final when no other window can change it, and provisional otherwise. |
-| run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
+| run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled run. |
 | arr run | One arr's share of a run: its scan, its grabs, then its wait pass. |
-| cycle | One scheduled-loop iteration (every configured arr, once). |
-| wait pass | The post-grab phase that waits for downloads and drives imports. |
-| preview mode | qBittorrent credentials absent: everything is evaluated and reported, nothing is grabbed or cached. |
+| scheduled run | One scheduled-loop iteration (every configured arr, once). |
+| wait pass | The pass after the grabs that waits for downloads and gets them imported. |
+| dry run | `--dry-run`, or qBittorrent credentials absent: everything is evaluated and reported, nothing is grabbed or cached. |
 | the arrs / an arr | Sonarr and Radarr, collectively/generically. |
 | dual-audio | A release carrying both Japanese and English audio. |
 
@@ -136,7 +136,7 @@ No telemetry: Pearlarr is outbound-only, listens on no ports, and sends nothing 
 
 ## Invariants
 
-Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comments in the source. Each entry names the module that enforces it.
+Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comments in the source. Each one names the module that enforces it.
 
 <!-- gen:invariants - GENERATED by scripts/gen_docs.py from the # Invariant: comments in pearlarr/. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 - `pearlarr/cache.py` - a dry run never commits, so every staged write is discarded on close and a dry run can never cache a title.

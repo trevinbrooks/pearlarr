@@ -1,6 +1,6 @@
 # Output
 
-Pearlarr writes to four surfaces: the console, an always-on log file, a JSON event stream, and the notification webhooks.
+Pearlarr writes four kinds of output: the console, an always-on log file, a JSON event stream, and the notification webhooks.
 This page explains what each is for and which ones are stable interfaces you can build on.
 
 The machine-readable contract is the **JSON event stream** and the **webhook payloads**.
@@ -9,10 +9,10 @@ Do not parse them.
 
 ## Console formats
 
-`advanced.log_format` picks the console surface (see [configuration.md](configuration.md#advanced)):
+`advanced.log_format` chooses the console format (see [configuration.md](configuration.md#advanced)):
 
 - `auto` (the default) resolves to `rich` on a terminal and to `plain` when stdout is piped or redirected, which is what `docker logs` sees.
-- `rich` is the live cockpit: a boot ledger, per-title scan blocks, and a live wait region, with color and progress bars.
+- `rich` is the live console: the boot step lines, a block per title during the scan, and a live wait region, with color and progress bars.
 - `plain` writes one line per event in the same grammar as the log file.
 - `json` writes one JSON object per event to stdout, the [event catalog](#event-catalog) below.
 
@@ -23,11 +23,11 @@ The log file is always written, and always in the text grammar, whatever the con
 
 Every run appends to `Pearlarr.log` under the data directory's `logs/` folder (`pearlarr paths` prints the location. Per-OS defaults are in [deployment.md](deployment.md#the-data-directory)).
 
-Each line is `<timestamp> LEVEL [breadcrumb] message key=value ...`, one line per event. A rendered traceback is the only multi-line form.
-The grammar is stable enough to read and grep, but it is **not a parsing API**: wording, breadcrumbs, and `key=value` tails may change in any release.
+Each line is `<timestamp> LEVEL [scope path] message key=value ...`, one line per event. A rendered traceback is the only multi-line form.
+The grammar is stable enough to read and grep, but it is **not a parsing API**: wording, scope paths, and `key=value` tails may change in any release.
 Automation belongs on the JSON stream or the webhooks.
 
-At the start of each run (or scheduled cycle), the previous file rotates to a dated backup, `Pearlarr.log.<run's timestamp>`.
+At the start of each run, scheduled ones included, the previous file rotates to a dated backup, `Pearlarr.log.<run's timestamp>`.
 Backups older than `advanced.log_retention_days` are deleted once the run's configuration loads.
 
 ## Levels
@@ -36,9 +36,9 @@ Backups older than `advanced.log_retention_days` are deleted once the run's conf
 
 | Level | Meaning |
 | --- | --- |
-| `DEBUG` | Implementation tracing for maintainers. The redaction guarantee still holds |
+| `DEBUG` | Implementation tracing for maintainers. The redaction guarantee still applies |
 | `INFO` | The facts and outcomes of the run |
-| `WARNING` | Something degraded but the run continues. The message names the fix |
+| `WARNING` | Something went wrong but the run continues. The message names the fix |
 | `ERROR` | The run, or one title, failed. The message names the fix |
 | `CRITICAL` | Accepted as a threshold, but Pearlarr itself never logs above ERROR. Only a dependency's adopted log records carry it |
 
@@ -56,13 +56,13 @@ Every object carries the envelope keys, in stable order:
 | `event` | The event name. The catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `message` | The human-readable line (informational, not an interface) |
-| `component` | The subsystem it came from (`run`, `scan`, `title`, `cli`, ...). Always present. It seeds the text log's `[bracket]`. An event carrying a `path` breadcrumb prints that as the bracket instead |
+| `component` | The subsystem it came from (`run`, `scan`, `title`, `cli`, ...). Every event has it. The text log shows it as the line's `[scope path]` when the event carries no `path` |
 
 Per-event fields follow the envelope.
-Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during` and `exc`), events inside a nested scope carry a `path` breadcrumb, and `arr_run_summary` carries the `needs_action_records` and `grabbed_records` arrays.
+Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during` and `exc`), events inside a nested scope carry their scope path as `path`, and `arr_run_summary` carries the `needs_action_records` and `grabbed_records` arrays.
 Absent facts are omitted, never `null`.
 
-The stream honors `advanced.log_level`, with one carve-out: an `arr_run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
+The stream honors `advanced.log_level`, with one carve-out: an `arr_run_summary` with `needs_action_records` or errors is admitted at `WARNING`, so a warnings-only stream still ends each arr run with its summary.
 
 The command events at the end of the catalog (`paths_shown`, `starter_config_written`, `effective_config_shown`, and the `config_*` and `cache_*` events) appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream. `advanced.log_format` does not affect them, only the per-command `--json` flag does.
 
@@ -76,7 +76,7 @@ Any release can also rename or remove one, or change what it means, and says so 
 ### Replaying a capture
 
 `pearlarr replay` turns a captured JSON stream back into the readable text grammar, for reading a docker-captured or archived log after the fact: `pearlarr replay events.jsonl`, or `docker logs pearlarr | pearlarr replay -` (`-` reads stdin).
-Each envelope prints as one `<timestamp> LEVEL [breadcrumb] message key=value` line, the same shape the log file uses.
+Each envelope prints as one `<timestamp> LEVEL [scope path] message key=value` line, the same shape the log file uses.
 Because the renderer knows only the envelope, not each event, lines from a newer Pearlarr still render best-effort, and non-JSON lines (docker interleaves stderr) are skipped with a count on stderr.
 
 ## Event catalog
@@ -742,9 +742,9 @@ Both webhook URLs are secrets under the [redaction guarantee](../SECURITY.md#the
 
 ### Discord grab notifications
 
-With `notifications.discord_url` set, every title that adds at least one torrent posts one message, never in preview or `--dry-run` mode.
+With `notifications.discord_url` set, every title that adds at least one torrent posts one message, never on a dry run.
 The payload is Discord's standard webhook format: username `Pearlarr`, one embed carrying the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes (the README shows one rendered).
-When `notifications.wait_notify` is on, the wait pass posts a completion digest the same way.
+When `notifications.wait_notify` is on, the wait pass posts a summary the same way when it finishes.
 
 Delivery semantics: posts are paced at least one second apart. A `429` is retried once when Discord's `Retry-After` is five seconds or less, and dropped otherwise. Any other `4xx` disables Discord for the rest of the run (the URL is likely wrong). A `5xx` or a network error drops that one notification with a warning.
 
@@ -770,6 +770,6 @@ With `notifications.wait_webhook_url` set, the end of each wait pass POSTs one J
 }
 ```
 
-`rows` has one entry per watched torrent. `outcome` is the row's outcome name and `word` its short display form. The names are `IMPORTED`, `GONE`, `DOWNLOAD_ERRORED`, `DOWNLOAD_TIMED_OUT`, `NO_CONTENT_PATH`, `STILL_IMPORTING`, `SONARR_BUSY`, `NOT_READY`, `NOTHING_PLACED`, `PARTIAL`, `ATTEMPT_FAILED`, `QBITTORRENT_UNREACHABLE`, `IMPORT_IN_PROGRESS`, `AWAITING_IMPORT` and `STILL_DOWNLOADING`.
+`rows` has one object per watched torrent. `outcome` is the row's outcome name and `word` its short display form. The names are `IMPORTED`, `GONE`, `DOWNLOAD_ERRORED`, `DOWNLOAD_TIMED_OUT`, `NO_CONTENT_PATH`, `STILL_IMPORTING`, `SONARR_BUSY`, `NOT_READY`, `NOTHING_PLACED`, `PARTIAL`, `ATTEMPT_FAILED`, `QBITTORRENT_UNREACHABLE`, `IMPORT_IN_PROGRESS`, `AWAITING_IMPORT` and `STILL_DOWNLOADING`.
 Delivery semantics: one POST per wait pass (none when nothing was waited on), a ten-second timeout, no retry, and the response status is not checked: fire and forget.
 The payload follows the same stability policy as the JSON event stream.

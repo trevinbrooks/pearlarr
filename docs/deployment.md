@@ -7,7 +7,7 @@ For the ten-minute first run, start with the README's [Install](../README.md#ins
 ## The Docker image
 
 `ghcr.io/trevinbrooks/pearlarr` is a multi-arch image (linux/amd64 and linux/arm64) on a `python:3.14-slim` base.
-It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:` key says otherwise, and sets `PEARLARR_DATA_DIR=/config`, so the single `/config` mount holds the config, caches, and logs together.
+It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:` key says otherwise, and sets `PEARLARR_DATA_DIR=/config`, so the single `/config` mount keeps the config, caches, and logs together.
 Any config key can also be set through the container's `environment:` as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`). See [Overriding config keys](configuration.md#overriding-config-keys).
 
 | Tag | Meaning |
@@ -30,7 +30,7 @@ Started bare (the normal service), it walks four steps:
 
 1. **Writability check**: if `/config` is not writable by the container's uid, it stops immediately with the message `ERROR: /config is not writable by uid 1000 (gid 1000).` and the fix (chown the host directory, or point `user:`/PUID/PGID at its owner).
    A bind-mount directory auto-created by Docker is root-owned, which is why the quick start says to `mkdir -p ./config` yourself.
-2. **First boot**: if `/config/config.yml` does not exist, `pearlarr config init` writes the starter template and the container exits so you can fill it in.
+2. **First boot**: if `/config/config.yml` does not exist, `pearlarr config init` writes a template and the container exits so you can fill it in.
    With `restart: unless-stopped` Docker restarts it. The file now exists, so the container stays up (each run fails with a one-line error until the file is filled in).
 3. **Catch-up run**: with `PEARLARR_RUN_ON_START=true` (the default), one `pearlarr run single` runs at container start.
    Its failure does not stop the container. The exit code is logged and the schedule proceeds.
@@ -41,22 +41,22 @@ Started bare (the normal service), it walks four steps:
 `PEARLARR_CRON` (default `0 */6 * * *`, every six hours) is a standard five-field cron expression, evaluated in the `TZ` timezone (default UTC. `tzdata` is installed in the image).
 The config's `schedule.interval_hours` does **not** apply in the container. It only drives the bare-metal `pearlarr run scheduled` loop.
 
-Overlapping runs are double-guarded: supercronic will not start a run while the previous one is still going, and Pearlarr holds its own cross-process file lock besides (see [Interruption semantics](#interruption-semantics)).
+Overlapping runs are double-guarded: supercronic will not start a run while the previous one is still going, and Pearlarr takes its own cross-process file lock besides (see [Interruption semantics](#interruption-semantics)).
 
 ### Permissions
 
 The compose example's `user: "${PUID:-1000}:${PGID:-1000}"` line sets the uid/gid the container runs as.
 PUID and PGID are compose *interpolation* variables. Set them in an `.env` file next to the compose file or in the shell.
-They are **not** `environment:` keys. An `environment:` entry is silently ignored for this.
+They are **not** `environment:` keys. Set under `environment:`, they are silently ignored.
 Match them to the owner of the `./config` host directory so the container can write its config, caches, and logs there.
 
 The starter config is written with mode `600`, which works when your host editor runs as the same uid as the container.
-If you loosen it (say `chmod 644`), Pearlarr warns on every run that the file, which holds API keys, is readable by other users.
+If you loosen it (say `chmod 644`), Pearlarr warns on every run that the file, which contains API keys, is readable by other users.
 
 ### Custom certificate authorities
 
 Pearlarr verifies TLS against the operating-system trust store (via [truststore](https://truststore.readthedocs.io)), not a bundled CA list.
-On a bare-metal host, a corporate or homelab CA installed system-wide (`update-ca-certificates` on Debian/Ubuntu, Keychain on macOS, certmgr on Windows) is picked up automatically.
+On a bare-metal host, a corporate or homelab CA installed system-wide (`update-ca-certificates` on Debian/Ubuntu, Keychain on macOS, certmgr on Windows) is used automatically.
 In the container the OS store carries only the public CAs, so mount your CA and point OpenSSL at it instead of disabling verification:
 
 ```yaml
@@ -70,7 +70,7 @@ environment:
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish. Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
 A stop during the catch-up run at start is passed on to that run instead. It stops cleanly, keeping every title it finished, and the container exits without starting the schedule.
-Ten seconds is not enough once a wait pass is in flight: the default `blocking` `imports.wait_mode` can legitimately hold a run for up to `imports.download_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
+Ten seconds is not enough once a wait pass is in flight: the default `blocking` `imports.wait_mode` can legitimately keep a run going for up to `imports.download_timeout`. Raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
 stop_grace_period: 1h
@@ -87,12 +87,12 @@ It is purely informational. Docker does not restart anything on unhealthy, and a
 
 Two options:
 
-- **The built-in loop**: `pearlarr run scheduled` (or bare `pearlarr`) runs every configured arr each `schedule.interval_hours`, re-reading the config each cycle so edits take effect without a restart.
+- **The built-in loop**: `pearlarr run scheduled` (or bare `pearlarr`) runs every configured arr each `schedule.interval_hours`, re-reading the config for each scheduled run so edits take effect without a restart.
   Run it under a process supervisor (systemd service, launchd, etc.). It exits 0 on SIGTERM, so ordinary service stops are clean.
 - **Your own scheduler**: cron or a systemd timer invoking `pearlarr run single`.
   Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected. A run stopped with SIGTERM exits 0.
 
-If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir> - skipping this run` and exits non-zero (in scheduled mode, the loop retries next cycle).
+If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir> - skipping this run` and exits non-zero (in scheduled mode, the loop tries again at the next scheduled run).
 Running multiple instances *intentionally* is fine: give each its own data directory (`--data-dir` or `PEARLARR_DATA_DIR`), which also gives each its own lock.
 
 ## The data directory
@@ -108,10 +108,10 @@ The `--data-dir` flag wins over the `PEARLARR_DATA_DIR` environment variable (wh
 
 What is in it, and what deleting each piece costs:
 
-| File | What it holds | If you delete it |
+| File | What it contains | If you delete it |
 | --- | --- | --- |
 | `config.yml` | Your settings and credentials, the only file you author. | Gone is gone: `pearlarr config init` writes a fresh starter, but you refill it yourself. Keep it backed up. |
-| `cache.db` | Run state: which entries were processed, pending imports awaiting a wait pass, the arr-activity checkpoint. | Safe but costly: the next run re-evaluates the whole library, and pending imports are forgotten (Sonarr still imports what it can on its own). |
+| `cache.db` | Run state: which titles were checked, pending imports awaiting a wait pass, the arr-activity checkpoint. | Safe but costly: the next run re-evaluates the whole library, and pending imports are forgotten (Sonarr still imports what it can on its own). |
 | `cache.backup.db` | The snapshot written by `pearlarr cache backup`. | You lose the rollback point. Take a new backup. |
 | `mappings.db` | The parsed ID-mapping sources. | Cheap: rebuilt from the mapping downloads on the next run. |
 | `logs/` | `Pearlarr.log` plus dated `Pearlarr.log.<timestamp>` backups, kept for `advanced.log_retention_days` days. | Disposable. |
@@ -120,11 +120,11 @@ What is in it, and what deleting each piece costs:
 ## Backup and restore
 
 Two files matter: `config.yml` and `cache.db`.
-The mapping cache is regenerable. The logs are disposable.
+The mappings database (`mappings.db`) is regenerable. The logs are disposable.
 
 - `pearlarr cache backup` snapshots `cache.db` to `cache.backup.db` using SQLite's online-backup API, so the copy is consistent even if taken mid-write. It writes through a temp file, so a failed backup can never destroy the previous good one.
 - `pearlarr cache restore` replaces `cache.db` with a copy of the backup. The backup is kept, so a restore is repeatable.
-- Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir> - not modifying the cache`
+- Neither touches the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir> - not modifying the cache`
 
 Copying the whole data directory while Pearlarr is not running is also a complete backup.
 
@@ -154,7 +154,7 @@ Pearlarr is safe to interrupt (Ctrl-C, `docker stop`, a crash, a power cut):
 - **The run lock cannot wedge.**
   It is an OS-level advisory lock, released by the kernel when the process dies, so a crash never blocks future runs.
 
-An interrupted wait pass strands nothing either: downloads keep going in qBittorrent, and each grab's pending import was committed with its title, so a later run picks it up.
+An interrupted wait pass loses nothing either: downloads keep going in qBittorrent, and each grab's pending import was committed with its title, so a later run picks it up.
 
 ## Uninstalling
 
@@ -165,7 +165,7 @@ An interrupted wait pass strands nothing either: downloads keep going in qBittor
 What remains, deliberately, because deleting it may not be what you want:
 
 - **Torrents keep seeding in qBittorrent.**
-  If you set `sonarr.torrent_category` / `radarr.torrent_category` or `qbittorrent.tags`, Pearlarr's torrents are filterable by that category or tag. Without them there is no marker distinguishing its adds.
+  If you set `sonarr.torrent_category` / `radarr.torrent_category` or `qbittorrent.tags`, Pearlarr's torrents are filterable by that category or tag. Without them nothing marks which torrents are Pearlarr's.
 - **Imported files stay in your library**: they are Sonarr's/Radarr's now.
 - **The Discord webhook** you created is untouched. Delete it in Discord if nothing else uses it.
 
@@ -175,13 +175,13 @@ Pearlarr 1.0 is a renamed fork of [bbtufty/seadexarr](https://github.com/bbtufty
 
 - **The image and package moved**: `ghcr.io/trevinbrooks/pearlarr` replaces `ghcr.io/bbtufty/seadexarr`, the PyPI package is `pearlarr`, the command is `pearlarr`, and the environment variables are `PEARLARR_*`.
 - **Rewrite the config**: the format changed wholesale from flat keys to nested groups, and unknown keys now fail at load instead of being ignored.
-  Move your old `config.yml` aside first. `config init` refuses to overwrite an existing file, and following its `--force` hint would destroy the values you are about to transfer.
+  Move your old `config.yml` aside first. `config init` won't overwrite an existing file, and following its `--force` hint would destroy the values you are about to transfer.
   Then run `pearlarr config init` for a commented starter and transfer your values: for example, `sonarr_url` is now `sonarr.url`, `qbit_info` is the `qbittorrent` group, `torrent_tags` is `qbittorrent.tags`, and `public_only` is replaced by the `seadex.private_releases` policy.
   [docs/configuration.md](configuration.md) documents every key.
 - **The data directory is new**: upstream kept files beside the install. Pearlarr uses one OS-standard directory (see [above](#the-data-directory)).
   In Docker, mount `/config` as before. The layout inside it is Pearlarr's own.
-- **The cache is not carried over**: the old `cache.json` is not read, and Pearlarr starts fresh.
-  That is cheap: the first run re-evaluates the library against what the arrs already have on disk and downloads nothing it finds there.
+- **The old cache is not used**: the old `cache.json` is not read, and Pearlarr starts fresh.
+  That is cheap: the first run re-evaluates the library against what the arrs already have and downloads nothing it finds there.
 - **`SCHEDULE_TIME` is deprecated**: set `schedule.interval_hours` (bare metal) or `PEARLARR_CRON` (Docker) instead.
   On bare metal a still-set `SCHEDULE_TIME` wins for now, with a deprecation warning. The container never reads it.
 - **Python 3.13 or newer** is required for a pip install. The Docker image brings its own interpreter.

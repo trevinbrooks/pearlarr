@@ -1,10 +1,10 @@
 # Configuration
 
 Pearlarr reads its entire configuration from a single file, `config.yml`, in its data directory.
-This page documents every setting it holds, group by group.[^generated]
+This page documents every setting in it, group by group.[^generated]
 `pearlarr paths` prints where that is, `pearlarr config init` writes a starter copy, `pearlarr config validate` checks a filled-in file, and `pearlarr config show` prints the effective configuration with every secret redacted.
 
-The file holds credentials in plain text: it is created owner-only (`0600`), and a warning fires at load when an existing file is readable by group or other.
+The file contains credentials in plain text: it is created owner-only (`0600`), and a warning fires at load when an existing file is readable by group or other.
 
 [^generated]: The setting tables in this reference are generated from Pearlarr's config models, so they always match your installed version.
 
@@ -17,10 +17,10 @@ The file holds credentials in plain text: it is created owner-only (`0600`), and
 ## The config schema version
 
 The file opens with `config_version`, the version of the key/value schema it is written against.
-A file from an older Pearlarr keeps working: every load migrates it in memory, and the next run rewrites the file itself at the current schema, noting where the previous file was kept (`config.yml.bak`) and recording what was folded in the log file.
-The rewritten file is the current annotated starter template with your values filled in: the key docs refresh, but comments of your own are not carried over.
+A file from an older Pearlarr keeps working: every load migrates it in memory, and the next run rewrites the file itself at the current schema, noting where the previous file was kept (`config.yml.bak`) and writing the changes to the log file.
+The rewritten file is the current annotated template with your values filled in: the key docs refresh, but comments of your own are not kept.
 When the file cannot be rewritten (a read-only config, say), the run continues on the in-memory migration behind a short warning, and `pearlarr config migrate` does the same rewrite on demand.
-A file written by a newer Pearlarr (a downgraded install) refuses to load, naming both versions.
+A file written by a newer Pearlarr (a downgraded install) won't load, and the error names both versions.
 
 ## Environment variables
 
@@ -39,35 +39,35 @@ A file written by a newer Pearlarr (a downgraded install) refuses to load, namin
 
 Any config key can be set from the environment, which is handy for containers and secret managers that inject values rather than editing a file.
 The variable name is the key's dotted path with `PEARLARR_` in front and each dot written as a double underscore: `PEARLARR_SONARR__URL` sets `sonarr.url`, `PEARLARR_SEADEX__WANT_BEST` sets `seadex.want_best`, and a deeper path keeps nesting (`PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE`).
-Name segments fold to lowercase, except below a free-form table such as `qbittorrent.options`, where a segment keeps the exact case you write: that example sets the uppercase `VERIFY_WEBUI_CERTIFICATE` option, just as the file would.
+Name segments are converted to lowercase, except below a free-form table such as `qbittorrent.options`, where a segment keeps the exact case you write: that example sets the uppercase `VERIFY_WEBUI_CERTIFICATE` option, just as the file would.
 An environment override beats the file, per key: setting `PEARLARR_SONARR__URL` leaves the file's `sonarr.api_key` untouched.
 
 The value is parsed as YAML, so it means exactly what the same text means in `config.yml`: `PEARLARR_ADVANCED__SLEEP_TIME=0` is the number zero, `PEARLARR_SONARR__VERIFY_SSL=false` is a boolean, and `PEARLARR_SEADEX__IGNORE_TAGS='[Dolby Vision, Deband Required]'` is a list.
 Quote to force a string, exactly as in the file: an API key that reads as a number or a keyword (`123`, `no`) needs quotes, as in `PEARLARR_SONARR__API_KEY='123'`.
 YAML comments apply too: a space followed by `#` starts one, so a password like `hunter2 #1` silently loses its tail unless the value carries its own quotes: `PEARLARR_QBITTORRENT__PASSWORD='"hunter2 #1"'`.
-A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and falls back to the built-in default.
+A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and takes the built-in default.
 
 A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves to an unknown key) is rejected by the same validation that catches a typo'd file key, naming the offending key rather than being silently ignored.
 The error line for a key a variable set names the variable: `sonar (set by PEARLARR_SONAR__URL): unknown key`.
-`pearlarr config show` prints the effective configuration with every override already merged in, so it is the way to confirm an override landed.
+`pearlarr config show` prints the effective configuration with every override already merged in, so it is the way to confirm an override took effect.
 
 ## Configuration changes and the cache
 
-Titles that have been handled are cached in `cache.db` and skipped on later runs.
+Titles that have been checked are cached in `cache.db` and are not checked again on later runs.
 Changing a selection-affecting setting (anything in the `seadex` group, or `imports.languages_*`), or upgrading to a release whose notes say it re-checks cached titles, is detected automatically: the next run re-checks every cached title against the new rules and says so:
 
 ```text
-Matching settings changed - rechecking cached entries
+Selection settings changed - checking cached titles again
 ```
 
 That one run does a full evaluation pass (roughly first-run speed). Pending imports and the arr-activity checkpoint are kept, and titles the new rules still consider satisfied are not re-downloaded or re-announced.
 Other settings take effect immediately and trigger no re-check, and nothing needs to be deleted by hand.
-A preview-only run (qBittorrent not configured) never records the pass, so it re-checks and re-announces every run until qBittorrent is set and a real run confirms the new settings.
+A dry run (qBittorrent not configured) never marks the re-check done, so it re-checks and re-announces every run until qBittorrent is set and a real run confirms the new settings.
 
 ## sonarr
 
 Sonarr connection and per-run behavior.
-A group left blank means Sonarr runs are skipped. A half-filled connection (URL without API key, or the reverse) is warned about by name rather than skipped silently.
+A group left blank means Sonarr is not run. A half-filled connection (URL without API key, or the reverse) is warned about by name rather than skipped silently.
 
 <!-- gen:group-sonarr - GENERATED by scripts/gen_docs.py from pearlarr/config.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 | Key | Default | Values | Description |
@@ -98,8 +98,8 @@ Radarr connection and per-run behavior. The keys mean the same as their Sonarr c
 ## qbittorrent
 
 Where grabbed torrents go.
-**Leaving any of `host`, `username`, or `password` blank puts every run in preview mode:** titles are evaluated and decisions are reported, but nothing is added to qBittorrent, nothing is cached as handled, and no notifications are sent.
-Preview mode is the safe way to try a config against live Sonarr/Radarr instances.
+**Leaving any of `host`, `username`, or `password` blank makes every run a dry run:** titles are evaluated and decisions are reported, but nothing is grabbed, nothing is cached, and no notifications are sent.
+A dry run is the safe way to try a config against live Sonarr/Radarr instances.
 
 <!-- gen:group-qbittorrent - GENERATED by scripts/gen_docs.py from pearlarr/config.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 | Key | Default | Values | Description |
@@ -114,11 +114,11 @@ Preview mode is the safe way to try a config against live Sonarr/Radarr instance
 ## seadex
 
 How a release is chosen for each title.
-Pearlarr takes the SeaDex entry for a title, drops releases excluded by `ignore_tags` and `trackers`, keeps those matching the audio preference (`prefer_dual_audio`) and among them the ones marked best (`want_best`), and finally compares the survivors against the files the arr already has. The audio preference outranks the best tag: a dual-audio alternative is chosen over a single-audio best.
+Pearlarr takes the SeaDex entry for a title, drops releases excluded by `ignore_tags` and `trackers`, keeps those matching the audio preference (`prefer_dual_audio`) and among them the ones marked best (`want_best`), and finally compares the survivors against the files the arr already has. The audio preference outranks the best tag: a dual-audio release is chosen over a single-audio best.
 
 Private releases are never grabbed (SeaDex carries no download link for them, and no private-tracker auth is supported).
-`private_releases` decides what happens when a title's preferred release is private-only: `warn` keeps the title uncached so every run re-checks it. `fallback` takes the best public alternative and remembers that the title was satisfied by a fallback.
-Switching from `fallback` back to `warn` re-checks those remembered titles and resurfaces the private-only warning. A fallback substitute never replaces a private copy you already own.
+`private_releases` decides what happens when a title's preferred release is private-only: `warn` keeps the title uncached so every run re-checks it. `fallback` grabs a public release instead, chosen by the same settings, and remembers that the title was satisfied by a fallback.
+Switching from `fallback` back to `warn` re-checks those remembered titles and resurfaces the private-only warning. A fallback never replaces a private copy you already own.
 
 <!-- gen:group-seadex - GENERATED by scripts/gen_docs.py from pearlarr/config.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 | Key | Default | Values | Description |
@@ -135,13 +135,13 @@ Switching from `fallback` back to `warn` re-checks those remembered titles and r
 ## imports
 
 What happens after a torrent is grabbed, on Sonarr runs.
-With a `wait_mode` other than `off`, Pearlarr drives grabbed downloads through to import at the end of the run: `blocking` waits for qBittorrent to finish, then imports this run's grabs and any download still pending from an earlier run; `deferred` never waits, and runs one non-blocking check that imports the earlier runs' downloads that have finished.
-During the scan, an earlier run's download is reported under its series as `queued`, `downloaded`, or `imported` and is never imported mid-scan.
+With a `wait_mode` other than `off`, Pearlarr drives grabbed downloads through to import at the end of the run: `blocking` waits for qBittorrent to finish, then imports this run's grabs and any pending import from an earlier run; `deferred` never waits, and runs one non-blocking pass that imports the earlier runs' downloads that have finished.
+During the scan, an earlier run's download is reported under its series as `downloading`, `downloaded`, or `imported` and is never imported mid-scan.
 Sonarr imports the files itself where it can.
-When it cannot (a blocked import, or a download Sonarr is not tracking), Pearlarr steps in with a manual import, pinned to the correct series and episodes by its own mapping.
-A download that outlasts the run (including one a wait times out on) is carried as a pending import and picked up by a later run, until it imports or leaves qBittorrent.
+When it cannot (a blocked import, or a download Sonarr is not tracking), Pearlarr runs an auto import, pinned to the correct series and episodes by its own mapping.
+A download that outlasts the run (including one a wait times out on) is kept as a pending import and picked up by a later run, until it imports or leaves qBittorrent.
 A download that leaves qBittorrent before it imports is no longer tracked, on Sonarr and Radarr alike, and the next run checks its title again: the release is grabbed again if the library still lacks it.
-In `blocking` each later run waits on a pending download again, up to `download_timeout`. To stop Pearlarr waiting on one that will never finish, add the title's AniList ID to `seadex.ignore_anilist_ids` and remove the download from qBittorrent.
+In `blocking` each later run waits on a pending import again, up to `download_timeout`. To stop Pearlarr waiting on one that will never finish, add the title's AniList ID to `seadex.ignore_anilist_ids` and remove the download from qBittorrent.
 
 A Radarr run never waits or imports, since Radarr imports its own downloads.
 With a `wait_mode` other than `off` it tracks a grabbed movie until Radarr's import history (the last 30 days of it) shows the import or the torrent leaves qBittorrent, and applies `post_import_category` after the import.
@@ -177,8 +177,8 @@ A delivery failure never fails the run.
 
 ## schedule
 
-Cadence for scheduled mode (`pearlarr run scheduled`, the default command): one cycle runs every configured arr, and the process then sleeps for `interval_hours`.
-The config is re-read each cycle, so edits take effect without a restart.
+Cadence for scheduled mode (`pearlarr run scheduled`, the default command): each scheduled run goes through every configured arr, and the process then sleeps for `interval_hours`.
+The config is re-read for each scheduled run, so edits take effect without a restart.
 In Docker the schedule comes from `PEARLARR_CRON` instead.
 
 <!-- gen:group-schedule - GENERATED by scripts/gen_docs.py from pearlarr/config.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
@@ -190,8 +190,8 @@ In Docker the schedule comes from `PEARLARR_CRON` instead.
 ## advanced
 
 Rate limiting, caching, run caps, and logging.
-`detect_arr_activity` re-checks titles whose files changed arr-side (an upgrade or manual replacement in Sonarr/Radarr, or their import of a Pearlarr grab) even though they are cached as handled. Turn it off if a release you deliberately replaced keeps being re-grabbed.
-The console format and level apply to terminal output. A plain-text file log is always written to the data directory regardless.
+`detect_arr_activity` re-checks titles whose files changed arr-side (an upgrade or manual replacement in Sonarr/Radarr, or their import of a Pearlarr grab) even though they are cached. Turn it off if a release you deliberately replaced keeps being re-grabbed.
+The console format applies to the console only. A plain-text file log is always written to the data directory regardless, at the same `log_level`.
 
 <!-- gen:group-advanced - GENERATED by scripts/gen_docs.py from pearlarr/config.py. Do not edit between the markers. Regenerate: uv run python scripts/gen_docs.py -->
 | Key | Default | Values | Description |
@@ -223,4 +223,4 @@ Setting one to `false` disables it. `anime_ids` and `anibridge` also accept an i
 
 The sources sometimes put a movie or OVA on the wrong special of its series.
 When a title maps only to specials, and they aired more than two weeks from the dates AniList gives it, Pearlarr looks for the series' specials that aired between those dates, give or take a day, and run about as long as AniList says an episode does. If there are exactly as many as the title has episodes, it uses those instead. If not, a two-episode title takes the one such special that aired on its first date and the one on its last. Anything else keeps the mapping.
-An inline mapping is checked the same way. The debug log names each AniList ID matched like this.
+An inline mapping is checked the same way. The debug log names each AniList ID mapped like this.
