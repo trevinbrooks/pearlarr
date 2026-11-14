@@ -277,16 +277,16 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         update = services.new_cached_title_update(title, sd_entry)
 
         # Get the episode list for all relevant episodes
-        ep_list = self._episodes.mapping_episodes(
+        title_episodes = self._episodes.mapping_episodes(
             sonarr_series_id=sonarr_series_id,
             anilist_id=anilist_id,
             mapping=mapping,
         )
 
-        if ep_list is None:
+        if title_episodes is None:
             return
 
-        if not ep_list:
+        if not title_episodes:
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): stop, don't mislabel "unmonitored" or grab orphans.
             services.log_no_episodes(title.name)
@@ -302,7 +302,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             return
 
         # If all episodes are unmonitored, then stop if ignore_unmonitored is switched on
-        if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
+        if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in title_episodes):
             services.log_arr_item_unmonitored(title.name)
             services.owe_pause()
             return
@@ -310,7 +310,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Now that we have the episodes, log the active title with its
         # season/episode coverage + URL, and remember them for the cache so
         # a later run that finds it unchanged can show the same detail
-        coverage = _coverage.coverage_of_episodes(ep_list)
+        coverage = _coverage.coverage_of_episodes(title_episodes)
         services.open_title_block(
             title=title.name,
             sd_entry=sd_entry,
@@ -319,8 +319,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         update["coverage"] = coverage
         update["url"] = sd_url
 
-        self._report_missing_episodes(ep_list)
-        sonarr_files = self._episodes.sonarr_files(ep_list=ep_list)
+        self._report_missing_episodes(title_episodes)
+        sonarr_files = self._episodes.sonarr_files(title_episodes)
 
         self.logger.debug(
             f"Sonarr release {pluralize(sonarr_files.group_count(), 'group')}: {sonarr_files.groups_label()}"
@@ -353,7 +353,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         grabbing_title = GrabbingTitle(
             anilist_id=anilist_id,
             series_id=sonarr_series_id,
-            title_index=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
+            title_index=episode_index(title_episodes, self._episodes.orders_for(sonarr_series_id)),
             series_index=indexes.get(sonarr_series_id, episode_index([])),
             title_names=title.names,
             episode_count=self._episodes.episode_count(anilist_id),
@@ -386,7 +386,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         plan = services.plan_grabs(
             seadex_dict=seadex_dict,
             arr_files=sonarr_files,
-            ep_list=ep_list,
+            title_episodes=title_episodes,
         )
         seadex_dict = plan.seadex_dict
         self._warn_overrides(placed, seadex_dict)
@@ -430,16 +430,16 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             ),
         )
 
-    def _report_missing_episodes(self, ep_list: list[SonarrEpisode]) -> None:
+    def _report_missing_episodes(self, title_episodes: list[SonarrEpisode]) -> None:
         """Report the title's episodes that have no file."""
 
-        missing = [ep for ep in ep_list if ep.episode_file_id == 0]
+        missing = [ep for ep in title_episodes if ep.episode_file_id == 0]
         if missing:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
             # a count, so it's clear what's absent. Fall back to the count if the
             # episodes can't be condensed.
             missing_coverage = _coverage.coverage_of_episodes(missing)
-            self._services.log_missing_episodes(missing_coverage or f"{len(missing)}/{len(ep_list)}")
+            self._services.log_missing_episodes(missing_coverage or f"{len(missing)}/{len(title_episodes)}")
 
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
         """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""

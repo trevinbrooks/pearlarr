@@ -789,7 +789,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
 
         episodes = make_bare_instance(
             SonarrEpisodes,
-            _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
+            _series_episodes={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
         )
         # A non-empty series, yet the mapping without TVDB mappings resolves to NO episodes (skip).
         assert episodes.mapping_episodes(sonarr_series_id=777, anilist_id=500, mapping=without_tvdb_mappings) == []

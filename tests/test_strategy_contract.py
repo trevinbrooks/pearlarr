@@ -287,9 +287,9 @@ class _FakeRunServices(ArrRunServices):
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        ep_list: list[SonarrEpisode] | None = None,
+        title_episodes: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
-        del ep_list
+        del title_episodes
         self.plan_grabs_calls.append((seadex_dict, arr_files))
         if self._plan_grabs_result is not None:
             return self._plan_grabs_result
@@ -442,9 +442,9 @@ class TestArrRunStartHook:
     This stays at strategy level to pin that get_items actually routes through it.
     """
 
-    def test_sonarr_get_items_clears_ep_list_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_sonarr_get_items_clears_the_series_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
-        strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
+        strat = make_sonarr_sync(series_episodes={5: [sonarr_ep(1, 1)]})
         strat._episodes._orderings = {5: NO_INDEX_ORDERS}
         strat._episodes._picks_logged = {11}
 
@@ -457,7 +457,7 @@ class TestArrRunStartHook:
 
         assert result == series
         # The episode collaborator drops its caches + recomputes the series hash as it enumerates.
-        assert strat._episodes._ep_list_cache == {}
+        assert strat._episodes._series_episodes == {}
         assert strat._episodes._orderings == {}
         assert strat._episodes._picks_logged == set()
         assert strat._episodes._series_hash == sonarr_series_hash([5, 7])
@@ -4347,7 +4347,7 @@ class TestSonarrFiles:
 
     def test_episode_files_with_no_group_never_reach_no_group(self) -> None:
         # PIN: an episode file with no group contributes NOTHING to the `ArrFiles` - it
-        # travels on the ep_list into the planner's size matching instead. The
+        # travels on the title's episodes into the planner's size matching instead. The
         # planner merges both arrs' no-group sources, so a file fed through
         # both would count twice and could then never be owned.
         episodes = make_sonarr_episodes()

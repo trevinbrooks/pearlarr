@@ -158,10 +158,10 @@ class TestUpgradePendingSkipsForOwnedOutdated:
                 PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
-        ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
+        title_episodes = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), title_episodes)
 
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -231,10 +231,10 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             },
         )
         # Sonarr has Priv's release at the MATCHING SeaDex size.
-        ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
+        title_episodes = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (999,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (999,)}), title_episodes)
 
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
@@ -302,10 +302,10 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert set(sd) == {"Priv"}  # warn mode adds no fallback
 
         _attach_episodes(sd, {PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)]})
-        ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
+        title_episodes = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), title_episodes)
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
@@ -377,10 +377,10 @@ class TestPlanGrabsNotice:
             },
         )
         # S01E01 has a file at an outdated size (upgrade pending). S02E01 is missing.
-        ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
+        title_episodes = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"PrivA": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"PrivA": (100,)}), title_episodes)
 
         assert plan.seadex_dict["PubA"].releases[self.PUBA_URL].to_grab is True
         assert plan.seadex_dict["PrivA"].releases[self.PRIVA_URL].to_grab is False
@@ -678,10 +678,10 @@ class TestPromotionGeneralization:
                 PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
-        ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
+        title_episodes = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), title_episodes)
 
         assert plan.seadex_dict["Pub"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -794,13 +794,13 @@ class TestPromotionGeneralization:
             },
         )
         # S01E01 owned at matching size. S02E01 owned at an outdated size.
-        ep_list = [
+        title_episodes = [
             sonarr_ep(1, 1, size=555, release_group="M"),
             sonarr_ep(2, 1, size=100, release_group="M"),
         ]
 
         with _record() as recording:
-            plan = filt.plan_grabs(sd, ArrFiles(by_group={"M": (555, 100)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"M": (555, 100)}), title_episodes)
 
         assert plan.seadex_dict["F"].releases[self.F_URL].to_grab is False
         assert plan.seadex_dict["M"].releases[self.M_PUB_URL].to_grab is False
@@ -1012,9 +1012,9 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         sd_warn = warn_filt.build(entry)
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
         _attach_episodes(sd_warn, {PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)]})
-        ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
+        title_episodes = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
-            warn_plan = warn_filt.plan_grabs(sd_warn, ArrFiles(by_group={"Fall": (555,)}), ep_list)
+            warn_plan = warn_filt.plan_grabs(sd_warn, ArrFiles(by_group={"Fall": (555,)}), title_episodes)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 

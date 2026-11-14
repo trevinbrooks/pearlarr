@@ -70,7 +70,7 @@ def _strat(parses: ParseCache, series: list[SonarrEpisode]) -> SonarrStrategy:
 
     return make_sonarr_sync(
         cache_store=FakeCacheStore(sonarr_parse=_rows(parses)),
-        ep_list_cache={7: series},
+        series_episodes={7: series},
     )
 
 
@@ -97,11 +97,11 @@ def _record(update: PendingImportUpdate) -> PendingImport:
 
 
 def _grabbing_title(
-    ep_list: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None
+    title_episodes: list[SonarrEpisode], series: list[SonarrEpisode], names: TitleNames | None = None
 ) -> GrabbingTitle:
     """The grab-time title: title 1's list over the whole-series index."""
 
-    return make_grabbing_title(episode_index(ep_list), episode_index(series), names=names or TitleNames())
+    return make_grabbing_title(episode_index(title_episodes), episode_index(series), names=names or TitleNames())
 
 
 def _trust(own: PendingImport, siblings: Sequence[PendingImport] = ()) -> TrustedGroups:
@@ -118,7 +118,7 @@ class TestBuildPendingImportUpdates:
     """
 
     def test_builds_updates_only_for_grabs_with_a_hash(self) -> None:
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
@@ -131,10 +131,10 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
-            grabbing_title=_grabbing_title(ep_list, ep_list, TitleNames("Show", ("Show", "Shou"))),
+            grabbing_title=_grabbing_title(title_episodes, title_episodes, TitleNames("Show", ("Show", "Shou"))),
         )
 
         # Only the download+hash release gets an update (no download / no hash are skipped).
@@ -158,7 +158,7 @@ class TestBuildPendingImportUpdates:
     def test_stale_parse_row_is_an_unread_parse(self) -> None:
         # The placement reads the sweep's rows under the sweep's freshness rule: a
         # row the sweep rejected and could not refresh must not place a file here.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         stale = {
             "Show - 01.mkv": {
                 "fetched_at": "2020-01-01 00:00:00",
@@ -167,7 +167,7 @@ class TestBuildPendingImportUpdates:
         }
         strat = make_sonarr_sync(
             cache_store=FakeCacheStore(sonarr_parse=stale),
-            ep_list_cache={7: ep_list},
+            series_episodes={7: title_episodes},
         )
         seadex_dict = {
             "RG": rg_group({"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
@@ -185,14 +185,14 @@ class TestBuildPendingImportUpdates:
         # entry_groups/stale_groups are the PLAN's findings, copied through
         # verbatim (see the planner's group-verdict tests for the derivation)
         # so the import guard reads exactly what the grab decision found.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group({"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)}),
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept"), stale_groups=("Stale",)),
@@ -206,7 +206,7 @@ class TestBuildPendingImportUpdates:
     def test_update_records_the_listing_sizes(self) -> None:
         # The grabbed release's file sizes go with the pending import so the import can tell
         # this release's files from an outdated same-group copy.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
@@ -215,7 +215,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -228,7 +228,7 @@ class TestBuildPendingImportUpdates:
         # An episode already with another preferred release's file at grab time was never
         # this torrent's to import: it goes in preowned_episode_ids so the
         # wait's done counts start at zero, not at the pre-existing files.
-        ep_list = [
+        title_episodes = [
             sonarr_ep(1, 1, ep_id=101, size=500, release_group="Kept"),
             sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
         ]
@@ -250,7 +250,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(
                 guards=OwnedAtGrab(entry_groups=("RG", "Kept")),
@@ -264,7 +264,7 @@ class TestBuildPendingImportUpdates:
         # (see the planner's owned-episodes tests). The update persists the
         # (id, size) pairs so the import doesn't copy over the very file the
         # grab just called this torrent's, and can confirm the match by size again.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, size=1000), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, size=1000), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - 02.mkv": parsed_info(season=1, episodes=(2,))}
         seadex_dict = {
             "RG": rg_group(
@@ -281,7 +281,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(
                 guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 1000),)),
@@ -291,7 +291,7 @@ class TestBuildPendingImportUpdates:
         assert updates["h1"].claim.guards.owned_episodes == ((101, 1000),)
 
     def test_multi_file_torrent_maps_each_file_to_its_own_episode(self) -> None:
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": parsed_info(season=1, episodes=(1,)),
             "Show - 02.mkv": parsed_info(season=1, episodes=(2,)),
@@ -310,7 +310,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -348,7 +348,7 @@ class TestBuildPendingImportUpdates:
         # The count steps need no index, but an update is final where an import poll is retried,
         # so the whole placement waits for a served list. Two files with no name number over two episodes
         # would otherwise zip in name order.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         files = ["Show - Special A.mkv", "Show - Special B.mkv"]
         parses = {name: parsed_info() for name in files}
         seadex_dict = {
@@ -357,14 +357,14 @@ class TestBuildPendingImportUpdates:
         sonarr = FakeSonarrClient()
         sonarr.episodes_return = None
         strat = make_sonarr_sync(
-            sonarr=sonarr, cache_store=FakeCacheStore(sonarr_parse=_rows(parses)), ep_list_cache={}
+            sonarr=sonarr, cache_store=FakeCacheStore(sonarr_parse=_rows(parses)), series_episodes={}
         )
 
         updates = _build(
             strat,
             seadex_dict,
             facts=title_facts(),
-            grabbing_title=_grabbing_title(ep_list, []),
+            grabbing_title=_grabbing_title(title_episodes, []),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -376,8 +376,8 @@ class TestBuildPendingImportUpdates:
         # but OUTSIDE this title's set go in the exclusions, so file map + excluded
         # account for every file and the pending import stays determinate (a real progress
         # bar, an import timeout that re-anchors per arriving file).
-        ep_list = [sonarr_ep(3, 1, ep_id=101, episode_file_id=0), sonarr_ep(3, 2, ep_id=102, episode_file_id=0)]
-        series = [*ep_list, sonarr_ep(3, 13, ep_id=113, episode_file_id=0)]
+        title_episodes = [sonarr_ep(3, 1, ep_id=101, episode_file_id=0), sonarr_ep(3, 2, ep_id=102, episode_file_id=0)]
+        series = [*title_episodes, sonarr_ep(3, 13, ep_id=113, episode_file_id=0)]
         parses = {
             "Show - S03E01.mkv": parsed_info(season=3, episodes=(1,)),
             "Show - S03E02.mkv": parsed_info(season=3, episodes=(2,)),
@@ -400,7 +400,7 @@ class TestBuildPendingImportUpdates:
             _strat(parses, series),
             seadex_dict,
             facts=title_facts(),
-            grabbing_title=_grabbing_title(ep_list, series),
+            grabbing_title=_grabbing_title(title_episodes, series),
         )
 
         update = updates["h1"]
@@ -413,7 +413,7 @@ class TestBuildPendingImportUpdates:
     def test_file_resolving_nowhere_in_the_series_is_not_excluded(self) -> None:
         # Its key exists nowhere in the series, so nothing proves it another
         # title's: the pending import keeps it as possibly this torrent's rather than writing it off.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - S09E09.mkv": parsed_info(season=9, episodes=(9,))}
         seadex_dict = {
             "RG": rg_group(
@@ -422,7 +422,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -434,7 +434,7 @@ class TestBuildPendingImportUpdates:
         # Two claimants on one episode (a v2 beside its v1): the placement takes the
         # later version AND excludes the other, so this pending import will never
         # import it, so completeness may account for it.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": parsed_info(season=1, episodes=(1,)),
             "Show - 01v2.mkv": parsed_info(season=1, episodes=(1,)),
@@ -453,7 +453,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -466,7 +466,7 @@ class TestBuildPendingImportUpdates:
         # A file with no cached parse and a full-season-rejected zip: neither is
         # KNOWABLY another title's, so neither is excluded - the pending import stays
         # indeterminate (conservative) rather than trusting an incomplete file map.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": parsed_info(season=1, episodes=(1,)),
             # "Show - Extra.mkv" has no cached parse at all.
@@ -486,7 +486,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -499,7 +499,7 @@ class TestBuildPendingImportUpdates:
         # The live shape that motivated the claimed coverage: one title, one group, one
         # torrent per episode. Identical name·group labels made "which episodes
         # imported?" unanswerable from the wait report / notification.
-        ep_list = [sonarr_ep(2, 6, ep_id=101, episode_file_id=0), sonarr_ep(2, 7, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(2, 6, ep_id=101, episode_file_id=0), sonarr_ep(2, 7, ep_id=102, episode_file_id=0)]
         parses = {
             "Show - S02E06.mkv": parsed_info(season=2, episodes=(6,)),
             "Show - S02E07.mkv": parsed_info(season=2, episodes=(7,)),
@@ -514,7 +514,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -523,7 +523,7 @@ class TestBuildPendingImportUpdates:
         assert _record(updates["h2"]).display_label == f"Show{SEP}RG{SEP}S02 E07"
 
     def test_an_unparsed_video_still_builds_an_update_with_an_empty_map(self) -> None:
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -533,7 +533,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat({}, ep_list),
+            _strat({}, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -548,7 +548,7 @@ class TestBuildPendingImportUpdates:
         # Two releases over one window: the parsed file claims its episode, the
         # unparsed one claims nothing, so its label names every episode it
         # is checked against rather than losing the claimed coverage.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - S01E01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
@@ -560,7 +560,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -571,7 +571,7 @@ class TestBuildPendingImportUpdates:
 
     def test_no_video_files_builds_no_update(self) -> None:
         # A release with only non-video files (subs) has nothing to import.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         seadex_dict = {
             "RG": rg_group(
                 {
@@ -581,7 +581,7 @@ class TestBuildPendingImportUpdates:
         }
 
         updates = _build(
-            _strat({}, ep_list),
+            _strat({}, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -601,7 +601,7 @@ class TestFileMapGuards:
         # An OP/ED whose plain-"S05" name Sonarr matches to the whole season:
         # the parse carries all 12 matched pairs, and none of them may place
         # (the old behavior imported this one file as every episode).
-        ep_list = [sonarr_ep(5, e, ep_id=500 + e, episode_file_id=0) for e in range(1, 13)]
+        title_episodes = [sonarr_ep(5, e, ep_id=500 + e, episode_file_id=0) for e in range(1, 13)]
         parses = {
             "Show S05 Ending.mkv": parsed_info(
                 matched=tuple((5, e) for e in range(1, 13)),
@@ -614,7 +614,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -628,7 +628,7 @@ class TestFileMapGuards:
         # A plain-"S01" OP/ED Sonarr matched to a whole season of only two
         # episodes: the pair count slips under the span cap, so Sonarr's own
         # fullSeason flag on the parse is what keeps it out of the file map.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {
             "Show S01 Opening.mkv": parsed_info(
                 matched=((1, 1), (1, 2)),
@@ -642,7 +642,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -652,7 +652,7 @@ class TestFileMapGuards:
         assert dict(updates["h1"].file_map) == {}
 
     def test_legitimate_double_episode_span_still_places(self) -> None:
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
@@ -661,7 +661,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -671,8 +671,8 @@ class TestFileMapGuards:
     def test_partially_resolving_span_is_not_placed(self) -> None:
         # A double-episode file straddling the title boundary: only episode 1
         # is in this title's list, so placing it on [101] would half-import the file.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
-        series = [*ep_list, sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        series = [*title_episodes, sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {"Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2))}
         seadex_dict = {
             "RG": rg_group(
@@ -684,7 +684,7 @@ class TestFileMapGuards:
             _strat(parses, series),
             seadex_dict,
             facts=title_facts(),
-            grabbing_title=_grabbing_title(ep_list, series),
+            grabbing_title=_grabbing_title(title_episodes, series),
         )
 
         assert dict(updates["h1"].file_map) == {}
@@ -692,7 +692,7 @@ class TestFileMapGuards:
     def test_second_claim_of_an_id_in_the_file_map_is_not_placed(self) -> None:
         # "13" and "13v2" both parse to S02E13: the later version wins,
         # deterministically, and the other claimant is left out of the file map.
-        ep_list = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
+        title_episodes = [sonarr_ep(2, 13, ep_id=213, episode_file_id=0)]
         parses = {
             "Show - 13.mkv": parsed_info(season=2, episodes=(13,)),
             "Show - 13v2.mkv": parsed_info(season=2, episodes=(13,)),
@@ -711,7 +711,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -722,7 +722,7 @@ class TestFileMapGuards:
         # The later file claims one already-placed id and one unplaced one: placement
         # leaves the whole file unplaced on any collision, so it is rejected whole
         # rather than placing the other half.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parses = {
             "Show - 01.mkv": parsed_info(season=1, episodes=(1,)),
             "Show - 01-02.mkv": parsed_info(season=1, episodes=(1, 2)),
@@ -741,7 +741,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -752,7 +752,7 @@ class TestFileMapGuards:
         # The same file name in two folders collapses in the name-keyed
         # file map: the first occurrence's claim stands and the copy is rejected,
         # so the file map is deterministic and never double-claims the id.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parses = {"Show - 01.mkv": parsed_info(season=1, episodes=(1,))}
         seadex_dict = {
             "RG": rg_group(
@@ -768,7 +768,7 @@ class TestFileMapGuards:
         }
 
         updates = _build(
-            _strat(parses, ep_list),
+            _strat(parses, title_episodes),
             seadex_dict,
             facts=title_facts(),
         )
@@ -782,16 +782,18 @@ class TestParseWriteFeedsUpdates:
     """One `/parse` per file name: the gather asks Sonarr, persists the parse, and the placement places by it."""
 
     @staticmethod
-    def _cold(parse: ParsedFileInfo, ep_list: list[SonarrEpisode]) -> tuple[SonarrStrategy, FakeSonarrClient]:
+    def _cold(parse: ParsedFileInfo, title_episodes: list[SonarrEpisode]) -> tuple[SonarrStrategy, FakeSonarrClient]:
         """A strat whose Sonarr answers every `/parse` with `parse`, its cache cold."""
 
         sonarr = FakeSonarrClient(parse_fn=lambda _f: parse)
-        return make_sonarr_sync(sonarr=sonarr, cache_store=FakeCacheStore(), ep_list_cache={7: ep_list}), sonarr
+        return make_sonarr_sync(
+            sonarr=sonarr, cache_store=FakeCacheStore(), series_episodes={7: title_episodes}
+        ), sonarr
 
     def test_parse_write_feeds_the_update_build(self) -> None:
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)]
         parse = parsed_info(season=1, episodes=(1,), matched=((1, 1),))
-        strat, sonarr = self._cold(parse, ep_list)
+        strat, sonarr = self._cold(parse, title_episodes)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": make_release(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
@@ -812,7 +814,7 @@ class TestParseWriteFeedsUpdates:
     def test_full_season_flag_flows_from_parse_write_to_rejection(self) -> None:
         # End-to-end through the real write path: a fullSeason parse persists the
         # flag on the cached parse, and the placement rejects the file by it.
-        ep_list = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        title_episodes = [sonarr_ep(1, 1, ep_id=101, episode_file_id=0), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         parse = parsed_info(
             matched=(
                 (1, 1),
@@ -820,7 +822,7 @@ class TestParseWriteFeedsUpdates:
             ),
             full_season=True,
         )
-        strat, _ = self._cold(parse, ep_list)
+        strat, _ = self._cold(parse, title_episodes)
         seadex_dict = {
             "RG": rg_group(
                 {"u1": make_release(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},

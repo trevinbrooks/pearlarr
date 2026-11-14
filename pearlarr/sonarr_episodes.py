@@ -142,7 +142,7 @@ class SonarrEpisodes:
         # otherwise re-fetch the same whole-series episode list. Cache it for the
         # run so the network round-trip happens once per series. Reset at the arr run's start
         # (refresh_library, driven by the strategy's get_items hook).
-        self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
+        self._series_episodes: dict[int, list[SonarrEpisode]] = {}
 
         # Hash of the current Sonarr series-id set, recomputed each run in
         # refresh_library. Pins the `/parse` cache rows with no series to the library
@@ -171,7 +171,7 @@ class SonarrEpisodes:
         strategy's `get_items` hook.
         """
 
-        self._ep_list_cache = {}
+        self._series_episodes = {}
         self._orderings = {}
         self._picks_logged = set()
         series = self.get_all_sonarr_series()
@@ -205,7 +205,7 @@ class SonarrEpisodes:
         thread pool collapses that to a few seconds while keeping every list
         FRESH - the grab/skip decision reads each episode's existing file, so the
         lists are deliberately not persisted across runs. Only the network fetch
-        runs in the pool. The in-memory `_ep_list_cache` is populated on the
+        runs in the pool. The in-memory `_series_episodes` is populated on the
         main thread (the cache and mappings are not thread-safe). A series whose
         fetch fails is left unwarmed and re-fetched (and logged) by
         `mapping_episodes` on the main thread during the loop.
@@ -256,7 +256,7 @@ class SonarrEpisodes:
                 for fut in concurrent.futures.as_completed(futures):
                     sid, eps = fut.result()
                     if eps is not None:
-                        self._ep_list_cache[sid] = eps
+                        self._series_episodes[sid] = eps
                     done += 1
                     if progress is not None:
                         progress.progress(done / total, f"{done}/{total}")
@@ -352,26 +352,26 @@ class SonarrEpisodes:
     def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' whole episode list, cached per run (fetched when cold, None when the fetch failed)."""
 
-        ep_list = self._ep_list_cache.get(series_id)
-        if ep_list is None:
-            ep_list = self.sonarr.episodes(series_id)
-            if ep_list is None:
+        episodes = self._series_episodes.get(series_id)
+        if episodes is None:
+            episodes = self.sonarr.episodes(series_id)
+            if episodes is None:
                 return None
-            self._ep_list_cache[series_id] = ep_list
-        return ep_list
+            self._series_episodes[series_id] = episodes
+        return episodes
 
     def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' episodes read now, refreshing the per-run cache. None when the read failed."""
 
         fetched = self.sonarr.episodes(series_id)
         if fetched is not None:
-            self._ep_list_cache[series_id] = fetched
+            self._series_episodes[series_id] = fetched
         return fetched
 
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
         """The series' last successfully read episodes this run, or empty."""
 
-        return self._ep_list_cache.get(series_id, [])
+        return self._series_episodes.get(series_id, [])
 
     def mapping_episodes(
         self,
@@ -398,27 +398,27 @@ class SonarrEpisodes:
         # per-AniList-id), so a multi-season series resolving to several ids would
         # otherwise re-request the identical list. Cache it per series for the run
         # and only do the per-id filtering below on the shared, read-only list.
-        ep_list = self.cached_episodes(sonarr_series_id)
-        if ep_list is None:
+        series_episodes = self.cached_episodes(sonarr_series_id)
+        if series_episodes is None:
             return None
 
         # Filter down here by various things. Resolve the include test once by
         # mapping kind rather than re-branching on a string for every episode. The
-        # comprehension preserves ep_list order, exactly as the append loop did.
+        # comprehension preserves the series' order, exactly as the append loop did.
         if mode is MappingKind.SEASON_OFFSET:
             if mapping.source is MappingSource.ANIBRIDGE:
                 # AniBridge mapping without TVDB mappings (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
                 # Return none. check_title surfaces NO_EPISODES + the AniBridge warning.
                 return []
-            final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
+            mapped = [ep for ep in series_episodes if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
             if not tvdb_mappings:
                 # AniBridge attached no usable per-season ranges, so nothing resolves.
                 # Return empty. check_title surfaces the visible NO_EPISODES row.
                 return []
-            final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
+            mapped = [ep for ep in series_episodes if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
@@ -435,10 +435,10 @@ class SonarrEpisodes:
 
         # Prefer the AniDB mapping dict over any offsets
         if len(anidb_episode_by_tvdb) > 0:
-            anidb_final_ep_list: list[SonarrEpisode] = []
+            in_anidb: list[SonarrEpisode] = []
 
             # See if we have the mapping for each episode
-            for ep in final_ep_list:
+            for ep in mapped:
                 season_number = ep.season_number
                 episode_number = ep.episode_number
                 if season_number is None or episode_number is None:
@@ -449,28 +449,28 @@ class SonarrEpisodes:
                     {},
                 ).get(episode_number, None)
                 if anidb_mapping_dict_entry is not None:
-                    anidb_final_ep_list.append(ep)
+                    in_anidb.append(ep)
 
             # These episodes are read-only from here on (coverage,
             # sonarr_files, and the planner only read them), so we
             # return references into the shared cache rather than cloning.
-            final_ep_list = anidb_final_ep_list
+            mapped = in_anidb
 
         # No AniDB mapping: anime-id mappings still need the offset slice, while
         # AniBridge mappings are already fully filtered above (no-op).
         elif mode is MappingKind.SEASON_OFFSET:
-            final_ep_list = self._apply_anime_id_offsets(
-                final_ep_list=final_ep_list,
+            mapped = self._apply_anime_id_offsets(
+                season_episodes=mapped,
                 anilist_id=anilist_id,
                 mapping=mapping,
             )
 
-        return self._picked_by_date(anilist_id, final_ep_list, ep_list)
+        return self._picked_by_date(anilist_id, mapped, series_episodes)
 
     def _picked_by_date(
         self, anilist_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
     ) -> list[SonarrEpisode]:
-        """The title's episodes: `mapped`, or the specials of `series_episodes` AniList's dates choose over them.
+        """The title's episodes: `mapping_episodes`, or the specials of `series_episodes` AniList's dates choose over them.
 
         A choice is logged once per run, though a run resolves a title several times.
         """
@@ -490,14 +490,14 @@ class SonarrEpisodes:
 
     def _apply_anime_id_offsets(
         self,
-        final_ep_list: list[SonarrEpisode],
+        season_episodes: list[SonarrEpisode],
         anilist_id: int,
         mapping: TitleMapping,
     ) -> list[SonarrEpisode]:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
         Args:
-            final_ep_list: Season-filtered episodes to slice.
+            season_episodes: Season-filtered episodes to slice.
             anilist_id: AniList ID, used to resolve the expected episode count.
             mapping: The title's mapping (read for `tvdb_epoffset` and `tvdb_season`.
                 A `tvdb_season` of -1 means single-season offset slice).
@@ -509,24 +509,21 @@ class SonarrEpisodes:
 
         # If we don't get a number of episodes, use them all
         if episode_count is None:
-            episode_count = len(final_ep_list) - ep_offset
+            episode_count = len(season_episodes) - ep_offset
 
         # Check that we're including this by the episode number. This only
         # works for single-seasons, so be careful!
         if mapping.tvdb_season != -1:
-            return [ep for ep in final_ep_list if 1 <= (ep.episode_number or 0) - ep_offset <= episode_count]
+            return [ep for ep in season_episodes if 1 <= (ep.episode_number or 0) - ep_offset <= episode_count]
 
-        return final_ep_list[ep_offset : episode_count + ep_offset]
+        return season_episodes[ep_offset : episode_count + ep_offset]
 
-    def sonarr_files(
-        self,
-        ep_list: list[SonarrEpisode],
-    ) -> ArrFiles:
+    def sonarr_files(self, episodes: list[SonarrEpisode]) -> ArrFiles:
         """Convert the episodes' existing files into an `ArrFiles`."""
 
         # keep_no_group=False: episode files with no group go with the episode list
         # into the planner's size matching instead (pinned).
         return ArrFiles.from_files(
-            [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
+            [f for ep in episodes if ep.episode_file_id != 0 and (f := ep.episode_file) is not None],
             keep_no_group=False,
         )

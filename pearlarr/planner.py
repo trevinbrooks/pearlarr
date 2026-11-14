@@ -377,7 +377,7 @@ class _PlanContext:
     with no placed episodes. None when no file without a group can claim ownership."""
     coverage: EpisodeCoverage
     """Which sibling groups cover each episode (see `episode_coverage`)."""
-    has_ep_list: bool
+    has_title_episodes: bool
     debug_on: bool
 
 
@@ -435,7 +435,7 @@ def _group_ownership(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupOwners
     # per-episode identities attribute them (size-identified files included);
     # without one, the Arr's tag-keyed size index is the whole vocabulary.
     attributed: dict[str | None, list[int | None]] = {}
-    if ctx.has_ep_list:
+    if ctx.has_title_episodes:
         for identity in ctx.file_release_groups.values():
             attributed.setdefault(identity.group, []).append(identity.size)
     else:
@@ -485,7 +485,7 @@ class GrabPlanner:
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        ep_list: list[SonarrEpisode] | None = None,
+        title_episodes: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Filter torrents by release group.
 
@@ -513,7 +513,7 @@ class GrabPlanner:
         # the coverage index below and the per-episode match loop: looking up a
         # placed episode's (season, episode) is then an O(1) dict op rather than a
         # fresh search of the whole list.
-        sonarr_by_key = index_episodes_by_key(ep_list or [])
+        sonarr_by_key = index_episodes_by_key(title_episodes or [])
 
         # Which sibling groups cover each episode, reusing the index above
         coverage = episode_coverage(seadex_dict, sonarr_by_key)
@@ -563,7 +563,7 @@ class GrabPlanner:
             file_release_groups=identities,
             untagged_counter=untagged_counter,
             coverage=coverage,
-            has_ep_list=ep_list is not None,
+            has_title_episodes=title_episodes is not None,
             debug_on=debug_on,
         )
 
@@ -699,7 +699,7 @@ class GrabPlanner:
 
         # At this point, we need an episode list from Sonarr. Only an absent list
         # skips: an empty one is never passed in production (the strategy returns first).
-        if not ctx.has_ep_list:
+        if not ctx.has_title_episodes:
             self.logger.debug(
                 "Skipping per-episode check: no Sonarr episode list available",
             )
@@ -823,7 +823,7 @@ class GrabPlanner:
         import.
         """
 
-        if not ctx.has_ep_list:
+        if not ctx.has_title_episodes:
             self.logger.debug(
                 "No Sonarr episode list: not checking whether a release left for a hand import is still owed"
             )

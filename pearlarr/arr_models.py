@@ -170,11 +170,11 @@ class SonarrEpisode(ApiModel):
     """An empty/null `episodeFile` reduces to `None`."""
 
 
-def index_episodes_by_key(ep_list: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
+def index_episodes_by_key(episodes: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
     """Index Sonarr episodes by `season_episode_key`, the first one winning."""
 
     index: dict[EpisodeKey, SonarrEpisode] = {}
-    for ep in ep_list:
+    for ep in episodes:
         index.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep)
     return index
 

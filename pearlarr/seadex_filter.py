@@ -293,7 +293,7 @@ class SeadexReleaseFilter:
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        ep_list: list[SonarrEpisode] | None = None,
+        title_episodes: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Plan which releases to grab.
 
@@ -308,7 +308,7 @@ class SeadexReleaseFilter:
         result = self._planner.plan(
             seadex_dict=seadex_dict,
             arr_files=arr_files,
-            ep_list=ep_list,
+            title_episodes=title_episodes,
         )
 
         # The planner reports what to log rather than logging it, so each
