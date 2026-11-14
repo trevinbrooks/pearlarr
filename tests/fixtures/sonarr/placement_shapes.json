@@ -1,9 +1,9 @@
 [
  {
   "name": "chunibyo-lite-named-in-romaji",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
-   "titled"
+   "title name"
   ],
   "episodes": [
    {
@@ -633,11 +633,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    10351
   ],
-  "series_title": "Love, Chunibyo & Other Delusions!",
-  "titles": [
+  "series_name": "Love, Chunibyo & Other Delusions!",
+  "anilist_names": [
    "Love, Chunibyo & Other Delusions - Heart Throb -: The Rikka Wars/ Apocalypse of the Wicked Lord Shingan Reborn",
    "Chuunibyou demo Koi ga Shitai! Ren: Saisei no... Jaou Shingan Mokushiroku"
   ],
@@ -966,10 +966,10 @@
   ]
  },
  {
-  "name": "oda-nobuna-unread-run",
-  "provenance": "count",
+  "name": "oda-nobuna-sequence-no-parsed-number",
+  "basis": "count",
   "tags": [
-   "release run unread"
+   "sequence no parsed number"
   ],
   "episodes": [
    {
@@ -1113,7 +1113,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    2381,
    2382,
    2383,
@@ -1127,8 +1127,8 @@
    2391,
    2392
   ],
-  "series_title": "Oda Nobuna's Ambition",
-  "titles": [
+  "series_name": "Oda Nobuna's Ambition",
+  "anilist_names": [
    "The Ambition of Oda Nobuna",
    "Oda Nobuna no Yabou"
   ],
@@ -1319,11 +1319,11 @@
   "expected_excluded": []
  },
  {
-  "name": "angel-beats-shifted-pairs",
-  "provenance": "count",
+  "name": "angel-beats-shifted-by-a-special",
+  "basis": "count",
   "tags": [
-   "release run matched inside",
-   "release run matched outside"
+   "sequence matched in window",
+   "sequence matched outside window"
   ],
   "episodes": [
    {
@@ -1494,7 +1494,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    3073,
    3074,
    3075,
@@ -1509,8 +1509,8 @@
    3084,
    3085
   ],
-  "series_title": "Angel Beats!",
-  "titles": [
+  "series_name": "Angel Beats!",
+  "anilist_names": [
    "Angel Beats!"
   ],
   "parses": {
@@ -1793,10 +1793,10 @@
   "expected_excluded": []
  },
  {
-  "name": "fate-ubw-absent-season-key",
-  "provenance": "count",
+  "name": "fate-ubw-spelled-season-not-in-series",
+  "basis": "count",
   "tags": [
-   "release run bogus key"
+   "sequence spelled not in series"
   ],
   "episodes": [
    {
@@ -2097,7 +2097,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    3043,
    3044,
    3045,
@@ -2112,8 +2112,8 @@
    3054,
    3055
   ],
-  "series_title": "Fate/Stay Night: Unlimited Blade Works",
-  "titles": [
+  "series_name": "Fate/Stay Night: Unlimited Blade Works",
+  "anilist_names": [
    "Fate/stay night: Unlimited Blade Works 2nd Season"
   ],
   "parses": {
@@ -2318,10 +2318,10 @@
   "expected_excluded": []
  },
  {
-  "name": "overlord-part-run-in-specials",
-  "provenance": "title",
+  "name": "overlord-part-sequence-in-specials",
+  "basis": "titles in names",
   "tags": [
-   "release run key outside"
+   "sequence spelled outside window"
   ],
   "episodes": [
    {
@@ -3477,13 +3477,13 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    2116,
    2117,
    2118
   ],
-  "series_title": "Overlord",
-  "titles": [
+  "series_name": "Overlord",
+  "anilist_names": [
    "Overlord: Ple Ple Pleiades - Clementine Toubou-hen"
   ],
   "parses": {
@@ -3538,11 +3538,11 @@
   "expected_excluded": []
  },
  {
-  "name": "bahamut-part-titles-in-run",
-  "provenance": "title",
+  "name": "bahamut-part-titles-in-sequence",
+  "basis": "titles in names",
   "tags": [
-   "release run key inside",
-   "release run unread"
+   "sequence spelled in window",
+   "sequence no parsed number"
   ],
   "episodes": [
    {
@@ -3966,7 +3966,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    2037,
    2038,
    2039,
@@ -3980,8 +3980,8 @@
    2047,
    2048
   ],
-  "series_title": "Rage of Bahamut",
-  "titles": [
+  "series_name": "Rage of Bahamut",
+  "anilist_names": [
    "Rage of Bahamut: Genesis",
    "Shingeki no Bahamut: GENESIS"
   ],
@@ -4172,11 +4172,11 @@
   "expected_excluded": []
  },
  {
-  "name": "one-punch-ova-run-beside-season",
-  "provenance": "disk agrees",
+  "name": "one-punch-ova-sequence-beside-season",
+  "basis": "sonarr agrees",
   "tags": [
-   "release run unread",
-   "foreign"
+   "sequence no parsed number",
+   "outside window"
   ],
   "episodes": [
    {
@@ -4715,7 +4715,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    7091,
    7092,
    7093,
@@ -4723,8 +4723,8 @@
    7095,
    7096
   ],
-  "series_title": "One-Punch Man",
-  "titles": [
+  "series_name": "One-Punch Man",
+  "anilist_names": [
    "One-Punch Man Season 2 OVA",
    "One Punch Man 2 OVA"
   ],
@@ -5055,9 +5055,9 @@
  },
  {
   "name": "bebop-permuted-sessions",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
-   "coherent permuted",
+   "sequence parsed out of order",
    "exact"
   ],
   "episodes": [
@@ -5383,7 +5383,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9747,
    9748,
    9749,
@@ -5411,8 +5411,8 @@
    9771,
    9772
   ],
-  "series_title": "Cowboy Bebop",
-  "titles": [
+  "series_name": "Cowboy Bebop",
+  "anilist_names": [
    "Cowboy Bebop"
   ],
   "parses": {
@@ -5969,10 +5969,10 @@
  },
  {
   "name": "grimgar-special-among-season",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
    "exact",
-   "foreign"
+   "outside window"
   ],
   "episodes": [
    {
@@ -6119,11 +6119,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    5818
   ],
-  "series_title": "Grimgar, Ashes and Illusions",
-  "titles": [
+  "series_name": "Grimgar, Ashes and Illusions",
+  "anilist_names": [
    "Grimgar of Fantasy and Ash OVA 2.5",
    "Hai to Gensou no Grimgar OVA 2.5"
   ],
@@ -6307,7 +6307,7 @@
  },
  {
   "name": "death-billiards-single",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
    "single"
   ],
@@ -6456,11 +6456,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    3056
   ],
-  "series_title": "Death Parade",
-  "titles": [
+  "series_name": "Death Parade",
+  "anilist_names": [
    "Death Billiards"
   ],
   "parses": {
@@ -6483,10 +6483,10 @@
   "expected_excluded": []
  },
  {
-  "name": "hero-academia-numberless-pair",
-  "provenance": "title",
+  "name": "hero-academia-two-in-name-order",
+  "basis": "titles in names",
   "tags": [
-   "ordered"
+   "name order"
   ],
   "episodes": [
    {
@@ -8513,12 +8513,12 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9259,
    9260
   ],
-  "series_title": "My Hero Academia",
-  "titles": [
+  "series_name": "My Hero Academia",
+  "anilist_names": [
    "My Hero Academia Season 5 OVA",
    "Boku no Hero Academia 5 (ONA)"
   ],
@@ -8556,7 +8556,7 @@
  },
  {
   "name": "bebop-movie-absolute",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
    "absolute"
   ],
@@ -8883,11 +8883,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9745
   ],
-  "series_title": "Cowboy Bebop",
-  "titles": [
+  "series_name": "Cowboy Bebop",
+  "anilist_names": [
    "Cowboy Bebop: The Movie - Knockin' on Heaven's Door",
    "Cowboy Bebop: Tengoku no Tobira"
   ],
@@ -8913,8 +8913,8 @@
   "expected_excluded": []
  },
  {
-  "name": "bebop-movie-numberless",
-  "provenance": "disk agrees",
+  "name": "bebop-movie-no-parsed-number",
+  "basis": "sonarr agrees",
   "tags": [
    "single"
   ],
@@ -9241,11 +9241,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9745
   ],
-  "series_title": "Cowboy Bebop",
-  "titles": [
+  "series_name": "Cowboy Bebop",
+  "anilist_names": [
    "Cowboy Bebop: The Movie - Knockin' on Heaven's Door",
    "Cowboy Bebop: Tengoku no Tobira"
   ],
@@ -9270,7 +9270,7 @@
  },
  {
   "name": "vexations-op-ed-extras",
-  "provenance": "disk agrees",
+  "basis": "sonarr agrees",
   "tags": [
    "exact",
    "extra"
@@ -9417,7 +9417,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    7681,
    7682,
    7683,
@@ -9431,8 +9431,8 @@
    7691,
    7692
   ],
-  "series_title": "The Vexations of a Shut-In Vampire Princess",
-  "titles": [
+  "series_name": "The Vexations of a Shut-In Vampire Princess",
+  "anilist_names": [
    "The Vexations of a Shut-In Vampire Princess",
    "Hikikomari Kyuuketsuki no Monmon"
   ],
@@ -9720,8 +9720,8 @@
   ]
  },
  {
-  "name": "chunibyo-explicit-span",
-  "provenance": "pinned",
+  "name": "chunibyo-spelled-episode-range",
+  "basis": "pinned",
   "tags": [
    "exact"
   ],
@@ -10353,7 +10353,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    10360,
    10361,
    10362,
@@ -10361,8 +10361,8 @@
    10364,
    10365
   ],
-  "series_title": "Love, Chunibyo & Other Delusions!",
-  "titles": [
+  "series_name": "Love, Chunibyo & Other Delusions!",
+  "anilist_names": [
    "Love, Chunibyo & Other Delusions - Heart Throb - Lite",
    "Chuunibyou demo Koi ga Shitai! Ren Lite"
   ],
@@ -10429,8 +10429,8 @@
   "expected_excluded": []
  },
  {
-  "name": "attack-on-titan-absolute-zip",
-  "provenance": "count",
+  "name": "attack-on-titan-absolute-in-order",
+  "basis": "count",
   "tags": [
    "absolute"
   ],
@@ -11778,7 +11778,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9703,
    9704,
    9705,
@@ -11790,8 +11790,8 @@
    9711,
    9712
   ],
-  "series_title": "Attack on Titan",
-  "titles": [
+  "series_name": "Attack on Titan",
+  "anilist_names": [
    "Attack on Titan Season 3 Part 2",
    "Shingeki no Kyojin Season 3 Part 2"
   ],
@@ -11952,10 +11952,10 @@
   "expected_excluded": []
  },
  {
-  "name": "magical-girl-special-run-declined",
-  "provenance": "pinned",
+  "name": "magical-girl-special-sequence-left-unplaced",
+  "basis": "pinned",
   "tags": [
-   "numbered run",
+   "sequence beside placed files",
    "exact"
   ],
   "episodes": [
@@ -12228,7 +12228,7 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    7851,
    7852,
    7853,
@@ -12242,8 +12242,8 @@
    7861,
    7862
   ],
-  "series_title": "Magical Girl Raising Project",
-  "titles": [
+  "series_name": "Magical Girl Raising Project",
+  "anilist_names": [
    "Magical Girl Raising Project",
    "Mahou Shoujo Ikusei Keikaku"
   ],
@@ -12474,7 +12474,7 @@
  },
  {
   "name": "mushoku-split-cour-shift",
-  "provenance": "count",
+  "basis": "count",
   "tags": [
    "exact",
    "absolute"
@@ -13187,7 +13187,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    2586,
    2587,
    2588,
@@ -13201,8 +13201,8 @@
    2596,
    2597
   ],
-  "series_title": "Mushoku Tensei: Jobless Reincarnation",
-  "titles": [
+  "series_name": "Mushoku Tensei: Jobless Reincarnation",
+  "anilist_names": [
    "Mushoku Tensei: Jobless Reincarnation Cour 2",
    "Mushoku Tensei: Isekai Ittara Honki Dasu Part 2"
   ],
@@ -13465,11 +13465,11 @@
   "expected_excluded": []
  },
  {
-  "name": "seven-deadly-sins-titled-run",
-  "provenance": "title",
+  "name": "seven-deadly-sins-sequence-by-title-name",
+  "basis": "titles in names",
   "tags": [
-   "titled run",
-   "foreign"
+   "sequence picked by title name",
+   "outside window"
   ],
   "episodes": [
    {
@@ -14684,7 +14684,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    6380,
    6381,
    6382,
@@ -14710,8 +14710,8 @@
    6402,
    6403
   ],
-  "series_title": "The Seven Deadly Sins",
-  "titles": [
+  "series_name": "The Seven Deadly Sins",
+  "anilist_names": [
    "The Seven Deadly Sins: Imperial Wrath of the Gods",
    "Nanatsu no Taizai: Kamigami no Gekirin"
   ],
@@ -15919,10 +15919,10 @@
   ]
  },
  {
-  "name": "overlord-movie-titled",
-  "provenance": "title",
+  "name": "overlord-movie-by-title-name",
+  "basis": "titles in names",
   "tags": [
-   "titled"
+   "title name"
   ],
   "episodes": [
    {
@@ -17078,11 +17078,11 @@
     }
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    2085
   ],
-  "series_title": "Overlord",
-  "titles": [
+  "series_name": "Overlord",
+  "anilist_names": [
    "Overlord: The Dark Hero",
    "Overlord: Shikkoku no Senshi"
   ],
@@ -17116,12 +17116,12 @@
   "expected_excluded": []
  },
  {
-  "name": "bungo-second-season-titled-members",
-  "provenance": "title",
+  "name": "bungo-second-season-by-episode-titles",
+  "basis": "titles in names",
   "tags": [
-   "run titled members",
+   "sequence picked by episode titles",
    "extra",
-   "named outside"
+   "episode title outside window"
   ],
   "episodes": [
    {
@@ -17745,7 +17745,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    13454,
    13455,
    13456,
@@ -17759,8 +17759,8 @@
    13464,
    13465
   ],
-  "series_title": "Bungo Stray Dogs",
-  "titles": [
+  "series_name": "Bungo Stray Dogs",
+  "anilist_names": [
    "Bungo Stray Dogs 2",
    "Bungou Stray Dogs 2nd Season"
   ],
@@ -18385,9 +18385,9 @@
  },
  {
   "name": "tokyo-revengers-episode-word",
-  "provenance": "title",
+  "basis": "titles in names",
   "tags": [
-   "run titled members",
+   "sequence picked by episode titles",
    "extra"
   ],
   "episodes": [
@@ -19342,7 +19342,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    18536,
    18537,
    18538,
@@ -19368,8 +19368,8 @@
    18558,
    18559
   ],
-  "series_title": "Tokyo Revengers",
-  "titles": [
+  "series_name": "Tokyo Revengers",
+  "anilist_names": [
    "Tokyo Revengers"
   ],
   "parses": {
@@ -20114,10 +20114,10 @@
   ]
  },
  {
-  "name": "monogatari-named-run-refused",
-  "provenance": "title",
+  "name": "monogatari-names-another-sequence",
+  "basis": "titles in names",
   "tags": [
-   "run named elsewhere"
+   "title names another sequence"
   ],
   "episodes": [
    {
@@ -21341,7 +21341,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    7619,
    7620,
    7621,
@@ -21355,8 +21355,8 @@
    7629,
    7630
   ],
-  "series_title": "Monogatari",
-  "titles": [
+  "series_name": "Monogatari",
+  "anilist_names": [
    "Owarimonogatari"
   ],
   "parses": {
@@ -23011,10 +23011,10 @@
   ]
  },
  {
-  "name": "hyouka-season-run-reread",
-  "provenance": "count",
+  "name": "hyouka-season-sequence-into-specials",
+  "basis": "count",
   "tags": [
-   "season run reread",
+   "season sequence matched into specials",
    "single"
   ],
   "episodes": [
@@ -23249,11 +23249,11 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9365
   ],
-  "series_title": "Hyouka",
-  "titles": [
+  "series_name": "Hyouka",
+  "anilist_names": [
    "Hyouka: What Should Be Had",
    "Hyouka: Motsubeki Mono wa"
   ],
@@ -23696,10 +23696,10 @@
   ]
  },
  {
-  "name": "accel-world-season-run-reread",
-  "provenance": "count",
+  "name": "accel-world-season-sequence-into-specials",
+  "basis": "count",
   "tags": [
-   "season run reread",
+   "season sequence matched into specials",
    "exact",
    "extra"
   ],
@@ -24055,7 +24055,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    9326,
    9327,
    9328,
@@ -24081,8 +24081,8 @@
    9348,
    9349
   ],
-  "series_title": "Accel World",
-  "titles": [
+  "series_name": "Accel World",
+  "anilist_names": [
    "Accel World"
   ],
   "parses": {
@@ -24647,10 +24647,10 @@
   ]
  },
  {
-  "name": "spice-and-wolf-absolute-window",
-  "provenance": "count",
+  "name": "spice-and-wolf-window-in-absolute-order",
+  "basis": "count",
   "tags": [
-   "absolute window"
+   "window in absolute order"
   ],
   "episodes": [
    {
@@ -24954,7 +24954,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    5268,
    5274,
    5275,
@@ -24969,8 +24969,8 @@
    5284,
    5285
   ],
-  "series_title": "Spice and Wolf",
-  "titles": [
+  "series_name": "Spice and Wolf",
+  "anilist_names": [
    "Spice and Wolf",
    "Ookami to Koushinryou"
   ],
@@ -25254,10 +25254,10 @@
   "expected_excluded": []
  },
  {
-  "name": "attack-on-titan-covering-run",
-  "provenance": "count",
+  "name": "attack-on-titan-whole-season-sequence",
+  "basis": "count",
   "tags": [
-   "covering run"
+   "whole-season sequence"
   ],
   "episodes": [
    {
@@ -26571,7 +26571,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    10569,
    10570,
    10571,
@@ -26583,8 +26583,8 @@
    10577,
    10578
   ],
-  "series_title": "Attack on Titan",
-  "titles": [
+  "series_name": "Attack on Titan",
+  "anilist_names": [
    "Attack on Titan Season 3 Part 2",
    "Shingeki no Kyojin Season 3 Part 2"
   ],
@@ -26902,10 +26902,10 @@
   ]
  },
  {
-  "name": "magus-bride-versioned-run",
-  "provenance": "count",
+  "name": "magus-bride-sequence-with-versions",
+  "basis": "count",
   "tags": [
-   "versioned run"
+   "sequence with versions"
   ],
   "episodes": [
    {
@@ -27779,7 +27779,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    14167,
    14168,
    14169,
@@ -27805,8 +27805,8 @@
    14189,
    14190
   ],
-  "series_title": "The Ancient Magus' Bride",
-  "titles": [
+  "series_name": "The Ancient Magus' Bride",
+  "anilist_names": [
    "The Ancient Magus' Bride",
    "Mahoutsukai no Yome"
   ],
@@ -28204,10 +28204,10 @@
   ]
  },
  {
-  "name": "bakuman-season-counted",
-  "provenance": "title",
+  "name": "bakuman-season-numeral",
+  "basis": "titles in names",
   "tags": [
-   "season counted"
+   "season numeral"
   ],
   "episodes": [
    {
@@ -28981,7 +28981,7 @@
     "episode_file": null
    }
   ],
-  "entry_ids": [
+  "window_ids": [
    8462,
    8463,
    8464,
@@ -29008,8 +29008,8 @@
    8485,
    8486
   ],
-  "series_title": "Bakuman",
-  "titles": [
+  "series_name": "Bakuman",
+  "anilist_names": [
    "Bakuman. 3"
   ],
   "parses": {
