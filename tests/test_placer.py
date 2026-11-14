@@ -436,7 +436,7 @@ class TestPlaceEpisodeTitle:
 
         assert placed == {
             titled: ((), PlacementVerdict.NO_EPISODE_FOUND),
-            neighbour: ((), PlacementVerdict.TITLE_REFUTED),
+            neighbour: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
         }
 
     def test_the_higher_version_of_a_titled_file_takes_the_title(self) -> None:
@@ -673,7 +673,7 @@ class TestPlaceContradictedSequence:
         assert placed == {
             self._RUN[0]: ((602,), PlacementVerdict.EPISODE_TITLE),
             self._RUN[1]: ((603,), PlacementVerdict.EPISODE_TITLE),
-            self._RUN[2]: ((), PlacementVerdict.TITLE_REFUTED),
+            self._RUN[2]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
             self._RUN[3]: ((), PlacementVerdict.OUTSIDE_WINDOW),
         }
 
@@ -689,7 +689,7 @@ class TestPlaceContradictedSequence:
         assert placed == {
             run[0]: ((602,), PlacementVerdict.EPISODE_TITLE),
             run[1]: ((603,), PlacementVerdict.EPISODE_TITLE),
-            run[2]: ((), PlacementVerdict.TITLE_REFUTED),
+            run[2]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
         }
 
     def test_a_member_its_own_title_confirms_keeps_its_season_and_episode(self) -> None:
@@ -715,7 +715,7 @@ class TestPlaceContradictedSequence:
         placed = by_name(place(self._PARSED, _target(_FIRST_THREE), file_map=file_map))
 
         assert placed == {
-            self._RUN[2]: ((), PlacementVerdict.TITLE_REFUTED),
+            self._RUN[2]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
             self._RUN[3]: ((), PlacementVerdict.OUTSIDE_WINDOW),
         }
 

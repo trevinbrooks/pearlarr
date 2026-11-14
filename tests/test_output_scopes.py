@@ -72,9 +72,9 @@ def _factory() -> tuple[ScopeFactory, _Recorder, FakeClock]:
 def test_scope_ids_mint_unique_increasing_serials() -> None:
     ids = ScopeIdCounter()
     a = ids.mint(ScopeKind.BOOT_STEP)
-    b = ids.mint(ScopeKind.ENTRY)
+    b = ids.mint(ScopeKind.TITLE)
     assert (a.kind, a.serial) == (ScopeKind.BOOT_STEP, 1)
-    assert (b.kind, b.serial) == (ScopeKind.ENTRY, 2)
+    assert (b.kind, b.serial) == (ScopeKind.TITLE, 2)
 
 
 def test_two_default_factories_never_mint_colliding_serials() -> None:
@@ -220,16 +220,16 @@ def test_late_title_post_demotes_and_keeps_the_severity() -> None:
         ),
     )
     title_scope.post(
-        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
+        GrabAction(status=GrabStatus.GRABBING, groups=(), grabbed=(), in_qbit=()),
     )
 
     assert len(recorder.of_type(TitleDetail)) == 0
     assert len(recorder.of_type(GrabAction)) == 0
     late = recorder.of_type(Diagnostic)
-    assert [d.origin for d in late] == ["output.late.entry"] * 2
+    assert [d.origin for d in late] == ["output.late.title"] * 2
     assert late[0].severity is Severity.WARNING  # a demoted warn stays counted as one
-    assert "[after entry 'Frieren' closed]" in late[0].message
-    assert "grab action: adding" in late[1].message
+    assert "[after title 'Frieren' closed]" in late[0].message
+    assert "grab action: grabbing" in late[1].message
 
 
 def test_every_late_fact_kind_describes_itself() -> None:
@@ -256,15 +256,17 @@ def test_every_late_fact_kind_describes_itself() -> None:
 def test_wait_opens_scope_then_announces_totals() -> None:
     factory, recorder, _ = _factory()
 
-    wait = factory.wait(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR)
+    wait = factory.wait(total=4, progress_line_s=300.0, kind=WaitKind.BLOCKING)
 
     assert isinstance(recorder.events[0], ScopeOpened)
-    assert recorder.events[1] == WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=wait.scope_id)
+    assert recorder.events[1] == WaitStarted(
+        total=4, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=wait.scope_id
+    )
 
 
 def test_wait_progress_and_finished_rows_are_tagged() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR)
+    wait = factory.wait(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING)
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=30.0))
     wait.row_finished(RowFinished(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
@@ -277,25 +279,25 @@ def test_wait_progress_and_finished_rows_are_tagged() -> None:
 
 def test_wait_finish_emits_tally_then_closes() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR)
+    wait = factory.wait(total=4, progress_line_s=300.0, kind=WaitKind.BLOCKING)
 
-    wait.finish(WaitFinished(imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.MONITOR))
+    wait.finish(WaitFinished(imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.BLOCKING))
 
     (finished,) = recorder.of_type(WaitFinished)
     assert finished == WaitFinished(
-        imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.MONITOR, scope=wait.scope_id
+        imported=3, left=1, failed=0, elapsed_s=730.0, in_progress=0, kind=WaitKind.BLOCKING, scope=wait.scope_id
     )
     assert isinstance(recorder.events[-1], ScopeClosed)
 
 
 def test_late_wait_emissions_demote() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR)
+    wait = factory.wait(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING)
     wait.close()
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=1.0))
     wait.row_finished(RowFinished(label="T", outcome=Outcome.IMPORTED, files=None, waited_s=1.0))
-    wait.finish(WaitFinished(imported=0, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR))
+    wait.finish(WaitFinished(imported=0, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.BLOCKING))
 
     assert len(recorder.of_type(WaitProgress)) == 0
     assert len(recorder.of_type(RowFinished)) == 0

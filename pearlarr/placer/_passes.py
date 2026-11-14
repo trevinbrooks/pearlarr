@@ -22,7 +22,8 @@ The passes run in this order. Each places files only onto the ids that earlier p
 12. Single file (`_pass_pairing`, `_place_single`): `SINGLE`, `TITLE_NAME`.
 13. Name order (`_pass_pairing`, `_natural_order`): `NAME_ORDER`.
 14. Numbered sequence (`_sequence_passes.pass_sequence`): `SEQUENCE`, `DUPLICATE`.
-15. Classify (`_pass_classify`): `MISNUMBERED`, `DUPLICATE`, `OUTSIDE_WINDOW`, `TITLE_REFUTED`, `NO_EPISODE_FOUND`.
+15. Classify (`_pass_classify`): `MISNUMBERED`, `DUPLICATE`, `OUTSIDE_WINDOW`, `EPISODE_TITLES_CONTRADICT`,
+    `NO_EPISODE_FOUND`.
 16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, `OTHER_ORDER_OUTSIDE_WINDOW`, `ORDER_ONLY`.
 
 At most one of passes 11 to 13 is tried: pairing in absolute order when its conditions hold, else the single-file
@@ -101,12 +102,12 @@ def _pass_extras(state: PlacerState) -> None:
 def _pass_reject_contradicted(state: PlacerState) -> None:
     """Reject each parse a file's title contradicts, its sequence's unconfirmed parses too, and unconfirmed numbers.
 
-    A title contradicts a parse when the file's name carries the title of an episode other than the one the
-    parse points at. In a numbered sequence, that rejects the in-window parses of the other members too, and the
-    title of a member in the file map contradicts its sequence like any mate's. A member whose own title confirms its
-    parse keeps it, and one rejected for a mate's title is noted (`TorrentFile.sequence_contradicted`), which pass 15
-    reads as `TITLE_REFUTED`. A file Sonarr read onto an episode by the number its own title opens with, when no title
-    confirms that number (`PlacerState.parsed_by_title_number`), is left for a hand import like one whose numbers
+    A title contradicts a parse when the file's name carries the title of an episode other than the one the parse points
+    at. In a numbered sequence, that rejects the in-window parses of the other members too, and the title of a member in
+    the file map contradicts its sequence like any mate's. A member whose own title confirms its parse keeps it, and one
+    rejected for a mate's title is noted (`TorrentFile.sequence_contradicted`), which pass 15 reads as
+    `EPISODE_TITLES_CONTRADICT`. A file Sonarr read onto an episode by the number its own title opens with, when no
+    title confirms that number (`PlacerState.parsed_by_title_number`), is left for a hand import like one whose numbers
     disagree: `MISNUMBERED` unless a later pass places it or gives it a provisional verdict. Any rejection turns the
     pairing passes off.
     """
@@ -535,12 +536,12 @@ def _pass_classify(state: PlacerState) -> None:
     """Classify every unplaced file.
 
     Each becomes `MISNUMBERED` (its own numbers disagree, or its number stands unconfirmed:
-    `TorrentFile.numbers_disagree`), `DUPLICATE` (it reads inside the window onto episodes other files provably use,
-    or a version of the same file uses the episode whose title it carries), `OUTSIDE_WINDOW` (its parsed episodes lie
-    wholly outside the window, or it carries the title of an episode outside it, confirmed by its parse, by that
-    parse's rejection while other files use its episodes, or by no unused id being left), `TITLE_REFUTED` (a sequence
-    member pass 2 rejected), or `NO_EPISODE_FOUND`. The grab records the exclusions on the pending import, and the
-    import warns about an unplaced file it finds in the torrent's folder. It never guesses.
+    `TorrentFile.numbers_disagree`), `DUPLICATE` (it reads inside the window onto episodes other files provably use, or
+    a version of the same file uses the episode whose title it carries), `OUTSIDE_WINDOW` (its parsed episodes lie
+    wholly outside the window, or it carries the title of an episode outside it, confirmed by its parse, by that parse's
+    rejection while other files use its episodes, or by no unused id being left), `EPISODE_TITLES_CONTRADICT` (a
+    sequence member pass 2 rejected), or `NO_EPISODE_FOUND`. The grab records the exclusions on the pending import, and
+    the import warns about an unplaced file it finds in the torrent's folder. It never guesses.
     """
 
     proof = _duplicate_proof(state)
@@ -562,7 +563,7 @@ def _pass_classify(state: PlacerState) -> None:
         elif state.has_episode_index and (parsed.wholly_outside or _titled_outside(state, file, nothing_left)):
             state.leave_unplaced(file, PlacementVerdict.OUTSIDE_WINDOW)
         elif file.sequence_contradicted:
-            state.leave_unplaced(file, PlacementVerdict.TITLE_REFUTED)
+            state.leave_unplaced(file, PlacementVerdict.EPISODE_TITLES_CONTRADICT)
         else:
             state.leave_unplaced(file, PlacementVerdict.NO_EPISODE_FOUND)
 

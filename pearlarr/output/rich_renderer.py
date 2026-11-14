@@ -3,7 +3,7 @@
 Diagnostics are position-free. This renderer is the single ambient position
 authority: its `scope_path.OpenScopes` instance decides where a
 diagnostic lands: indented while the boot scope, an item, a wait region, or a title
-block is open, column 0 under RUN alone (before the first item and after the
+block is open, column 0 under ARR_RUN alone (before the first item and after the
 scan closes. Mid-scan an item stays open until the next boundary,
 so import-flow notes indent with the listing they land in). The boot
 events (banner / steps / ready line) drive the `boot_region.BootRegion`
@@ -151,8 +151,8 @@ class RichRenderer(Renderer):
         # Each region owns one Live slot. A scope close tears its slot down
         # no matter which event closed the scope (ScopeClosed, an ArrRunFinished unwind).
         self._regions: tuple[tuple[ScopeKind, LiveRegion], ...] = (
-            (ScopeKind.BOOT_SECTION, self._boot),
-            (ScopeKind.WAIT_REGION, self._wait),
+            (ScopeKind.BOOT, self._boot),
+            (ScopeKind.WAIT, self._wait),
         )
 
     @override
@@ -301,10 +301,10 @@ class RichRenderer(Renderer):
     def _indented_scope_open(self) -> bool:
         """True while the boot scope, an item, a wait region, or a title block is open.
 
-        These are the indented contexts a diagnostic goes into (RUN alone
+        These are the indented contexts a diagnostic goes into (ARR_RUN alone
         stays column-0). ITEM is included so an import-flow warning fired
         between a series' title blocks indents with the listing instead of
         breaking it at the arr run margin.
         """
 
-        return self._has_open_scope(ScopeKind.BOOT_SECTION, ScopeKind.ITEM, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
+        return self._has_open_scope(ScopeKind.BOOT, ScopeKind.ITEM, ScopeKind.WAIT, ScopeKind.TITLE)

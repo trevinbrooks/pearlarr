@@ -197,7 +197,7 @@ class WaitRegion(LiveRegion):
         self._layout = _TableLayout.for_width(self._features.width)
         # A deliberate seed, never rendered: frames only anchor on WaitProgress, and the scope
         # emits WaitStarted (which overwrites this) before it can emit any progress.
-        self._kind = WaitKind.MONITOR
+        self._kind = WaitKind.BLOCKING
 
     def _current_group(self) -> Group:
         """Build the frame for the CURRENT instant, ticking timers and spinner forward."""

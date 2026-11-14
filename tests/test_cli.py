@@ -1287,12 +1287,12 @@ class TestHubRenderers:
         assert [list(obj)[:5] for obj in events] == [envelope] * len(events)
         # One object per EVENT, in emit order. The file_only diagnostic stays out.
         assert [obj["event"] for obj in events] == [
-            "run_started",
+            "pearlarr_started",
             "scan_started",
             "item_started",
             "diagnostic",
-            "torrent_graduated",
-            "run_summary",
+            "wait_row_finished",
+            "arr_run_summary",
         ]
 
 
@@ -1674,7 +1674,7 @@ class TestDataDirLine:
 
     def test_run_single_logs_the_resolved_data_dir(self) -> None:
         # Virgin data dir: the run exits 1 writing the template, but the
-        # run_started line (plain renderer, structured grammar) carries the
+        # pearlarr_started line (plain renderer, structured grammar) carries the
         # data_dir fact FIRST, before the config read fails.
         result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1

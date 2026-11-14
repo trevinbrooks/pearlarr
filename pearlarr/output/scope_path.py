@@ -63,22 +63,18 @@ from .events import (
 )
 
 KIND_DEPTH: Final[Mapping[ScopeKind, int]] = {
-    ScopeKind.BOOT_SECTION: 1,
-    ScopeKind.RUN: 1,
+    ScopeKind.BOOT: 1,
+    ScopeKind.ARR_RUN: 1,
     ScopeKind.BOOT_STEP: 2,
     ScopeKind.ITEM: 2,
     # Same depth as ITEM is deliberate: a wait pass is mutually exclusive
     # with an item. Revisit only if a per-item wait ever appears.
-    ScopeKind.WAIT_REGION: 2,
-    ScopeKind.ENTRY: 3,
+    ScopeKind.WAIT: 2,
+    ScopeKind.TITLE: 3,
 }
 
-# Fixed path segments for the boot, title and wait scope kinds. Other kinds render their label.
-SEGMENT_WORD: Final[Mapping[ScopeKind, str]] = {
-    ScopeKind.BOOT_SECTION: "boot",
-    ScopeKind.ENTRY: "entry",
-    ScopeKind.WAIT_REGION: "wait",
-}
+# The scope kinds whose path segment is the kind's word. Other kinds render their label.
+WORD_SEGMENT_KINDS: Final = frozenset({ScopeKind.BOOT, ScopeKind.TITLE, ScopeKind.WAIT})
 
 # Path separator for the text renderers' [path] scope path.
 PATH_SEP: Final = " › "
@@ -91,13 +87,13 @@ class OpenScope:
     kind: ScopeKind
     label: str
     scope: ScopeId | None
-    """`None` for boundary-opened RUN/ITEM scopes."""
+    """`None` for boundary-opened ARR_RUN/ITEM scopes."""
 
 
 def _segment(open_scope: OpenScope) -> str:
-    """A scope's path segment: fixed words for the `SEGMENT_WORD` kinds, the label otherwise."""
+    """A scope's path segment: the kind's word for the `WORD_SEGMENT_KINDS`, the label otherwise."""
 
-    return SEGMENT_WORD.get(open_scope.kind, open_scope.label)
+    return str(open_scope.kind) if open_scope.kind in WORD_SEGMENT_KINDS else open_scope.label
 
 
 @final
@@ -122,7 +118,7 @@ class OpenScopes:
             case PearlarrStarted() | ScheduledRunStarted() | ArrRunFinished():
                 self._close_at(1)  # unwind to root (all levels)
             case ScanStarted(arr=arr):
-                self._push(ScopeKind.RUN, str(arr))
+                self._push(ScopeKind.ARR_RUN, str(arr))
             case ItemStarted(index=index, total=total, title=title):
                 self._push(ScopeKind.ITEM, f"[{index}/{total}] {title}")
             case ScanFinished() | ArrRunSummaryReady():
@@ -173,7 +169,7 @@ class OpenScopes:
         return tuple(self._stack)
 
     def path_text(self) -> str:
-        """The full PATH_SEP-joined scope path, e.g. "sonarr" then "[3/182] Title" then "entry"."""
+        """The full PATH_SEP-joined scope path, e.g. "sonarr" then "[3/182] Title" then "title"."""
 
         return PATH_SEP.join(_segment(open_scope) for open_scope in self._stack)
 

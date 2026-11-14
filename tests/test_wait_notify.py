@@ -145,6 +145,33 @@ def test_push_wait_summary_posts_to_webhook() -> None:
 
 
 @respx.mock
+def test_webhook_rows_name_every_outcome() -> None:
+    route = respx.post("https://hook.example").respond(json={})
+    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client())
+    result = WaitResult(tuple(WaitOutcomeRow("Demo", outcome) for outcome in Outcome), elapsed_s=1)
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
+    payload = cast("dict[str, list[dict[str, str]]]", json.loads(route.calls.last.request.content))
+    assert [row["outcome"] for row in payload["rows"]] == [
+        "IMPORTED",
+        "GONE",
+        "DOWNLOAD_ERRORED",
+        "DOWNLOAD_TIMED_OUT",
+        "NO_CONTENT_PATH",
+        "STILL_IMPORTING",
+        "SONARR_BUSY",
+        "NOT_READY",
+        "NOTHING_PLACED",
+        "PARTIAL",
+        "ATTEMPT_FAILED",
+        "QBITTORRENT_UNREACHABLE",
+        "IMPORT_IN_PROGRESS",
+        "AWAITING_IMPORT",
+        "STILL_DOWNLOADING",
+    ]
+
+
+@respx.mock
 def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
     # The generic-webhook twin of the Discord containment: a request failure is
     # warned about and swallowed, never propagated to the cache save at the end of the run.
@@ -179,7 +206,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
 
 def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow("Demo Batch", Outcome.MISSING)
+    row = WaitOutcomeRow("Demo Batch", Outcome.GONE)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
@@ -190,7 +217,9 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     row = WaitOutcomeRow(
-        "Demo Batch", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import("Part_1.mkv", "Part 2.mkv")
+        "Demo Batch",
+        Outcome.NOTHING_PLACED,
+        left_for_hand_import=files_left_for_hand_import("Part_1.mkv", "Part 2.mkv"),
     )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
@@ -238,7 +267,7 @@ def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: l
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
     rows = tuple(
-        WaitOutcomeRow(f"Title {i}", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import(*names))
+        WaitOutcomeRow(f"Title {i}", Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import(*names))
         for i in range(25)
     )
 

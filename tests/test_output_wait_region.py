@@ -57,8 +57,8 @@ def _render_group(group: Group) -> str:
     return strip_ansi(stream.getvalue())
 
 
-_WAIT = ScopeId(ScopeKind.WAIT_REGION, 700)
-_WAIT_TWO = ScopeId(ScopeKind.WAIT_REGION, 701)
+_WAIT = ScopeId(ScopeKind.WAIT, 700)
+_WAIT_TWO = ScopeId(ScopeKind.WAIT, 701)
 
 
 def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
@@ -91,7 +91,7 @@ class TestWaitLiveRegionLifecycle:
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
+        _feed(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         assert renderer._wait._live is None  # WaitStarted alone never opens the live region
 
         _feed(renderer, _progress(_dl("Show"), elapsed=0))
@@ -106,14 +106,16 @@ class TestWaitLiveRegionLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show A"), elapsed=0),
             RowFinished(label="Show A", outcome=Outcome.IMPORTED, files=8, waited_s=300),
         )
         live = renderer._wait._live
         assert live is not None and live.is_started  # the live region is still active
 
-        _feed(renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.MONITOR))
+        _feed(
+            renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.BLOCKING)
+        )
         out = _plain(stream)
         assert "✔ imported    Show A  (8 files · 5m 00s)" in out  # finished as durable scrollback
         assert "wait complete · 1 imported · 5m 00s" in out
@@ -125,13 +127,15 @@ class TestWaitLiveRegionLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=150, in_progress=0, kind=WaitKind.MONITOR))
+        _feed(
+            renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=150, in_progress=0, kind=WaitKind.BLOCKING)
+        )
         assert renderer._wait._live is None and not live.is_started
         assert "wait complete · 1 imported · 2m 30s" in _plain(stream)
 
@@ -140,9 +144,9 @@ class TestWaitLiveRegionLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
-            WaitFinished(imported=0, left=0, failed=0, elapsed_s=120, in_progress=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=0, left=0, failed=0, elapsed_s=120, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert renderer._wait._live is None
         assert "wait complete" not in _plain(stream)
@@ -152,7 +156,7 @@ class TestWaitLiveRegionLifecycle:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         assert renderer._wait._live is not None
@@ -172,7 +176,7 @@ class TestNonLiveProgressLine:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),  # the start snapshot never prints a progress line
             _progress(_dl("Show"), elapsed=300),  # the first progress line
         )
@@ -189,11 +193,11 @@ class TestNonLiveProgressLine:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
             _progress(_dl("Show"), elapsed=300),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
-            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert _plain(stream).strip() == ""
         assert renderer._wait._live is None
@@ -207,7 +211,7 @@ class TestNonLiveProgressLine:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
         )
         out = _plain(stream)
@@ -224,7 +228,7 @@ class TestOpenScopesTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         live = renderer._wait._live
@@ -239,7 +243,7 @@ class TestOpenScopesTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         live = renderer._wait._live
@@ -256,7 +260,7 @@ class TestOpenScopesTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         first = renderer._wait._live
@@ -268,7 +272,7 @@ class TestOpenScopesTeardown:
         _feed(
             renderer,
             ScopeOpened(scope=_WAIT_TWO, label="wait"),
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         second = renderer._wait._live
@@ -284,7 +288,7 @@ class TestOpenScopesTeardown:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         assert renderer._wait._live is not None  # the live region is NOT level-gated
@@ -292,7 +296,7 @@ class TestOpenScopesTeardown:
         _feed(
             renderer,
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
-            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert renderer._wait._live is None
         out = _plain(stream)
@@ -304,10 +308,10 @@ class TestOpenScopesTeardown:
 
         _feed(
             renderer,
-            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+            WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=1),
-            WaitFinished(imported=1, left=0, failed=0, elapsed_s=1, in_progress=0, kind=WaitKind.MONITOR),
+            WaitFinished(imported=1, left=0, failed=0, elapsed_s=1, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert renderer._wait._live is None
 
@@ -329,7 +333,7 @@ class TestWaitRegionDirect:
 
     def test_scope_closed_is_idempotent_after_a_live(self) -> None:
         region = self._region()
-        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         region.handle(_progress(_dl("Show"), elapsed=0))
         live = region._live
         assert live is not None and live.is_started
@@ -340,9 +344,9 @@ class TestWaitRegionDirect:
         assert region._live is None
 
     def test_check_kind_threads_from_the_start_event_into_the_frame(self) -> None:
-        # The frame must render the CHECK verb, never the reset default's MONITOR wording.
+        # The frame must render the DEFERRED verb, never the reset default's BLOCKING wording.
         region = self._region()
-        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.CHECK))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.DEFERRED))
         region.handle(_progress(_dl("Show"), elapsed=5.0))
 
         frame = _render_group(region._current_group())
@@ -357,7 +361,7 @@ class TestWaitRegionDirect:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         importing = TorrentView(key="h", label="Copy", phase=Phase.IMPORTING, phase_elapsed_s=4.0)
-        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         region.handle(WaitProgress(snapshot=WaitSnapshot((importing,), elapsed_s=10.0)))
 
         at_push = _render_group(region._current_group())
@@ -374,7 +378,7 @@ class TestWaitRegionDirect:
         region = self._region()
         download = TorrentView(key="d", label="Down", phase=Phase.DOWNLOADING, fraction=0.5)
         copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
-        region.handle(WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         region.handle(WaitProgress(snapshot=WaitSnapshot((download, copying), elapsed_s=5.0)))
 
         model = live_model(WaitSnapshot((download, copying), elapsed_s=5.0), region._features, region._kind)
@@ -392,7 +396,7 @@ class TestWaitRegionDirect:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=60)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
-        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
+        region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         region.handle(WaitProgress(snapshot=WaitSnapshot((copying,), elapsed_s=5.0)))
 
         frame = _render_group(region._current_group())
@@ -445,7 +449,7 @@ def _latched_region(console: Console) -> tuple[WaitRegion, _LiveFrame]:
     """A region with an active Live whose frame builder raises on every tick."""
 
     region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: 0.0)
-    region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR))
+    region.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
     region.handle(_progress(_dl("Show"), elapsed=0))
     frame = _LiveFrame(_boom)
     region._live_frame = frame

@@ -289,7 +289,7 @@ class TestPlacementVerdict:
     ) -> None:
         hand_import = {
             PlacementVerdict.MISNUMBERED,
-            PlacementVerdict.TITLE_REFUTED,
+            PlacementVerdict.EPISODE_TITLES_CONTRADICT,
             PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW,
             PlacementVerdict.ORDER_ONLY,
         }
@@ -338,7 +338,7 @@ class TestPlacementVerdict:
             PlacementVerdict.ORDER_ONLY,
             PlacementVerdict.DUPLICATE,
             PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW,
-            PlacementVerdict.TITLE_REFUTED,
+            PlacementVerdict.EPISODE_TITLES_CONTRADICT,
         }
     )
     """The verdicts a window gives that aren't final."""
@@ -365,7 +365,7 @@ class TestPlacementVerdict:
         # left it for a hand import.
         final_unplaced_by_name = {v for v in PlacementVerdict if v.other_order_may_place and v.left_for_hand_import}
 
-        assert final_unplaced_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.TITLE_REFUTED}
+        assert final_unplaced_by_name == {PlacementVerdict.MISNUMBERED, PlacementVerdict.EPISODE_TITLES_CONTRADICT}
 
 
 class TestAllSpecials:

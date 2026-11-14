@@ -134,7 +134,7 @@ def row_finished_note(event: RowFinished) -> str:
 
     outcome = event.outcome
     left = event.left_for_hand_import
-    if outcome is Outcome.UNMATCHED:
+    if outcome is Outcome.NOTHING_PLACED:
         return f"{count_noun(len(left.files), 'file')} matched no episode · import by hand in Sonarr"
     if outcome is Outcome.PARTIAL:
         if left.explained_by_order:
@@ -151,7 +151,7 @@ def row_finished_note(event: RowFinished) -> str:
         return "checked again next run"
     if not outcome.dropped:
         return "retries next run"
-    # The only other dropped outcome is MISSING: the torrent is gone from qBittorrent.
+    # The only other dropped outcome is GONE: the torrent is gone from qBittorrent.
     return "no longer tracked · title checked again next run"
 
 
@@ -171,7 +171,7 @@ def wait_progress_line(snapshot: WaitSnapshot) -> ConsoleLine:
     counts = snapshot.counts()
     message = indent_string(
         f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
-        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.AWAITING_FIRST_POLL]} queued · "
+        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.NOT_POLLED]} queued · "
         f"{long_duration(snapshot.elapsed_s)}",
     )
     return ConsoleLine(logging.INFO, message)
@@ -341,7 +341,7 @@ def live_model(snapshot: WaitSnapshot, features: ConsoleFeatures, kind: WaitKind
 
 # Every Phase but FINISHED, drift-pinned (test_output_wait_render ties it to set(Phase)).
 # _overflow_text and wait_progress_line hand-list the same trio.
-_PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.AWAITING_FIRST_POLL: 2}
+_PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.NOT_POLLED: 2}
 
 
 def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
@@ -390,7 +390,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             status="copying" if torrent.command_issued else "importing",
             time=elapsed,
         )
-    return RowModel(label=torrent.label, phase=Phase.AWAITING_FIRST_POLL, fraction=0.0, status="queued")
+    return RowModel(label=torrent.label, phase=Phase.NOT_POLLED, fraction=0.0, status="queued")
 
 
 def _overflow_text(hidden: list[TorrentView]) -> str:
@@ -404,8 +404,8 @@ def _overflow_text(hidden: list[TorrentView]) -> str:
         parts.append(f"{counts[Phase.IMPORTING]} more importing")
     if counts[Phase.DOWNLOADING]:
         parts.append(f"{counts[Phase.DOWNLOADING]} more downloading")
-    if counts[Phase.AWAITING_FIRST_POLL]:
-        parts.append(f"{counts[Phase.AWAITING_FIRST_POLL]} queued")
+    if counts[Phase.NOT_POLLED]:
+        parts.append(f"{counts[Phase.NOT_POLLED]} queued")
     return "+ " + " · ".join(parts)
 
 

@@ -73,7 +73,7 @@ def test_dry_run_derives_from_the_note() -> None:
     real = ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
-        added_count=0,
+        grabbed_count=0,
         tally=ArrRunTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
@@ -86,8 +86,8 @@ def test_dry_run_derives_from_the_note() -> None:
 
 
 def test_scope_id_is_a_value() -> None:
-    assert ScopeId(ScopeKind.ENTRY, 3) == ScopeId(ScopeKind.ENTRY, 3)
-    assert ScopeId(ScopeKind.ENTRY, 3) != ScopeId(ScopeKind.ITEM, 3)
+    assert ScopeId(ScopeKind.TITLE, 3) == ScopeId(ScopeKind.TITLE, 3)
+    assert ScopeId(ScopeKind.TITLE, 3) != ScopeId(ScopeKind.ITEM, 3)
 
 
 # --- severity mapping --------------------------------------------------------------
@@ -107,7 +107,7 @@ def test_skip_reason_severity_marks_the_users_own_choice_info() -> None:
     assert severity(SkipReason.PRIVATE_ONLY) is Severity.WARNING
     assert severity(SkipReason.UNSUPPORTED_TRACKER) is Severity.WARNING
     assert severity(SkipReason.MISNUMBERED) is Severity.WARNING
-    assert severity(SkipReason.INPUT_UNREAD) is Severity.WARNING
+    assert severity(SkipReason.PLACEMENT_INPUT_UNREAD) is Severity.WARNING
     assert severity(SkipReason.TRACKER_NOT_SELECTED) is Severity.INFO
     skipped = ReleaseSkipped(group="G", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED)
     assert severity_of(skipped) is Severity.INFO
@@ -140,8 +140,8 @@ def test_row_finished_severity_follows_its_outcome_category() -> None:
 
     assert severity_of(row_finished(Outcome.IMPORTED)) is Severity.INFO
     assert severity_of(row_finished(Outcome.DOWNLOAD_TIMED_OUT)) is Severity.WARNING
-    assert severity_of(row_finished(Outcome.UNMATCHED)) is Severity.WARNING
-    assert severity_of(row_finished(Outcome.MISSING)) is Severity.ERROR
+    assert severity_of(row_finished(Outcome.NOTHING_PLACED)) is Severity.WARNING
+    assert severity_of(row_finished(Outcome.GONE)) is Severity.ERROR
 
 
 def test_structural_events_default_to_info() -> None:
@@ -185,14 +185,14 @@ def test_arr_run_tally_freezes_arr_run_stats_whole() -> None:
         reason="private tracker",
         cause=NeedsActionCause.PRIVATE_ONLY,
     )
-    stats.added.append(grab)
+    stats.grabbed.append(grab)
     stats.needs_action.append(needs)
 
     tally = ArrRunTally.from_stats(stats)
 
     assert tally == ArrRunTally(
         checked=182,
-        added=(grab,),
+        grabbed=(grab,),
         up_to_date=161,
         unchanged=14,
         no_seadex_entry=3,
@@ -207,8 +207,8 @@ def test_arr_run_tally_freezes_arr_run_stats_whole() -> None:
         held_by_cap=0,
     )
     # Frozen tuples of owned facts: later stats mutation can't reach into the tally.
-    stats.added.append(grab)
-    assert tally.added == (grab,)
+    stats.grabbed.append(grab)
+    assert tally.grabbed == (grab,)
 
 
 # Fields allowed to differ between ArrRunStats and ArrRunTally - deliberately empty.

@@ -65,7 +65,7 @@ class BootFlow:
         self._data_dir = data_dir
         self._clock = clock
         self._steps = ScopeFactory(emit_to_hub, clock=clock)
-        self._boot_scope = BootScope(ScopeKind.BOOT_SECTION, "boot")
+        self._boot_scope = BootScope(ScopeKind.BOOT, "boot")
         self._boot_start: _BootStart | None = None
         self._step_failed = False
 

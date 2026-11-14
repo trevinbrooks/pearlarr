@@ -300,7 +300,7 @@ class TestArrRunSummary:
         state.stats.checked = 3
         state.torrents_added = 1
         state.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
-        state.stats.added = [
+        state.stats.grabbed = [
             GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
         state.stats.needs_action = [
@@ -324,7 +324,7 @@ class TestArrRunSummary:
 
         summary = self._summary_of(events).summary
         assert summary.dry_run is False and summary.dry_run_note is None
-        assert summary.added_count == 1
+        assert summary.grabbed_count == 1
         assert summary.tally.checked == 3
         assert [f.cause for f in summary.tally.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
         assert summary.tip is NeedsActionCause.PRIVATE_ONLY
@@ -485,7 +485,7 @@ class TestSummaryPendingImportCounters:
         # shows `added` but no `queued` row for the same torrent.
         state = ArrRunState(arr=Arr.SONARR)
         state.torrents_added = 1
-        state.stats.added = [
+        state.stats.grabbed = [
             GrabbedRow(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
         # counters stay 0 -> no queued/importing rows
@@ -572,7 +572,7 @@ class TestPrivateOnlyTip:
     def test_outdated_cause_renders_the_owned_outdated_tip(self) -> None:
         # The fallback-never-replaces-an-owned-copy skip: the tip names the two
         # ways out (update or delete) and, with fallback already on, no setting.
-        messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_STALE))
+        messages = _summary_messages(self._needs_ctx(NeedsActionCause.PRIVATE_ONLY_OUTDATED))
         assert not any("private_releases" in m for m in messages)
         assert any(
             "your copies of these releases are outdated (their file sizes no longer match); "

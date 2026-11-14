@@ -47,7 +47,7 @@ _TS = datetime.fromtimestamp(_EPOCH).strftime("%Y-%m-%d %H:%M:%S")
 _FIXED_TIME = "2026-01-01T18:00:00+00:00"
 _FIXED_TS = "2026-01-01 18:00:00"
 
-_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 2)
+_TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 2)
 
 
 def _json_capture(events: list[Event]) -> str:
@@ -118,7 +118,7 @@ def test_golden_round_trip_reproduces_the_text_grammar(
         f"sonarr_parse=1 pending_imports=0 guard_facts=0 tvdb_orders=0 size_bytes=4096"
     ) in out
     # path wins over component for a scoped event.
-    assert f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking title=Frieren" in out
+    assert f"{_TS} INFO [sonarr › [3/182] Frieren › title] checking title=Frieren" in out
     # the diagnostic's [where] is its origin/component, and the traceback appends verbatim.
     assert f"{_TS} ERROR [anilist] boom" in out
     assert "ValueError: request failed" in out
@@ -185,7 +185,7 @@ def test_interleaved_non_event_lines_are_skipped_and_counted(
     envelope = _envelope(
         schema_version=1,
         time=_FIXED_TIME,
-        event="run_started",
+        event="pearlarr_started",
         level="INFO",
         message="Pearlarr started",
         component="run",
@@ -210,7 +210,7 @@ def test_interleaved_non_event_lines_are_skipped_and_counted(
 
 def test_a_single_skip_is_singular(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     envelope = _envelope(
-        schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
+        schema_version=1, time=_FIXED_TIME, event="pearlarr_started", level="INFO", message="started", component="run"
     )
 
     _result, _out, err = _replay(tmp_path, f"garbage\n{envelope}\n", capsys)
@@ -227,7 +227,7 @@ def test_a_foreign_schema_version_warns_once_and_still_renders(
         _envelope(
             schema_version=2,
             time=_FIXED_TIME,
-            event="run_started",
+            event="pearlarr_started",
             level="INFO",
             message=f"line {n}",
             component="run",
@@ -268,7 +268,7 @@ def test_a_downstream_broken_pipe_ends_quietly(
     # `pearlarr replay big.jsonl | head` closes stdout mid-stream. That is the
     # consumer's choice, not a failure - exit 0, no error line.
     envelope = _envelope(
-        schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
+        schema_version=1, time=_FIXED_TIME, event="pearlarr_started", level="INFO", message="started", component="run"
     )
     path = tmp_path / "capture.jsonl"
     path.write_text(envelope + "\n", encoding="utf-8")
@@ -299,7 +299,7 @@ def test_stdin_is_read_with_a_dash(
     envelope = _envelope(
         schema_version=1,
         time=_FIXED_TIME,
-        event="run_started",
+        event="pearlarr_started",
         level="INFO",
         message="from stdin",
         component="run",
@@ -322,7 +322,7 @@ def test_a_non_utf8_byte_never_aborts_the_capture(
     # Docker interleaves raw stderr. A binary fragment decodes to U+FFFD and is
     # skipped as noise, and a bad byte INSIDE an envelope still renders - never a traceback.
     envelope = _envelope(
-        schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
+        schema_version=1, time=_FIXED_TIME, event="pearlarr_started", level="INFO", message="started", component="run"
     )
     corrupted = envelope.replace("started", "sta?ted").encode("utf-8").replace(b"?", b"\xff")
     path = tmp_path / "capture.jsonl"
@@ -346,7 +346,7 @@ def test_a_unicode_line_separator_inside_a_message_stays_one_event(
     envelope = _envelope(
         schema_version=1,
         time=_FIXED_TIME,
-        event="run_started",
+        event="pearlarr_started",
         level="INFO",
         message="line break",
         component="run",
@@ -371,7 +371,7 @@ def test_terminal_control_sequences_are_neutralized(
     hostile = _envelope(
         schema_version=1,
         time=_FIXED_TIME,
-        event="run_started",
+        event="pearlarr_started",
         level="INFO",
         message="\x1b[1A\x1b[2Kforged line",
         component="run",
@@ -393,7 +393,7 @@ class TestCliRunnerExitCodes:
             _envelope(
                 schema_version=1,
                 time=_FIXED_TIME,
-                event="run_started",
+                event="pearlarr_started",
                 level="INFO",
                 message="started",
                 component="run",

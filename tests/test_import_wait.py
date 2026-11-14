@@ -1052,13 +1052,13 @@ class TestPendingImportStateConversion:
         [
             (Outcome.STILL_DOWNLOADING, PendingImportState.DOWNLOADING),
             (Outcome.DOWNLOAD_TIMED_OUT, PendingImportState.DOWNLOADING),
-            (Outcome.NOT_CHECKED, PendingImportState.DOWNLOADING),
+            (Outcome.QBITTORRENT_UNREACHABLE, PendingImportState.DOWNLOADING),
             (Outcome.AWAITING_IMPORT, PendingImportState.DOWNLOADED),
             (Outcome.IMPORT_IN_PROGRESS, PendingImportState.DOWNLOADED),
             (Outcome.STILL_IMPORTING, PendingImportState.DOWNLOADED),
             (Outcome.SONARR_BUSY, PendingImportState.DOWNLOADED),
             (Outcome.NOT_READY, PendingImportState.DOWNLOADED),
-            (Outcome.UNMATCHED, PendingImportState.DOWNLOADED),
+            (Outcome.NOTHING_PLACED, PendingImportState.DOWNLOADED),
             (Outcome.PARTIAL, PendingImportState.DOWNLOADED),
             (Outcome.ATTEMPT_FAILED, PendingImportState.DOWNLOADED),
             (Outcome.NO_CONTENT_PATH, PendingImportState.DOWNLOADED),
@@ -1099,7 +1099,7 @@ class TestUnmatchedRowFinish:
 
         assert result is not None
         assert [(row.outcome, row.left_for_hand_import) for row in result.rows] == [
-            (Outcome.UNMATCHED, files_left_for_hand_import(*self._NAMES))
+            (Outcome.NOTHING_PLACED, files_left_for_hand_import(*self._NAMES))
         ]
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY]
         assert view.final("h").left_for_hand_import.names == self._NAMES
@@ -1116,7 +1116,7 @@ class TestUnmatchedRowFinish:
         )
 
         final = view.final("h")
-        assert final.outcome is Outcome.UNMATCHED
+        assert final.outcome is Outcome.NOTHING_PLACED
         assert final.left_for_hand_import.names == self._NAMES
         assert final.phase_elapsed_s < 600
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY]
@@ -1147,8 +1147,8 @@ class TestUnmatchedRowFinish:
         mgr.run_blocking(view=view)
 
         assert [call.pending.infohash for call in strategy.import_calls] == ["h", "slow"]
-        assert view.final("h").outcome is Outcome.UNMATCHED
-        assert view.final("slow").outcome is Outcome.UNMATCHED
+        assert view.final("h").outcome is Outcome.NOTHING_PLACED
+        assert view.final("slow").outcome is Outcome.NOTHING_PLACED
         assert set(mgr._pending_imports.rows()) == {"h", "slow"}
 
 
@@ -1802,7 +1802,7 @@ class TestRunBlocking:
     @pytest.mark.parametrize(
         ("torrents", "outcome", "kept"),
         [
-            pytest.param({}, Outcome.MISSING, False, id="missing-drops"),
+            pytest.param({}, Outcome.GONE, False, id="missing-drops"),
             pytest.param({"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, True, id="errored-leaves"),
             # Never finishes: past imports.download_timeout the row finishes
             # DOWNLOAD_TIMED_OUT (left), the pending import stays for a later run.
@@ -1974,7 +1974,7 @@ class TestRunBlocking:
         result = mgr.run_blocking(view=view)  # must not raise
 
         assert result is not None and result.waited == 1
-        assert view.final("h1").outcome is Outcome.MISSING  # the interrupt-time push carried it
+        assert view.final("h1").outcome is Outcome.GONE  # the interrupt-time push carried it
 
     def test_import_exception_is_swallowed_announced_and_pending_import_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate
@@ -2026,7 +2026,7 @@ class TestRunBlocking:
             store=_ExplodingDropStore(),
             clock=FakeClock(step=5),
         )
-        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
+        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.BLOCKING)
 
         with pytest.raises(RuntimeError, match="drop boom"):
             wait_pass.run_poll()
@@ -2047,7 +2047,7 @@ class TestRunBlocking:
             store=_ExplodingPutStore(),
             clock=FakeClock(step=5),
         )
-        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.MONITOR)
+        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.BLOCKING)
 
         with pytest.raises(RuntimeError, match="put boom"):
             wait_pass.run_poll()
@@ -2063,7 +2063,7 @@ def _wait_pass(
     """A fresh `WaitPass` over one pending import, wired to a scripted qBittorrent."""
 
     mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy(), clock=FakeClock(step=5))
-    return WaitPass(mgr, [pending], kind=WaitKind.MONITOR)
+    return WaitPass(mgr, [pending], kind=WaitKind.BLOCKING)
 
 
 class TestBlockingWaitDownloadProgressRefresh:
@@ -2649,7 +2649,7 @@ class TestWaitPassStoresPlacements:
             store=_ExplodingPutStore(),
             clock=FakeClock(step=5),
         )
-        wait_pass = WaitPass(mgr, [_pending_import_with_no_file_map()], kind=WaitKind.MONITOR)
+        wait_pass = WaitPass(mgr, [_pending_import_with_no_file_map()], kind=WaitKind.BLOCKING)
 
         wait_pass.run_poll()  # must not raise
 
@@ -2923,7 +2923,7 @@ class TestPostImportCategory:
 
         mgr.run_blocking(view=view)
 
-        assert view.final("h").outcome is Outcome.MISSING
+        assert view.final("h").outcome is Outcome.GONE
         assert mgr._pending_imports.rows() == {}  # still dropped
         assert qbit.set_category_calls == []
 

@@ -3,12 +3,12 @@
 
 Pin ambient position against the live regions' scopes (boot step line indent while the
 boot scope is open, wait indent while the wait region is open, item indent
-while an item is being worked, column 0 under RUN alone), the unwind close that empties
+while an item is being worked, column 0 under ARR_RUN alone), the unwind close that empties
 the open scopes for an arr-run-fatal error, the S4 floors (third-party WARNING floor
 unless DEBUG, first-party INFO renders dim), the `file_only` and
 no-rich-console no-ops, trace rendering without locals, markup literalness,
 the begin_run open-scopes reset, and the durable loop lines (NextRunScheduled, the
-ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent case is pinned in
+ReleaseSkipped/GrabFailed scan routing). The TITLE-indent case is pinned in
 `test_output_scan_render`.
 """
 
@@ -44,9 +44,9 @@ from pearlarr.releases import SkipReason
 
 from .fakes import AsciiStringIO, strip_ansi
 
-_BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
-_WAIT = ScopeId(ScopeKind.WAIT_REGION, 2)
-_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 3)
+_BOOT = ScopeId(ScopeKind.BOOT, 1)
+_WAIT = ScopeId(ScopeKind.WAIT, 2)
+_TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 3)
 
 
 def _renderer(width: int = 120) -> tuple[RichRenderer, io.StringIO]:
@@ -111,7 +111,7 @@ class TestPosition:
         assert _lines(stream)[-1] == f"{INDENT}⚠ mid-scan"
 
     def test_before_the_first_item_stays_at_column_zero_under_run_alone(self) -> None:
-        """RUN alone is structural: before any item opens, the run margin holds."""
+        """ARR_RUN alone is structural: before any item opens, the run margin holds."""
 
         renderer, stream = _renderer()
 

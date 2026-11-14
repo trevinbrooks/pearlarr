@@ -203,8 +203,8 @@ class TitleView:
     """The hand-import verdict a file of the title's own window still carries after the merge, else None.
 
     The verdicts are `_HAND_IMPORT_VERDICTS`: contradicted by its sequence's titles, or read by another TVDB order
-    outside the window. The window gave the file one and no window gave it a final verdict. `TITLE_REFUTED` comes
-    first when both kinds are left."""
+    outside the window. The window gave the file one and no window gave it a final verdict. `EPISODE_TITLES_CONTRADICT`
+    comes first when both kinds are left."""
     another_titles: frozenset[str]
     """The files that are another title's for the title's own window alone (`placements`'s rule, with that window
     the only one imported). A file a window left `WAITING_ON_PARSE` isn't among them, since no window has read it
@@ -302,7 +302,9 @@ class WindowedPlacements:
         )
 
 
-_HAND_IMPORT_VERDICTS = frozenset({PlacementVerdict.TITLE_REFUTED, PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW})
+_HAND_IMPORT_VERDICTS = frozenset(
+    {PlacementVerdict.EPISODE_TITLES_CONTRADICT, PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW}
+)
 """Two of the three hand-import verdicts: contradicted by its sequence's titles, or read by another TVDB order
 outside the window. Another window may still place such a file, one left for another order only on the episodes
 that order reads it onto. `ORDER_ONLY`, the third, is left out."""

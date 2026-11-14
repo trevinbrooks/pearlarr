@@ -48,8 +48,8 @@ _SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
             NeedsActionCause.MISNUMBERED,
             "numbering does not match its SeaDex listing; import it by hand",
         ),
-        SkipReason.TITLE_REFUTED: SkipReport(
-            NeedsActionCause.TITLE_REFUTED,
+        SkipReason.EPISODE_TITLES_CONTRADICT: SkipReport(
+            NeedsActionCause.EPISODE_TITLES_CONTRADICT,
             "file titles contradict its numbering; import it by hand",
         ),
         # No retry clears it: the row stays until the arr has the group's files, so it outranks a failed read.
@@ -59,8 +59,8 @@ _SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
         ),
         # The placement may have left a sequence waiting on the unread input, so the grab was decided coarsely:
         # re-check.
-        SkipReason.INPUT_UNREAD: SkipReport(
-            NeedsActionCause.PLACEMENT_INPUT_MISSING,
+        SkipReason.PLACEMENT_INPUT_UNREAD: SkipReport(
+            NeedsActionCause.PLACEMENT_INPUT_UNREAD,
             "a read the placement needs failed; will retry next run",
         ),
     },
@@ -267,7 +267,7 @@ class GrabPipeline:
             # Prefer the release's own parsed file list, falling back to the title's coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
             coverage_str = _coverage.coverage_string(release.episodes) or self._state.per_title.entry_coverage
-            self._state.stats.added.append(
+            self._state.stats.grabbed.append(
                 GrabbedRow(
                     title=self._state.per_title.title_name,
                     coverage=coverage_str,
@@ -418,7 +418,7 @@ class GrabPipeline:
                     "private-only release; your copy is outdated (its file size no longer matches) "
                     "and only a fallback covers it"
                 ),
-                NeedsActionCause.PRIVATE_ONLY_STALE,
+                NeedsActionCause.PRIVATE_ONLY_OUTDATED,
             )
         return (
             "private-only release; no public alternative covers these files",
@@ -430,7 +430,7 @@ class GrabPipeline:
 
         any_to_grab = self._planner.any_to_grab(req.seadex_dict)
         # The strategy's placement facts land on the title's flags beside the add loop's own.
-        self._state.per_title.add_skipped(SkipReason.INPUT_UNREAD, req.input_unread_groups)
+        self._state.per_title.add_skipped(SkipReason.PLACEMENT_INPUT_UNREAD, req.input_unread_groups)
         self._state.per_title.metadata_unread |= req.metadata_unread
 
         added_this_title = 0

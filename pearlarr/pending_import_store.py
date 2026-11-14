@@ -29,7 +29,7 @@ class PendingImportStore:
         self._state = state
 
     def grabbed_keys(self) -> set[str]:
-        """Keys of the pending imports written THIS run, tallied as `added` and never carried-over."""
+        """Keys of the pending imports written THIS run, tallied as `grabbed` and never carried-over."""
 
         return set(self._state.grabbed_this_run)
 
@@ -87,7 +87,7 @@ class PendingImportStore:
         return self.load(rows)
 
     def insert_grabbed(self, pending: PendingImport, claim: TitleClaim) -> None:
-        """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `added`)."""
+        """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `grabbed`)."""
 
         self._put(pending)
         self._put_guards(claim)

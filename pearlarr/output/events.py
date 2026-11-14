@@ -29,8 +29,8 @@ class TitleState(StrEnum):
     NO_EPISODES = "no episodes"
     IGNORED = "ignored"
     NO_ENTRY = "no entry"
-    SKIPPED = "skipped"
-    QUEUED = "queued"
+    NOT_CHECKED = "skipped"
+    DOWNLOADING = "queued"
     DOWNLOADED = "downloaded"
     IMPORTED = "imported"
 
@@ -67,15 +67,15 @@ class StyledValue:
     accent: Accent = Accent.PLAIN
 
 
-class ScopeKind(Enum):
-    """The open scope kinds."""
+class ScopeKind(StrEnum):
+    """The open scope kinds. A value is the kind's word on the wire."""
 
-    BOOT_SECTION = auto()
-    BOOT_STEP = auto()
-    RUN = auto()
-    ITEM = auto()
-    ENTRY = auto()
-    WAIT_REGION = auto()
+    BOOT = "boot"
+    BOOT_STEP = "boot_step"
+    ARR_RUN = "arr_run"
+    ITEM = "item"
+    TITLE = "title"
+    WAIT = "wait"
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,9 +271,9 @@ class GrabFailed:
 class GrabStatus(Enum):
     """The grab action's disposition."""
 
-    ADDING = auto()
-    WOULD_ADD = auto()
-    ALREADY_DOWNLOADING = auto()
+    GRABBING = auto()
+    WOULD_GRAB = auto()
+    ALREADY_IN_QBIT = auto()
     """The release is already in qBittorrent."""
 
 
@@ -311,7 +311,7 @@ class GrabAction:
 
     status: GrabStatus
     groups: tuple[GroupLabel, ...]
-    added: tuple[ReleaseLabel, ...]
+    grabbed: tuple[ReleaseLabel, ...]
     in_qbit: tuple[ReleaseLabel, ...]
     waiting_to_import: bool = False
     scope: ScopeId | None = None
@@ -336,7 +336,7 @@ class ScanFinished:
 
 @dataclass(frozen=True, slots=True)
 class GrabbedRow:
-    """One grab, recorded for the arr run summary's "added" detail block."""
+    """One grab, recorded for the arr run summary's "grabbed" detail block."""
 
     title: str | None
     coverage: str | None
@@ -345,27 +345,30 @@ class GrabbedRow:
     group: str
 
 
-class NeedsActionCause(Enum):
-    """Why a title landed in "needs action". The summary's tips key off this, never the display reason text."""
+class NeedsActionCause(StrEnum):
+    """Why a title landed in "needs action". The summary's tips key off this, never the display reason text.
 
-    PRIVATE_ONLY = auto()
+    A value is the cause's word on the wire.
+    """
+
+    PRIVATE_ONLY = "private_only"
     """The `private_releases: warn` skip: a private-only release with no fallback attempted."""
-    PRIVATE_ONLY_NO_FALLBACK = auto()
+    PRIVATE_ONLY_NO_FALLBACK = "private_only_no_fallback"
     """`private_releases: fallback` that couldn't or wouldn't fall back."""
-    PRIVATE_ONLY_STALE = auto()
+    PRIVATE_ONLY_OUTDATED = "private_only_outdated"
     """`private_releases: fallback` refusing to replace the library's outdated copy of the preferred private release."""
-    UNSUPPORTED_TRACKER = auto()
+    UNSUPPORTED_TRACKER = "unsupported_tracker"
     """A release is on a tracker we have no parser for."""
-    GRAB_FAILED = auto()
+    GRAB_FAILED = "grab_failed"
     """A contained transient failure (tracker/qBittorrent unreachable)."""
-    PLACEMENT_INPUT_MISSING = auto()
+    PLACEMENT_INPUT_UNREAD = "placement_input_unread"
     """A read the grab-time placement needs failed: the grab was decided without it, or skipped until it answers."""
-    MISNUMBERED = auto()
+    MISNUMBERED = "misnumbered"
     """A release's file numbers disagree, or it's a specials torrent numbered another way than its listing: a hand
     import."""
-    TITLE_REFUTED = auto()
+    EPISODE_TITLES_CONTRADICT = "episode_titles_contradict"
     """A release's episode titles contradict its numbering and none of it places on the title."""
-    PLACED_ELSEWHERE = auto()
+    PLACED_ELSEWHERE = "placed_elsewhere"
     """None of a release's files place on the title, and some place under another title SeaDex lists it with."""
 
 
@@ -388,7 +391,7 @@ class ArrRunTally:
     """`ArrRunStats` frozen at summary time."""
 
     checked: int
-    added: tuple[GrabbedRow, ...]
+    grabbed: tuple[GrabbedRow, ...]
     up_to_date: int
     unchanged: int
     no_seadex_entry: int
@@ -406,7 +409,7 @@ class ArrRunTally:
     def from_stats(cls, stats: ArrRunStats) -> ArrRunTally:
         return cls(
             checked=stats.checked,
-            added=tuple(stats.added),
+            grabbed=tuple(stats.grabbed),
             up_to_date=stats.up_to_date,
             unchanged=stats.unchanged,
             no_seadex_entry=stats.no_seadex_entry,
@@ -429,7 +432,7 @@ class ArrRunSummary:
     arr: Arr
     dry_run_note: str | None
     """The dry-run note, None on a real run."""
-    added_count: int
+    grabbed_count: int
     tally: ArrRunTally
     wait_mode_on: bool
     warnings: int
@@ -461,7 +464,7 @@ def clamp01(value: float) -> float:
 class Phase(Enum):
     """The lifecycle phase of one torrent in the wait pass."""
 
-    AWAITING_FIRST_POLL = auto()
+    NOT_POLLED = auto()
     """Still downloading (or not yet polled)."""
     DOWNLOADING = auto()
     """Downloading with live download progress."""
@@ -482,7 +485,7 @@ class TorrentView:
 
     key: str
     label: str
-    phase: Phase = Phase.AWAITING_FIRST_POLL
+    phase: Phase = Phase.NOT_POLLED
     fraction: float = 0.0
     speed_bps: int | None = None
     eta_s: int | None = None
@@ -542,12 +545,15 @@ class WaitSnapshot:
 
 
 class WaitKind(Enum):
-    """Which wait pass a wait region narrates, with its rendering vocab."""
+    """Which wait pass a wait region narrates, with its rendering vocab.
 
-    MONITOR = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
+    A member's name, lowercased, is the JSON `wait_pass` value.
+    """
+
+    BLOCKING = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
     """The blocking wait pass: waits for downloads to finish, then imports."""
 
-    CHECK = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
+    DEFERRED = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
     """The deferred wait pass: polls once, imports the finished ones, never waits."""
 
     start_template: str
@@ -597,7 +603,7 @@ class RowFinished:
     files: int | None
     waited_s: float
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
-    """On the `UNMATCHED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
+    """On the `NOTHING_PLACED` and `PARTIAL` outcomes, the on-disk files left for a hand import."""
     scope: ScopeId | None = None
 
 

@@ -7,6 +7,6 @@ from pearlarr.arr_run_state import ArrRunStats
 def test_arr_run_stats_shape() -> None:
     s = ArrRunStats()
     assert s.checked == 0
-    assert s.added == []
+    assert s.grabbed == []
     assert s.needs_action == []
     assert s.unmonitored == 0

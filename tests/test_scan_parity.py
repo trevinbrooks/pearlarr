@@ -238,7 +238,7 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
 
 # --- titled rows with detail continuations (SeaDex unreachable / no entry) ------------
 
-UNREACHABLE_ROW = TitleRow(state=TitleState.SKIPPED, label="Cached Show")
+UNREACHABLE_ROW = TitleRow(state=TitleState.NOT_CHECKED, label="Cached Show")
 UNREACHABLE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
 UNREACHABLE_STATUS_DETAIL = TitleDetail(
     label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM)
@@ -290,7 +290,7 @@ def _pending_import_lines(row: Line) -> tuple[Line, ...]:
     )
 
 
-PENDING_IMPORT_QUEUED = _pending_import_header(TitleState.QUEUED)
+PENDING_IMPORT_QUEUED = _pending_import_header(TitleState.DOWNLOADING)
 PENDING_QUEUED_LINES = _pending_import_lines(_styled("  queued      My Show · SubGroup", "grey50"))
 
 PENDING_IMPORT_DOWNLOADED = _pending_import_header(TitleState.DOWNLOADED)
@@ -315,7 +315,7 @@ _FRESH_ADDED = (
     ReleaseLabel(name="", group="GroupB"),
 )
 
-ACTION_FRESH = GrabAction(status=GrabStatus.ADDING, groups=_FRESH_GROUPS, added=_FRESH_ADDED, in_qbit=())
+ACTION_FRESH = GrabAction(status=GrabStatus.GRABBING, groups=_FRESH_GROUPS, grabbed=_FRESH_ADDED, in_qbit=())
 ACTION_FRESH_LINES: tuple[Line, ...] = (
     _detail(
         "    status    adding SeaDex's recommended release",
@@ -329,7 +329,7 @@ ACTION_FRESH_LINES: tuple[Line, ...] = (
     _detail("    added     GroupB", "added", "GroupB", style="green"),
 )
 
-ACTION_DRY = GrabAction(status=GrabStatus.WOULD_ADD, groups=_FRESH_GROUPS, added=_FRESH_ADDED, in_qbit=())
+ACTION_DRY = GrabAction(status=GrabStatus.WOULD_GRAB, groups=_FRESH_GROUPS, grabbed=_FRESH_ADDED, in_qbit=())
 ACTION_DRY_LINES: tuple[Line, ...] = (
     _detail(
         "    status    would add SeaDex's recommended release (dry run)",
@@ -352,9 +352,9 @@ _DOWNLOADING = (ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="Group
 _ONE_GROUP = (GroupLabel(name="GroupA", tags=("HDR",)),)
 
 ACTION_DOWNLOADING_WAITING = GrabAction(
-    status=GrabStatus.ALREADY_DOWNLOADING,
+    status=GrabStatus.ALREADY_IN_QBIT,
     groups=_ONE_GROUP,
-    added=(),
+    grabbed=(),
     in_qbit=_DOWNLOADING,
     waiting_to_import=True,
 )
@@ -377,9 +377,9 @@ ACTION_DOWNLOADING_WAITING_LINES: tuple[Line, ...] = (
 )
 
 ACTION_DOWNLOADING_NO_WAIT = GrabAction(
-    status=GrabStatus.ALREADY_DOWNLOADING,
+    status=GrabStatus.ALREADY_IN_QBIT,
     groups=_ONE_GROUP,
-    added=(),
+    grabbed=(),
     in_qbit=_DOWNLOADING,
 )
 ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
@@ -401,9 +401,9 @@ ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
 # Mixed outcomes render grouped - all added, then all already in qBittorrent - regardless
 # of results order (accepted Band-D delta, OLD interleaved in results order).
 ACTION_MIXED = GrabAction(
-    status=GrabStatus.ADDING,
+    status=GrabStatus.GRABBING,
     groups=_FRESH_GROUPS,
-    added=(ReleaseLabel(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
+    grabbed=(ReleaseLabel(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
     in_qbit=_DOWNLOADING,
 )
 ACTION_MIXED_LINES: tuple[Line, ...] = (
@@ -451,7 +451,7 @@ OUTDATED_TIP = (
 def _rich_stats() -> ArrRunStats:
     return ArrRunStats(
         checked=8,
-        added=[
+        grabbed=[
             GrabbedRow(
                 title="Frieren",
                 coverage="S01 E01-E28",
@@ -503,7 +503,7 @@ SUMMARY_RICH = ArrRunSummaryReady(
     summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
-        added_count=2,
+        grabbed_count=2,
         tally=ArrRunTally.from_stats(_rich_stats()),
         wait_mode_on=True,
         warnings=2,
@@ -566,7 +566,7 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
 def _dry_stats() -> ArrRunStats:
     return ArrRunStats(
         checked=2,
-        added=[
+        grabbed=[
             GrabbedRow(
                 title="Dry Show",
                 coverage="S01 E01-E12",
@@ -592,7 +592,7 @@ SUMMARY_DRY_HAS_CLIENT = ArrRunSummaryReady(
     summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note="nothing grabbed",
-        added_count=1,
+        grabbed_count=1,
         tally=ArrRunTally.from_stats(_dry_stats()),
         wait_mode_on=False,
         warnings=0,
@@ -643,7 +643,7 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
 def _dry_run_stats() -> ArrRunStats:
     return ArrRunStats(
         checked=1,
-        added=[
+        grabbed=[
             GrabbedRow(
                 title="Preview Movie",
                 coverage=None,
@@ -659,7 +659,7 @@ SUMMARY_DRY_NO_CLIENT = ArrRunSummaryReady(
     summary=ArrRunSummary(
         arr=Arr.RADARR,
         dry_run_note="qBittorrent not configured; nothing grabbed",
-        added_count=1,
+        grabbed_count=1,
         tally=ArrRunTally.from_stats(_dry_run_stats()),
         wait_mode_on=False,
         warnings=0,
@@ -698,7 +698,7 @@ SUMMARY_MINIMAL = ArrRunSummaryReady(
     summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
-        added_count=0,
+        grabbed_count=0,
         tally=ArrRunTally.from_stats(ArrRunStats()),
         wait_mode_on=False,
         warnings=0,
@@ -732,7 +732,7 @@ def _wait_off_stats() -> ArrRunStats:
                 group="PrivGrp",
                 url="https://releases.moe/33",
                 reason="your copy of the private release is outdated",
-                cause=NeedsActionCause.PRIVATE_ONLY_STALE,
+                cause=NeedsActionCause.PRIVATE_ONLY_OUTDATED,
             ),
         ],
         # Non-zero pending import counters that must stay hidden with the wait mode off.
@@ -746,13 +746,13 @@ SUMMARY_WAIT_OFF = ArrRunSummaryReady(
     summary=ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
-        added_count=0,
+        grabbed_count=0,
         tally=ArrRunTally.from_stats(_wait_off_stats()),
         wait_mode_on=False,
         warnings=0,
         errors=0,
         elapsed_s=None,
-        tip=NeedsActionCause.PRIVATE_ONLY_STALE,
+        tip=NeedsActionCause.PRIVATE_ONLY_OUTDATED,
     ),
 )
 SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
@@ -1025,7 +1025,9 @@ class TestExternalDetailParity:
         ),
         # grab_pipeline._may_grab: a pack whose file titles contradict its numbers, none of it placed.
         _FactSite(
-            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TITLE_REFUTED, url="https://x/1"),
+            ReleaseSkipped(
+                group="GroupA", tracker="Nyaa", reason=SkipReason.EPISODE_TITLES_CONTRADICT, url="https://x/1"
+            ),
             _xdetail(
                 _W,
                 "    skipped   https://x/1 (file titles contradict its numbering)",
@@ -1070,7 +1072,7 @@ class TestExternalDetailParity:
         ),
         # grab_pipeline._may_grab: the listing the placement judges a pack by could not be read.
         _FactSite(
-            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.INPUT_UNREAD, url="https://x/1"),
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.PLACEMENT_INPUT_UNREAD, url="https://x/1"),
             _xdetail(
                 _W,
                 "    skipped   https://x/1 (a read the placement needs failed)",

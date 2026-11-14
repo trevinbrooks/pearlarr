@@ -129,18 +129,18 @@ class TestWaitBuilders:
     """Builder edge cases the goldens miss: zero tallies, per-kind wording, outcome line style/level by outcome."""
 
     def test_zero_row_finish_tally_is_empty(self) -> None:
-        finished = WaitFinished(imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR)
+        finished = WaitFinished(imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.BLOCKING)
         assert wait_tally_lines(finished) == []
 
     @pytest.mark.parametrize(
         ("kind", "one", "two"),
         [
             (
-                WaitKind.MONITOR,
+                WaitKind.BLOCKING,
                 "Waiting on 1 download to complete and import...",
                 "Waiting on 2 downloads to complete and import...",
             ),
-            (WaitKind.CHECK, "Checking 1 carried-over download...", "Checking 2 carried-over downloads..."),
+            (WaitKind.DEFERRED, "Checking 1 carried-over download...", "Checking 2 carried-over downloads..."),
         ],
     )
     def test_start_line_words_and_pluralizes_by_kind(self, kind: WaitKind, one: str, two: str) -> None:
@@ -152,12 +152,12 @@ class TestWaitBuilders:
     @pytest.mark.parametrize(
         ("kind", "expected"),
         [
-            (WaitKind.MONITOR, "  wait complete · 1 imported · 1m 00s"),
-            (WaitKind.CHECK, "  check complete · 1 imported · 2 pending · 1m 00s"),
+            (WaitKind.BLOCKING, "  wait complete · 1 imported · 1m 00s"),
+            (WaitKind.DEFERRED, "  check complete · 1 imported · 2 pending · 1m 00s"),
         ],
     )
     def test_tally_head_and_pending_bucket_by_kind(self, kind: WaitKind, expected: str) -> None:
-        pending = 2 if kind is WaitKind.CHECK else 0
+        pending = 2 if kind is WaitKind.DEFERRED else 0
         finished = WaitFinished(imported=1, left=0, failed=0, elapsed_s=60.0, in_progress=pending, kind=kind)
         assert wait_tally_lines(finished)[1].message == expected
 
@@ -214,7 +214,7 @@ def test_live_model_orders_and_bounds_the_box() -> None:
     torrents.append(TorrentView("imp", "Importer", Phase.IMPORTING))
     snap = WaitSnapshot(tuple(torrents), elapsed_s=120)
 
-    model = live_model(snap, features, WaitKind.MONITOR)
+    model = live_model(snap, features, WaitKind.BLOCKING)
 
     # height budget caps visible rows. The rest collapse to an overflow tally.
     assert len(model.rows) == 4
@@ -223,7 +223,7 @@ def test_live_model_orders_and_bounds_the_box() -> None:
     assert "17" in model.overflow  # 20 downloads + 1 importing, 4 shown -> 17 hidden
 
 
-@pytest.mark.parametrize(("kind", "left"), [(WaitKind.MONITOR, "waiting 1/2"), (WaitKind.CHECK, "checking 1/2")])
+@pytest.mark.parametrize(("kind", "left"), [(WaitKind.BLOCKING, "waiting 1/2"), (WaitKind.DEFERRED, "checking 1/2")])
 def test_live_model_header_reports_aggregate_under_the_kinds_verb(kind: WaitKind, left: str) -> None:
     snap = WaitSnapshot(
         (
@@ -245,7 +245,7 @@ def test_live_model_importing_determinate_bar() -> None:
     # and the elapsed clock in the shared time column.
     snap = WaitSnapshot((_importing_row("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
 
-    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0]
 
     assert row.show_bar is True
     assert row.count == "8/12"
@@ -262,7 +262,7 @@ def test_live_model_importing_is_indeterminate_without_a_total() -> None:
         elapsed_s=10,
     )
 
-    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0]
 
     assert row.show_bar is False
     assert row.count == ""
@@ -276,7 +276,7 @@ def test_live_model_importing_before_command_reads_importing() -> None:
         elapsed_s=4,
     )
 
-    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0]
 
     assert row.status == "importing"
 
@@ -286,7 +286,7 @@ def test_live_model_download_row_layout() -> None:
     # only (the done side is already the bar + %, so "done/total" was redundant).
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5),), elapsed_s=10)
 
-    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0]
 
     assert row.show_bar is True
     assert row.count == "50%"
@@ -294,7 +294,7 @@ def test_live_model_download_row_layout() -> None:
     assert row.size == "2.7 GB"
     assert "/" not in row.size
 
-    queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), _WIDE, WaitKind.MONITOR).rows[0]
+    queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), _WIDE, WaitKind.BLOCKING).rows[0]
     assert queued.status == "queued"
 
 
@@ -308,7 +308,7 @@ def test_sparkline_scales_to_the_window_peak() -> None:
 def test_download_row_speed_carries_the_sparkline() -> None:
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(0, 3_200_000)),))
 
-    row = live_model(snap, _WIDE, WaitKind.MONITOR).rows[0]
+    row = live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0]
 
     assert row.speed == "▁█ 3.1 MB/s"
 
@@ -319,15 +319,15 @@ def test_sparkline_is_dropped_when_narrow_or_ascii() -> None:
     narrow = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=True, width=72, height=40)
     ascii_features = ConsoleFeatures(can_redraw=True, can_color=True, can_unicode=False, width=100, height=40)
 
-    assert live_model(snap, narrow, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
-    assert live_model(snap, ascii_features, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, narrow, WaitKind.BLOCKING).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, ascii_features, WaitKind.BLOCKING).rows[0].speed == "3.1 MB/s"
 
 
 def test_sparkline_needs_two_samples() -> None:
     # A single sample says nothing about the trend. The cell stays plain.
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(3_200_000,)),))
 
-    assert live_model(snap, _WIDE, WaitKind.MONITOR).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, _WIDE, WaitKind.BLOCKING).rows[0].speed == "3.1 MB/s"
 
 
 def test_compact_eta_covers_every_magnitude() -> None:
@@ -377,10 +377,12 @@ def test_outcome_line_tail_says_left_pending_outcomes_retry() -> None:
 
 def test_outcome_line_tail_counts_unmatched_files_and_names_the_action() -> None:
     # Never "retries".
-    event = _grad("A", Outcome.UNMATCHED, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"))
+    event = _grad(
+        "A", Outcome.NOTHING_PLACED, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv")
+    )
     assert row_finished_note(event) == "2 files matched no episode · import by hand in Sonarr"
     assert row_finished_note(
-        _grad("A", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import("a.mkv"))
+        _grad("A", Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import("a.mkv"))
     ) == ("1 file matched no episode · import by hand in Sonarr")
 
 
@@ -472,7 +474,8 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
 def test_a_row_left_for_hand_import_names_five_files_and_counts_the_rest() -> None:
     names = tuple(f"[grp] Show - Part {n:02d}.mkv" for n in range(1, 8))
     lines = row_finished_lines(
-        _grad("A", Outcome.UNMATCHED, left_for_hand_import=files_left_for_hand_import(*names)), detect_features(None)
+        _grad("A", Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import(*names)),
+        detect_features(None),
     )
     assert [line.message for line in lines[1:]] == [
         "    files       [grp] Show - Part 01.mkv",
@@ -494,4 +497,4 @@ def test_a_mixed_pending_import_keeps_its_count_and_keys_the_order_only_file() -
 
 
 def test_outcome_line_tail_says_a_missing_pending_import_is_gone() -> None:
-    assert row_finished_note(_grad("A", Outcome.MISSING)) == "no longer tracked · title checked again next run"
+    assert row_finished_note(_grad("A", Outcome.GONE)) == "no longer tracked · title checked again next run"

@@ -62,7 +62,7 @@ def test_banner_opens_the_boot_scope_and_states_the_run_facts() -> None:
     flow.banner()
 
     (opened,) = recording.of_type(ScopeOpened)
-    assert opened.scope.kind is ScopeKind.BOOT_SECTION
+    assert opened.scope.kind is ScopeKind.BOOT
     (started,) = recording.of_type(PearlarrStarted)
     assert started.data_dir == "/data/dir"
     assert started.version.startswith("v")  # the installed package version

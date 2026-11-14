@@ -78,7 +78,7 @@ from .process_hub import (
     uninstall_hub,
 )
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
-from .scope_path import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, OpenScope, OpenScopes
+from .scope_path import KIND_DEPTH, PATH_SEP, WORD_SEGMENT_KINDS, OpenScope, OpenScopes
 from .scopes import (
     PROCESS_SCOPE_IDS,
     BootScope,
@@ -97,9 +97,9 @@ __all__ = [
     "KIND_DEPTH",
     "PATH_SEP",
     "PROCESS_SCOPE_IDS",
-    "SEGMENT_WORD",
     "SPARK_SAMPLES",
     "STRIKE_LIMIT",
+    "WORD_SEGMENT_KINDS",
     "Accent",
     "ArrRunFinished",
     "ArrRunSummary",
