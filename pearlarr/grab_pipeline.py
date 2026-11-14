@@ -71,7 +71,7 @@ _SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
 class GrabRequest:
     """The resolved per-title payload for the shared grab tail."""
 
-    al_id: int
+    anilist_id: int
     arr_title: str
     """The library item's own name (the notification's byline when it adds information)."""
     title_name: str
@@ -456,7 +456,7 @@ class GrabPipeline:
             )
             self.cache_store.update_cached_title(
                 self._state.arr,
-                req.al_id,
+                req.anilist_id,
                 req.update,
             )
         else:
@@ -472,8 +472,8 @@ class GrabPipeline:
         """
 
         # Fetched up front to keep the network calls in the run's request ordering.
-        anilist_thumb = self._anilist.thumb(req.al_id)
-        anilist_banner = self._anilist.banner(req.al_id)
+        anilist_thumb = self._anilist.thumb(req.anilist_id)
+        anilist_banner = self._anilist.banner(req.anilist_id)
 
         # grab_releases runs even in a dry run: the service simulates the add, while the to-grab, private-release
         # and tracker filters still apply, so only releases that would really be grabbed are counted.

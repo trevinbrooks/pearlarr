@@ -439,7 +439,7 @@ class TestOrderedWindows:
 
         order = _order(listed[3], listed)
 
-        assert [w.al_id for w in order.windows] == [3, 4, 1, 2]
+        assert [w.anilist_id for w in order.windows] == [3, 4, 1, 2]
 
     def test_an_ignored_title_runs_after_the_kept_ones_of_its_kind(self) -> None:
         listed = (
@@ -451,7 +451,7 @@ class TestOrderedWindows:
 
         order = _order(listed[1], listed)
 
-        assert [w.al_id for w in order.windows] == [2, 1, 4, 3]
+        assert [w.anilist_id for w in order.windows] == [2, 1, 4, 3]
 
     def test_other_ids_are_every_other_windows_ids(self) -> None:
         listed = (title_window(1, _FIRST_COUR), title_window(2, _SECOND_COUR), title_window(3, _SPECIALS))
@@ -463,13 +463,13 @@ class TestOrderedWindows:
     def test_the_grabbing_titles_window_wins_its_slot(self) -> None:
         own = title_window(1, _FIRST_COUR)
 
-        order = _order(own, (title_window(1, _FIRST_COUR[:2]),), (title_claim(al_id=1),))
+        order = _order(own, (title_window(1, _FIRST_COUR[:2]),), (title_claim(anilist_id=1),))
 
         assert order.windows == (own,)
 
     def test_a_claimed_titles_window_is_its_claims_and_it_imports(self) -> None:
         own = title_window(1, _FIRST_COUR)
-        claim = title_claim(al_id=2, ordered_episode_ids=_SECOND_COUR[:2])
+        claim = title_claim(anilist_id=2, ordered_episode_ids=_SECOND_COUR[:2])
 
         order = _order(own, (title_window(2, _SECOND_COUR),), (claim,))
 
@@ -478,7 +478,7 @@ class TestOrderedWindows:
     def test_a_claims_window_takes_its_listed_windows_ignored_flag(self) -> None:
         # Title 1 claimed the torrent before it was ignored. Its claim's window still imports, but runs after the
         # kept season window, where its listed window would.
-        claim = title_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+        claim = title_claim(anilist_id=1, ordered_episode_ids=_FIRST_COUR[:2])
         listed = (title_window(1, _FIRST_COUR, ignored=True), title_window(2, _SECOND_COUR))
 
         order = _order(listed[1], listed, (claim,))
@@ -488,7 +488,7 @@ class TestOrderedWindows:
 
     def test_a_claims_window_takes_the_flag_off_an_empty_listed_window(self) -> None:
         # The listed window came back empty, so it doesn't run, but its flag still reaches the claim's window.
-        claim = title_claim(al_id=1, ordered_episode_ids=_FIRST_COUR[:2])
+        claim = title_claim(anilist_id=1, ordered_episode_ids=_FIRST_COUR[:2])
         listed = (title_window(1, (), ignored=True), title_window(2, _SECOND_COUR))
 
         order = _order(listed[1], listed, (claim,))
@@ -498,7 +498,7 @@ class TestOrderedWindows:
     def test_a_claims_window_takes_its_listed_windows_episode_count(self) -> None:
         # A claim doesn't keep AniList's count, so its window reads it off the title's listed window.
         own = title_window(1, _FIRST_COUR)
-        claim = title_claim(al_id=2, ordered_episode_ids=_SECOND_COUR[:2])
+        claim = title_claim(anilist_id=2, ordered_episode_ids=_SECOND_COUR[:2])
 
         order = _order(own, (title_window(2, _SECOND_COUR, episode_count=3),), (claim,))
 
@@ -514,7 +514,7 @@ class TestOrderedWindows:
 
     def test_a_claim_its_entry_no_longer_lists_keeps_its_window(self) -> None:
         # Unchanged, so with no ignored flag and no episode count: the listing has neither for it.
-        claim = title_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+        claim = title_claim(anilist_id=2, ordered_episode_ids=_SECOND_COUR)
         listed = title_window(1, _FIRST_COUR, episode_count=3)
 
         order = _order(listed, (listed,), (claim,))
@@ -524,22 +524,22 @@ class TestOrderedWindows:
 
     def test_the_own_window_and_the_claims_import_wherever_they_sort(self) -> None:
         listed = (title_window(1, _FIRST_COUR),)
-        claim = title_claim(al_id=2, ordered_episode_ids=_SECOND_COUR)
+        claim = title_claim(anilist_id=2, ordered_episode_ids=_SECOND_COUR)
 
         order = _order(title_window(3, _SPECIALS), listed, (claim,))
 
-        assert [w.al_id for w in order.windows] == [1, 2, 3]
+        assert [w.anilist_id for w in order.windows] == [1, 2, 3]
         assert (order.grabbing_window_at, order.imports) == (2, {1, 2})
 
     def test_a_listed_window_with_no_ids_is_left_out(self) -> None:
         # It would mean no window, admitting every id of the series.
         order = _order(title_window(1, _FIRST_COUR), (title_window(2, ()),))
 
-        assert [w.al_id for w in order.windows] == [1]
+        assert [w.anilist_id for w in order.windows] == [1]
 
     def test_a_claim_with_no_ids_still_runs_with_the_specials_windows(self) -> None:
         # A pending import an older version wrote can hold such a claim, which admits any id.
-        claim = title_claim(al_id=1)
+        claim = title_claim(anilist_id=1)
         listed = title_window(2, _FIRST_COUR)
 
         order = _order(listed, (listed,), (claim,))

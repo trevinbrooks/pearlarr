@@ -103,19 +103,19 @@ def ordered_windows(
     # The ignored flag and the episode count are the listing's for every window: facts about the title at the read,
     # which a claim doesn't hold. They're read off every listed window, so a title whose listed window came back
     # empty still gives them to its claim.
-    chosen = {window.al_id: window for window in listing.windows if window.ordered_episode_ids}
-    listed = {window.al_id: window for window in listing.windows}
+    chosen = {window.anilist_id: window for window in listing.windows if window.ordered_episode_ids}
+    listed = {window.anilist_id: window for window in listing.windows}
     imported = set[int]()
     for claim in claims:
-        listed_window = listed.get(claim.al_id)
-        chosen[claim.al_id] = (
+        listed_window = listed.get(claim.anilist_id)
+        chosen[claim.anilist_id] = (
             claim.window
             if listed_window is None
             else replace(claim.window, ignored=listed_window.ignored, episode_count=listed_window.episode_count)
         )
-        imported.add(claim.al_id)
-    chosen[grabbing_window.al_id] = grabbing_window
-    imported.add(grabbing_window.al_id)
+        imported.add(claim.anilist_id)
+    chosen[grabbing_window.anilist_id] = grabbing_window
+    imported.add(grabbing_window.anilist_id)
     if any(window.series_id not in indexes for window in chosen.values()):
         return None
     windows = tuple(
@@ -124,13 +124,13 @@ def ordered_windows(
             key=lambda window: (
                 all_specials(indexes[window.series_id], window.ordered_episode_ids),
                 window.ignored,
-                window.al_id,
+                window.anilist_id,
             ),
         )
     )
     return WindowOrder(
         windows=windows,
-        imports=frozenset(at for at, window in enumerate(windows) if window.al_id in imported),
+        imports=frozenset(at for at, window in enumerate(windows) if window.anilist_id in imported),
         grabbing_window_at=windows.index(grabbing_window),
     )
 

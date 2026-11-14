@@ -123,7 +123,7 @@ class PendingImportStore:
         """
 
         if self._state.arr is Arr.SONARR:
-            self._store.put_guards(self._state.arr, claim.al_id, claim.guards)
+            self._store.put_guards(self._state.arr, claim.anilist_id, claim.guards)
 
     def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
         """Persist the files a poll's Sonarr history placed onto the pending import and return the updated copy.
@@ -152,7 +152,7 @@ class PendingImportStore:
 
         self.drop(pending.infohash)
         for claim in pending.claims:
-            self._store.uncache_title(self._state.arr, claim.al_id)
+            self._store.uncache_title(self._state.arr, claim.anilist_id)
 
     def other_arr_holds(self, infohash: str) -> bool:
         """Whether the other arr still has a pending import on the torrent (the category move is put off for it)."""

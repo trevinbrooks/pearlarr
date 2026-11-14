@@ -47,9 +47,9 @@ class _RecordingCacheStore(FakeCacheStore):
         self.updates: list[CachedTitleUpdate] = []
 
     @override
-    def update_cached_title(self, arr: Arr, al_id: int, update: CachedTitleUpdate) -> None:
+    def update_cached_title(self, arr: Arr, anilist_id: int, update: CachedTitleUpdate) -> None:
         self.updates.append(update)
-        super().update_cached_title(arr, al_id, update)
+        super().update_cached_title(arr, anilist_id, update)
 
 
 class _RecordingReporter:
@@ -58,9 +58,9 @@ class _RecordingReporter:
     def __init__(self) -> None:
         self.cached: list[int] = []
 
-    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
         del state
-        self.cached.append(al_id)
+        self.cached.append(anilist_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +263,7 @@ class TestACheckedTitleLosesItsStamp:
 
         cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
         pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
-        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._anilist.answers.update({7: {}})
         pipeline._state.per_title.title_name = "Show"
         run = self._run(cache, _grab_pipeline=pipeline, _state=pipeline._state)
         run.mark_dirty([7])
@@ -274,7 +274,7 @@ class TestACheckedTitleLosesItsStamp:
 
         run.grab_and_cache(
             grab_request(
-                al_id=7,
+                anilist_id=7,
                 entry=self._ENTRY,
                 seadex_dict=one_release_dict(srg="RG", infohash="h1"),
                 update=run.new_cached_title_update(run.resolve_title(7), self._ENTRY),
@@ -395,14 +395,14 @@ class _TailReporter:
         self.no_releases_ctxs.append(state)
         return True
 
-    def log_no_sd_entry(self, state: ArrRunState, al_id: int) -> bool:
+    def log_no_sd_entry(self, state: ArrRunState, anilist_id: int) -> bool:
         del state
-        self.no_sd_entry_ids.append(al_id)
+        self.no_sd_entry_ids.append(anilist_id)
         return True
 
-    def log_seadex_unreachable(self, state: ArrRunState, al_id: int) -> bool:
+    def log_seadex_unreachable(self, state: ArrRunState, anilist_id: int) -> bool:
         del state
-        self.seadex_unreachable_ids.append(al_id)
+        self.seadex_unreachable_ids.append(anilist_id)
         return True
 
 
@@ -489,7 +489,7 @@ class TestResolveTitle:
         run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
 
         assert run.resolve_title(5) == Title(
-            al_id=5, name=display, names=TitleNames(arr_title, (anilist,) if anilist else ())
+            anilist_id=5, name=display, names=TitleNames(arr_title, (anilist,) if anilist else ())
         )
 
 
@@ -509,7 +509,7 @@ class TestNewCacheDetails:
         entry = make_entry_record(updated_at=_FRESH)
         run = make_services()
 
-        title = Title(al_id=5, name="Series", names=TitleNames("Series", (anilist,) if anilist else ()))
+        title = Title(anilist_id=5, name="Series", names=TitleNames("Series", (anilist,) if anilist else ()))
 
         details = run.new_cached_title_update(title, entry)
 

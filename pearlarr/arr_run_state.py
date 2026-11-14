@@ -17,17 +17,17 @@ if TYPE_CHECKING:
     from .planner import PrivateOnlyNotices
 
 
-def unresolved_label(al_id: int) -> str:
+def unresolved_label(anilist_id: int) -> str:
     """The id-form label a title falls back to when no name resolved."""
 
-    return f"AniList #{al_id}"
+    return f"AniList #{anilist_id}"
 
 
 @dataclass(frozen=True, slots=True)
 class Title:
     """A title's resolved name: what the run shows, and the AniList name when one resolved."""
 
-    al_id: int
+    anilist_id: int
     name: str
     """The AniList name, else the arr item's own name, else the id form."""
     names: TitleNames = field(default_factory=TitleNames)
@@ -43,15 +43,15 @@ class Title:
     def resolved(self) -> bool:
         """False when nothing named the title and `name` fell back to the id form."""
 
-        return self.name != unresolved_label(self.al_id)
+        return self.name != unresolved_label(self.anilist_id)
 
 
-def title_from_names(al_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
+def title_from_names(anilist_id: int, anilist_titles: tuple[str, ...], arr_title: str) -> Title:
     """The title, named by the first AniList name, else the arr item's own name, else the id form."""
 
     names = TitleNames(arr_title, tuple(title for title in anilist_titles if title))
     named = names.anilist[0] if names.anilist else arr_title
-    return Title(al_id=al_id, name=named or unresolved_label(al_id), names=names)
+    return Title(anilist_id=anilist_id, name=named or unresolved_label(anilist_id), names=names)
 
 
 @dataclass

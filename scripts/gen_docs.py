@@ -818,7 +818,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.TitleHeader(
             state=TitleState.CHECKING,
             title="Sousou no Frieren",
-            al_id=154587,
+            anilist_id=154587,
             coverage="S01",
             url="https://seadex.moe/154587/",
             scope=_TITLE_SCOPE,

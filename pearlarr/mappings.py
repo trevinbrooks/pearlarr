@@ -809,16 +809,16 @@ class MappingResolver(KnownExternalIds):
             # since the mapping value is unused for movies and overriding would
             # silently flip the documented "AniBridge is primary" precedence.
             if self._anime_enabled:
-                for al_id, mapping in self.mappings_from_anime_ids(ids).items():
-                    existing = anilist_mappings.get(al_id)
+                for anilist_id, mapping in self.mappings_from_anime_ids(ids).items():
+                    existing = anilist_mappings.get(anilist_id)
                     if existing is None or (ids.tvdb is not None and _is_anibridge_without_tvdb_mappings(existing)):
-                        anilist_mappings[al_id] = mapping
+                        anilist_mappings[anilist_id] = mapping
 
             # Set aside any AniList ids configured to be ignored.
             ignored = {
-                al_id: anilist_mappings.pop(al_id)
-                for al_id in sorted(self.ignore_anilist_ids)
-                if al_id in anilist_mappings
+                anilist_id: anilist_mappings.pop(anilist_id)
+                for anilist_id in sorted(self.ignore_anilist_ids)
+                if anilist_id in anilist_mappings
             }
 
             # Sort by AniList ID.

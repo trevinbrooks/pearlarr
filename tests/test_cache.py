@@ -37,7 +37,7 @@ from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
-from .builders import claim_al_ids, make_entry_record, pending_import, title_claim, title_is_cached
+from .builders import claim_anilist_ids, make_entry_record, pending_import, title_claim, title_is_cached
 from .fakes import RecordingHub
 
 # Stand-in for a config hash. `CacheStore` only stores and compares the
@@ -45,10 +45,10 @@ from .fakes import RecordingHub
 CONFIG_HASH = "0123456789abcdef0123456789abcdef"
 
 
-def _cached_title_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
+def _cached_title_name(store: CacheStore, anilist_id: int, arr: Arr = Arr.SONARR) -> str | None:
     """The cached title's stored name via `get_cached_title` (None when the row is absent)."""
 
-    cached = store.get_cached_title(arr, al_id)
+    cached = store.get_cached_title(arr, anilist_id)
     return None if cached is None else cached.name
 
 
@@ -215,16 +215,16 @@ def _seed_v4_db(
     raw.close()
 
 
-def _v4_blob(infohash: str, al_id: int, **fields: Any) -> dict[str, Any]:
+def _v4_blob(infohash: str, anilist_id: int, **fields: Any) -> dict[str, Any]:
     """A fully shaped v4 pending row: one title's row on `infohash`, `fields` overriding."""
 
     blob: dict[str, Any] = {
         "infohash": infohash,
         "series_id": 5,
-        "al_id": al_id,
-        "title": f"Entry {al_id}",
+        "al_id": anilist_id,
+        "title": f"Entry {anilist_id}",
         "coverage": "S01",
-        "url": f"https://releases.moe/{al_id}",
+        "url": f"https://releases.moe/{anilist_id}",
         "ordered_episode_ids": [101],
         "names": {"series": "Series", "anilist": ["Alias"]},
         "preowned_episode_ids": [],
@@ -340,7 +340,7 @@ class TestSchemaVersionGate:
         # The v1 -> v2 step grows the (arr, infohash) PK to (arr, infohash, al_id)
         # via a table rebuild, and the v4 -> v5 merge turns each row into a claim.
         # A legacy row with no al_id in its JSON lands under the 0 sentinel and
-        # ends as its hash's one claim with al_id 0. A row that DOES carry al_id
+        # ends as its hash's one claim with anilist_id 0. A row that DOES carry al_id
         # in its JSON backfills the key from it.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
@@ -360,12 +360,12 @@ class TestSchemaVersionGate:
         with _open(tmp_path) as store:
             pending = store.get_pending_import_rows(Arr.SONARR)
             assert set(pending) == {"legacy", "tagged"}
-            # The sentinel-keyed legacy row rehydrates as a claim with al_id 0.
+            # The sentinel-keyed legacy row rehydrates as a claim with anilist_id 0.
             legacy = PendingImport.from_json(pending["legacy"], guards={})
-            assert claim_al_ids(legacy) == (0,)
+            assert claim_anilist_ids(legacy) == (0,)
             assert legacy.claims[0].title == "Old Show"
             tagged = PendingImport.from_json(pending["tagged"], guards={})
-            assert claim_al_ids(tagged) == (9,)
+            assert claim_anilist_ids(tagged) == (9,)
             assert tagged.series_ids == (6,)
             # The merged rows behave exactly like modern rows: keyed by hash, dropped by hash.
             store.drop_pending_import_row(Arr.SONARR, "legacy")
@@ -478,7 +478,7 @@ class TestSchemaVersionGate:
 
     def test_v4_rows_of_one_torrent_merge_into_one_row(self, tmp_path: Path) -> None:
         # The v4 -> v5 step: one torrent's per-title rows become ONE row whose
-        # claims sit in al_id order. The rows group by case fold and the key +
+        # claims sit in anilist_id order. The rows group by case fold and the key +
         # blob hash come out lowercase.
         # The release facts are the first row's, the file maps union with the first
         # row winning a shared name, an exclusion another row mapped is dropped,
@@ -506,7 +506,7 @@ class TestSchemaVersionGate:
             excluded_files=["x.mkv"],
             awaiting_cleanup=True,
         )
-        # Inserted newest first: the merge orders claims by al_id, not by row order.
+        # Inserted newest first: the merge orders claims by anilist_id, not by row order.
         _seed_v4_db(db, [("sonarr", "ABCD", 22, json.dumps(second)), ("sonarr", "abcd", 11, json.dumps(first))])
 
         with _open(tmp_path) as store:
@@ -575,9 +575,9 @@ class TestSchemaVersionGate:
             sonarr = store.get_pending_import_rows(Arr.SONARR)
             radarr = store.get_pending_import_rows(Arr.RADARR)
             assert PendingImport.from_json(sonarr["h"], guards={}).awaiting_cleanup is False
-            assert claim_al_ids(PendingImport.from_json(sonarr["h"], guards={})) == (11, 22)
+            assert claim_anilist_ids(PendingImport.from_json(sonarr["h"], guards={})) == (11, 22)
             assert PendingImport.from_json(radarr["h"], guards={}).awaiting_cleanup is True
-            assert claim_al_ids(PendingImport.from_json(radarr["h"], guards={})) == (0,)
+            assert claim_anilist_ids(PendingImport.from_json(radarr["h"], guards={})) == (0,)
             assert store.other_arr_holds(Arr.SONARR, "h") is True
             assert store.get_guards(Arr.SONARR) == {
                 11: OwnedAtGrab(entry_groups=("A",)),
@@ -1012,7 +1012,7 @@ class TestPendingImports:
 
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            rec = _row(pending_import(infohash="h1", al_id=3, series_id=5))
+            rec = _row(pending_import(infohash="h1", anilist_id=3, series_id=5))
             store.put_pending_import_row(Arr.SONARR, "h1", rec)
             store.put_pending_import_row(Arr.RADARR, "h2", {"infohash": "h2"})
             assert store.get_pending_import_rows(Arr.SONARR) == {"h1": rec}
@@ -1032,11 +1032,13 @@ class TestPendingImports:
         # claims: a re-put under the hash replaces the row whole (never a
         # second row), and the drop takes every claim with it.
         with _open(tmp_path) as store:
-            store.put_pending_import_row(Arr.SONARR, "h", _row(pending_import(infohash="h", al_id=11, series_id=5)))
+            store.put_pending_import_row(
+                Arr.SONARR, "h", _row(pending_import(infohash="h", anilist_id=11, series_id=5))
+            )
             both = _row(
                 pending_import(
                     infohash="h",
-                    claims=(title_claim(al_id=11, series_id=5), title_claim(al_id=22, series_id=5)),
+                    claims=(title_claim(anilist_id=11, series_id=5), title_claim(anilist_id=22, series_id=5)),
                 )
             )
             store.put_pending_import_row(Arr.SONARR, "h", both)
@@ -1061,7 +1063,7 @@ class TestPendingImports:
         # the same arr's row never counts, a missing hash reads False, and the
         # other arr's row flips the answer for as long as it lives.
         with _open(tmp_path) as store:
-            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=11).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", anilist_id=11).to_json())
 
             assert store.other_arr_holds(Arr.SONARR, "h") is False
             assert store.other_arr_holds(Arr.RADARR, "h") is True
@@ -1074,14 +1076,14 @@ class TestPendingImports:
 
     def test_get_pending_for_series_matches_any_claim_in_sql(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            a = _row(pending_import(infohash="a", al_id=1, series_id=5))
-            b = _row(pending_import(infohash="b", al_id=2, series_id=5))
-            c = _row(pending_import(infohash="c", al_id=3, series_id=9))
+            a = _row(pending_import(infohash="a", anilist_id=1, series_id=5))
+            b = _row(pending_import(infohash="b", anilist_id=2, series_id=5))
+            c = _row(pending_import(infohash="c", anilist_id=3, series_id=9))
             # A two-claim row spanning both series answers to either.
             both = _row(
                 pending_import(
                     infohash="t",
-                    claims=(title_claim(al_id=6, series_id=5), title_claim(al_id=7, series_id=9)),
+                    claims=(title_claim(anilist_id=6, series_id=5), title_claim(anilist_id=7, series_id=9)),
                 )
             )
             store.put_pending_import_row(Arr.SONARR, "a", a)
@@ -1107,9 +1109,9 @@ class TestGuardFacts:
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:
-            store.put_pending_import_row(Arr.SONARR, "hs", pending_import(infohash="hs", al_id=7).to_json())
+            store.put_pending_import_row(Arr.SONARR, "hs", pending_import(infohash="hs", anilist_id=7).to_json())
             store.put_pending_import_row(
-                Arr.RADARR, "hr", pending_import(infohash="hr", al_id=7, series_id=0).to_json()
+                Arr.RADARR, "hr", pending_import(infohash="hr", anilist_id=7, series_id=0).to_json()
             )
             facts = OwnedAtGrab(
                 entry_groups=("SubsPlease", "Erai-raws"),
@@ -1127,7 +1129,7 @@ class TestGuardFacts:
         # The fix's write semantic: a re-put overwrites the title's single row
         # whole, so no two reads can ever see divergent evidence for one title.
         with _open(tmp_path) as store:
-            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", anilist_id=7).to_json())
             store.put_guards(Arr.SONARR, 7, OwnedAtGrab(entry_groups=("Old",)))
             newest = OwnedAtGrab(entry_groups=("New",), stale_groups=("Old",))
             store.put_guards(Arr.SONARR, 7, newest)
@@ -1143,7 +1145,7 @@ class TestGuardFacts:
             store.put_guards(Arr.SONARR, 7, facts)
             assert store.get_guards(Arr.SONARR) == {}
 
-            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", al_id=7).to_json())
+            store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h", anilist_id=7).to_json())
             assert store.get_guards(Arr.SONARR) == {7: facts}
 
             # The last pending import dropping re-orphans the row: stored, no longer read.
@@ -1160,7 +1162,9 @@ class TestGuardFacts:
             store.put_guards(Arr.SONARR, 7, seven)
             store.put_guards(Arr.SONARR, 8, eight)
             store.put_guards(Arr.SONARR, 9, OwnedAtGrab(entry_groups=("C",)))
-            shared = pending_import(infohash="h", claims=(title_claim(al_id=7), title_claim(al_id=8, series_id=8)))
+            shared = pending_import(
+                infohash="h", claims=(title_claim(anilist_id=7), title_claim(anilist_id=8, series_id=8))
+            )
             store.put_pending_import_row(Arr.SONARR, "h", shared.to_json())
 
             assert store.get_guards(Arr.SONARR) == {7: seven, 8: eight}
@@ -1281,7 +1285,7 @@ class TestRunLifecycle:
                 },
             )
             store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
-            carried = _row(pending_import(infohash="aaa", al_id=7, series_id=5))
+            carried = _row(pending_import(infohash="aaa", anilist_id=7, series_id=5))
             store.put_pending_import_row(Arr.SONARR, "aaa", carried)
             store.save(dry_run=False)  # the run's commit, so the close's rollback has nothing to undo
 

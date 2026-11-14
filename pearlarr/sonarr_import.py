@@ -1062,7 +1062,7 @@ class ImportReconciler:
                 index, pending.guards_for(series_id), grabbed_groups[series_id]
             )
         by_claim = {
-            claim.al_id: EpisodeSnapshot.guarded(
+            claim.anilist_id: EpisodeSnapshot.guarded(
                 by_series[claim.series_id].episodes, claim.guards, grabbed_groups[claim.series_id]
             )
             for claim in pending.claims

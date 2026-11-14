@@ -261,10 +261,10 @@ def _eps_for(series_id: int) -> list[SonarrEpisode]:
     return [sonarr_ep(1, series_id)]
 
 
-def _ids(*al_ids: int) -> dict[int, TitleMapping]:
-    """A `{al_id -> mapping}` dict. Only the keys are read by the prefetch gate."""
+def _ids(*anilist_ids: int) -> dict[int, TitleMapping]:
+    """A `{anilist_id -> mapping}` dict. Only the keys are read by the prefetch gate."""
 
-    return {aid: TitleMapping(anilist_id=aid) for aid in al_ids}
+    return {aid: TitleMapping(anilist_id=aid) for aid in anilist_ids}
 
 
 class _Recorder:
@@ -330,7 +330,7 @@ class _StopOnFirstProgress:
 class _Services:
     """A stand-in for the arr run services the prefetch consults.
 
-    `title_mappings` resolves a series' tvdb id to its `{al_id -> mapping}`
+    `title_mappings` resolves a series' tvdb id to its `{anilist_id -> mapping}`
     dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
     always-mapped helper). `title_needs_check` is the per-title needs-check gate
     (`needs_scan=None` reports every title as needing a check).
@@ -358,10 +358,10 @@ class _Services:
             return {ids.tvdb: TitleMapping(anilist_id=ids.tvdb)}
         return self._mapping.get(ids.tvdb, {})
 
-    def title_needs_check(self, al_id: int) -> bool:
+    def title_needs_check(self, anilist_id: int) -> bool:
         if self._needs_scan is None:
             return True
-        return al_id in self._needs_scan
+        return anilist_id in self._needs_scan
 
 
 class TestPrefetchEpisodes:
@@ -494,13 +494,13 @@ def _entry(dt: datetime) -> EntryRecord:
 
 
 class _Seadex:
-    """A SeaDex gateway stand-in returning one fixed entry (or a not-found) for any al_id."""
+    """A SeaDex gateway stand-in returning one fixed entry (or a not-found) for any anilist_id."""
 
     def __init__(self, entry: EntryRecord | None) -> None:
         self._entry = entry
 
-    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
-        del al_id
+    def entry(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry:
+        del anilist_id
         return self._entry if self._entry is not None else SeaDexNoEntry.NOT_FOUND
 
 
@@ -592,7 +592,7 @@ class TestPrefetchLeavesOutUnchanged:
     """
 
     def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, _Sonarr]:
-        # Each series maps to a single al_id equal to its id, so a series is warmed
+        # Each series maps to a single anilist_id equal to its id, so a series is warmed
         # iff that id is in `needs_scan`.
         sonarr = _Sonarr()
         services = _Services(identity=True, needs_scan=needs_scan)

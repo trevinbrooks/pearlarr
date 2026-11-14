@@ -217,8 +217,8 @@ def _fields_item_started(event: ItemStarted) -> tuple[Field, ...]:
 
 def _fields_title_header(event: TitleHeader) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", event.title)]
-    if event.al_id is not None:
-        fields.append(Field("al_id", event.al_id))
+    if event.anilist_id is not None:
+        fields.append(Field("anilist_id", event.anilist_id))
     if event.coverage:
         fields.append(Field("coverage", event.coverage))
     if event.url:

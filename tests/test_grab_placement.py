@@ -93,10 +93,10 @@ _FACTS = torrent_facts(
 
 
 def _grabbing_title(
-    window_episodes: list[SonarrEpisode], names: TitleNames | None = None, *, al_id: int = 1
+    window_episodes: list[SonarrEpisode], names: TitleNames | None = None, *, anilist_id: int = 1
 ) -> GrabbingTitle:
     return make_grabbing_title(
-        episode_index(window_episodes), episode_index(_SERIES), al_id=al_id, names=names or TitleNames()
+        episode_index(window_episodes), episode_index(_SERIES), anilist_id=anilist_id, names=names or TitleNames()
     )
 
 
@@ -371,7 +371,7 @@ class TestPlaceOntoResident:
             ListedFile("Other - 01.mkv", 6, _number_with_no_match(1)),
         ]
 
-        placement = place_release(files, _grabbing_title(_SEASON, al_id=2), _torrent(pending))
+        placement = place_release(files, _grabbing_title(_SEASON, anilist_id=2), _torrent(pending))
 
         assert placement.placements.placements == ()
         assert placement.episodes == ()
@@ -416,7 +416,7 @@ class TestPlaceOntoResident:
         pending = pending_import(
             infohash="h1",
             series_id=8,
-            al_id=2,
+            anilist_id=2,
             file_episode_map={"show - s01e01.mkv": [901], "show - s01e02.mkv": [902]},
             seadex_files=_SEASON_NAMES,
             ordered_episode_ids=(901, 902, 903, 904),
@@ -473,7 +473,7 @@ class TestPlaceUnderAnotherTitlesContradiction:
             ordered_episode_ids=(101, 102, 103),
         )
         grabbing_title = make_grabbing_title(
-            episode_index([ep for ep in _TITLED if ep.id in window_episodes]), _TITLED_INDEX, al_id=2
+            episode_index([ep for ep in _TITLED if ep.id in window_episodes]), _TITLED_INDEX, anilist_id=2
         )
         listed_files = [ListedFile(name, 1000 + i, info) for i, (name, info) in enumerate(files.items())]
         torrent = known_torrent(pending, indexes={7: _TITLED_INDEX}, evidence=torrent_evidence())
@@ -605,7 +605,7 @@ class TestPlaceSkipped:
         torrent = known_torrent(indexes={7: series}, evidence=listed)
 
         for_season = place_release(files, make_grabbing_title(episode_index(season), series), torrent)
-        for_special = place_release(files, make_grabbing_title(episode_index([special]), series, al_id=2), torrent)
+        for_special = place_release(files, make_grabbing_title(episode_index([special]), series, anilist_id=2), torrent)
 
         assert (for_season.skip_reason, for_special.skip_reason) == (None, None)
         assert for_season.covered_ids == {101, 102, 103}
@@ -740,15 +740,15 @@ class TestPlaceSkipped:
             ),
         )
 
-    @pytest.mark.parametrize("al_id", [1, 2])
-    def test_a_torrent_another_series_places_against_the_aliases_skips_the_release(self, al_id: int) -> None:
+    @pytest.mark.parametrize("anilist_id", [1, 2])
+    def test_a_torrent_another_series_places_against_the_aliases_skips_the_release(self, anilist_id: int) -> None:
         # The stored pending import also claims the torrent for another series: there every file places by its
         # number, against what the aliases say, so the torrent waits for a hand import. Either title skips it: the
         # aliases placed or claimed its files under the first, the second placed them.
         grabbing_title = (
             self._specials_grabbing_title(2, 4)
-            if al_id == 1
-            else make_grabbing_title(self._OTHER, self._OTHER, al_id=2, series_id=8)
+            if anilist_id == 1
+            else make_grabbing_title(self._OTHER, self._OTHER, anilist_id=2, series_id=8)
         )
 
         placement = place_release(self._specials(), grabbing_title, self._aliased_against((901, 902, 903)))
@@ -779,7 +779,7 @@ class TestPlaceSkipped:
         pending = pending_import(
             infohash="h1", seadex_files=[f.file_name for f in files], ordered_episode_ids=(101, 102, 103)
         )
-        grabbing_title = make_grabbing_title(episode_index(second), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index(second), series, anilist_id=2)
 
         placement = place_release(files, grabbing_title, known_torrent(pending, indexes={7: series}))
 
@@ -866,7 +866,7 @@ class TestPlaceBesideAnotherListedTitle:
             ListedFile("Show - S01E02 (0003).mkv", 10, _matched(1, 2)),
             ListedFile("Show - S01E03 (0003).mkv", 20, _matched(1, 3)),
         ]
-        grabbing_title = make_grabbing_title(episode_index([_SPECIAL]), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index([_SPECIAL]), series, anilist_id=2)
         torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(title_window(1, (101, 102, 103))))
 
         placement = place_release(files, grabbing_title, torrent)
@@ -879,7 +879,7 @@ class TestPlaceBesideAnotherListedTitle:
         # Title 3's specials window places nothing of the season pack the two season titles take.
         seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=True)})}
         torrent = _torrent(listed=[title_window(1, (101, 102)), title_window(2, (103, 104))])
-        placed = PlacedEntry.place(_grabbing_title([_SPECIAL], al_id=3), {"u1": _season_files()}, {"u1": torrent})
+        placed = PlacedEntry.place(_grabbing_title([_SPECIAL], anilist_id=3), {"u1": _season_files()}, {"u1": torrent})
 
         placed.attach_placements(seadex_dict)
 
@@ -917,7 +917,7 @@ class TestPlaceBesideAnotherListedTitle:
         second = [sonarr_ep(2, n, ep_id=200 + n, episode_file_id=0) for n in range(1, 5)]
         series = episode_index([*_SEASON, *second])
         files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, 1)]
-        grabbing_title = make_grabbing_title(episode_index(_SEASON), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index(_SEASON), series, anilist_id=2)
         listed = torrent_evidence(title_window(1, (ep.id for ep in second), ignored=True))
 
         placement = place_release(files, grabbing_title, known_torrent(indexes={7: series}, evidence=listed))
@@ -933,12 +933,16 @@ class TestPlaceBesideAnotherListedTitle:
         series = episode_index([*_SEASON, *second])
         files = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, 1)]
         pending = pending_import(
-            infohash="h1", al_id=1, ordered_episode_ids=(101, 102, 103, 104), file_episode_map={}, seadex_files=_RUN
+            infohash="h1",
+            anilist_id=1,
+            ordered_episode_ids=(101, 102, 103, 104),
+            file_episode_map={},
+            seadex_files=_RUN,
         )
         listed = torrent_evidence(
             title_window(1, (101, 102, 103, 104), ignored=True), title_window(2, (ep.id for ep in second))
         )
-        grabbing_title = make_grabbing_title(episode_index(second), series, al_id=2)
+        grabbing_title = make_grabbing_title(episode_index(second), series, anilist_id=2)
 
         placement = place_release(files, grabbing_title, known_torrent(pending, indexes={7: series}, evidence=listed))
 
@@ -963,7 +967,7 @@ class TestPlaceBesideAnotherListedTitle:
         files.append(ListedFile("Show - NCOP.mkv", 50, None))
         torrent = _torrent(listed=[title_window(1, (101, 102, 103, 104)), title_window(2, (201, 202))])
 
-        placement = place_release(files, _grabbing_title(_SERIES[-2:], al_id=2), torrent)
+        placement = place_release(files, _grabbing_title(_SERIES[-2:], anilist_id=2), torrent)
 
         assert by_name(placement.placements) == {
             **{normalize_file_name(name): ((), PlacementVerdict.WAITING_ON_PARSE) for name in _RUN},
@@ -1074,13 +1078,13 @@ class TestSeasonBatchListedOnTwoTitles:
 
     @staticmethod
     def _place(
-        al_id: int, pending: PendingImport | None = None, evidence: FetchedSeadex = _RG_EVIDENCE
+        anilist_id: int, pending: PendingImport | None = None, evidence: FetchedSeadex = _RG_EVIDENCE
     ) -> PlacedRelease:
-        main = al_id == 20815
+        main = anilist_id == 20815
         grabbing_title = make_grabbing_title(
             episode_index(_RG_SEASON if main else _RG_SPECIALS),
             _RG_SERIES,
-            al_id=al_id,
+            anilist_id=anilist_id,
             series_id=919,
             names=_RG_MAIN if main else _RG_CHIBI,
         )
@@ -1134,7 +1138,7 @@ class TestSeasonBatchListedOnTwoTitles:
     def test_under_the_chibi_title_beside_the_seasons_pending_import_the_release_is_skipped(self) -> None:
         pending = pending_import(
             infohash="h1",
-            al_id=20815,
+            anilist_id=20815,
             series_id=919,
             file_episode_map={name: (ep.id,) for name, ep in zip(_RG_EPISODE_NAMES, _RG_SEASON, strict=True)},
             seadex_files=[f.file_name for f in _RG_FILES],
@@ -1199,7 +1203,7 @@ _MHA_NAMES = TitleNames(
 _MHA_GRABBING_TITLE = make_grabbing_title(
     episode_index([_MHA_SERIES.by_id[9254], _MHA_SERIES.by_id[9255]]),
     _MHA_SERIES,
-    al_id=122349,
+    anilist_id=122349,
     names=_MHA_NAMES,
     episode_count=2,
     alternate_titles=("Boku no Hero Academia",),
@@ -1233,7 +1237,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         # special for it again, but no file is left to place.
         pending = pending_import(
             infohash="h1",
-            al_id=122349,
+            anilist_id=122349,
             file_episode_map={normalize_file_name(_MHA_OVA): [9254]},
             seadex_files=[_MHA_OVA],
             ordered_episode_ids=(9254, 9255),
@@ -1256,7 +1260,7 @@ class TestPlaceWhereEveryNumberingAgrees:
 
     def test_a_batch_counted_from_one_places_on_the_seasons_title(self) -> None:
         grabbing_title = make_grabbing_title(
-            episode_index(_SC_SEASON), _SC_SERIES, al_id=7590, names=_SC_MAIN, episode_count=13
+            episode_index(_SC_SEASON), _SC_SERIES, anilist_id=7590, names=_SC_MAIN, episode_count=13
         )
         torrent = known_torrent(
             indexes={7: _SC_SERIES}, evidence=torrent_evidence(_SC_SEASON_WINDOW, _SC_SPECIALS_WINDOW)
@@ -1279,7 +1283,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         # title's, as a file the season's window had placed would be: no hand import, and nothing of the release
         # lands here.
         grabbing_title = make_grabbing_title(
-            episode_index(_SC_SPECIALS[:6]), _SC_SERIES, al_id=8599, names=_SC_EXTRAS, episode_count=6
+            episode_index(_SC_SPECIALS[:6]), _SC_SERIES, anilist_id=8599, names=_SC_EXTRAS, episode_count=6
         )
         torrent = known_torrent(
             indexes={7: _SC_SERIES}, evidence=torrent_evidence(_SC_SEASON_WINDOW, _SC_SPECIALS_WINDOW)
@@ -1337,24 +1341,24 @@ class TestKnownTorrent:
         assert grabbing_title.window == title_window(1, (101, 102, 103, 104), episode_count=4)
 
     def test_a_new_grabbing_titles_window_takes_its_anilist_ids_place(self) -> None:
-        order = _torrent(two_claim_pending_import()).order(_grabbing_title(_SEASON, al_id=3).window)
+        order = _torrent(two_claim_pending_import()).order(_grabbing_title(_SEASON, anilist_id=3).window)
 
         assert order is not None
-        assert [w.al_id for w in order.windows] == [1, 2, 3]
+        assert [w.anilist_id for w in order.windows] == [1, 2, 3]
         assert (order.grabbing_window_at, order.imports) == (2, {0, 1, 2})
 
     def test_a_listed_title_that_never_claimed_runs_but_is_not_imported(self) -> None:
         order = _torrent(listed=[title_window(2, (103, 104))]).order(_grabbing_title(_SEASON).window)
 
         assert order is not None
-        assert [w.al_id for w in order.windows] == [1, 2]
+        assert [w.anilist_id for w in order.windows] == [1, 2]
         assert (order.grabbing_window_at, order.imports) == (0, {0})
 
     def test_a_claim_moving_series_leaves_its_old_series_unread(self) -> None:
         # Title 1's stored claim is on series 7, and this grab claims series 8.
         pending = pending_import(
             infohash="h1",
-            al_id=1,
+            anilist_id=1,
             ordered_episode_ids=(101, 102, 103, 104),
             file_episode_map={},
             seadex_files=_SEASON_NAMES,
@@ -1363,10 +1367,10 @@ class TestKnownTorrent:
         fresh = torrent_evidence(title_window(1, (801, 802, 803, 804), series_id=8))
         torrent = known_torrent(pending, indexes={8: other}, evidence=fresh)
 
-        order = torrent.order(make_grabbing_title(other, other, al_id=1, series_id=8).window)
+        order = torrent.order(make_grabbing_title(other, other, anilist_id=1, series_id=8).window)
 
         assert order is not None
-        assert [(w.al_id, w.series_id) for w in order.windows] == [(1, 8)]
+        assert [(w.anilist_id, w.series_id) for w in order.windows] == [(1, 8)]
         assert order.imports == {0}
 
 
@@ -1607,7 +1611,7 @@ class TestPendingImportAt:
 
     def test_joined_appends_a_new_titles_claim(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        update = pending_import_update("h1", stored=stored, al_id=2)
+        update = pending_import_update("h1", stored=stored, anilist_id=2)
 
         pending = update.pending_import_at(_STAMP, restart=False)
 
@@ -1670,7 +1674,7 @@ class TestPendingImportAt:
 
     def test_fresh_restarts_the_stored_pending_import(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
-        update = pending_import_update("h1", stored=stored, al_id=2)
+        update = pending_import_update("h1", stored=stored, anilist_id=2)
 
         pending = update.pending_import_at(_STAMP, restart=True)
 
@@ -1685,7 +1689,7 @@ class TestBuildUpdateWithNoWindow:
         return PlannedGrab("RG", "https://nyaa.si/view/1", make_release(infohash="h1", is_dual_audio=True), "h1")
 
     def test_a_new_torrents_update_has_an_id_less_claim(self) -> None:
-        facts = title_facts(al_id=9, series_id=0, title="Movie", url="https://releases.moe/9")
+        facts = title_facts(anilist_id=9, series_id=0, title="Movie", url="https://releases.moe/9")
 
         update = build_update_without_window(self._planned_grab(), facts, None)
 
@@ -1693,18 +1697,18 @@ class TestBuildUpdateWithNoWindow:
         assert update.facts == torrent_facts(is_dual_audio=True)
         assert update.file_map == {} and update.excluded == () and update.order_only == {}
         assert update.claim == title_claim(
-            al_id=9, series_id=0, title="Movie", url="https://releases.moe/9", guards=facts.guards
+            anilist_id=9, series_id=0, title="Movie", url="https://releases.moe/9", guards=facts.guards
         )
 
     def test_a_listed_torrent_joins_its_stored_pending_import(self) -> None:
-        stored = pending_import(infohash="h1", al_id=1, series_id=0)
+        stored = pending_import(infohash="h1", anilist_id=1, series_id=0)
 
         pending = build_update_without_window(
-            self._planned_grab(), title_facts(al_id=2, series_id=0), stored
+            self._planned_grab(), title_facts(anilist_id=2, series_id=0), stored
         ).pending_import_at(_STAMP, restart=False)
 
         assert pending.release_group == stored.release_group
-        assert [claim.al_id for claim in pending.claims] == [1, 2]
+        assert [claim.anilist_id for claim in pending.claims] == [1, 2]
 
 
 class TestTitleClaim:

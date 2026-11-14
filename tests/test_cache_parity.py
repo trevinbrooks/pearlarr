@@ -84,16 +84,19 @@ def _apply_ops(store: AbstractCacheStore) -> None:
         "hashA",
         pending_import(
             infohash="hashA",
-            claims=(title_claim(al_id=7, series_id=7, title="A"), title_claim(al_id=9, series_id=8, title="A2")),
+            claims=(
+                title_claim(anilist_id=7, series_id=7, title="A"),
+                title_claim(anilist_id=9, series_id=8, title="A2"),
+            ),
         ).to_json(),
     )
     store.put_pending_import_row(
-        Arr.SONARR, "hashB", pending_import(infohash="hashB", al_id=8, series_id=8, title="B").to_json()
+        Arr.SONARR, "hashB", pending_import(infohash="hashB", anilist_id=8, series_id=8, title="B").to_json()
     )
     # A Radarr row on hashA, so `other_arr_holds` answers differently per arr: a
     # fake ignoring the arr narrowing cannot match both.
     store.put_pending_import_row(
-        Arr.RADARR, "hashA", pending_import(infohash="hashA", al_id=7, series_id=0, title="AR").to_json()
+        Arr.RADARR, "hashA", pending_import(infohash="hashA", anilist_id=7, series_id=0, title="AR").to_json()
     )
 
     # Guard rows: a same-id re-put (latest wins, al 7 has a live claim), al 9 live

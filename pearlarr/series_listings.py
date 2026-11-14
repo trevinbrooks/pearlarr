@@ -61,26 +61,26 @@ class SeriesListings:
         """
 
         listed: list[ListedTitle] = []
-        for al_id, mapping in resolved.kept_and_ignored.items():
-            entry = self._seadex.entry(al_id)
+        for anilist_id, mapping in resolved.kept_and_ignored.items():
+            entry = self._seadex.entry(anilist_id)
             if isinstance(entry, SeaDexNoEntry):
                 if entry is SeaDexNoEntry.UNREACHABLE:
                     return None
                 continue
             try:
-                ep_list = self._episodes.mapping_episodes(series_id, al_id, mapping)
+                ep_list = self._episodes.mapping_episodes(series_id, anilist_id, mapping)
             except ValueError:
                 continue
             window = (
                 None
                 if ep_list is None
                 else TitleWindow.of(
-                    al_id=al_id,
+                    anilist_id=anilist_id,
                     series_id=series_id,
                     ep_list=ep_list,
-                    names=self._names(al_id),
-                    ignored=al_id in resolved.ignored,
-                    episode_count=self._episodes.episode_count(al_id),
+                    names=self._names(anilist_id),
+                    ignored=anilist_id in resolved.ignored,
+                    episode_count=self._episodes.episode_count(anilist_id),
                 )
             )
             listed.append(ListedTitle(entry, window, mapping.special_aliasing))

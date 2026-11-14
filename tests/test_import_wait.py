@@ -63,7 +63,7 @@ from .builders import (
     FakeCacheStore,
     FakeTorrents,
     attempt_result,
-    claim_al_ids,
+    claim_anilist_ids,
     files_left_for_hand_import,
     grab_request,
     make_bare_instance,
@@ -387,7 +387,7 @@ def _two_claim_pending_import(**overrides: Any) -> PendingImport:
 
     fields: dict[str, Any] = {"infohash": "h"}
     fields.update(overrides)
-    return two_claim_pending_import(al_ids=(11, 22), windows=((), ()), titles=("Cour 1", "Cour 2"), **fields)
+    return two_claim_pending_import(anilist_ids=(11, 22), windows=((), ()), titles=("Cour 1", "Cour 2"), **fields)
 
 
 @dataclass(frozen=True)
@@ -557,9 +557,9 @@ class TestPendingImportsGuardLoading:
             strategy=_RecordingStrategy(),
             store=store,
             stored_pending_imports=[
-                pending_import(infohash="run1", al_id=5),
-                pending_import(infohash="run2", al_id=5),
-                pending_import(infohash="other", al_id=6),
+                pending_import(infohash="run1", anilist_id=5),
+                pending_import(infohash="run2", anilist_id=5),
+                pending_import(infohash="other", anilist_id=6),
             ],
         )
         facts = OwnedAtGrab(entry_groups=("NewPick",), stale_groups=("OldPick",))
@@ -741,8 +741,8 @@ class TestReportImportsForSeries:
         pending = pending_import(
             infohash="h",
             claims=(
-                title_claim(al_id=11, series_id=7, window_coverage="S01 E01-E12", url="https://releases.moe/11"),
-                title_claim(al_id=22, series_id=8, window_coverage="S02 E01-E12", url="https://releases.moe/22"),
+                title_claim(anilist_id=11, series_id=7, window_coverage="S01 E01-E12", url="https://releases.moe/11"),
+                title_claim(anilist_id=22, series_id=8, window_coverage="S02 E01-E12", url="https://releases.moe/22"),
             ),
         )
         mgr = make_orchestration_manager(
@@ -791,20 +791,20 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         """Titles 5, 6 and 9 cached."""
 
         store = FakeCacheStore()
-        for al_id in (5, 6, 9):
-            store.update_cached_title(Arr.SONARR, al_id, {"updated_at": cls._CACHED_ON})
+        for anilist_id in (5, 6, 9):
+            store.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": cls._CACHED_ON})
         return store
 
     @staticmethod
     def _record() -> PendingImport:
         """Torrent "h", claimed by title 5 on series 7 and title 6 on series 8."""
 
-        return two_claim_pending_import(al_ids=(5, 6), series_ids=(7, 8), infohash="h")
+        return two_claim_pending_import(anilist_ids=(5, 6), series_ids=(7, 8), infohash="h")
 
     @staticmethod
     def _stamps(store: FakeCacheStore) -> dict[int, str | None]:
-        cached_titles = {al_id: store.get_cached_title(Arr.SONARR, al_id) for al_id in (5, 6, 9)}
-        return {al_id: cached.updated_at for al_id, cached in cached_titles.items() if cached is not None}
+        cached_titles = {anilist_id: store.get_cached_title(Arr.SONARR, anilist_id) for anilist_id in (5, 6, 9)}
+        return {anilist_id: cached.updated_at for anilist_id, cached in cached_titles.items() if cached is not None}
 
     def test_the_scan_report_clears_the_stamp_of_every_claiming_title(self) -> None:
         store = self._store()
@@ -1352,7 +1352,7 @@ class TestBlockingWaitWorkingSet:
         assert [p.display_label for p in pending_imports] == [f"Cour 1 & Cour 2{SEP}SubGroup"]
         # The store round-trip keeps both claims on the one row.
         rehydrated = mgr._pending_imports.load(mgr._pending_imports.rows())
-        assert {key: claim_al_ids(p) for key, p in rehydrated.items()} == {"h": (11, 22)}
+        assert {key: claim_anilist_ids(p) for key, p in rehydrated.items()} == {"h": (11, 22)}
 
 
 def _run_blocking_wait(
@@ -2749,7 +2749,7 @@ class TestPendingImportWrites:
     def test_save_writes_no_guard_row(self) -> None:
         # A claim's guard row is its grab's to write: a pending import saved from a loaded copy never re-puts one.
         store = FakeCacheStore()
-        pending = pending_import(infohash="h", al_id=5, guards=OwnedAtGrab(entry_groups=("G",)))
+        pending = pending_import(infohash="h", anilist_id=5, guards=OwnedAtGrab(entry_groups=("G",)))
         mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=store)
 
         mgr._pending_imports.save(pending)
@@ -3014,7 +3014,7 @@ class TestPostImportCategoryOtherArrGate:
     def test_move_is_put_off_while_the_other_arr_holds_the_hash(self) -> None:
         # The Sonarr import is confirmed and its pending import drops, but the Radarr pending import still
         # claims the hash (the one lowercase key both arrs store): no move, while the close still runs.
-        radarr_pending = pending_import(infohash="h", al_id=22, series_id=0, title="Movie")
+        radarr_pending = pending_import(infohash="h", anilist_id=22, series_id=0, title="Movie")
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         store = FakeCacheStore()
@@ -3061,7 +3061,7 @@ class TestPostImportCategoryOtherArrGate:
         final = view.final("h")
         assert final.outcome is Outcome.IMPORTED
         assert final.label == f"Cour 1 & Cour 2{SEP}SubGroup"
-        assert [claim_al_ids(c) for c in strategy.close_calls] == [(11, 22)]
+        assert [claim_anilist_ids(c) for c in strategy.close_calls] == [(11, 22)]
 
     def test_other_arr_missing_drop_releases_the_gate(self) -> None:
         # Run 1 (Radarr): only its pending import exists and the torrent is gone from
@@ -3183,7 +3183,7 @@ class TestRemoveFromQueue:
 
         mgr.report_imports_for_series(7)
 
-        assert [claim_al_ids(c) for c in strategy.close_calls] == [(11, 22)]
+        assert [claim_anilist_ids(c) for c in strategy.close_calls] == [(11, 22)]
         assert mgr._pending_imports.rows() == {}
 
     def test_remove_from_queue_off_never_closes(self) -> None:
@@ -3220,8 +3220,8 @@ class TestRemoveFromQueue:
         # gate): Sonarr's queue record only blocks Sonarr's completed-download
         # handling, so a Radarr pending import sharing the torrent must not keep it open.
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
-        sonarr_pending = pending_import(infohash="h", al_id=11, series_id=7)
-        radarr_pending = pending_import(infohash="h", al_id=22, series_id=0)
+        sonarr_pending = pending_import(infohash="h", anilist_id=11, series_id=7)
+        radarr_pending = pending_import(infohash="h", anilist_id=22, series_id=0)
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
@@ -3714,7 +3714,7 @@ class TestCleanupRetry:
     def test_other_arr_pending_import_awaiting_cleanup_still_puts_off_the_move(self) -> None:
         # The other arr's pending import awaiting cleanup still claims the hash: the confirmed cleanup
         # puts off the move, runs the close, and still drops this arr's pending import.
-        radarr_awaiting_cleanup = pending_import(infohash="h", al_id=22, series_id=0, awaiting_cleanup=True)
+        radarr_awaiting_cleanup = pending_import(infohash="h", anilist_id=22, series_id=0, awaiting_cleanup=True)
         strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         store = FakeCacheStore()
@@ -3736,7 +3736,7 @@ class TestCleanupRetry:
     def test_cleanup_with_the_other_arr_on_the_hash_leaves_out_the_move_and_drops(self) -> None:
         # A later Radarr grab claims the hash: that pending import owns the eventual move, so
         # the pending import confirmed again by the cleanup finish just closes and drops.
-        radarr_pending = pending_import(infohash="h", al_id=22, series_id=0)
+        radarr_pending = pending_import(infohash="h", anilist_id=22, series_id=0)
         strategy = _RecordingStrategy(completed=attempt_result(all_done=True))
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
         store = FakeCacheStore()
@@ -4072,8 +4072,8 @@ class TestCrossArrCategoryGate:
         # movie. The Sonarr import must NOT move the category while the Radarr
         # pending import still claims the hash; the later Radarr reconcile fires the move.
         store = FakeCacheStore()
-        sonarr_pending = pending_import(infohash="h", al_id=11, series_id=7, title="Series")
-        radarr_pending = pending_import(infohash="h", al_id=22, series_id=0, title="Movie")
+        sonarr_pending = pending_import(infohash="h", anilist_id=11, series_id=7, title="Series")
+        radarr_pending = pending_import(infohash="h", anilist_id=22, series_id=0, title="Movie")
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
 
         # Sonarr run: its part is confirmed (files done) and drops, but the Radarr

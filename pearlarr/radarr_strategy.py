@@ -131,23 +131,23 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
     def check_title(
         self,
         item: RadarrItem,
-        al_id: int,
+        anilist_id: int,
         mapping: TitleMapping,
     ) -> None:
         """Check one title for a Radarr movie."""
 
         services = self._services
 
-        sd_entry = services.begin_check(al_id)
+        sd_entry = services.begin_check(anilist_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url
 
         # Movies have no episode coverage, so the backfill is just the URL.
-        if services.is_unchanged(al_id, sd_entry, lambda: ""):
+        if services.is_unchanged(anilist_id, sd_entry, lambda: ""):
             return
 
-        title = services.resolve_title(al_id)
+        title = services.resolve_title(anilist_id)
         services.open_title_block(title=title.name, sd_entry=sd_entry)
 
         update = services.new_cached_title_update(title, sd_entry)
@@ -165,7 +165,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         seadex_dict = services.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            services.report_no_releases(al_id, update)
+            services.report_no_releases(anilist_id, update)
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -195,7 +195,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
             planned = releases_to_grab(seadex_dict)
             stored = services.pending_imports.stored_pending_imports(f.qbit_hash for f in planned)
             facts = TitleFacts(
-                al_id=al_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
+                anilist_id=anilist_id, series_id=0, title=title.name, coverage=None, url=sd_url, guards=OwnedAtGrab()
             )
             pending_import_updates = {
                 f.qbit_hash: build_update_without_window(f, facts, stored.get(f.qbit_hash)) for f in planned
@@ -203,7 +203,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
         services.grab_and_cache(
             GrabRequest(
-                al_id=al_id,
+                anilist_id=anilist_id,
                 arr_title=item.title,
                 title_name=title.name,
                 entry=sd_entry,

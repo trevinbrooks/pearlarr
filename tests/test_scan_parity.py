@@ -188,7 +188,7 @@ IGNORED_TITLED_LINES: tuple[Line, ...] = (
 CHECKING_FULL = TitleHeader(
     state=TitleState.CHECKING,
     title="Frieren",
-    al_id=1,
+    anilist_id=1,
     coverage="S01 E01-E28",
     url="https://releases.moe/111852",
     incomplete=True,
@@ -208,7 +208,7 @@ CHECKING_FULL_LINES: tuple[Line, ...] = (
 CHECKING_URL_ONLY = TitleHeader(
     state=TitleState.CHECKING,
     title="Perfect Blue",
-    al_id=1,
+    anilist_id=1,
     url="https://releases.moe/437",
 )
 CHECKING_URL_ONLY_LINES: tuple[Line, ...] = (

@@ -647,9 +647,9 @@ class _IgnoredIdLog:
     def __init__(self) -> None:
         self.ids: list[int] = []
 
-    def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
+    def log_ignored_anilist_id(self, state: ArrRunState, anilist_id: int) -> None:
         del state
-        self.ids.append(al_id)
+        self.ids.append(anilist_id)
 
 
 class TestArrRunServicesIgnoredIds:
@@ -792,7 +792,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
             _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
         )
         # A non-empty series, yet the mapping without TVDB mappings resolves to NO episodes (skip).
-        assert episodes.mapping_episodes(sonarr_series_id=777, al_id=500, mapping=without_tvdb_mappings) == []
+        assert episodes.mapping_episodes(sonarr_series_id=777, anilist_id=500, mapping=without_tvdb_mappings) == []
 
 
 # --------------------------------------------------------------------------- #

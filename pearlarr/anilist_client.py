@@ -319,12 +319,12 @@ class AniListClient:
             hub_warn(f"AniList {detail}, skipping further lookups this run")
         self._unreachable = True
 
-    def query(self, al_id: int) -> dict[str, Any]:
+    def query(self, anilist_id: int) -> dict[str, Any]:
         """Fetch one AniList Media by id (see _post_with_retry for the retry policy)."""
 
-        return self._post_with_retry(QUERY, {"id": al_id})
+        return self._post_with_retry(QUERY, {"id": anilist_id})
 
-    def query_batch(self, al_ids: list[int]) -> AniListAnswers:
+    def query_batch(self, anilist_ids: list[int]) -> AniListAnswers:
         """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in.
 
         Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -332,7 +332,7 @@ class AniListClient:
         simply absent from the result.
         """
 
-        j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
+        j = self._post_with_retry(BATCH_QUERY, {"ids": list(anilist_ids)})
         # The cache stores each Media body verbatim (re-parsed on read into an
         # AniListMediaNode). Keep each Media OBJECT carrying an int id, skipping
         # junk elements in the array.

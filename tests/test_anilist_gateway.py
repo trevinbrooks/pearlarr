@@ -32,22 +32,22 @@ def _now_str() -> str:
     return datetime.now().strftime(STAMP_FORMAT)
 
 
-def _fresh_answer(al_id: int) -> dict[str, Any]:
+def _fresh_answer(anilist_id: int) -> dict[str, Any]:
     """A populated cached answer stamped inside the refresh age."""
 
-    return {"fetched_at": _stamp(days_ago=1), "data": anilist_body(al_id)}
+    return {"fetched_at": _stamp(days_ago=1), "data": anilist_body(anilist_id)}
 
 
-def _stale_answer(al_id: int) -> dict[str, Any]:
+def _stale_answer(anilist_id: int) -> dict[str, Any]:
     """A populated cached answer stamped past the refresh age."""
 
-    return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": anilist_body(al_id)}
+    return {"fetched_at": _stamp(days_ago=ANILIST_REFRESH_AGE_DAYS + 1), "data": anilist_body(anilist_id)}
 
 
-def _dateless_answer(al_id: int) -> dict[str, Any]:
+def _dateless_answer(anilist_id: int) -> dict[str, Any]:
     """A cached answer stamped inside the refresh age, with a Media that has no `startDate` key."""
 
-    body = anilist_body(al_id)
+    body = anilist_body(anilist_id)
     del body["data"]["Media"]["startDate"]
     return {"fetched_at": _stamp(days_ago=1), "data": body}
 
@@ -76,7 +76,7 @@ class TestLoadCache:
 
         gateway.load_cache()
 
-        assert gateway.al_cache == {1: anilist_body(1), 2: anilist_body(2), 3: anilist_body(3)}
+        assert gateway.answers == {1: anilist_body(1), 2: anilist_body(2), 3: anilist_body(3)}
         # A week-old count beats withholding it: None downstream means "use every episode".
         assert gateway.episode_count(2) == 12
         assert client.query_calls == []
@@ -92,8 +92,8 @@ class TestPrefetch:
         client = ScriptedAniListClient()
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        for al_id in (1, 2):
-            store.put_anilist_meta(al_id, _fresh_answer(al_id))
+        for anilist_id in (1, 2):
+            store.put_anilist_meta(anilist_id, _fresh_answer(anilist_id))
         gateway.load_cache()
 
         assert gateway.prefetch([1, 2], dry_run=True) == 0
@@ -114,7 +114,7 @@ class TestPrefetch:
         assert fetched == len(ids)
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE], ids[ANILIST_BATCH_SIZE:]]
         # Both pages merged into the run cache. The absent id is simply absent.
-        assert set(gateway.al_cache) == set(ids) - {7}
+        assert set(gateway.answers) == set(ids) - {7}
         # Persisted (via put_anilist_meta) before returning, so the batch's work
         # survives an early run exit.
         assert store.get_anilist_meta(1) is not None
@@ -158,7 +158,7 @@ class TestPrefetch:
         gateway.prefetch([3], dry_run=True)
 
         assert client.batch_calls == [[3]]
-        assert gateway.al_cache[3] == anilist_body(3)
+        assert gateway.answers[3] == anilist_body(3)
         assert store.get_anilist_meta(3) is None
         assert store.get_anilist_meta(1) is not None
 
@@ -177,7 +177,7 @@ class TestPrefetch:
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE]]
         # The tripped chunk fetched nothing, so the boot step's bar never claimed it as progress.
         assert progress.updates == []
-        assert gateway.al_cache == {}
+        assert gateway.answers == {}
         assert store.get_anilist_meta(1) is None
 
     def test_unreachable_keeps_stale_rows_and_serves_them(self) -> None:
@@ -254,11 +254,11 @@ class TestMediaResolution:
         # The first resolver fetched and stored the raw body. The other four
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
-        assert 42 in gateway.al_cache
+        assert 42 in gateway.answers
 
     def test_airing_reads_the_dates_count_and_episode_length(self) -> None:
         gateway = make_anilist_gateway()
-        gateway.al_cache = {
+        gateway.answers = {
             1: anilist_body(1),
             2: {"data": {"Media": {"id": 2, "episodes": 12}}},
         }
@@ -270,7 +270,7 @@ class TestMediaResolution:
 
     def test_titles_list_english_then_romaji_once_each(self) -> None:
         gateway = make_anilist_gateway()
-        gateway.al_cache = {
+        gateway.answers = {
             1: {"data": {"Media": {"id": 1, "title": {"english": "E", "romaji": "R"}}}},
             2: {"data": {"Media": {"id": 2, "title": {"english": "Same", "romaji": "Same"}}}},
             3: {"data": {"Media": {"id": 3, "title": {"romaji": "R"}}}},
@@ -290,7 +290,7 @@ class TestMediaResolution:
         assert gateway.titles(7) == ()
         assert gateway.episode_count(7) is None
 
-        assert gateway.al_cache[7] == {}
+        assert gateway.answers[7] == {}
         assert client.query_calls == [7]
 
     def test_failure_marks_anilist_unreachable_without_remembering_a_not_found(self) -> None:
@@ -300,14 +300,14 @@ class TestMediaResolution:
         assert gateway.titles(7) == ()
         assert gateway.unreachable is True
         # No answer is not a not-found answer: the id stays unknown instead of kept as absent.
-        assert gateway.al_cache == {}
+        assert gateway.answers == {}
 
 
 class TestUnread:
     """An id is unread only when an unreachable AniList left its lookup without a cached answer with its air dates."""
 
     @pytest.mark.parametrize(
-        ("al_id", "unread"),
+        ("anilist_id", "unread"),
         [
             pytest.param(2, True, id="no-record"),
             pytest.param(3, True, id="stored-without-dates"),
@@ -316,7 +316,7 @@ class TestUnread:
         ],
     )
     def test_an_unreachable_source_leaves_unread_a_looked_up_id_with_no_dated_answer(
-        self, al_id: int, unread: bool
+        self, anilist_id: int, unread: bool
     ) -> None:
         store = FakeCacheStore()
         store.put_anilist_meta(3, _dateless_answer(3))
@@ -326,10 +326,10 @@ class TestUnread:
         # AniList answers that it doesn't have id 5, then fails on id 1.
         gateway.episode_count(5)
         gateway.episode_count(1)
-        gateway.episode_count(al_id)
+        gateway.episode_count(anilist_id)
 
         assert gateway.unreachable is True
-        assert gateway.air_dates_unread(al_id) is unread
+        assert gateway.air_dates_unread(anilist_id) is unread
 
     def test_an_id_nothing_looked_up_is_not_unread(self) -> None:
         gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})))
@@ -371,8 +371,8 @@ class TestLogPluralization:
     def test_load_cache_plural(self) -> None:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(store=store)
-        for al_id in (1, 2):
-            store.put_anilist_meta(al_id, _fresh_answer(al_id))
+        for anilist_id in (1, 2):
+            store.put_anilist_meta(anilist_id, _fresh_answer(anilist_id))
         handler = self._captured(gateway)
 
         gateway.load_cache()

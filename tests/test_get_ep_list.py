@@ -62,16 +62,16 @@ class _RecordingAniList:
         self.format_calls: list[int] = []
         self.n_eps_calls: list[int] = []
 
-    def media_format(self, al_id: int) -> str | None:
-        self.format_calls.append(al_id)
+    def media_format(self, anilist_id: int) -> str | None:
+        self.format_calls.append(anilist_id)
         return self._media_format
 
-    def episode_count(self, al_id: int) -> int | None:
-        self.n_eps_calls.append(al_id)
+    def episode_count(self, anilist_id: int) -> int | None:
+        self.n_eps_calls.append(anilist_id)
         return self._n_eps
 
-    def airing(self, al_id: int) -> AniListAiring:
-        del al_id
+    def airing(self, anilist_id: int) -> AniListAiring:
+        del anilist_id
         return self._airing
 
 
@@ -108,7 +108,7 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=_NoAniDbMappings())
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=1)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert anilist.format_calls == [123]
     assert anilist.n_eps_calls == [123]
@@ -130,7 +130,7 @@ def test_the_episode_count_is_the_gateways() -> None:
 def test_a_title_the_gateway_left_unread_is_unread() -> None:
     # AniList turns unreachable on title 5. Title 4 is looked up after that, from its answer in the arr run cache.
     down = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({5})))
-    down.al_cache[4] = anilist_body(4)
+    down.answers[4] = anilist_body(4)
     down.episode_count(5)
     down.episode_count(4)
     episodes = make_sonarr_episodes(_anilist=down)
@@ -146,7 +146,7 @@ def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr)
 
     mapping = TitleMapping(anilist_id=123, tvdb_mappings={})
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert result == []
 
@@ -177,7 +177,7 @@ def test_anidb_map_filters_episodes_and_bypasses_the_offset_slice() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, 0)]
     assert result is not None
@@ -198,7 +198,7 @@ def test_tv_format_outside_season_zero_never_consults_anidb() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=1, anidb_id=99)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert mappings.calls == []
     assert result is not None
@@ -214,7 +214,7 @@ def test_missing_anidb_id_never_consults_anidb() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert mappings.calls == []
     assert result is not None
@@ -234,7 +234,7 @@ def test_episodes_without_numbers_are_skipped_on_the_anidb_path() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=-1, anidb_id=99)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, -1)]
     assert result is not None
@@ -254,7 +254,7 @@ def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
     episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _resolver=mappings)
 
     mapping = TitleMapping(anilist_id=123, tvdb_season=0, anidb_id=99)
-    result = episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=mapping)
+    result = episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=mapping)
 
     assert mappings.calls == [(99, 0)]
     assert anilist.n_eps_calls == [123]  # fell through to the offset slice
@@ -297,7 +297,7 @@ def _film() -> SonarrEpisodes:
 
 
 def test_mapped_specials_give_way_to_the_ones_aired_on_anilists_date() -> None:
-    result = _film().mapping_episodes(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+    result = _film().mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
 
     assert result is not None
     assert [(ep.season_number, ep.episode_number) for ep in result] == [(0, 2)]
@@ -307,8 +307,8 @@ def test_a_pick_by_date_is_logged_once_a_run() -> None:
     recording = install_recording_hub()
     episodes = _film()
 
-    episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
-    episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+    episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+    episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
 
     assert diagnostic_messages(recording, Severity.DEBUG) == [
         "AniList 123 maps to S00E01 (aired 2019-02-20) but is dated 2020-08-29 - using S00E02 (aired 2020-08-29)"
@@ -326,7 +326,7 @@ def test_a_logged_pick_of_several_specials_names_each_and_both_dates() -> None:
         AniListAiring(start=date(2020, 8, 29), end=date(2020, 9, 5), episodes=2, duration=45),
     )
 
-    episodes.mapping_episodes(sonarr_series_id=10, al_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
+    episodes.mapping_episodes(sonarr_series_id=10, anilist_id=123, mapping=_MAPPED_FROM_SPECIAL_ONE)
 
     note = (
         "AniList 123 maps to S00E01 (aired 2019-02-20), S00E02 (aired 2020-08-29) "

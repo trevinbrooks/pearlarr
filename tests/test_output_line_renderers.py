@@ -207,7 +207,7 @@ def test_title_header_line_reads_the_full_scope_path() -> None:
     header = TitleHeader(
         state=TitleState.CHECKING,
         title="Frieren: Beyond Journey's End",
-        al_id=154587,
+        anilist_id=154587,
         coverage="S01 E01-E28",
         url="https://releases.moe/154587",
         incomplete=True,
@@ -216,7 +216,7 @@ def test_title_header_line_reads_the_full_scope_path() -> None:
     line = _format(header, *_open_title_scope_events())
     assert line == (
         f"{_TS} INFO [sonarr › [3/182] Frieren › title] checking "
-        f'title="Frieren: Beyond Journey\'s End" al_id=154587 coverage="S01 E01-E28" '
+        f'title="Frieren: Beyond Journey\'s End" anilist_id=154587 coverage="S01 E01-E28" '
         f"link=https://releases.moe/154587 incomplete=true"
     )
 

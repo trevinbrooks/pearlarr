@@ -240,7 +240,7 @@ A title's block opened. `message` is the title's state word.
   "component": "title",
   "path": "sonarr › [3/42] Sousou no Frieren › title",
   "title": "Sousou no Frieren",
-  "al_id": 154587,
+  "anilist_id": 154587,
   "coverage": "S01",
   "link": "https://seadex.moe/154587/"
 }

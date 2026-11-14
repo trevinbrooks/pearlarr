@@ -177,13 +177,13 @@ def test_late_step_calls_demote_to_attributed_diagnostics() -> None:
 def test_title_opens_with_its_header_tagged() -> None:
     factory, recorder, _ = _factory()
 
-    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", al_id=154587))
+    title_scope = factory.title(TitleHeader(state=TitleState.CHECKING, title="Frieren", anilist_id=154587))
 
     opened = recorder.of_type(ScopeOpened)
     headers = recorder.of_type(TitleHeader)
     assert [o.label for o in opened] == ["Frieren"]
     assert headers[0].scope == title_scope.scope_id
-    assert headers[0].al_id == 154587
+    assert headers[0].anilist_id == 154587
     assert recorder.events[0] == opened[0]  # header-at-open: ScopeOpened first
 
 

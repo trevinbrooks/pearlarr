@@ -282,7 +282,10 @@ class TestImportSnapshot:
     @staticmethod
     def _snapshot(by_claim: dict[int, EpisodeSnapshot] | None = None) -> ImportSnapshot:
         pending = pending_import(
-            claims=(title_claim(al_id=1, series_id=7, ordered_episode_ids=[1]), title_claim(al_id=2, series_id=8)),
+            claims=(
+                title_claim(anilist_id=1, series_id=7, ordered_episode_ids=[1]),
+                title_claim(anilist_id=2, series_id=8),
+            ),
         )
         first = episode_snapshot(
             episodes=episode_index([sonarr_ep(1, 1, ep_id=1, episode_file_id=10, release_group="SubGroup")]),
@@ -359,8 +362,8 @@ class TestImportSnapshot:
     def test_route_names_the_first_claim_with_a_window_holding_the_id(self) -> None:
         # Two windows hold id 2: the earlier claim classifies it, as the placer's first window decides, so the
         # later claim's preowned 2 does not read as preowned. Id 3 holds one claim, and 9 holds none.
-        first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
-        second = title_claim(al_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
+        first = title_claim(anilist_id=1, ordered_episode_ids=[1, 2])
+        second = title_claim(anilist_id=2, ordered_episode_ids=[2, 3], preowned_episode_ids=[2, 3])
         snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3)}, {})
 
         assert snapshot.route(2) == Route(first, 7)
@@ -371,8 +374,11 @@ class TestImportSnapshot:
     def test_route_classifies_a_series_under_its_sole_claim_with_no_window(self) -> None:
         # One claim with no window on series 7 classifies every id its index holds. Two claims with no window on
         # series 8 merge: their ids route to the series alone, and preowned reads off either of them.
-        only_claim = title_claim(al_id=1)
-        pair = (title_claim(al_id=2, series_id=8), title_claim(al_id=3, series_id=8, preowned_episode_ids=[5]))
+        only_claim = title_claim(anilist_id=1)
+        pair = (
+            title_claim(anilist_id=2, series_id=8),
+            title_claim(anilist_id=3, series_id=8, preowned_episode_ids=[5]),
+        )
         snapshot = ImportSnapshot(pending_import(claims=(only_claim, *pair)), {7: _series(1), 8: _series(5)}, {})
 
         assert snapshot.route(1) == Route(only_claim, 7)
@@ -382,8 +388,8 @@ class TestImportSnapshot:
     def test_an_overlapped_id_is_classified_under_the_first_claims_evidence(self) -> None:
         # A's plan marked group G outdated and B's preferred releases carry it. Both windows hold id 2: classified
         # under A, the G file on it still needs importing, where B's own snapshot calls its id 3 done.
-        first = title_claim(al_id=1, ordered_episode_ids=[1, 2])
-        second = title_claim(al_id=2, ordered_episode_ids=[2, 3])
+        first = title_claim(anilist_id=1, ordered_episode_ids=[1, 2])
+        second = title_claim(anilist_id=2, ordered_episode_ids=[2, 3])
         by_claim = {1: _series(1, 2, 3, group="G"), 2: _series(1, 2, 3, group="G", trusted={"g": None})}
         snapshot = ImportSnapshot(pending_import(claims=(first, second)), {7: _series(1, 2, 3, group="G")}, by_claim)
 

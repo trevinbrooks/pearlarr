@@ -54,10 +54,10 @@ class SeaDexSource(ABC):
     """
 
     @abstractmethod
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int: ...
+    def prefetch(self, anilist_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int: ...
 
     @abstractmethod
-    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry: ...
+    def entry(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry: ...
 
     @property
     @abstractmethod
@@ -77,7 +77,7 @@ class SeaDexEntryApi(Protocol):
 
     def from_filter(self, filter_str: str, /) -> Iterable[EntryRecord]: ...
 
-    def from_id(self, al_id: int, /) -> EntryRecord: ...
+    def from_id(self, anilist_id: int, /) -> EntryRecord: ...
 
 
 class SeaDexGateway(SeaDexSource):
@@ -112,7 +112,7 @@ class SeaDexGateway(SeaDexSource):
         self._unreachable = True
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
+    def prefetch(self, anilist_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         """Bulk-fetch SeaDex entries for many ids in batched OR-filter queries.
 
         Populates the per-run entry cache so the per-item loop's `entry`
@@ -126,7 +126,7 @@ class SeaDexGateway(SeaDexSource):
         per id.
 
         Args:
-            al_ids: Candidate AniList IDs for this run.
+            anilist_ids: Candidate AniList IDs for this run.
             progress: Boot step fed per-batch
                 fraction + "done/total" detail. None outside a boot step.
 
@@ -135,7 +135,7 @@ class SeaDexGateway(SeaDexSource):
             caller's boot step line.
         """
 
-        missing = sorted({i for i in al_ids if i not in self._entry_cache and i not in self._prefetched})
+        missing = sorted({i for i in anilist_ids if i not in self._entry_cache and i not in self._prefetched})
         total = len(missing)
         if not total:
             return 0
@@ -172,14 +172,14 @@ class SeaDexGateway(SeaDexSource):
             self._note_unreachable(e)
             return None
 
-    def _fetch_batch(self, al_ids: Sequence[int]) -> dict[int, EntryRecord]:
+    def _fetch_batch(self, anilist_ids: Sequence[int]) -> dict[int, EntryRecord]:
         """Fetch one batch via an OR-ed `alID` filter, keyed by AniList id."""
 
-        filter_str = " || ".join(f"alID={al_id}" for al_id in al_ids)
+        filter_str = " || ".join(f"alID={anilist_id}" for anilist_id in anilist_ids)
         return {record.anilist_id: record for record in self._client.from_filter(filter_str)}
 
     @override
-    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
+    def entry(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry:
         """Get the SeaDex entry for an AniList id, or a typed `SeaDexNoEntry`.
 
         Served from the bulk-prefetch cache when warm. A prefetched-but-absent id
@@ -189,16 +189,16 @@ class SeaDexGateway(SeaDexSource):
         attempt.
         """
 
-        cached = self._entry_cache.get(al_id)
+        cached = self._entry_cache.get(anilist_id)
         if cached is not None:
             return cached
-        if al_id in self._prefetched:
+        if anilist_id in self._prefetched:
             return SeaDexNoEntry.NOT_FOUND
         if self._unreachable:
             return SeaDexNoEntry.UNREACHABLE
-        return self._entry_single(al_id)
+        return self._entry_single(anilist_id)
 
-    def _entry_single(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
+    def _entry_single(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry:
         """Single by-id lookup with the orchestrator's graceful degradation.
 
         An entry not found (`EntryNotFoundError`) is NOT_FOUND, immediately - that's
@@ -211,13 +211,13 @@ class SeaDexGateway(SeaDexSource):
         """
 
         try:
-            return self._client.from_id(al_id)
+            return self._client.from_id(anilist_id)
         except EntryNotFoundError:
             return SeaDexNoEntry.NOT_FOUND
         except httpx.HTTPError:
             pass
         try:
-            return self._client.from_id(al_id)
+            return self._client.from_id(anilist_id)
         except EntryNotFoundError:
             return SeaDexNoEntry.NOT_FOUND
         except httpx.HTTPError as e:

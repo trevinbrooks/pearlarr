@@ -102,7 +102,7 @@ class Role:
 
 def build_role(
     seadex_client: SeaDexEntry,
-    al_id: int,
+    anilist_id: int,
     group: str,
     *,
     name: str,
@@ -110,9 +110,9 @@ def build_role(
     series_key: str,
     quality: QualityStub,
 ) -> Role:
-    """Pull `group`'s Nyaa torrent off the live SeaDex entry for `al_id`."""
+    """Pull `group`'s Nyaa torrent off the live SeaDex entry for `anilist_id`."""
 
-    entry = seadex_client.from_id(al_id)
+    entry = seadex_client.from_id(anilist_id)
     for torrent in entry.torrents:
         if torrent.tracker is not Tracker.NYAA or torrent.release_group != group or torrent.infohash is None:
             continue
@@ -134,7 +134,7 @@ def build_role(
             files=files,
             import_files=import_files,
         )
-    raise SystemExit(f"no Nyaa torrent for alID={al_id} group={group}")
+    raise SystemExit(f"no Nyaa torrent for alID={anilist_id} group={group}")
 
 
 class MockState:

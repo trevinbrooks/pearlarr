@@ -235,7 +235,7 @@ class TestPerTitleErrorContainment:
         # The per-title failure is an ERROR Diagnostic with its traceback (containment
         # is observable).
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A (AniList #1): unexpected error (boom on al_id 1) - moving on to the next title"
+        assert error.message == "A (AniList #1): unexpected error (boom on anilist_id 1) - moving on to the next title"
         assert error.trace is not None
         # The single finalize still ran once on the normal path to the arr run's end.
         assert finalize.calls == 1
@@ -299,7 +299,7 @@ class TestPerItemErrorContainment:
 class _StagingStrategy(FakeStrategy):
     """A `FakeStrategy` whose items each map titles 1 and 2, every title staging a row through `report_no_releases`.
 
-    A row is keyed `item.id * 10 + al_id`. `stop_at` (item id, AniList id) raises `SystemExit` after that id's
+    A row is keyed `item.id * 10 + anilist_id`. `stop_at` (item id, AniList id) raises `SystemExit` after that id's
     row, standing in for the SIGTERM handler. `None` never stops.
     """
 
@@ -309,9 +309,9 @@ class _StagingStrategy(FakeStrategy):
         self._stop_at = stop_at
 
     @override
-    def check_title(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
-        self._services.report_no_releases(item.id * 10 + al_id, {"name": item.title})
-        if (item.id, al_id) == self._stop_at:
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        self._services.report_no_releases(item.id * 10 + anilist_id, {"name": item.title})
+        if (item.id, anilist_id) == self._stop_at:
             raise SystemExit(0)
 
     @override

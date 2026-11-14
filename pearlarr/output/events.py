@@ -210,7 +210,7 @@ class TitleHeader:
 
     state: TitleState
     title: str
-    al_id: int | None = None
+    anilist_id: int | None = None
     coverage: str | None = None
     url: str | None = None
     incomplete: bool = False

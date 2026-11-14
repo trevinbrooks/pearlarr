@@ -201,7 +201,7 @@ class ArrRunDeps:
                 config_hash=app_config.config_hash(),
             )
 
-        # AniList client gateway: owns the in-memory meta cache (al_cache) and the
+        # AniList client gateway: owns the in-memory meta cache (answers) and the
         # persisted anilist_meta table, over the bound wire client.
         anilist = AniListGateway(
             cache_store=cache_store,
@@ -342,7 +342,7 @@ class ArrRunServices:
 
         # AniList ids whose arr-side files changed since the last run (fed by the
         # arr run loop's activity read). They bypass `is_unchanged` once.
-        self._dirty_al_ids: set[int] = set()
+        self._dirty_anilist_ids: set[int] = set()
 
         # The shared per-title collaborators, built from the deps bundle + the
         # placeholder state. bind_arr_run rebinds their state at the top of each arr run.
@@ -383,7 +383,7 @@ class ArrRunServices:
 
         self._state = state
         # Per-arr-run state: the loop's activity read re-marks dirty ids after this.
-        self._dirty_al_ids.clear()
+        self._dirty_anilist_ids.clear()
         self._filter.bind_arr_run(state)
         self._grab_pipeline.bind_arr_run(state)
         self._pending_imports.bind_arr_run(state)
@@ -398,7 +398,7 @@ class ArrRunServices:
 
         return self._pending_imports
 
-    def title_needs_check(self, al_id: int) -> bool:
+    def title_needs_check(self, anilist_id: int) -> bool:
         """Side-effect-free mirror of check_title's no-entry + is_unchanged gates.
 
         True iff the per-title loop would actually check this title. Lets
@@ -408,12 +408,12 @@ class ArrRunServices:
         over the warmed SeaDex cache and the cached titles.
         """
 
-        sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
+        sd_entry = self._seadex.entry(anilist_id)  # warmed cache, no network
         if isinstance(sd_entry, SeaDexNoEntry):
             return False
-        return self._unchanged_cached_title(al_id, sd_entry) is None
+        return self._unchanged_cached_title(anilist_id, sd_entry) is None
 
-    def _unchanged_cached_title(self, al_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
+    def _unchanged_cached_title(self, anilist_id: int, sd_entry: EntryRecord) -> CachedTitle | None:
         """The cached row iff the title is unchanged and the per-title loop needn't check it. None checks it.
 
         The single decision BOTH cache gates share: `title_needs_check` chooses
@@ -426,16 +426,20 @@ class ArrRunServices:
         after a switch back from `fallback`.
         """
 
-        if self._config.seadex.ignore_seadex_update_times or self._selection_changed or al_id in self._dirty_al_ids:
+        if (
+            self._config.seadex.ignore_seadex_update_times
+            or self._selection_changed
+            or anilist_id in self._dirty_anilist_ids
+        ):
             return None
-        cached = self.cache_store.get_cached_title(self._state.arr, al_id)
+        cached = self.cache_store.get_cached_title(self._state.arr, anilist_id)
         if cached is None or not cached.cached_under(sd_entry.updated_at):
             return None
         if cached.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
             return None
         return cached
 
-    def mark_dirty(self, al_ids: Iterable[int]) -> None:
+    def mark_dirty(self, anilist_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last run.
 
         Fed by the arr run loop's `ArrActivityReader` read.
@@ -443,7 +447,7 @@ class ArrRunServices:
         short-circuit for exactly these ids.
         """
 
-        self._dirty_al_ids.update(al_ids)
+        self._dirty_anilist_ids.update(anilist_ids)
 
     def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
@@ -456,8 +460,8 @@ class ArrRunServices:
 
         # Logged per call, not only on the cache-filling one, so the main loop still logs every ignored id.
         if log_ignored:
-            for al_id in resolved.ignored:
-                self._reporter.log_ignored_anilist_id(self._state, al_id)
+            for anilist_id in resolved.ignored:
+                self._reporter.log_ignored_anilist_id(self._state, anilist_id)
 
         return resolved.kept
 
@@ -471,14 +475,14 @@ class ArrRunServices:
 
         return self._resolver.resolve(ids)
 
-    def resolve_title(self, al_id: int) -> Title:
+    def resolve_title(self, anilist_id: int) -> Title:
         """Resolve the title's name in `title_from_names`' order (resolves only: no logging, no attribution).
 
         The stored name is deliberately not read: the gateway serves its cached answer, and
         `new_cached_title_update` writes the result back. `open_title_block` opens the block with it.
         """
 
-        return title_from_names(al_id, self._anilist.titles(al_id), self._state.arr_title)
+        return title_from_names(anilist_id, self._anilist.titles(anilist_id), self._state.arr_title)
 
     def new_cached_title_update(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
         """The cache update a checked title accumulates into.
@@ -537,7 +541,7 @@ class ArrRunServices:
 
     def _update_cached_title(
         self,
-        al_id: int,
+        anilist_id: int,
         update: CachedTitleUpdate,
     ) -> None:
         """Merge `update` into a title's cached row (in-memory only).
@@ -545,11 +549,11 @@ class ArrRunServices:
         The run's save points flush it. See `CacheStore.update_cached_title`.
         """
 
-        self.cache_store.update_cached_title(self._state.arr, al_id, update)
+        self.cache_store.update_cached_title(self._state.arr, anilist_id, update)
 
     def report_no_releases(
         self,
-        al_id: int,
+        anilist_id: int,
         update: CachedTitleUpdate,
         *,
         metadata_unread: bool = False,
@@ -566,7 +570,7 @@ class ArrRunServices:
         if not metadata_unread:
             # Never fallback-satisfied: overwrite any True a prior fallback run left.
             update["fallback_satisfied"] = False
-            self._update_cached_title(al_id=al_id, update=update)
+            self._update_cached_title(anilist_id=anilist_id, update=update)
         self.owe_pause()
 
     def report_invalid_selection(self) -> None:
@@ -591,7 +595,7 @@ class ArrRunServices:
             self._state.pause_owed = False
             self._clock.sleep(self._config.advanced.sleep_time)
 
-    def begin_check(self, al_id: int) -> EntryRecord | None:
+    def begin_check(self, anilist_id: int) -> EntryRecord | None:
         """Shared per-title head: reset skip flags, tally, fetch SeaDex entry.
 
         Returns the entry to check, or None for no entry or an unreachable SeaDex.
@@ -603,19 +607,19 @@ class ArrRunServices:
         self._state.stats.checked += 1
 
         # Get the SeaDex entry if it exists
-        sd_entry = self._seadex.entry(al_id)
+        sd_entry = self._seadex.entry(anilist_id)
         if isinstance(sd_entry, SeaDexNoEntry):
             if sd_entry is SeaDexNoEntry.UNREACHABLE:
-                self._reporter.log_seadex_unreachable(self._state, al_id)
+                self._reporter.log_seadex_unreachable(self._state, anilist_id)
             else:
-                self._reporter.log_no_sd_entry(self._state, al_id)
+                self._reporter.log_no_sd_entry(self._state, anilist_id)
             return None
 
         return sd_entry
 
     def is_unchanged(
         self,
-        al_id: int,
+        anilist_id: int,
         sd_entry: EntryRecord,
         coverage: Callable[[], str],
     ) -> bool:
@@ -629,11 +633,11 @@ class ArrRunServices:
         one-time url backfill, never on the common already-backfilled path.
         """
 
-        cached = self._unchanged_cached_title(al_id, sd_entry)
+        cached = self._unchanged_cached_title(anilist_id, sd_entry)
         if cached is None:
             # A forced re-check finds the row already stamped with SeaDex's current update time. Left so, a check
             # that ends in a failed grab, a skip or an error would leave the title unchanged from then on.
-            self.cache_store.uncache_title(self._state.arr, al_id)
+            self.cache_store.uncache_title(self._state.arr, anilist_id)
             return False
 
         # One-time backfills merged into a single write: the url + coverage an older row lacks,
@@ -642,11 +646,11 @@ class ArrRunServices:
         if not cached.url:
             backfill["url"] = sd_entry.url
             backfill["coverage"] = coverage()
-        if not cached.name and (name := self.resolve_title(al_id).anilist):
+        if not cached.name and (name := self.resolve_title(anilist_id).anilist):
             backfill["name"] = name
         if backfill:
-            self._update_cached_title(al_id=al_id, update=backfill)
-        self._reporter.log_cached_title(self._state, al_id)
+            self._update_cached_title(anilist_id=anilist_id, update=backfill)
+        self._reporter.log_cached_title(self._state, anilist_id)
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> None:

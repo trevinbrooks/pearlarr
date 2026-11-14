@@ -107,7 +107,7 @@ def _dated(episodes: Iterable[SonarrEpisode]) -> str:
 
 
 class SonarrEpisodes:
-    """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic, and each series' orders.
+    """Owns the per-run episode cache + the (series, anilist_id, mapping) -> episodes logic, and each series' orders.
 
     Constructed once per run in `SonarrStrategy` from the shared
     `ArrRunDeps`, the strategy's Sonarr client, and the arr run
@@ -281,10 +281,10 @@ class SonarrEpisodes:
                 continue
             if not item.monitored and self._config.sonarr.ignore_unmonitored:
                 continue
-            al_ids = services.title_mappings(ExternalIds.of_series(item), log_ignored=False)
-            if not al_ids:
+            anilist_ids = services.title_mappings(ExternalIds.of_series(item), log_ignored=False)
+            if not anilist_ids:
                 continue
-            if not any(services.title_needs_check(aid) for aid in al_ids):
+            if not any(services.title_needs_check(aid) for aid in anilist_ids):
                 continue
             seen.add(item.id)
             series_ids.append(item.id)
@@ -326,15 +326,15 @@ class SonarrEpisodes:
         facts = self._order_facts.get(series_id)
         return facts is not None and facts.season_type == AIRED_ORDER
 
-    def episode_count(self, al_id: int) -> int | None:
+    def episode_count(self, anilist_id: int) -> int | None:
         """AniList's episode count for the title, None when AniList gives none."""
 
-        return self._anilist.episode_count(al_id)
+        return self._anilist.episode_count(anilist_id)
 
-    def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
+    def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool:
         """Whether AniList left any of the titles unread (`AniListGateway.air_dates_unread`)."""
 
-        return any(self._anilist.air_dates_unread(al_id) for al_id in al_ids)
+        return any(self._anilist.air_dates_unread(anilist_id) for anilist_id in anilist_ids)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series has no stored orders, as when SkyHook was unreachable before its first fetch.
@@ -376,7 +376,7 @@ class SonarrEpisodes:
     def mapping_episodes(
         self,
         sonarr_series_id: int,
-        al_id: int,
+        anilist_id: int,
         mapping: TitleMapping,
     ) -> list[SonarrEpisode] | None:
         """Get a list of relevant episodes for an AniList mapping.
@@ -387,7 +387,7 @@ class SonarrEpisodes:
 
         tvdb_season = mapping.tvdb_season
 
-        if al_id == -1:
+        if anilist_id == -1:
             raise ValueError("AniList ID not defined!")
 
         anidb_id = mapping.anidb_id
@@ -422,7 +422,7 @@ class SonarrEpisodes:
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
-        al_format = self._anilist.media_format(al_id)
+        media_format = self._anilist.media_format(anilist_id)
 
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
@@ -430,7 +430,7 @@ class SonarrEpisodes:
         # season's {tvdb_ep: anidb_ep} dict ({} when none) and raises on an
         # ambiguous id.
         anidb_episode_by_tvdb: dict[int, dict[int, int]] = {}
-        if self._resolver.has_anidb and anidb_id is not None and (al_format != "TV" or tvdb_season == 0):
+        if self._resolver.has_anidb and anidb_id is not None and (media_format != "TV" or tvdb_season == 0):
             anidb_episode_by_tvdb = self._resolver.anidb_episode_by_tvdb(anidb_id, tvdb_season)
 
         # Prefer the AniDB mapping dict over any offsets
@@ -461,29 +461,29 @@ class SonarrEpisodes:
         elif mode is MappingKind.SEASON_OFFSET:
             final_ep_list = self._apply_anime_id_offsets(
                 final_ep_list=final_ep_list,
-                al_id=al_id,
+                anilist_id=anilist_id,
                 mapping=mapping,
             )
 
-        return self._picked_by_date(al_id, final_ep_list, ep_list)
+        return self._picked_by_date(anilist_id, final_ep_list, ep_list)
 
     def _picked_by_date(
-        self, al_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
+        self, anilist_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: list[SonarrEpisode]
     ) -> list[SonarrEpisode]:
         """The title's episodes: `mapped`, or the specials of `series_episodes` AniList's dates choose over them.
 
         A choice is logged once per run, though a run resolves a title several times.
         """
 
-        airing = self._anilist.airing(al_id)
+        airing = self._anilist.airing(anilist_id)
         picked = specials_by_date(mapping_episodes, series_episodes, airing)
         if picked is None:
             return mapping_episodes
-        if al_id not in self._picks_logged:
-            self._picks_logged.add(al_id)
+        if anilist_id not in self._picks_logged:
+            self._picks_logged.add(anilist_id)
             dates = f"{airing.start}" if airing.end in (None, airing.start) else f"{airing.start} to {airing.end}"
             hub_note(
-                f"AniList {al_id} maps to {_dated(mapping_episodes)} but is dated {dates} - using {_dated(picked)}",
+                f"AniList {anilist_id} maps to {_dated(mapping_episodes)} but is dated {dates} - using {_dated(picked)}",
                 severity=Severity.DEBUG,
             )
         return picked
@@ -491,21 +491,21 @@ class SonarrEpisodes:
     def _apply_anime_id_offsets(
         self,
         final_ep_list: list[SonarrEpisode],
-        al_id: int,
+        anilist_id: int,
         mapping: TitleMapping,
     ) -> list[SonarrEpisode]:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
         Args:
             final_ep_list: Season-filtered episodes to slice.
-            al_id: AniList ID, used to resolve the expected episode count.
+            anilist_id: AniList ID, used to resolve the expected episode count.
             mapping: The title's mapping (read for `tvdb_epoffset` and `tvdb_season`.
                 A `tvdb_season` of -1 means single-season offset slice).
         """
 
         # Slice the list to get the correct episodes, so any potential offsets
         ep_offset = mapping.tvdb_epoffset
-        episode_count = self.episode_count(al_id)
+        episode_count = self.episode_count(anilist_id)
 
         # If we don't get a number of episodes, use them all
         if episode_count is None:
