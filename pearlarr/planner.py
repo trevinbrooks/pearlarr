@@ -123,7 +123,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     """Group SeaDex release groups that cover exactly the same files.
 
     Groups are keyed by their placed episode coverage and collapse only when the sets are identical: a
-    season batch and one cour overlap yet cover different files. Groups with no parsing at all (Radarr
+    season batch and one cour overlap yet cover different files. Groups of an Arr that places nothing (Radarr
     movies) share one key. A group none of whose files placed on the title is kept on its own, since its
     coverage is unproven and a duplicate grab beats silently dropped content. Two groups a name number pass
     placed onto the same window reduce to one, so a wrong placement drops the real release, the same
@@ -131,22 +131,22 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     """
 
     # The grouping key is one of three shapes: a shared "all cover one movie"
-    # sentinel str, a per-group "couldn't parse" sentinel tuple, or the parsed
-    # episode-coverage frozenset that equates groups covering identical files.
+    # sentinel str, a per-group "nothing placed" sentinel tuple, or the frozenset
+    # of placed episode keys that equates groups covering identical files.
     grouped: dict[str | tuple[str, str] | frozenset[EpisodeKey], list[str]] = {}
     for rg, group_releases in seadex_dict.items():
-        all_episodes = group_releases.all_episodes
+        episodes = group_releases.episodes
 
         key: str | tuple[str, str] | frozenset[EpisodeKey]
-        if all_episodes is None:
-            # No episode parsing for this Arr (e.g., Radarr): treat as one movie
-            key = "__no_episode_parsing__"
-        elif len(all_episodes) == 0:
-            # Parsing ran but found nothing: keep this group on its own so we
+        if episodes is None:
+            # This Arr places nothing (Radarr): treat as one movie
+            key = "__no_placement__"
+        elif len(episodes) == 0:
+            # The placement ran and placed nothing: keep this group on its own so we
             # never drop content we couldn't verify
-            key = ("__unparsed__", rg)
+            key = ("__nothing_placed__", rg)
         else:
-            key = frozenset(ep.key for ep in all_episodes)
+            key = frozenset(ep.key for ep in episodes)
 
         # Insertion-ordered dict preserves first-seen group order for us
         grouped.setdefault(key, []).append(rg)
@@ -224,11 +224,11 @@ class EpisodeCoverage(NamedTuple):
     """
 
     blanket: frozenset[str]
-    """Groups with a release whose parses key into nothing here: coverage unprovable, so they cover every
+    """Groups with a release none of whose files placed here: coverage unprovable, so they cover every
     episode unconditionally."""
 
     by_key: Mapping[EpisodeKey, frozenset[str]]
-    """The groups whose parsed releases cover each (season, episode) Sonarr actually has."""
+    """The groups with a release placed on each (season, episode) Sonarr actually has."""
 
 
 def episode_coverage(
@@ -254,16 +254,14 @@ def episode_coverage(
             continue
 
         for release in group_releases.releases.values():
-            seadex_episodes = release.episodes
-
             # A release none of whose files placed on this title proves nothing
             # about coverage, so its group covers everything rather than nothing.
-            if not seadex_episodes:
+            if not release.episodes:
                 blanket.add(seadex_rg_normalized)
 
-            for seadex_ep in seadex_episodes:
-                if seadex_ep.key in sonarr_by_key:
-                    by_key.setdefault(seadex_ep.key, set()).add(seadex_rg_normalized)
+            for placed_ep in release.episodes:
+                if placed_ep.key in sonarr_by_key:
+                    by_key.setdefault(placed_ep.key, set()).add(seadex_rg_normalized)
 
     return EpisodeCoverage(frozenset(blanket), {key: frozenset(groups) for key, groups in by_key.items()})
 
@@ -284,7 +282,7 @@ class _FileReleaseGroups(NamedTuple):
 
     `groups` holds every identified file (by group tag or by size);
     `no_group_sizes` holds every file with no group, the size-identified ones
-    included, because the unparsed-release matcher compares that multiset
+    included, because the matcher for a release with no placed episodes compares that multiset
     whole. The overlap is the size-identified files - do not join the views.
     """
 
@@ -343,11 +341,11 @@ def _file_release_groups(
                     if key not in identities and size > 0 and size in release.file_sizes:
                         identities[key] = _FileReleaseGroup(normalized, by_size=True, size=size)
                 continue
-            for seadex_ep in release.episodes:
-                key = seadex_ep.key
-                if key in identities or seadex_ep.size <= 0 or untagged.get(key) != seadex_ep.size:
+            for placed_ep in release.episodes:
+                key = placed_ep.key
+                if key in identities or placed_ep.size <= 0 or untagged.get(key) != placed_ep.size:
                     continue
-                identities[key] = _FileReleaseGroup(normalized, by_size=True, size=seadex_ep.size)
+                identities[key] = _FileReleaseGroup(normalized, by_size=True, size=placed_ep.size)
     return _FileReleaseGroups(identities, untagged)
 
 
@@ -375,8 +373,8 @@ class _PlanContext:
     """The effective release identity of each of the arr's files (see `_file_release_groups`)."""
     untagged_counter: Counter[int] | None
     """The size multiset of the arr's files with no group (Radarr's `None` key, or Sonarr's
-    episode files with no group), built by `_no_group_counter` - the unparsed-release
-    ownership input. None when no file without a group can claim ownership."""
+    episode files with no group), built by `_no_group_counter` - the ownership input for a release
+    with no placed episodes. None when no file without a group can claim ownership."""
     coverage: EpisodeCoverage
     """Which sibling groups cover each episode (see `episode_coverage`)."""
     has_ep_list: bool
@@ -428,8 +426,8 @@ def _group_ownership(seadex_dict: SeadexDict, ctx: _PlanContext) -> _GroupOwners
     for rg, item in seadex_dict.items():
         listed = cover.setdefault(normalize_group(rg), set())
         for release in item.releases.values():
-            # Release-level and per-episode sizes both count (an episode parse can
-            # carry sizes the release's file list doesn't); zero proves nothing.
+            # Release-level and per-episode sizes both count (a placed episode can
+            # carry a size the release's file list doesn't); zero proves nothing.
             listed.update(s for s in release.file_sizes if s > 0)
             listed.update(ep.size for ep in release.episodes if ep.size > 0)
 
@@ -492,7 +490,7 @@ class GrabPlanner:
         """Filter torrents by release group.
 
         This is either an episode-by-episode for the Sonarr
-        case where we can parse episodes, or a more blunt
+        case where files are placed on episodes, or a more blunt
         hammer just checking against anything for Radarr
         and weirdly named TV
         """
@@ -513,7 +511,7 @@ class GrabPlanner:
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the coverage index below and the per-episode match loop: looking up a
-        # parsed SeaDex (season, episode) is then an O(1) dict op rather than a
+        # placed episode's (season, episode) is then an O(1) dict op rather than a
         # fresh search of the whole list.
         sonarr_by_key = index_episodes_by_key(ep_list or [])
 
@@ -614,7 +612,7 @@ class GrabPlanner:
         seadex_rg: str,
         release: Release,
     ) -> None:
-        """Decide a single release with no parsed episodes, by release group + size.
+        """Decide a single release with no placed episodes, by release group + size.
 
         Flips `release.to_grab` in place. The blunt path used for
         Radarr and weirdly named TV: if the group isn't in the Arr's files
@@ -708,28 +706,26 @@ class GrabPlanner:
             return
 
         url = release.url
-        seadex_episodes = release.episodes
 
         # For each episode the placement put this release on, check whether the release group matches and
         # whether the file sizes match. A release-group mismatch with no alternative marks it to grab,
         # and so does every size mismatching.
 
-        rg_matches = [False] * len(seadex_episodes)
-        size_matches = [False] * len(seadex_episodes)
-        # Fixed per call - normalize once, not once per parsed episode (only
+        rg_matches = [False] * len(release.episodes)
+        size_matches = [False] * len(release.episodes)
+        # Fixed per call - normalize once, not once per placed episode (only
         # sonarr_rg_normalized varies in the loop).
         seadex_rg_normalized = normalize_group(seadex_rg)
         # Per matched episode: each size the release places on it, and the size the arr has from this group there.
         listed_pairs: list[tuple[EpisodeKey, int]] = []
         arr_size_by_key: dict[EpisodeKey, int] = {}
 
-        for seadex_idx, seadex_ep in enumerate(seadex_episodes):
-            seadex_ep_size = seadex_ep.size
-            episode_key = seadex_ep.key
+        for placed_idx, placed_ep in enumerate(release.episodes):
+            episode_key = placed_ep.key
             sonarr_ep = ctx.sonarr_by_key.get(episode_key)
             if sonarr_ep is None:
                 continue
-            listed_pairs.append((episode_key, seadex_ep_size))
+            listed_pairs.append((episode_key, placed_ep.size))
 
             # Get the matched Sonarr episode's file size
             sonarr_ep_size = sonarr_ep.episode_file.size if sonarr_ep.episode_file else None
@@ -737,7 +733,7 @@ class GrabPlanner:
             # Do the sizes match? A missing Sonarr file reports no
             # size, so guard against None == None reading as a match
             # when neither side actually has a size.
-            size_match = sonarr_ep_size is not None and sonarr_ep_size == seadex_ep_size
+            size_match = sonarr_ep_size is not None and sonarr_ep_size == placed_ep.size
 
             season_ep_str = episode_key.label
 
@@ -774,7 +770,7 @@ class GrabPlanner:
                     self.logger.debug(f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.")
                     if not size_match:
                         self.logger.debug(
-                            f"Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
+                            f"Sizes are different: {sonarr_ep_size} (Sonarr), {placed_ep.size} (SeaDex)",
                         )
                     else:
                         self.logger.debug(f"Sizes match: {sonarr_ep_size}")
@@ -784,7 +780,7 @@ class GrabPlanner:
                 # it), so its vote could only ever be "owned" and would mask
                 # a genuinely outdated release around it.
                 if not by_size:
-                    rg_matches[seadex_idx] = True
+                    rg_matches[placed_idx] = True
 
                 if (
                     seadex_rg_normalized is not None
@@ -795,7 +791,7 @@ class GrabPlanner:
 
             # Now check against file size
             if size_match:
-                size_matches[seadex_idx] = True
+                size_matches[placed_idx] = True
 
         # Of the episodes we matched by group: EVERY one at an unlisted size
         # means the whole release is a size upgrade to grab. (Partly outdated

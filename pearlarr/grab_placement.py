@@ -42,9 +42,9 @@ from .releases import (
     AnotherTitlesCounts,
     EpisodeKey,
     OrderOnlyKey,
+    PlacedEpisode,
     PlannedGrab,
     Release,
-    ReleaseEpisode,
     SeadexDict,
     SkipReason,
     releases_to_grab,
@@ -195,7 +195,7 @@ class PlacedRelease:
     is new, else the files the stored pending import's file map does not cover. A file that is another listed title's
     is `ANOTHER_TITLES` (`TitleView.placements`)."""
 
-    episodes: tuple[ReleaseEpisode, ...]
+    episodes: tuple[PlacedEpisode, ...]
     """One `(season, episode, size)` per file and episode of the whole file map inside the title, in file order.
     A file nothing placed adds none, and a release left for a hand import (`SkipReason.left_for_hand_import`) has
     none. A release with no episodes makes the planner count its release group as covering every episode."""
@@ -352,7 +352,7 @@ def _on_another_titles_window(
 class _OnWindow:
     """What the whole file map puts on the title."""
 
-    episodes: tuple[ReleaseEpisode, ...]
+    episodes: tuple[PlacedEpisode, ...]
     """One `(season, episode, size)` per file and episode of the file map inside the title, in file order."""
     covered_ids: frozenset[int]
     """The title's episode ids the file map covers."""
@@ -361,7 +361,7 @@ class _OnWindow:
     def of(cls, files: Sequence[ListedFile], index: EpisodeIndex, whole_file_map: FileEpisodeMap) -> Self:
         """What `whole_file_map` puts on `index`, read in `files` order."""
 
-        records: list[ReleaseEpisode] = []
+        records: list[PlacedEpisode] = []
         claimed: set[int] = set()
         for f in files:
             for ep_id in whole_file_map.get(f.name, ()):
@@ -370,12 +370,10 @@ class _OnWindow:
                 if episode is None:
                     continue
                 claimed.add(ep_id)
-                # An episode Sonarr sent without numbers fits no coverage key, so it adds no `ReleaseEpisode`.
+                # An episode Sonarr sent without numbers fits no coverage key, so it adds no `PlacedEpisode`.
                 if episode.season_number is None or episode.episode_number is None:
                     continue
-                records.append(
-                    ReleaseEpisode(season=episode.season_number, episode=episode.episode_number, size=f.size)
-                )
+                records.append(PlacedEpisode(season=episode.season_number, episode=episode.episode_number, size=f.size))
         return cls(tuple(records), frozenset(claimed))
 
 
@@ -486,14 +484,14 @@ class PlacedEntry:
         """Write each release's episodes, skip reason, and skip counts onto it, and their episodes onto its group."""
 
         for group_releases in seadex_dict.values():
-            all_episodes: list[ReleaseEpisode] = []
+            episodes: list[PlacedEpisode] = []
             for url, release in group_releases.releases.items():
                 placement = self.by_url[url]
                 release.episodes = list(placement.episodes)
                 release.skip_reason = placement.skip_reason
                 release.another_titles_counts = placement.another_titles_counts
-                all_episodes.extend(release.episodes)
-            group_releases.all_episodes = all_episodes
+                episodes.extend(release.episodes)
+            group_releases.episodes = episodes
 
     def input_unread_groups(self, seadex_dict: SeadexDict) -> tuple[str, ...]:
         """The groups with a release whose placement waits on a read that failed."""

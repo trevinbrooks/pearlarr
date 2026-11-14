@@ -82,7 +82,7 @@ from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotices
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, Release, ReleaseEpisode, SeadexDict
+from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, PlacedEpisode, Release, SeadexDict
 from pearlarr.reporter import RunReporter
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexNoEntry, SeaDexSource
@@ -1039,7 +1039,7 @@ def make_release(
     download: bool = False,
     is_fallback: bool = False,
     upgrade: bool = False,
-    episodes: list[ReleaseEpisode] | None = None,
+    episodes: list[PlacedEpisode] | None = None,
 ) -> Release:
     """One SeaDex release, as `get_seadex_dict`'s dict carries it."""
 
@@ -1068,14 +1068,14 @@ def rg_group(
     urls: dict[str, Release],
     *,
     tags: frozenset[Tag] | None = None,
-    all_episodes: list[ReleaseEpisode] | None = None,
+    episodes: list[PlacedEpisode] | None = None,
 ) -> GroupReleases:
-    """`all_episodes` is tri-state: `None` skips parsing, `[]` is unparsed, populated is the coverage frozenset."""
+    """`episodes` is tri-state: `None` for an Arr that places nothing, `[]` when nothing placed, else the placed episodes."""
 
     return GroupReleases(
         releases=urls,
         tags=tags or frozenset(),
-        all_episodes=all_episodes,
+        episodes=episodes,
     )
 
 

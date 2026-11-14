@@ -39,18 +39,18 @@ def releases_overlap(seadex_dict: SeadexDict) -> bool:
     """See if SeaDex releases have overlapping episodes."""
 
     # Compares groups by their episode keys as get_same_files_groups (planner) does, but
-    # deliberately differs on unparsed releases: here an unparsed release is
+    # deliberately differs on a group that placed nothing: here it is
     # assumed to overlap (we can't prove it doesn't), whereas get_same_files_groups
     # keeps it separate (so we never drop content we couldn't verify). Keep both
     # consistent if the coverage semantics change.
     episode_sets: dict[str, set[EpisodeKey]] = {}
     for rg, group_releases in seadex_dict.items():
-        episode_sets[rg] = {ep.key for ep in group_releases.all_episodes or ()}
+        episode_sets[rg] = {ep.key for ep in group_releases.episodes or ()}
 
     release_groups: list[str] = list(episode_sets.keys())
     for i, rg1 in enumerate(release_groups):
         for rg2 in release_groups[i + 1 :]:
-            # If either release hasn't been parsed, then we can't rule out an
+            # If either group placed nothing, then we can't rule out an
             # overlap, so assume they overlap
             if len(episode_sets[rg1]) == 0 or len(episode_sets[rg2]) == 0:
                 return True
