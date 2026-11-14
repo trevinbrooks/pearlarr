@@ -36,10 +36,10 @@ from pearlarr.output import (
 from pearlarr.output.events import TitleState
 from pearlarr.wait_types import OutcomeKind
 
-_BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
+_BOOT = ScopeId(ScopeKind.BOOT, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)
-_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 3)
-_WAIT = ScopeId(ScopeKind.WAIT_REGION, 4)
+_TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 3)
+_WAIT = ScopeId(ScopeKind.WAIT, 4)
 
 
 def _open_scopes(*events: Event) -> OpenScopes:
@@ -58,7 +58,7 @@ def _summary_ready() -> ArrRunSummaryReady:
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
-            added_count=0,
+            grabbed_count=0,
             tally=ArrRunTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
@@ -119,7 +119,7 @@ def test_title_path_reads_run_item_title() -> None:
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
         ScopeOpened(scope=_TITLE_SCOPE, label="Frieren: Beyond Journey's End"),
     )
-    assert open_scopes.path_text() == "sonarr › [3/182] Frieren › entry"
+    assert open_scopes.path_text() == "sonarr › [3/182] Frieren › title"
     assert open_scopes.during() == "Frieren: Beyond Journey's End"
 
 
@@ -131,7 +131,7 @@ def test_scan_started_closes_the_boot_scope() -> None:
         ScopeOpened(scope=_BOOT, label="boot"),
         ScanStarted(arr=Arr.SONARR, total=182),
     )
-    assert _kinds(open_scopes) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN]
     assert open_scopes.path_text() == "sonarr"
 
 
@@ -142,7 +142,7 @@ def test_item_started_closes_the_previous_item_and_title() -> None:
         ScopeOpened(scope=_TITLE_SCOPE, label="A"),
         ItemStarted(arr=Arr.SONARR, index=2, total=182, title="B"),
     )
-    assert _kinds(open_scopes) == [ScopeKind.RUN, ScopeKind.ITEM]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN, ScopeKind.ITEM]
     assert open_scopes.path_text() == "sonarr › [2/182] B"
 
 
@@ -154,7 +154,7 @@ def test_scan_finished_closes_item_and_title_but_keeps_the_arr_run_scope() -> No
         ScanFinished(arr=Arr.SONARR),
     )
     # Reconcile-time diagnostics render at run level, never inside series #182 (B4.2).
-    assert _kinds(open_scopes) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN]
 
 
 def test_run_summary_ready_closes_to_run_level() -> None:
@@ -163,16 +163,16 @@ def test_run_summary_ready_closes_to_run_level() -> None:
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
         _summary_ready(),
     )
-    assert _kinds(open_scopes) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN]
 
 
 def test_wait_started_closes_only_title_depth() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeOpened(scope=_WAIT, label="wait"),
-        WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitStarted(total=4, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=_WAIT),
     )
-    assert _kinds(open_scopes) == [ScopeKind.RUN, ScopeKind.WAIT_REGION]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN, ScopeKind.WAIT]
     assert open_scopes.path_text() == "sonarr › wait"
 
 
@@ -213,9 +213,9 @@ def test_closing_a_mid_stack_scope_closes_everything_deeper() -> None:
 def test_closing_an_unknown_scope_is_a_no_op() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
-        ScopeClosed(scope=ScopeId(ScopeKind.ENTRY, 99)),
+        ScopeClosed(scope=ScopeId(ScopeKind.TITLE, 99)),
     )
-    assert _kinds(open_scopes) == [ScopeKind.RUN]
+    assert _kinds(open_scopes) == [ScopeKind.ARR_RUN]
 
 
 def test_content_events_never_move_the_open_scopes() -> None:
@@ -240,8 +240,8 @@ def test_path_for_returns_the_scope_path_down_to_that_scope() -> None:
         ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren"),
         ScopeOpened(scope=_TITLE_SCOPE, label="Frieren"),
     )
-    assert open_scopes.path_for(_TITLE_SCOPE) == "sonarr › [3/182] Frieren › entry"
-    assert open_scopes.path_for(ScopeId(ScopeKind.ENTRY, 99)) is None
+    assert open_scopes.path_for(_TITLE_SCOPE) == "sonarr › [3/182] Frieren › title"
+    assert open_scopes.path_for(ScopeId(ScopeKind.TITLE, 99)) is None
 
 
 def test_reset_clears_all_open_scopes() -> None:
@@ -271,4 +271,4 @@ def test_wait_region_depth_deliberately_equals_item_depth() -> None:
     per-item wait ever appears.
     """
 
-    assert KIND_DEPTH[ScopeKind.WAIT_REGION] == KIND_DEPTH[ScopeKind.ITEM]
+    assert KIND_DEPTH[ScopeKind.WAIT] == KIND_DEPTH[ScopeKind.ITEM]

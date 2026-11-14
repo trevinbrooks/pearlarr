@@ -5,7 +5,7 @@ Two halves over ONE set of goldens (the data in `test_scan_parity`, captured
 from the live reporter): the pure `scan_lines` builders reproduce the exact
 `(level, message, payload)` tuples per event, and the RichRenderer's scan branch
 renders the same lines through the shared payload renderers on the shared
-Console at LOGGER-parity gating. Plus the generalized ENTRY-indent position
+Console at LOGGER-parity gating. Plus the generalized TITLE-indent position
 rule for diagnostics.
 """
 
@@ -220,9 +220,9 @@ class TestBuilders:
         # The event carries an ORDERED tag tuple, fixing today's frozenset-random
         # join order. The rendered form is pinned here.
         event = GrabAction(
-            status=GrabStatus.ADDING,
+            status=GrabStatus.GRABBING,
             groups=(GroupLabel(name="GroupA", tags=("HDR", "Dual Audio")),),
-            added=(),
+            grabbed=(),
             in_qbit=(),
         )
         assert grab_action_lines(event)[1].message == "    group     GroupA [HDR, Dual Audio]"
@@ -344,12 +344,12 @@ class TestRichRendererScanBranch:
 
 
 class TestTitleIndentedDiagnostics:
-    """The generalized position rule: a diagnostic indents while an ENTRY or ITEM scope is open (like boot/wait).
+    """The generalized position rule: a diagnostic indents while a TITLE or ITEM scope is open (like boot/wait).
 
-    Under RUN alone it stays column-0.
+    Under ARR_RUN alone it stays column-0.
     """
 
-    _TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 1)
+    _TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 1)
 
     def _open_item(self, renderer: RichRenderer) -> None:
         renderer.handle(ScanStarted(arr=Arr.SONARR, total=1), 0.0)

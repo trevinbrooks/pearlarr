@@ -769,8 +769,8 @@ def _assert_converged_imported(outcome: _RunOutcome, out: str) -> None:
 
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset()
-    assert 'imported title="Demo Batch · Thighs" files=2' in out
-    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
+    assert 'imported torrent="Demo Batch · Thighs" files=2' in out
+    assert "complete wait_pass=blocking imported=1 in_progress=0 left=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
     # The unified done-bucket: whichever path imported (Sonarr-tracked or the
     # folder-fetch rescue), the confirmed site moves the torrent to the arr's
@@ -909,9 +909,9 @@ def test_never_fetched_pending_import_lands_from_history_on_the_first_check(
     assert outcome.pending_imports_after == frozenset()
     # The stored file map's episode count is 0 (nothing was mapped at grab time), so the
     # line carries no file count: the indeterminate bar, not a wrong number.
-    assert 'imported title="Demo Batch · Thighs"' in out
-    assert 'imported title="Demo Batch · Thighs" files=' not in out
-    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
+    assert 'imported torrent="Demo Batch · Thighs"' in out
+    assert 'imported torrent="Demo Batch · Thighs" files=' not in out
+    assert "complete wait_pass=blocking imported=1 in_progress=0 left=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
     # Nothing was POSTed, the one empty folder fetch was enough, and the
@@ -934,9 +934,9 @@ def test_files_with_no_numbers_finish_unmatched_on_the_first_poll(
     # names the files, and leaves the pending import for a human.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset({_INFOHASH})
-    assert out.count('unmatched title="Demo Batch · Thighs"') == 1
-    assert f'unmatched title="Demo Batch · Thighs" unmatched_files="{"; ".join(_NO_NUMBER_FILES)}"' in out
-    assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
+    assert out.count('unmatched torrent="Demo Batch · Thighs"') == 1
+    assert f'unmatched torrent="Demo Batch · Thighs" hand_import_files="{"; ".join(_NO_NUMBER_FILES)}"' in out
+    assert "complete wait_pass=blocking imported=0 in_progress=0 left=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
     # One folder fetch was the whole wait: nothing was POSTed or moved, no
@@ -961,9 +961,9 @@ def test_files_with_no_numbers_imported_by_hand_verify_on_the_first_poll(
     # intended episodes have a file of this torrent's group, so the pending import is done.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset()
-    assert 'imported title="Demo Batch · Thighs"' in out
-    assert 'imported title="Demo Batch · Thighs" files=' not in out
-    assert "complete kind=monitor imported=1 pending=0 deferred=0 failed=0" in out
+    assert 'imported torrent="Demo Batch · Thighs"' in out
+    assert 'imported torrent="Demo Batch · Thighs" files=' not in out
+    assert "complete wait_pass=blocking imported=1 in_progress=0 left=0 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
     # One folder fetch, nothing POSTed, the torrent moved to the imported
@@ -987,8 +987,8 @@ def test_unscannable_download_is_left_with_folder_warn(
     # survives for a later run and the run itself still completes.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset({_INFOHASH})
-    assert 'not ready title="Demo Batch · Thighs"' in out
-    assert "complete kind=monitor imported=0 pending=0 deferred=1 failed=0" in out
+    assert 'not ready torrent="Demo Batch · Thighs"' in out
+    assert "complete wait_pass=blocking imported=0 in_progress=0 left=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
     # The folder-mode warn template fired, naming the pending import.

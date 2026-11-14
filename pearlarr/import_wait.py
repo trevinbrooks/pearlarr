@@ -392,7 +392,7 @@ class ImportWaitManager:
         self._cleanup.bind_arr_run(state)
 
     def fresh_grab_keys(self) -> set[str]:
-        """Keys of the pending imports written THIS run, tallied as `added` and never carried over."""
+        """Keys of the pending imports written THIS run, tallied as `grabbed` and never carried over."""
 
         return self._pending_imports.grabbed_keys()
 
@@ -415,9 +415,9 @@ class ImportWaitManager:
         return self._pending_imports.save_history_placements(pending, result)
 
     def apply_outcome(self, pending: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
-        """One outcome's store effects: clean up on IMPORTED, drop on MISSING, else note the state.
+        """One outcome's store effects: clean up on IMPORTED, drop on GONE, else note the state.
 
-        A MISSING drop also uncaches its titles, so the next run checks them again.
+        A GONE drop also uncaches its titles, so the next run checks them again.
 
         Callers set their finished frame / result row only after this returns: a raising
         cleanup or drop must leave no phantom row for _finish_arr_run to count.
@@ -427,7 +427,7 @@ class ImportWaitManager:
             # A failed cleanup leaves the pending import awaiting cleanup: the result row still counts the import,
             # and `awaiting_cleanup` keeps every later counter off the key.
             self._cleanup.clean_up_and_drop(pending)
-        elif outcome is Outcome.MISSING:
+        elif outcome is Outcome.GONE:
             self._pending_imports.drop_unimported(pending)
         elif carried_over:
             # Still stored: note the outcome so the deferred wait pass's tally buckets
@@ -476,7 +476,7 @@ class ImportWaitManager:
     def tally_carried_over_into_stats(self) -> None:
         """Count each carried-over pending import not yet done into `downloading` / `downloaded`.
 
-        Reacquired pending imports count here too. Only a this-run grab is skipped (it stays `added`).
+        Reacquired pending imports count here too. Only a this-run grab is skipped (it stays `grabbed`).
         The raw `active_rows` view leaves out rows awaiting cleanup by the stored flag, so the
         no-phantom-count invariant holds locally instead of resting on distant state writes.
         """
@@ -505,7 +505,7 @@ class ImportWaitManager:
         if not pending_imports:
             return None
 
-        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.MONITOR)
+        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.BLOCKING)
 
         def body(view: WaitView) -> None:
             while wait_pass.active_count:
@@ -526,7 +526,7 @@ class ImportWaitManager:
         if not pending_imports:
             return None
 
-        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.CHECK)
+        wait_pass = WaitPass(self, pending_imports, kind=WaitKind.DEFERRED)
 
         def body(view: WaitView) -> None:
             wait_pass.run_single_poll()
@@ -716,16 +716,14 @@ class _WaitRow:
     dl_start: float
     """Download-phase clock, stamped at construction."""
     carried_over: bool
-    """Whether the pending import predates this run (a fresh grab tallies as `added`)."""
+    """Whether the pending import predates this run (a fresh grab tallies as `grabbed`)."""
     clock: _ImportClock | None = None
     """Created on the first COMPLETE poll, carrying the import phase's start."""
     view: TorrentView = field(init=False)
     """The row's current frame, snapshotted by the manager each push."""
 
     def __post_init__(self) -> None:
-        self.view = TorrentView(
-            key=self.pending.infohash, label=self.pending.display_label, phase=Phase.AWAITING_FIRST_POLL
-        )
+        self.view = TorrentView(key=self.pending.infohash, label=self.pending.display_label, phase=Phase.NOT_POLLED)
 
     @property
     def active(self) -> bool:
@@ -909,7 +907,7 @@ class WaitPass:
             elif phase is Phase.DOWNLOADING:
                 outcome = Outcome.STILL_DOWNLOADING
             else:
-                outcome = Outcome.NOT_CHECKED
+                outcome = Outcome.QBITTORRENT_UNREACHABLE
             self._finish_row(outcome, row)
 
     def _advance(self, row: _WaitRow) -> None:
@@ -922,7 +920,7 @@ class WaitPass:
         if poll.outcome is None:
             # Blocking only: `dl_start` is this pass's construction, so a deferred pass's timeout would
             # mislabel a still-downloading pending import. `_finish_active_rows` words it truthfully there.
-            if self.kind is WaitKind.MONITOR and self._clock.monotonic() - row.dl_start >= self._dl_timeout:
+            if self.kind is WaitKind.BLOCKING and self._clock.monotonic() - row.dl_start >= self._dl_timeout:
                 self._finish_row(Outcome.DOWNLOAD_TIMED_OUT, row)
                 return
             if not poll.observed:
@@ -933,7 +931,7 @@ class WaitPass:
             row.view_downloading(poll.telemetry, self._clock.monotonic())
             return
         if poll.outcome is TorrentStatus.GONE:
-            self._finish_row(Outcome.MISSING, row)
+            self._finish_row(Outcome.GONE, row)
             return
         if poll.outcome is TorrentStatus.ERRORED:
             self._finish_row(Outcome.DOWNLOAD_ERRORED, row)
@@ -971,7 +969,7 @@ class WaitPass:
             # Nothing to wait for: the deadline would only repeat the answer. Left for a hand import, reported again
             # next run.
             self._finish_row(
-                Outcome.UNMATCHED, row, _FinishDetail(left_for_hand_import=_unplaced_as_hand_import_files(result))
+                Outcome.NOTHING_PLACED, row, _FinishDetail(left_for_hand_import=_unplaced_as_hand_import_files(result))
             )
         elif result.left_for_hand_import.files:
             # The placed files are in and the rest wait on a hand import: left, reported again next run.

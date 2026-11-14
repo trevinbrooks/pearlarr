@@ -30,9 +30,9 @@ class WaitOutcomeRow:
     label: str
     outcome: Outcome
     carried_over: bool = False
-    """Whether the pending import predates this run. A fresh grab tallies as `added`, never `imported`."""
+    """Whether the pending import predates this run. A fresh grab tallies as `grabbed`, never `imported`."""
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES
-    """On the `UNMATCHED` and `PARTIAL` outcomes, the files in the folder left for a hand import."""
+    """On the `NOTHING_PLACED` and `PARTIAL` outcomes, the files in the folder left for a hand import."""
 
 
 @dataclass(frozen=True, slots=True)

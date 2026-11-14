@@ -44,7 +44,10 @@ def carries_ignored_tag(torrent: TorrentRecord, ignore_tags: frozenset[str]) -> 
 
 
 class SkipReason(StrEnum):
-    """Why a release is skipped this run: at add time for its tracker, or by the placement."""
+    """Why a release is skipped this run: at add time for its tracker, or by the placement.
+
+    A member's name, lowercased, is the JSON `reason` of `release_skipped`. Its value is the phrase a message uses.
+    """
 
     PRIVATE_ONLY = auto()
     UNSUPPORTED_TRACKER = auto()
@@ -55,15 +58,15 @@ class SkipReason(StrEnum):
     it's left for a hand import. Also a torrent with a file another TVDB order reads outside the title's window, where
     no listed title placed it (`PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW`), and nothing of it placed on the
     title."""
-    TITLE_REFUTED = "titles refute its numbers"
+    EPISODE_TITLES_CONTRADICT = "titles refute its numbers"
     """A torrent whose files' episode titles contradict their numbers, with nothing of it placed on the title
-    (`PlacementVerdict.TITLE_REFUTED`): left for a hand import."""
+    (`PlacementVerdict.EPISODE_TITLES_CONTRADICT`): left for a hand import."""
     PLACED_ELSEWHERE = "files place under another title"
     """A release none of whose files land on the title, while some are another title's SeaDex lists the torrent
     with: placed or left for a hand import by that title's window, or stored on an episode of its window. That title's
     grab imports the placed ones, unless the title is in `ignore_anilist_ids`, which is never grabbed for. Not a
     hand-import skip: the release as a whole isn't the title's, and only its files nothing placed are a hand import."""
-    INPUT_UNREAD = "a read failed"
+    PLACEMENT_INPUT_UNREAD = "a read failed"
     """A SeaDex listing for the series, Sonarr's parse of any of the release's video files while one is left to
     place, or the episode list of a series the pending import claims couldn't be read this run. Without the listing
     nothing is placed, since another title it names may have some of the files. Grabbing now could place a file on the
@@ -77,7 +80,7 @@ class SkipReason(StrEnum):
         return self in _HAND_IMPORT_SKIPS
 
 
-_HAND_IMPORT_SKIPS = frozenset({SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED})
+_HAND_IMPORT_SKIPS = frozenset({SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

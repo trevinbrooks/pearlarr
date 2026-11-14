@@ -71,7 +71,7 @@ class TorrentFile:
     read as they are, never as no parsed number."""
     sequence_contradicted: bool = False
     """Whether a mate's title contradicts the numbers of the file's sequence and its own name carries no such title
-    (`_passes._pass_reject_contradicted`): `TITLE_REFUTED` when no pass places it and pass 15 reads it no other way
+    (`_passes._pass_reject_contradicted`): `EPISODE_TITLES_CONTRADICT` when no pass places it and pass 15 reads it no other way
     (`_passes._pass_classify`)."""
     next_in_line_for: frozenset[int] = frozenset()
     """The ids a parse whose numbers disagree would have taken first in the exact pass's order

@@ -59,7 +59,7 @@ class ArrRunStats:
     """The arr run's tally rendered by the arr run summary."""
 
     checked: int = 0
-    added: list[GrabbedRow] = field(default_factory=list[GrabbedRow])
+    grabbed: list[GrabbedRow] = field(default_factory=list[GrabbedRow])
     up_to_date: int = 0
     unchanged: int = 0
     no_seadex_entry: int = 0
@@ -72,11 +72,11 @@ class ArrRunStats:
     )
     unmonitored: int = 0
     downloading: int = 0
-    """Carried-over `DOWNLOADING` pending imports (a grab of this arr run stays in `added`)."""
+    """Carried-over `DOWNLOADING` pending imports (a grab of this arr run stays in `grabbed`)."""
     downloaded: int = 0
-    """Carried-over `DOWNLOADED` pending imports (a grab of this arr run stays in `added`)."""
+    """Carried-over `DOWNLOADED` pending imports (a grab of this arr run stays in `grabbed`)."""
     imported: int = 0
-    """Carried-over `IMPORTED` pending imports (a grab of this arr run stays in `added`)."""
+    """Carried-over `IMPORTED` pending imports (a grab of this arr run stays in `grabbed`)."""
     held_by_cap: int = 0
     """Titles with a grabbable release held past the cap (re-checked and grabbed next run)."""
 
@@ -102,10 +102,10 @@ class PerTitleState:
     """Groups whose release hit a contained grab failure (tracker or client unreachable), so the title stays
     uncached."""
     skipped_groups: dict[SkipReason, list[str]] = field(default_factory=dict[SkipReason, list[str]])
-    """The groups a skip stopped, by skip reason. While any are here the title stays uncached and is checked again
-    next run, and a hand-import skip re-warns until the import covers it. `SkipReason.INPUT_UNREAD` also carries the
-    groups whose placement waited on a failed read, though a release of such a group may have been grabbed. Filled by
-    `add_skipped`."""
+    """The groups a skip stopped, by skip reason. While any are here the title stays uncached and is checked again next
+    run, and a hand-import skip re-warns until the import covers it. `SkipReason.PLACEMENT_INPUT_UNREAD` also carries
+    the groups whose placement waited on a failed read, though a release of such a group may have been grabbed. Filled
+    by `add_skipped`."""
     metadata_unread: bool = False
     """A title of the series was looked up without its AniList answer, or a series was read without its TVDB
     orders, so the title stays uncached and re-checks. Nothing for the user to do."""
@@ -159,7 +159,7 @@ class ArrRunState:
     snapshot but counted by the tally. Never also in `grabbed_this_run`."""
     pending_import_states: dict[str, PendingImportState] = field(default_factory=dict[str, PendingImportState])
     """Observed status of each carried-over pending import, keyed by hash. Never a grab of this arr run, which stays
-    `added`."""
+    `grabbed`."""
     pause_owed: bool = False
     """A title's queries owe the `advanced.sleep_time` pause. The arr run loop sleeps it before the next title."""
 

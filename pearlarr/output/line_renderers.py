@@ -179,9 +179,9 @@ def _boot_outcome_word(kind: OutcomeKind) -> str:
 
 
 def _grab_message(status: GrabStatus) -> str:
-    if status is GrabStatus.ADDING:
+    if status is GrabStatus.GRABBING:
         return "adding recommended release"
-    if status is GrabStatus.WOULD_ADD:
+    if status is GrabStatus.WOULD_GRAB:
         return "would add recommended release (dry run)"
     return "recommended release already in qBittorrent"
 
@@ -190,7 +190,7 @@ def _names_text(releases: tuple[ReleaseLabel, ...]) -> str:
     return "; ".join(release.display for release in releases)
 
 
-def _fields_run_started(event: PearlarrStarted) -> tuple[Field, ...]:
+def _fields_pearlarr_started(event: PearlarrStarted) -> tuple[Field, ...]:
     fields: list[Field] = []
     if event.version:
         fields.append(Field("version", event.version))
@@ -211,7 +211,7 @@ def _fields_item_started(event: ItemStarted) -> tuple[Field, ...]:
         Field("arr", str(event.arr)),
         Field("index", event.index),
         Field("total", event.total),
-        Field("title", event.title),
+        Field("name", event.title),
     )
 
 
@@ -220,7 +220,7 @@ def _fields_title_header(event: TitleHeader) -> tuple[Field, ...]:
     if event.al_id is not None:
         fields.append(Field("al_id", event.al_id))
     if event.coverage:
-        fields.append(Field("files", event.coverage))
+        fields.append(Field("coverage", event.coverage))
     if event.url:
         fields.append(Field("link", event.url))
     if event.incomplete:
@@ -235,7 +235,7 @@ def _fields_release_skipped(event: ReleaseSkipped) -> tuple[Field, ...]:
         Field("reason", event.reason.name.lower()),
     ]
     if event.reason is SkipReason.PLACED_ELSEWHERE:
-        fields.extend((Field("elsewhere", event.counts.another_titles), Field("unplaced", event.counts.unplaced)))
+        fields.extend((Field("another_titles", event.counts.another_titles), Field("unplaced", event.counts.unplaced)))
     if event.url:
         fields.append(Field("link", event.url))
     return tuple(fields)
@@ -247,15 +247,15 @@ def _fields_grab_action(event: GrabAction) -> tuple[Field, ...]:
         fields.append(Field("waiting_to_import", True))
     if event.groups:
         fields.append(Field("groups", "; ".join(group.display for group in event.groups)))
-    if event.added:
-        fields.append(Field("added", _names_text(event.added)))
+    if event.grabbed:
+        fields.append(Field("grabbed", _names_text(event.grabbed)))
     if event.in_qbit:
-        fields.append(Field("downloading", _names_text(event.in_qbit)))
+        fields.append(Field("in_qbittorrent", _names_text(event.in_qbit)))
     return tuple(fields)
 
 
 def _fields_row_finished(event: RowFinished) -> tuple[Field, ...]:
-    fields: list[Field] = [Field("title", event.label)]
+    fields: list[Field] = [Field("torrent", event.label)]
     if event.files is not None:
         fields.append(Field("files", event.files))
     left = event.left_for_hand_import
@@ -263,21 +263,21 @@ def _fields_row_finished(event: RowFinished) -> tuple[Field, ...]:
         lead, reason = hand_import_sentences(left)
         fields.append(Field("detail", f"{lead} {reason}."))
     if left.files:
-        fields.append(Field("unmatched_files", "; ".join(hand_import_names(left))))
+        fields.append(Field("hand_import_files", "; ".join(hand_import_names(left))))
     fields.append(Field("waited_s", event.waited_s))
     return tuple(fields)
 
 
 def _fields_wait_started(event: WaitStarted) -> tuple[Field, ...]:
-    return (Field("kind", event.kind.name.lower()), Field("total", event.total))
+    return (Field("wait_pass", event.kind.name.lower()), Field("total", event.total))
 
 
 def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     return (
-        Field("kind", event.kind.name.lower()),
+        Field("wait_pass", event.kind.name.lower()),
         Field("imported", event.imported),
-        Field("pending", event.in_progress),
-        Field("deferred", event.left),
+        Field("in_progress", event.in_progress),
+        Field("left", event.left),
         Field("failed", event.failed),
         Field("elapsed_s", event.elapsed_s),
     )
@@ -290,10 +290,10 @@ def _wait_progress_fact(event: WaitProgress) -> _Fact:
     fields = (
         Field("downloading", counts[Phase.DOWNLOADING]),
         Field("importing", counts[Phase.IMPORTING]),
-        Field("queued", counts[Phase.AWAITING_FIRST_POLL]),
+        Field("not_polled", counts[Phase.NOT_POLLED]),
         Field("elapsed_s", event.snapshot.elapsed_s),
     )
-    return _Fact("wait_pulse", Severity.INFO, "still waiting", fields, event.scope, "wait")
+    return _Fact("wait_progress", Severity.INFO, "still waiting", fields, event.scope, "wait")
 
 
 def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
@@ -304,19 +304,19 @@ def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
         fields.append(Field("note", summary.dry_run_note))
     fields.append(Field("checked", tally.checked))
     fields.append(Field("needs_action", len(tally.needs_action)))
-    fields.append(Field("added", summary.added_count))
+    fields.append(Field("grabbed", summary.grabbed_count))
     if tally.held_by_cap:
         fields.append(Field("held_by_cap", tally.held_by_cap))
     if summary.wait_mode_on:
         for key, value in (
-            ("queued", tally.downloading),
+            ("downloading", tally.downloading),
             ("downloaded", tally.downloaded),
             ("imported", tally.imported),
         ):
             if value:
                 fields.append(Field(key, value))
     fields.append(Field("up_to_date", tally.up_to_date))
-    fields.append(Field("cached", tally.unchanged))
+    fields.append(Field("unchanged", tally.unchanged))
     for key, value in (
         ("no_mappings", tally.no_mappings),
         ("no_seadex_entry", tally.no_seadex_entry),
@@ -331,26 +331,26 @@ def _fields_summary_head(summary: ArrRunSummary) -> tuple[Field, ...]:
     if summary.elapsed_s is not None:
         fields.append(Field("elapsed_s", summary.elapsed_s))
     if summary.tip is not None:
-        fields.append(Field("tip", summary.tip.name.lower()))
+        fields.append(Field("tip", str(summary.tip)))
     return tuple(fields)
 
 
 def _fields_needs_action(row: NeedsActionRow) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", row.title or "(unknown title)")]
     if row.coverage:
-        fields.append(Field("files", row.coverage))
+        fields.append(Field("coverage", row.coverage))
     fields.append(Field("group", row.group))
     fields.append(Field("reason", row.reason))
-    fields.append(Field("kind", row.cause.name.lower()))
+    fields.append(Field("cause", str(row.cause)))
     if row.url:
         fields.append(Field("link", row.url))
     return tuple(fields)
 
 
-def _fields_added(row: GrabbedRow) -> tuple[Field, ...]:
+def _fields_grabbed(row: GrabbedRow) -> tuple[Field, ...]:
     fields: list[Field] = [Field("title", row.title or "(unknown title)")]
     if row.coverage:
-        fields.append(Field("files", row.coverage))
+        fields.append(Field("coverage", row.coverage))
     fields.append(Field("group", row.group))
     if row.name:
         fields.append(Field("torrent", row.name))
@@ -360,15 +360,15 @@ def _fields_added(row: GrabbedRow) -> tuple[Field, ...]:
 
 
 def _placement_fields(event: Diagnostic, open_scopes: OpenScopes) -> tuple[Field, ...]:
-    # Ambient position is a guess. The line admits it (during=/placed=frontier).
+    # Ambient position is a guess. The line admits it (during=).
     during = open_scopes.during()
     if event.placed_by is PlacedBy.AMBIENT and during is not None:
-        return (Field("during", during), Field("placed", "frontier"))
+        return (Field("during", during),)
     return ()
 
 
 def _scope_fields(scope: ScopeId) -> tuple[Field, ...]:
-    return (Field("kind", scope.kind.name.lower()), Field("serial", scope.serial))
+    return (Field("kind", str(scope.kind)), Field("serial", scope.serial))
 
 
 def _fields_paths_shown(event: PathsShown) -> tuple[Field, ...]:
@@ -418,9 +418,9 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
 
     match event:
         case PearlarrStarted():
-            return _Fact("run_started", severity, "Pearlarr started", _fields_run_started(event), None, "run")
+            return _Fact("pearlarr_started", severity, "Pearlarr started", _fields_pearlarr_started(event), None, "run")
         case ScheduledRunStarted(number=number):
-            return _Fact("cycle_started", severity, "cycle started", (Field("number", number),), None, "run")
+            return _Fact("scheduled_run_started", severity, "cycle started", (Field("number", number),), None, "run")
         case NextRunScheduled(at=at):
             # Seconds precision drops microseconds and keeps the offset, matching the json "time" key's shape.
             fields = (Field("at", at.isoformat(timespec="seconds")),)
@@ -445,33 +445,33 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
         case ItemStarted():
             return _Fact("item_started", severity, "item", _fields_item_started(event), None, "scan")
         case TitleHeader(scope=scope, state=state):
-            return _Fact("entry_header", severity, str(state), _fields_title_header(event), scope, "entry")
+            return _Fact("title_header", severity, str(state), _fields_title_header(event), scope, "title")
         case TitleDetail(scope=scope, label=label, value=value, tail=tail):
             fields = (Field("note", tail),) if tail is not None else ()
-            return _Fact("entry_detail", severity, f"{label}: {value.text}", fields, scope, "entry")
+            return _Fact("title_detail", severity, f"{label}: {value.text}", fields, scope, "title")
         case TitleRow(scope=scope, state=state, label=label):
-            return _Fact("ledger_row", severity, str(state), (Field("title", label),), scope, "entry")
+            return _Fact("title_row", severity, str(state), (Field("title", label),), scope, "title")
         case ReleaseSkipped(scope=scope):
-            return _Fact("release_skipped", severity, "release skipped", _fields_release_skipped(event), scope, "entry")
+            return _Fact("release_skipped", severity, "release skipped", _fields_release_skipped(event), scope, "title")
         case GrabFailed(scope=scope, group=group, url=url, error=error):
             fields = (Field("group", group), Field("link", url), Field("error", error))
-            return _Fact("grab_failed", severity, "grab failed", fields, scope, "entry")
+            return _Fact("grab_failed", severity, "grab failed", fields, scope, "title")
         case GrabAction(scope=scope, status=status):
-            return _Fact("grab_action", severity, _grab_message(status), _fields_grab_action(event), scope, "entry")
+            return _Fact("grab_action", severity, _grab_message(status), _fields_grab_action(event), scope, "title")
         case CapReached(cap=cap):
             return _Fact("cap_reached", severity, "torrent cap reached", (Field("cap", cap),), None, "run")
         case ScanFinished(arr=arr):
             return _Fact("scan_finished", severity, "scan finished", (Field("arr", str(arr)),), None, "scan")
         case ArrRunSummaryReady(summary=summary):
-            return _Fact("run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
+            return _Fact("arr_run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
         case WaitStarted(scope=scope, kind=kind):
             return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
         case RowFinished(scope=scope, outcome=outcome):
-            return _Fact("torrent_graduated", severity, outcome.word, _fields_row_finished(event), scope, "wait")
+            return _Fact("wait_row_finished", severity, outcome.word, _fields_row_finished(event), scope, "wait")
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")
         case ArrRunFinished(arr=arr):
-            return _Fact("run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
+            return _Fact("arr_run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
             return _Fact("diagnostic", severity, message, _placement_fields(event, open_scopes), None, origin)
         case PathsShown():
@@ -530,7 +530,7 @@ def _summary_row_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
         _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(row))
         for row in summary.tally.needs_action
     )
-    added = tuple(_Line(Severity.INFO, "summary", "added", _fields_added(row)) for row in summary.tally.added)
+    added = tuple(_Line(Severity.INFO, "summary", "added", _fields_grabbed(row)) for row in summary.tally.grabbed)
     return (*needs, *added)
 
 
@@ -580,7 +580,7 @@ def _json_of(event: Event, open_scopes: OpenScopes, iso: str, severity: Severity
         payload["needs_action_records"] = [
             dict[str, JsonValue](_fields_needs_action(row)) for row in tally.needs_action
         ]
-        payload["added_records"] = [dict[str, JsonValue](_fields_added(row)) for row in tally.added]
+        payload["grabbed_records"] = [dict[str, JsonValue](_fields_grabbed(row)) for row in tally.grabbed]
     if isinstance(event, Diagnostic) and event.trace is not None:
         payload["exc"] = event.trace.plain
     return payload

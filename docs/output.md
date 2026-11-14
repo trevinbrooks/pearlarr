@@ -56,13 +56,13 @@ Every object carries the envelope keys, in stable order:
 | `event` | The event name. The catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `message` | The human-readable line (informational, not an interface) |
-| `component` | The subsystem it came from (`run`, `scan`, `entry`, `cli`, ...). Always present. It seeds the text log's `[bracket]`. An event carrying a `path` breadcrumb prints that as the bracket instead |
+| `component` | The subsystem it came from (`run`, `scan`, `title`, `cli`, ...). Always present. It seeds the text log's `[bracket]`. An event carrying a `path` breadcrumb prints that as the bracket instead |
 
 Per-event fields follow the envelope.
-Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during`, `placed`, and `exc`), events inside a nested scope carry a `path` breadcrumb, and `run_summary` carries the `needs_action_records` and `added_records` arrays.
+Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during` and `exc`), events inside a nested scope carry a `path` breadcrumb, and `arr_run_summary` carries the `needs_action_records` and `grabbed_records` arrays.
 Absent facts are omitted, never `null`.
 
-The stream honors `advanced.log_level`, with one carve-out: a `run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
+The stream honors `advanced.log_level`, with one carve-out: an `arr_run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
 
 The command events at the end of the catalog (`paths_shown`, `starter_config_written`, `effective_config_shown`, and the `config_*` and `cache_*` events) appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream. `advanced.log_format` does not affect them, only the per-command `--json` flag does.
 
@@ -87,7 +87,7 @@ through the real JSON serializer, so serialized names, enum values, and
 null-vs-absent behavior are the wire truth. The stream writes each object
 on a single line. Specimens are pretty-printed here, with `time` normalized.
 
-### `run_started`
+### `pearlarr_started`
 
 The process banner: the installed version and the resolved data directory. The first event of every invocation.
 
@@ -95,7 +95,7 @@ The process banner: the installed version and the resolved data directory. The f
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "run_started",
+  "event": "pearlarr_started",
   "level": "INFO",
   "message": "Pearlarr started",
   "component": "run",
@@ -104,15 +104,15 @@ The process banner: the installed version and the resolved data directory. The f
 }
 ```
 
-### `cycle_started`
+### `scheduled_run_started`
 
-Scheduled mode only: a new cycle begins (`number` counts from 1).
+Scheduled mode only: a new run begins (`number` counts from 1).
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "cycle_started",
+  "event": "scheduled_run_started",
   "level": "INFO",
   "message": "cycle started",
   "component": "run",
@@ -174,7 +174,7 @@ The per-arr scan opened: which arr, and how many library titles it will walk.
 
 ### `item_started`
 
-The scan moved to the next library title (`index` of `total`).
+The scan moved to the next library item (`index` of `total`, `name` its name).
 
 ```json
 {
@@ -187,13 +187,13 @@ The scan moved to the next library title (`index` of `total`).
   "arr": "sonarr",
   "index": 3,
   "total": 42,
-  "title": "Sousou no Frieren"
+  "name": "Sousou no Frieren"
 }
 ```
 
 ### `diagnostic`
 
-A problem or notice at any level. `origin` names the subsystem. A position-free diagnostic carries `during` plus `placed: frontier` (its position is the frontier's best guess), and one with a captured traceback carries it in `exc`.
+A problem or notice at any level. `origin` names the subsystem. A diagnostic raised outside any scope carries `during`, the scope that was open then, and one with a captured traceback carries it in `exc`.
 
 ```json
 {
@@ -204,8 +204,7 @@ A problem or notice at any level. `origin` names the subsystem. A position-free 
   "message": "AniList rate limited - waiting 30s before retrying",
   "component": "anilist",
   "origin": "anilist",
-  "during": "[3/42] Sousou no Frieren",
-  "placed": "frontier"
+  "during": "[3/42] Sousou no Frieren"
 }
 ```
 
@@ -221,69 +220,69 @@ A nested scope opened (`kind` + `serial` identify it). Events inside carry a hum
   "level": "INFO",
   "message": "scope opened",
   "component": "scope",
-  "kind": "entry",
+  "kind": "title",
   "serial": 2,
   "label": "Sousou no Frieren"
 }
 ```
 
-### `entry_header`
+### `title_header`
 
-A SeaDex entry block opened for the current title. `message` is the entry state word.
+A title's block opened. `message` is the title's state word.
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "entry_header",
+  "event": "title_header",
   "level": "INFO",
   "message": "checking",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "title": "Sousou no Frieren",
   "al_id": 154587,
-  "files": "S01",
+  "coverage": "S01",
   "link": "https://seadex.moe/154587/"
 }
 ```
 
-### `entry_detail`
+### `title_detail`
 
-A labeled line inside an entry block. `message` is `label: value`.
+A labeled line inside a title's block. `message` is `label: value`.
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "entry_detail",
+  "event": "title_detail",
   "level": "INFO",
   "message": "status: missing episodes",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "note": "S01E27-E28"
 }
 ```
 
-### `ledger_row`
+### `title_row`
 
-A self-contained one-line result for a title: `message` is the state word, `title` the library title.
+A one-line result for a title: `message` is the state word, `title` the title's name.
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "ledger_row",
+  "event": "title_row",
   "level": "INFO",
   "message": "unchanged",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "title": "Sousou no Frieren"
 }
 ```
 
 ### `release_skipped`
 
-A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, `placed_elsewhere`, or `input_unread`. On `placed_elsewhere`, `elsewhere` counts the release's files another title holds and `unplaced` the rest, which nothing placed.
+A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, `placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and `unplaced` the rest, which nothing placed.
 
 ```json
 {
@@ -292,8 +291,8 @@ A release was skipped at add time. `reason` is `private_only`, `unsupported_trac
   "event": "release_skipped",
   "level": "WARNING",
   "message": "release skipped",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "group": "Vodes",
   "tracker": "AnimeBytes",
   "reason": "private_only",
@@ -312,8 +311,8 @@ Adding a release to qBittorrent failed. The title is retried next run.
   "event": "grab_failed",
   "level": "WARNING",
   "message": "grab failed",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "group": "SubsPlease",
   "link": "https://nyaa.si/view/1734567",
   "error": "qBittorrent rejected the torrent"
@@ -331,11 +330,11 @@ The grab decision for a title. `message` distinguishes a real add, a dry-run wou
   "event": "grab_action",
   "level": "INFO",
   "message": "adding recommended release",
-  "component": "entry",
-  "path": "sonarr › [3/42] Sousou no Frieren › entry",
+  "component": "title",
+  "path": "sonarr › [3/42] Sousou no Frieren › title",
   "waiting_to_import": true,
   "groups": "SubsPlease [best]",
-  "added": "[SubsPlease] Sousou no Frieren"
+  "grabbed": "[SubsPlease] Sousou no Frieren"
 }
 ```
 
@@ -351,7 +350,7 @@ The matching close of a `scope_opened` (anything nested deeper closes with it).
   "level": "INFO",
   "message": "scope closed",
   "component": "scope",
-  "kind": "entry",
+  "kind": "title",
   "serial": 2
 }
 ```
@@ -388,25 +387,25 @@ The per-arr scan closed (a boundary event, the summary carries the facts).
 }
 ```
 
-### `run_summary`
+### `arr_run_summary`
 
-The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run held titles past the cap), plus `needs_action_records` and `added_records` arrays mirroring the summary's per-title lines.
+The arr run's summary: the tally counters (`held_by_cap` only when the run held titles past the cap), plus `needs_action_records` and `grabbed_records` arrays mirroring the summary's per-title lines.
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "run_summary",
+  "event": "arr_run_summary",
   "level": "INFO",
   "message": "run complete",
   "component": "summary",
   "arr": "sonarr",
   "checked": 42,
   "needs_action": 1,
-  "added": 1,
+  "grabbed": 1,
   "imported": 1,
   "up_to_date": 31,
-  "cached": 6,
+  "unchanged": 6,
   "no_mappings": 1,
   "no_seadex_entry": 2,
   "no_releases": 1,
@@ -417,17 +416,17 @@ The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run h
   "needs_action_records": [
     {
       "title": "Made in Abyss",
-      "files": "S02",
+      "coverage": "S02",
       "group": "Vodes",
       "reason": "private-only release; no public alternative covers these files",
-      "kind": "private_only_no_fallback",
+      "cause": "private_only_no_fallback",
       "link": "https://seadex.moe/108/"
     }
   ],
-  "added_records": [
+  "grabbed_records": [
     {
       "title": "Sousou no Frieren",
-      "files": "S01",
+      "coverage": "S01",
       "group": "SubsPlease",
       "torrent": "[SubsPlease] Sousou no Frieren",
       "link": "https://seadex.moe/154587/"
@@ -438,7 +437,7 @@ The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run h
 
 ### `wait_started`
 
-The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).
+A wait pass opened on `total` pending imports. `wait_pass` is `blocking` (waits for the downloads to finish, then imports) or `deferred` (one poll of the pending imports from earlier runs).
 
 ```json
 {
@@ -449,25 +448,25 @@ The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (wait
   "message": "waiting",
   "component": "wait",
   "path": "sonarr › wait",
-  "kind": "monitor",
+  "wait_pass": "blocking",
   "total": 1
 }
 ```
 
-### `torrent_graduated`
+### `wait_row_finished`
 
-One watched torrent reached a terminal outcome. `message` is the outcome word. `unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes. On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and why the files are held.
+The wait pass finished one row: a pending import got its outcome for this run. `message` is the outcome word. `hand_import_files` names the files left for a hand import, on the `unmatched` and `partial` outcomes. On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and why the files are held.
 
 ```json
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "torrent_graduated",
+  "event": "wait_row_finished",
   "level": "INFO",
   "message": "imported",
   "component": "wait",
   "path": "sonarr › wait",
-  "title": "[SubsPlease] Sousou no Frieren",
+  "torrent": "[SubsPlease] Sousou no Frieren",
   "files": 28,
   "waited_s": 412.0
 }
@@ -475,7 +474,7 @@ One watched torrent reached a terminal outcome. `message` is the outcome word. `
 
 ### `wait_finished`
 
-The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the check's rows left for the next run on purpose).
+The wait pass closed, with its `imported`, `in_progress`, `left` and `failed` counts.
 
 ```json
 {
@@ -486,16 +485,16 @@ The pass closed, with its imported/pending/deferred/failed tally (`pending` coun
   "message": "complete",
   "component": "wait",
   "path": "sonarr › wait",
-  "kind": "monitor",
+  "wait_pass": "blocking",
   "imported": 1,
-  "pending": 0,
-  "deferred": 0,
+  "in_progress": 0,
+  "left": 0,
   "failed": 0,
   "elapsed_s": 430.0
 }
 ```
 
-### `run_finished`
+### `arr_run_finished`
 
 The per-arr run closed (a boundary event).
 
@@ -503,7 +502,7 @@ The per-arr run closed (a boundary event).
 {
   "schema_version": 1,
   "time": "2026-01-01T18:00:00+00:00",
-  "event": "run_finished",
+  "event": "arr_run_finished",
   "level": "INFO",
   "message": "run finished",
   "component": "run",
@@ -734,7 +733,7 @@ The `paths` command: the resolved data directory and the files within it.
 - `BootStepStarted` - a live-cockpit affordance. `boot_step_finished` carries the step's facts.
 - `BootStepProgressed` - ephemeral progress for the live cockpit only.
 - `BootStepSlow` - a text-surface heads-up. The JSON stream sees the step finish.
-- `WaitProgress` - the per-poll wait snapshot. On the JSON stream, wait progress is the `wait_started` / `torrent_graduated` / `wait_finished` sequence.
+- `WaitProgress` - the per-poll wait snapshot. On the JSON stream, wait progress is the `wait_started` / `wait_row_finished` / `wait_finished` sequence.
 <!-- /gen:json-events -->
 
 ## Webhooks
@@ -771,6 +770,6 @@ With `notifications.wait_webhook_url` set, the end of each wait pass POSTs one J
 }
 ```
 
-`rows` has one entry per watched torrent. `outcome` is the terminal outcome's identifier and `word` its short display form.
+`rows` has one entry per watched torrent. `outcome` is the row's outcome name and `word` its short display form. The names are `IMPORTED`, `GONE`, `DOWNLOAD_ERRORED`, `DOWNLOAD_TIMED_OUT`, `NO_CONTENT_PATH`, `STILL_IMPORTING`, `SONARR_BUSY`, `NOT_READY`, `NOTHING_PLACED`, `PARTIAL`, `ATTEMPT_FAILED`, `QBITTORRENT_UNREACHABLE`, `IMPORT_IN_PROGRESS`, `AWAITING_IMPORT` and `STILL_DOWNLOADING`.
 Delivery semantics: one POST per wait pass (none when nothing was waited on), a ten-second timeout, no retry, and the response status is not checked: fire and forget.
 The payload follows the same stability policy as the JSON event stream.

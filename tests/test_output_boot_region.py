@@ -52,8 +52,8 @@ from pearlarr.wait_types import OutcomeKind
 from .builders import SEP
 from .fakes import strip_ansi
 
-_BOOT_SCOPE = ScopeId(ScopeKind.BOOT_SECTION, 900)
-_BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
+_BOOT_SCOPE = ScopeId(ScopeKind.BOOT, 900)
+_BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT, 901)
 
 
 def _opened(scope: ScopeId = _BOOT_SCOPE) -> ScopeOpened:

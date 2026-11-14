@@ -81,7 +81,7 @@ _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
     NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK: (
         "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
     ),
-    NeedsActionCause.PRIVATE_ONLY_STALE: (
+    NeedsActionCause.PRIVATE_ONLY_OUTDATED: (
         "Tip: your copies of these releases are outdated (their file sizes no longer match); "
         "update them from their private tracker, or delete the outdated files to let the "
         "public fallback stand in."
@@ -217,7 +217,7 @@ def _skip_text(event: ReleaseSkipped) -> str:
             return f"{event.url or event.group} (tracker {event.tracker} not yet supported)"
         case SkipReason.MISNUMBERED:
             return f"{event.url or event.group} (numbering does not match its SeaDex listing)"
-        case SkipReason.TITLE_REFUTED:
+        case SkipReason.EPISODE_TITLES_CONTRADICT:
             return f"{event.url or event.group} (file titles contradict its numbering)"
         case SkipReason.PLACED_ELSEWHERE:
             counts = event.counts
@@ -225,7 +225,7 @@ def _skip_text(event: ReleaseSkipped) -> str:
             if counts.unplaced:
                 text += f", {counts.unplaced} could not be placed"
             return f"{event.url or event.group} ({text})"
-        case SkipReason.INPUT_UNREAD:
+        case SkipReason.PLACEMENT_INPUT_UNREAD:
             return f"{event.url or event.group} (a read the placement needs failed)"
     assert_never(event.reason)
 
@@ -261,19 +261,19 @@ def grab_action_lines(event: GrabAction) -> tuple[ConsoleLine, ...]:
 
     lines: list[ConsoleLine] = []
     match event.status:
-        case GrabStatus.ADDING:
+        case GrabStatus.GRABBING:
             lines.append(_detail_kv("status", "adding SeaDex's recommended release", value_style=None))
-        case GrabStatus.WOULD_ADD:
+        case GrabStatus.WOULD_GRAB:
             lines.append(_detail_kv("status", "would add SeaDex's recommended release (dry run)", value_style=None))
-        case GrabStatus.ALREADY_DOWNLOADING:
+        case GrabStatus.ALREADY_IN_QBIT:
             message = "SeaDex's pick is already in qBittorrent"
             if event.waiting_to_import:
                 message += " - waiting to import"
             lines.append(_detail_kv("status", message, value_style="yellow"))
     for group in event.groups:
         lines.append(_detail_kv("group", group.display, value_style="cyan"))
-    added_label = "would add" if event.status is GrabStatus.WOULD_ADD else "added"
-    for release in event.added:
+    added_label = "would add" if event.status is GrabStatus.WOULD_GRAB else "added"
+    for release in event.grabbed:
         lines.append(_detail_kv(added_label, release.display, value_style="green"))
     for release in event.in_qbit:
         lines.append(_detail_kv("downloading", release.display, value_style="yellow"))
@@ -369,8 +369,10 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
     for item in needs:
         lines.extend(_needs_block(item))
 
-    lines.append(_summary_kv("added", str(summary.added_count), value_style="green" if summary.added_count else None))
-    for grab in tally.added:
+    lines.append(
+        _summary_kv("added", str(summary.grabbed_count), value_style="green" if summary.grabbed_count else None)
+    )
+    for grab in tally.grabbed:
         lines.extend(_added_block(grab, dry_run=summary.dry_run))
     if tally.held_by_cap:
         lines.append(_summary_kv("held by cap", str(tally.held_by_cap), value_style="yellow"))

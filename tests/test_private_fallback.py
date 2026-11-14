@@ -170,12 +170,12 @@ class TestUpgradePendingSkipsForOwnedOutdated:
         assert state.per_title.private_only_skipped is True
         assert state.per_title.private_only_outdated is True
 
-        # The private-only skip keeps the title uncached and surfaces the PRIVATE_ONLY_STALE row,
+        # The private-only skip keeps the title uncached and surfaces the PRIVATE_ONLY_OUTDATED row,
         # so it resurfaces every run until the copy is updated or deleted.
         pipe = make_grab_pipeline(cache_store=cache, _state=state, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         assert cache.get_cached_title(Arr.SONARR, 11) is None
-        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_STALE]
+        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_OUTDATED]
         assert [n.reason for n in state.stats.needs_action] == [OUTDATED_ROW_REASON]
 
     def test_radarr_size_disjoint_warns_and_skips(self) -> None:

@@ -284,7 +284,7 @@ class TestGrabReleaseRegistersPending:
         assert pipeline._state.grabbed_this_run == {}
         assert n_added == 0
         assert pipeline._state.torrents_added == 0
-        assert pipeline._state.stats.added == []
+        assert pipeline._state.stats.grabbed == []
         assert [r.outcome for r in results] == [AddStatus.ALREADY_IN_QBIT]
 
     def test_added_registers_and_counts(self) -> None:
@@ -302,7 +302,7 @@ class TestGrabReleaseRegistersPending:
         assert [p.infohash for p in pipeline._state.grabbed_this_run.values()] == ["h1"]
         assert n_added == 1
         assert pipeline._state.torrents_added == 1
-        assert len(pipeline._state.stats.added) == 1
+        assert len(pipeline._state.stats.grabbed) == 1
 
     def test_already_in_qbit_does_not_count_toward_cap(self) -> None:
         # One already-present + one fresh, cap 1: only the fresh add counts.
@@ -1006,7 +1006,7 @@ class TestUnsupportedTrackerSkip:
                 "and only a fallback covers it"
             )
         ]
-        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_STALE]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_OUTDATED]
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 7) is None
 
     def test_interactive_private_pick_reads_as_a_hand_picked_no_fallback(self) -> None:
@@ -1142,7 +1142,7 @@ class TestPlacementInputUnread:
         assert pipeline._state.torrents_added == 1
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
         rows = pipeline._state.stats.needs_action
-        assert [r.cause for r in rows] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
+        assert [r.cause for r in rows] == [NeedsActionCause.PLACEMENT_INPUT_UNREAD]
         assert rows[0].reason == "a read the placement needs failed; will retry next run"
         assert rows[0].group == "RG"
 
@@ -1155,7 +1155,7 @@ class TestPlacementInputUnread:
 
         assert pipeline._state.stats.up_to_date == 0
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_UNREAD]
 
     def test_a_failed_grab_outranks_the_unread_input(self) -> None:
         nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
@@ -1209,9 +1209,9 @@ class TestPlacementSkips:
                 ),
             ),
             (
-                SkipReason.TITLE_REFUTED,
+                SkipReason.EPISODE_TITLES_CONTRADICT,
                 SkipReport(
-                    NeedsActionCause.TITLE_REFUTED,
+                    NeedsActionCause.EPISODE_TITLES_CONTRADICT,
                     "file titles contradict its numbering; import it by hand",
                 ),
             ),
@@ -1241,7 +1241,7 @@ class TestPlacementSkips:
         # Another title's pending import has the torrent.
         resident = pending_import(infohash="h1")
         seadex_dict = one_release_dict(srg="RG", infohash="h1")
-        seadex_dict["RG"].releases["https://nyaa.si/view/1"].skip_reason = SkipReason.TITLE_REFUTED
+        seadex_dict["RG"].releases["https://nyaa.si/view/1"].skip_reason = SkipReason.EPISODE_TITLES_CONTRADICT
         torrents = FakeTorrents({"h1": AddResult(AddStatus.ALREADY_IN_QBIT, "Show", None)})
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, resident.infohash, resident.to_json())
@@ -1259,7 +1259,9 @@ class TestPlacementSkips:
     def test_an_unread_listing_skips_the_release_until_the_next_run(self) -> None:
         # The release names its group among the reads that failed: the row is the retry row, not a hand import.
         recording = install_recording_hub()
-        nyaa = self._skipped_release(url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.INPUT_UNREAD)
+        nyaa = self._skipped_release(
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.PLACEMENT_INPUT_UNREAD
+        )
         seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
         pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
@@ -1268,9 +1270,9 @@ class TestPlacementSkips:
 
         assert torrents.calls == []
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert pipeline._state.per_title.skipped_groups == {SkipReason.INPUT_UNREAD: ["RG"]}
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.INPUT_UNREAD]
-        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_MISSING]
+        assert pipeline._state.per_title.skipped_groups == {SkipReason.PLACEMENT_INPUT_UNREAD: ["RG"]}
+        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.PLACEMENT_INPUT_UNREAD]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_UNREAD]
 
     def test_a_release_whose_files_are_another_titles_is_never_added_and_its_skip_carries_the_counts(self) -> None:
         recording = install_recording_hub()
@@ -1302,7 +1304,9 @@ class TestPlacementSkips:
         another_titles = self._skipped_release(
             url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.PLACED_ELSEWHERE
         )
-        unread = self._skipped_release(url="https://nyaa.si/view/2", infohash="h2", skip_reason=SkipReason.INPUT_UNREAD)
+        unread = self._skipped_release(
+            url="https://nyaa.si/view/2", infohash="h2", skip_reason=SkipReason.PLACEMENT_INPUT_UNREAD
+        )
         seadex_dict: SeadexDict = {
             "RG": rg_group({another_titles.url: another_titles}),
             "Other": rg_group({unread.url: unread}),
@@ -1400,7 +1404,7 @@ class TestPlacementSkips:
     def test_the_misnumbered_row_outranks_the_titles_contradict_row(self) -> None:
         # The table's order decides between two hand-import skips.
         contradicted = self._skipped_release(
-            url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.TITLE_REFUTED
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.EPISODE_TITLES_CONTRADICT
         )
         misnumbered = self._skipped_release(
             url="https://nyaa.si/view/2", infohash="h2", skip_reason=SkipReason.MISNUMBERED
@@ -1417,7 +1421,7 @@ class TestPlacementSkips:
 
     def test_the_titles_contradict_row_outranks_a_failed_grab(self) -> None:
         skipped = self._skipped_release(
-            url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.TITLE_REFUTED
+            url="https://nyaa.si/view/1", infohash="h1", skip_reason=SkipReason.EPISODE_TITLES_CONTRADICT
         )
         failing = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
         seadex_dict: SeadexDict = {"RG": rg_group({skipped.url: skipped}), "Other": rg_group({failing.url: failing})}
@@ -1426,7 +1430,7 @@ class TestPlacementSkips:
 
         pipeline.grab_and_cache(_grab_request(seadex_dict))
 
-        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.TITLE_REFUTED]
+        assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.EPISODE_TITLES_CONTRADICT]
 
 
 class TestGrabFailureContainment:

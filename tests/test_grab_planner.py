@@ -1663,7 +1663,7 @@ class TestTorrentLeftForAHandImport:
 
         return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
 
-    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED])
+    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT])
     def test_every_special_holding_a_torrent_file_is_in_place(self, skip_reason: SkipReason) -> None:
         arr_episodes = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
 
@@ -1671,7 +1671,7 @@ class TestTorrentLeftForAHandImport:
 
         assert item.to_grab is False
 
-    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.TITLE_REFUTED])
+    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT])
     def test_an_empty_special_marks_the_torrent_to_grab_as_an_upgrade(self, skip_reason: SkipReason) -> None:
         arr_episodes = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
 

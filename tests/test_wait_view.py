@@ -91,7 +91,7 @@ def _finished_view(
 
 
 def _make_view(logger: logging.Logger, *, poll_s: int, progress_line_interval: int = 300) -> HubWaitView:
-    view = make_wait_view(logger, poll_s=poll_s, progress_line_interval=progress_line_interval, kind=WaitKind.MONITOR)
+    view = make_wait_view(logger, poll_s=poll_s, progress_line_interval=progress_line_interval, kind=WaitKind.BLOCKING)
     assert isinstance(view, HubWaitView)
     return view
 
@@ -139,7 +139,7 @@ class TestHubWaitViewNarration:
     """The narrator's hub-event grammar, pinned through a real recording hub."""
 
     @staticmethod
-    def _view(*, progress_line_s: float = 300.0, kind: WaitKind = WaitKind.MONITOR) -> HubWaitView:
+    def _view(*, progress_line_s: float = 300.0, kind: WaitKind = WaitKind.BLOCKING) -> HubWaitView:
         return HubWaitView(_quiet_logger(), progress_line_s=progress_line_s, wants_download_progress=True, kind=kind)
 
     def test_first_update_opens_starts_and_progresses_exactly_once(self) -> None:
@@ -152,9 +152,9 @@ class TestHubWaitViewNarration:
 
         assert [type(e) for e in recording.events] == [ScopeOpened, WaitStarted, WaitProgress]
         (opened,) = recording.of_type(ScopeOpened)
-        assert opened.scope.kind is ScopeKind.WAIT_REGION
+        assert opened.scope.kind is ScopeKind.WAIT
         (started,) = recording.of_type(WaitStarted)
-        assert started == WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=opened.scope)
+        assert started == WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=opened.scope)
         assert recording.of_type(WaitProgress) == [WaitProgress(snapshot=first, scope=opened.scope)]
 
         # Later updates never re-open. The total stays the FIRST snapshot's.
@@ -211,7 +211,7 @@ class TestHubWaitViewNarration:
         row = _finished_view(
             "h1",
             "A",
-            Outcome.UNMATCHED,
+            Outcome.NOTHING_PLACED,
             elapsed=15.0,
             left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"),
         )
@@ -220,7 +220,7 @@ class TestHubWaitViewNarration:
 
         (row_finished,) = recording.of_type(RowFinished)
         assert row_finished.left_for_hand_import.names == ("a.mkv", "b.mkv")
-        assert row_finished.outcome is Outcome.UNMATCHED
+        assert row_finished.outcome is Outcome.NOTHING_PLACED
 
     def test_rows_finished_at_the_first_snapshot_finish_after_the_start(self) -> None:
         # A documented divergence, pinned deliberately: the old views
@@ -259,7 +259,7 @@ class TestHubWaitViewNarration:
                 failed=1,
                 elapsed_s=200.0,
                 in_progress=1,
-                kind=WaitKind.MONITOR,
+                kind=WaitKind.BLOCKING,
                 scope=opened.scope,
             ),
         ]
@@ -293,7 +293,7 @@ class TestHubWaitViewNarration:
         (opened,) = recording.of_type(ScopeOpened)
         assert recording.of_type(WaitFinished) == [
             WaitFinished(
-                imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.MONITOR, scope=opened.scope
+                imported=0, left=0, failed=0, elapsed_s=42.0, in_progress=0, kind=WaitKind.BLOCKING, scope=opened.scope
             ),
         ]
         assert len(recording.of_type(ScopeClosed)) == 1
@@ -315,7 +315,7 @@ class TestHubWaitViewNarration:
     def test_interrupted_finish_still_closes_the_scope(self) -> None:
         # A KeyboardInterrupt inside finish's synchronous dispatch propagates
         # (never swallowed), but the wait scope still closes on the way out
-        # (the finally), so WAIT_REGION can't leak open behind the unwind.
+        # (the finally), so the WAIT scope can't leak open behind the unwind.
         recording = RecordingHub()
         install_hub(recording.hub)
         real_emit = recording.hub.emit
@@ -374,7 +374,7 @@ def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch)
     logger.setLevel(logging.DEBUG)
     capture = CaptureHandler()
     logger.addHandler(capture)
-    view = HubWaitView(logger, progress_line_s=300.0, wants_download_progress=True, kind=WaitKind.MONITOR)
+    view = HubWaitView(logger, progress_line_s=300.0, wants_download_progress=True, kind=WaitKind.BLOCKING)
 
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))  # open+start+progress: the 3 allowed
     view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=35))  # progress raises -> swallowed
@@ -429,7 +429,7 @@ def test_every_outcome_word_fits_the_state_column() -> None:
 def test_outcome_dropped_is_exactly_imported_and_missing() -> None:
     # Pins the word<->drop parity the wait pass relies on (`apply_outcome` drops on
     # the same two outcomes), so a displayed word can never diverge from the store mutation.
-    assert {o for o in Outcome if o.dropped} == {Outcome.IMPORTED, Outcome.MISSING}
+    assert {o for o in Outcome if o.dropped} == {Outcome.IMPORTED, Outcome.GONE}
 
 
 def test_outcome_glyph_falls_back_to_ascii() -> None:

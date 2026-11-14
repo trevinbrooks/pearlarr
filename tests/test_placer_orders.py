@@ -483,9 +483,9 @@ class TestInterleavedSpecialByOrder:
 
         result = self._contradicted(no_first)
 
-        assert by_name(merged_of(result))[self._RUN[0]] == ((), PlacementVerdict.TITLE_REFUTED)
+        assert by_name(merged_of(result))[self._RUN[0]] == ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT)
         assert by_name(merged_of(result))[self._RUN[1]] == ((), PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW)
-        assert result.seen_by(0, {0}).hand_import_verdict is PlacementVerdict.TITLE_REFUTED
+        assert result.seen_by(0, {0}).hand_import_verdict is PlacementVerdict.EPISODE_TITLES_CONTRADICT
 
     def test_two_orders_placing_the_members_apart_leave_them_until_the_listing_picks_one(self) -> None:
         # The second order leaves the special out and runs on into the next season: "S01E03" is the aired third
@@ -585,8 +585,8 @@ class TestInterleavedSpecialByOrder:
         result = self._place_short(_order((1, 1, 9001), (1, 2, 602), (1, 3, 9002)))
 
         assert by_name(result) == {
-            self._RUN[0]: ((), PlacementVerdict.TITLE_REFUTED),
-            self._RUN[1]: ((), PlacementVerdict.TITLE_REFUTED),
+            self._RUN[0]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
+            self._RUN[1]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
             self._LANTERN: ((), PlacementVerdict.NO_EPISODE_FOUND),
         }
 

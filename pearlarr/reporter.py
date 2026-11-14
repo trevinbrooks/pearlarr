@@ -50,7 +50,7 @@ from .wait_types import ImportWaitMode, PendingImportState
 _TIP_PRECEDENCE: tuple[NeedsActionCause, ...] = (
     NeedsActionCause.PRIVATE_ONLY,
     NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
-    NeedsActionCause.PRIVATE_ONLY_STALE,
+    NeedsActionCause.PRIVATE_ONLY_OUTDATED,
 )
 
 
@@ -206,7 +206,7 @@ class RunReporter:
         # The stored name wins: a prior run resolved it, so no lookup is needed.
         cached = self.cache_store.get_cached_title(state.arr, al_id)
         title = self._display_title(state, al_id, cached.name if cached is not None else None)
-        self._titled_row(TitleState.SKIPPED, title)
+        self._titled_row(TitleState.NOT_CHECKED, title)
         # Scope-free (the titled row closed the title scope): the reason goes in col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
 
@@ -274,7 +274,7 @@ class RunReporter:
 
     # GONE and ERRORED have no title-row vocabulary, so they render nothing inline.
     _TITLE_STATE_FOR_PENDING_IMPORT: ClassVar[dict[PendingImportState, TitleState]] = {
-        PendingImportState.DOWNLOADING: TitleState.QUEUED,
+        PendingImportState.DOWNLOADING: TitleState.DOWNLOADING,
         PendingImportState.DOWNLOADED: TitleState.DOWNLOADED,
         PendingImportState.IMPORTED: TitleState.IMPORTED,
     }
@@ -338,11 +338,11 @@ class RunReporter:
 
         # `added` first, so a dry run says "would add" only for a title it would grab something for.
         if not added:
-            status = GrabStatus.ALREADY_DOWNLOADING
+            status = GrabStatus.ALREADY_IN_QBIT
         elif dry_run:
-            status = GrabStatus.WOULD_ADD
+            status = GrabStatus.WOULD_GRAB
         else:
-            status = GrabStatus.ADDING
+            status = GrabStatus.GRABBING
 
         # Tag is a StrEnum, so sorting is by value.
         groups = tuple(
@@ -355,7 +355,7 @@ class RunReporter:
             GrabAction(
                 status=status,
                 groups=groups,
-                added=tuple(added),
+                grabbed=tuple(added),
                 in_qbit=tuple(downloading),
                 waiting_to_import=waiting_to_import,
             ),
@@ -396,7 +396,7 @@ class RunReporter:
                 summary=ArrRunSummary(
                     arr=state.arr,
                     dry_run_note=dry_run_note,
-                    added_count=state.torrents_added,
+                    grabbed_count=state.torrents_added,
                     tally=tally,
                     wait_mode_on=state.import_wait_mode is not ImportWaitMode.OFF,
                     warnings=since.warning,

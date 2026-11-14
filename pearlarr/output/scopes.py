@@ -214,7 +214,7 @@ class StepScope(_ScopeBase):
 class TitleScope(_ScopeBase):
     """One title block, opened with its header."""
 
-    _KIND_WORD: ClassVar[str] = "entry"
+    _KIND_WORD: ClassVar[str] = "title"
 
     def __init__(self, emit: Emit, scope: ScopeId, header: TitleHeader) -> None:
         super().__init__(emit, header.title, scope)
@@ -298,9 +298,7 @@ class ScopeFactory:
         return StepScope(self._emit, self._ids.mint(ScopeKind.BOOT_STEP), label, self._clock)
 
     def title(self, header: TitleHeader) -> TitleScope:
-        return TitleScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
+        return TitleScope(self._emit, self._ids.mint(ScopeKind.TITLE), header)
 
     def wait(self, total: int, *, progress_line_s: float, kind: WaitKind) -> WaitScope:
-        return WaitScope(
-            self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, progress_line_s=progress_line_s, kind=kind
-        )
+        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT), total, progress_line_s=progress_line_s, kind=kind)

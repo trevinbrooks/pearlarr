@@ -5,7 +5,7 @@
 """Tests for the shared text grammar + text renderers (`output.line_renderers`).
 
 Golden-pin the `ts LEVEL [where] message k=v` grammar (the file-log contract),
-the quoting/escape rules, scope path labels + the advisory during=/placed=frontier
+the quoting/escape rules, scope path labels + the advisory during=
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
 the throttled "still waiting" progress line, dated-backup rotation + retention pruning +
 append-after-close, the open scopes advancing in a finally, and the one-object-per-event json shape
@@ -101,8 +101,8 @@ _WHEN = datetime.fromtimestamp(_EPOCH)
 _TS = _WHEN.strftime("%Y-%m-%d %H:%M:%S")
 
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 1)
-_TITLE_SCOPE = ScopeId(ScopeKind.ENTRY, 2)
-_WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
+_TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 2)
+_WAIT = ScopeId(ScopeKind.WAIT, 3)
 
 
 def _format(event: Event, *events_before: Event) -> str | None:
@@ -166,7 +166,7 @@ def test_boot_step_finished_line_keeps_the_step_path() -> None:
     )
     line = _format(
         finished,
-        ScopeOpened(scope=ScopeId(ScopeKind.BOOT_SECTION, 9), label="boot"),
+        ScopeOpened(scope=ScopeId(ScopeKind.BOOT, 9), label="boot"),
         BootStepStarted(scope=_STEP, label="Reading config"),
     )
     assert line == f"{_TS} INFO [boot › Reading config] done outcome=ok elapsed_s=0.02"
@@ -190,7 +190,7 @@ def test_warned_boot_step_stays_info_with_the_warn_on_the_outcome_field() -> Non
 def test_boot_step_slow_heads_up_line() -> None:
     line = _format(
         BootStepSlow(scope=_STEP, label="Refreshing mappings"),
-        ScopeOpened(scope=ScopeId(ScopeKind.BOOT_SECTION, 9), label="boot"),
+        ScopeOpened(scope=ScopeId(ScopeKind.BOOT, 9), label="boot"),
         BootStepStarted(scope=_STEP, label="Refreshing mappings"),
     )
     assert line == f"{_TS} INFO [boot › Refreshing mappings] in progress"
@@ -199,7 +199,7 @@ def test_boot_step_slow_heads_up_line() -> None:
 def test_scan_and_item_lines() -> None:
     assert _format(ScanStarted(arr=Arr.SONARR, total=182)) == (f"{_TS} INFO [scan] starting arr=sonarr total=182")
     assert _format(ItemStarted(arr=Arr.SONARR, index=3, total=182, title="Frieren")) == (
-        f"{_TS} INFO [scan] item arr=sonarr index=3 total=182 title=Frieren"
+        f"{_TS} INFO [scan] item arr=sonarr index=3 total=182 name=Frieren"
     )
 
 
@@ -215,24 +215,24 @@ def test_title_header_line_reads_the_full_scope_path() -> None:
     )
     line = _format(header, *_open_title_scope_events())
     assert line == (
-        f"{_TS} INFO [sonarr › [3/182] Frieren › entry] checking "
-        f'title="Frieren: Beyond Journey\'s End" al_id=154587 files="S01 E01-E28" '
+        f"{_TS} INFO [sonarr › [3/182] Frieren › title] checking "
+        f'title="Frieren: Beyond Journey\'s End" al_id=154587 coverage="S01 E01-E28" '
         f"link=https://releases.moe/154587 incomplete=true"
     )
 
 
 def test_grab_action_line_joins_groups_and_names_the_qbittorrent_side() -> None:
     action = GrabAction(
-        status=GrabStatus.ADDING,
+        status=GrabStatus.GRABBING,
         groups=(GroupLabel("SubsPlease", ("dual audio",)), GroupLabel("Kowo")),
-        added=(ReleaseLabel("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
+        grabbed=(ReleaseLabel("[SubsPlease] Sousou no Frieren", "SubsPlease"),),
         in_qbit=(ReleaseLabel("", "Kowo"),),
         scope=_TITLE_SCOPE,
     )
     line = _format(action, *_open_title_scope_events())
     assert line == (
-        f"{_TS} INFO [sonarr › [3/182] Frieren › entry] adding recommended release "
-        f'groups="SubsPlease [dual audio]; Kowo" added="[SubsPlease] Sousou no Frieren" downloading=Kowo'
+        f"{_TS} INFO [sonarr › [3/182] Frieren › title] adding recommended release "
+        f'groups="SubsPlease [dual audio]; Kowo" grabbed="[SubsPlease] Sousou no Frieren" in_qbittorrent=Kowo'
     )
 
 
@@ -247,8 +247,8 @@ def test_release_skipped_line_carries_its_counts() -> None:
     )
     line = _format(skipped, *_open_title_scope_events())
     assert line == (
-        f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] release skipped "
-        "group=G tracker=Nyaa reason=placed_elsewhere elsewhere=12 unplaced=0 link=https://x"
+        f"{_TS} WARNING [sonarr › [3/182] Frieren › title] release skipped "
+        "group=G tracker=Nyaa reason=placed_elsewhere another_titles=12 unplaced=0 link=https://x"
     )
 
 
@@ -256,7 +256,7 @@ def test_grab_failed_line_escapes_embedded_quotes() -> None:
     failed = GrabFailed(group="G", url="https://x", error='tracker said "denied"', scope=_TITLE_SCOPE)
     line = _format(failed, *_open_title_scope_events())
     assert line == (
-        f"{_TS} WARNING [sonarr › [3/182] Frieren › entry] grab failed "
+        f"{_TS} WARNING [sonarr › [3/182] Frieren › title] grab failed "
         f'group=G link=https://x error="tracker said \\"denied\\""'
     )
 
@@ -267,13 +267,13 @@ def test_multi_line_messages_and_field_values_stay_one_line() -> None:
 
     failed = GrabFailed(group="G", url="u", error='said "no"\r\nthen hung up')
     assert _format(failed) == (
-        f'{_TS} WARNING [entry] grab failed group=G link=u error="said \\"no\\"\\r\\nthen hung up"'
+        f'{_TS} WARNING [title] grab failed group=G link=u error="said \\"no\\"\\r\\nthen hung up"'
     )
 
 
 @pytest.mark.parametrize(
     ("kind", "words"),
-    [(WaitKind.MONITOR, "waiting kind=monitor"), (WaitKind.CHECK, "checking kind=check")],
+    [(WaitKind.BLOCKING, "waiting wait_pass=blocking"), (WaitKind.DEFERRED, "checking wait_pass=deferred")],
 )
 def test_wait_start_lines_word_and_mark_the_pass_kind(kind: WaitKind, words: str) -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
@@ -292,7 +292,7 @@ def test_outcome_lines_carry_the_wait_scope_path() -> None:
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
-        f'{_TS} WARNING [sonarr › wait] timed out title="Sousou no Frieren" waited_s=600.00'
+        f'{_TS} WARNING [sonarr › wait] timed out torrent="Sousou no Frieren" waited_s=600.00'
     )
 
 
@@ -301,14 +301,14 @@ def test_unmatched_outcome_line_names_the_files() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
     row_finished = RowFinished(
         label="Demo Batch",
-        outcome=Outcome.UNMATCHED,
+        outcome=Outcome.NOTHING_PLACED,
         files=None,
         waited_s=15.0,
         left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"),
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
-        f'{_TS} WARNING [sonarr › wait] unmatched title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
+        f'{_TS} WARNING [sonarr › wait] unmatched torrent="Demo Batch" hand_import_files="a.mkv; b.mkv" waited_s=15.00'
     )
 
 
@@ -323,7 +323,7 @@ def test_partial_outcome_line_names_the_files_left_for_a_hand_import() -> None:
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
-        f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" unmatched_files="a.mkv; b.mkv" waited_s=15.00'
+        f'{_TS} WARNING [sonarr › wait] partial torrent="Demo Batch" hand_import_files="a.mkv; b.mkv" waited_s=15.00'
     )
 
 
@@ -338,10 +338,10 @@ def test_order_only_outcome_line_says_why_and_keys_each_file() -> None:
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
-        f'{_TS} WARNING [sonarr › wait] partial title="Demo Batch" '
+        f'{_TS} WARNING [sonarr › wait] partial torrent="Demo Batch" '
         'detail="S04 E01 is still missing in Sonarr. This pack is numbered by the DVD order, and 2 of its files are '
         "DVD episodes that aren't in Sonarr's list, so Pearlarr can't tell where they belong.\" "
-        'unmatched_files="DVD S07E01: [grp] Show Ending S1 - 01 [ABCD1234].mkv; '
+        'hand_import_files="DVD S07E01: [grp] Show Ending S1 - 01 [ABCD1234].mkv; '
         'DVD S07E02: [grp] Show Ending S1 - 02 [ABCD1234].mkv" waited_s=15.00'
     )
 
@@ -354,12 +354,12 @@ def test_ambient_diagnostic_admits_its_position_guess() -> None:
     )
     line = _format(
         diag,
-        ScopeOpened(scope=ScopeId(ScopeKind.BOOT_SECTION, 9), label="boot"),
+        ScopeOpened(scope=ScopeId(ScopeKind.BOOT, 9), label="boot"),
         BootStepStarted(scope=_STEP, label="Reading config"),
     )
     assert line == (
         f"{_TS} WARNING [config] Config file /x/config.yml is readable by other users - "
-        f'chmod 600 /x/config.yml during="Reading config" placed=frontier'
+        f'chmod 600 /x/config.yml during="Reading config"'
     )
 
 
@@ -371,12 +371,12 @@ def test_top_level_diagnostic_has_no_during_tail() -> None:
 def test_handle_demoted_diagnostic_never_claims_a_place_under_the_open_scopes() -> None:
     diag = Diagnostic(
         severity=Severity.INFO,
-        message="x [after entry 'T' closed]",
-        origin="output.late.entry",
+        message="x [after title 'T' closed]",
+        origin="output.late.title",
         placed_by=PlacedBy.HANDLE,
     )
     line = _format(diag, *_open_title_scope_events())
-    assert line == f"{_TS} INFO [output.late.entry] x [after entry 'T' closed]"
+    assert line == f"{_TS} INFO [output.late.title] x [after title 'T' closed]"
 
 
 def test_diagnostic_trace_appends_the_full_plain_traceback() -> None:
@@ -411,7 +411,7 @@ def test_pure_boundaries_and_ephemerals_have_no_text_form() -> None:
 def _summary_ready() -> ArrRunSummaryReady:
     stats = ArrRunStats(checked=182, up_to_date=161, unchanged=14)
     stats.downloading = 1
-    stats.added.append(
+    stats.grabbed.append(
         GrabbedRow(
             title="Frieren: Beyond Journey's End",
             coverage="S01 E01-E28",
@@ -434,7 +434,7 @@ def _summary_ready() -> ArrRunSummaryReady:
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
-            added_count=1,
+            grabbed_count=1,
             tally=ArrRunTally.from_stats(stats),
             wait_mode_on=True,
             warnings=2,
@@ -452,7 +452,7 @@ def _quiet_summary_ready() -> ArrRunSummaryReady:
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
-            added_count=0,
+            grabbed_count=0,
             tally=ArrRunTally.from_stats(ArrRunStats()),
             wait_mode_on=False,
             warnings=0,
@@ -468,15 +468,15 @@ def test_summary_renders_one_head_line_plus_one_line_per_row() -> None:
     assert text == "\n".join(
         [
             (
-                f"{_TS} INFO [summary] run complete arr=sonarr checked=182 needs_action=1 added=1 "
-                f"queued=1 up_to_date=161 cached=14 warnings=2 errors=0 elapsed_s=401.00 tip=private_only"
+                f"{_TS} INFO [summary] run complete arr=sonarr checked=182 needs_action=1 grabbed=1 "
+                f"downloading=1 up_to_date=161 unchanged=14 warnings=2 errors=0 elapsed_s=401.00 tip=private_only"
             ),
             (
                 f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
-                f'reason="private tracker" kind=private_only link=https://releases.moe/98765'
+                f'reason="private tracker" cause=private_only link=https://releases.moe/98765'
             ),
             (
-                f'{_TS} INFO [summary] added title="Frieren: Beyond Journey\'s End" files="S01 E01-E28" '
+                f'{_TS} INFO [summary] added title="Frieren: Beyond Journey\'s End" coverage="S01 E01-E28" '
                 f'group=SubsPlease torrent="[SubsPlease] Sousou no Frieren" link=https://releases.moe/154587'
             ),
         ],
@@ -501,9 +501,7 @@ def test_file_log_renderer_honors_the_configured_level_but_still_advances_the_op
     renderer.close()
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
-    assert content == (
-        f'{_TS} WARNING [anilist] late warning during="Frieren: Beyond Journey\'s End" placed=frontier\n'
-    )
+    assert content == (f'{_TS} WARNING [anilist] late warning during="Frieren: Beyond Journey\'s End"\n')
 
 
 def test_a_failed_row_finish_admits_through_a_warning_level_renderer(tmp_path: Path) -> None:
@@ -518,7 +516,7 @@ def test_a_failed_row_finish_admits_through_a_warning_level_renderer(tmp_path: P
 
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "Ok Show" not in content
-    assert f'{_TS} ERROR [wait] errored title="Bad Show" waited_s=5.00\n' in content
+    assert f'{_TS} ERROR [wait] errored torrent="Bad Show" waited_s=5.00\n' in content
 
 
 def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path) -> None:
@@ -534,7 +532,7 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
     assert lines == [
         (
             f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
-            f'reason="private tracker" kind=private_only link=https://releases.moe/98765'
+            f'reason="private tracker" cause=private_only link=https://releases.moe/98765'
         ),
     ]
 
@@ -867,7 +865,7 @@ def test_file_log_renderer_writes_utf8(tmp_path: Path) -> None:
 
 def test_wait_progress_stays_silent_below_the_progress_line_cadence() -> None:
     plain_renderer, stream = _plain_renderer()
-    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=None), _EPOCH)
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=None), _EPOCH)
     plain_renderer.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
     before = stream.getvalue()
 
@@ -883,7 +881,7 @@ def _wait_progress(elapsed: float) -> WaitProgress:
     torrents = (
         TorrentView(key="a", label="A", phase=Phase.DOWNLOADING, fraction=0.5),
         TorrentView(key="b", label="B", phase=Phase.IMPORTING),
-        TorrentView(key="c", label="C", phase=Phase.AWAITING_FIRST_POLL),
+        TorrentView(key="c", label="C", phase=Phase.NOT_POLLED),
     )
     return WaitProgress(snapshot=WaitSnapshot(torrents=torrents, elapsed_s=elapsed), scope=_WAIT)
 
@@ -893,7 +891,7 @@ def test_text_renderers_print_still_waiting_on_the_event_cadence() -> None:
     # never wall clock), and the start snapshot never prints one.
     plain_renderer, stream = _plain_renderer()
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    for event in (*context, WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT)):
+    for event in (*context, WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=_WAIT)):
         plain_renderer.handle(event, _EPOCH)
     plain_renderer.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never prints one
     plain_renderer.handle(_wait_progress(299.0), _EPOCH)  # within the interval
@@ -901,7 +899,7 @@ def test_text_renderers_print_still_waiting_on_the_event_cadence() -> None:
 
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due at progress_line_s
     assert stream.getvalue() == before + (
-        f"{_TS} INFO [sonarr › wait] still waiting downloading=1 importing=1 queued=1 elapsed_s=300.00\n"
+        f"{_TS} INFO [sonarr › wait] still waiting downloading=1 importing=1 not_polled=1 elapsed_s=300.00\n"
     )
 
 
@@ -909,11 +907,11 @@ def test_progress_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
     events: list[Event] = [
         ScanStarted(arr=Arr.SONARR, total=182),
         ScopeOpened(scope=_WAIT, label="wait"),
-        WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitStarted(total=3, progress_line_s=300.0, kind=WaitKind.BLOCKING, scope=_WAIT),
         _wait_progress(0.0),
         _wait_progress(300.0),
         _wait_progress(650.0),
-        WaitFinished(imported=1, left=0, failed=0, elapsed_s=700.0, in_progress=0, kind=WaitKind.MONITOR, scope=_WAIT),
+        WaitFinished(imported=1, left=0, failed=0, elapsed_s=700.0, in_progress=0, kind=WaitKind.BLOCKING, scope=_WAIT),
     ]
     plain_renderer, stream = _plain_renderer()
     file_log_renderer = FileLogRenderer(str(tmp_path))
@@ -929,12 +927,12 @@ def test_progress_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
 
 def test_a_new_wait_pass_restarts_the_progress_line_skip_first() -> None:
     plain_renderer, stream = _plain_renderer()
-    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING), _EPOCH)
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot prints nothing
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due
 
     plain_renderer.handle(
-        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH
+        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING), _EPOCH
     )  # a second pass this run
     plain_renderer.handle(_wait_progress(900.0), _EPOCH)  # skip-first again
     plain_renderer.handle(_wait_progress(900.0), _EPOCH)  # due again
@@ -944,7 +942,7 @@ def test_a_new_wait_pass_restarts_the_progress_line_skip_first() -> None:
 
 def test_begin_run_stops_the_progress_line_until_the_next_wait_pass() -> None:
     plain_renderer, stream = _plain_renderer()
-    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING), _EPOCH)
     plain_renderer.begin_run()
 
     plain_renderer.handle(_wait_progress(10_000.0), _EPOCH)
@@ -957,7 +955,7 @@ def test_progress_lines_drop_below_a_raised_threshold_but_the_cadence_advances()
     # throttle state advances regardless of level (the ProgressLineThrottle contract).
     plain_renderer, stream = _plain_renderer()
     plain_renderer.set_level(logging.WARNING)
-    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR), _EPOCH)
+    plain_renderer.handle(WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING), _EPOCH)
     plain_renderer.handle(_wait_progress(0.0), _EPOCH)
     plain_renderer.handle(_wait_progress(300.0), _EPOCH)  # due, but INFO drops at WARNING
     assert stream.getvalue() == ""
@@ -995,7 +993,7 @@ def test_the_open_scopes_advance_even_when_the_write_blows_up() -> None:
 
     stream.armed = False
     renderer.handle(Diagnostic(severity=Severity.WARNING, message="late", origin="app"), _EPOCH)
-    assert stream.getvalue() == (f'{_TS} WARNING [app] late during="Frieren: Beyond Journey\'s End" placed=frontier\n')
+    assert stream.getvalue() == (f'{_TS} WARNING [app] late during="Frieren: Beyond Journey\'s End"\n')
 
 
 # --- the json renderer ------------------------------------------------------------------
@@ -1018,7 +1016,7 @@ def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
     (payload,) = _json_lines([PearlarrStarted(version="v1.0.0", data_dir="/data")])
     assert list(payload) == ["schema_version", "time", "event", "level", "message", "component", "version", "data_dir"]
     assert payload["schema_version"] == 1
-    assert payload["event"] == "run_started"
+    assert payload["event"] == "pearlarr_started"
     assert payload["level"] == "INFO"
     assert payload["message"] == "Pearlarr started"
     assert payload["component"] == "run"
@@ -1053,13 +1051,12 @@ def test_json_diagnostic_shape_with_position_and_trace() -> None:
         "component",
         "origin",
         "during",
-        "placed",
         "exc",
     ]
     assert diag["level"] == "WARNING"
     assert diag["origin"] == "anilist"
     assert diag["component"] == "anilist"  # a Diagnostic's component equals its origin
-    assert diag["placed"] == "frontier"
+    assert "placed" not in diag
     exc_text = diag["exc"]
     assert isinstance(exc_text, str)
     assert "ValueError" in exc_text
@@ -1074,27 +1071,45 @@ def test_json_includes_scope_boundaries_but_not_ephemerals() -> None:
         ArrRunFinished(arr=Arr.SONARR),
     ]
     payloads = _json_lines(events)
-    assert [p["event"] for p in payloads] == ["scope_opened", "scope_closed", "run_finished"]
-    assert payloads[0]["kind"] == "entry"
+    assert [p["event"] for p in payloads] == ["scope_opened", "scope_closed", "arr_run_finished"]
+    assert payloads[0]["kind"] == "title"
     assert payloads[0]["label"] == "Frieren"
 
 
 def test_json_summary_carries_nested_record_arrays() -> None:
     (payload,) = _json_lines([_summary_ready()])
-    assert payload["event"] == "run_summary"
+    assert payload["event"] == "arr_run_summary"
     assert payload["checked"] == 182
     needs = payload["needs_action_records"]
     assert is_json_list(needs)
     first_need = needs[0]
     assert is_json_obj(first_need)
-    assert first_need["kind"] == "private_only"
+    assert first_need["cause"] == "private_only"
     assert first_need["reason"] == "private tracker"
-    added = payload["added_records"]
+    added = payload["grabbed_records"]
     assert is_json_list(added)
     first_added = added[0]
     assert is_json_obj(first_added)
     assert first_added["group"] == "SubsPlease"
     assert first_added["torrent"] == "[SubsPlease] Sousou no Frieren"
+
+
+def test_json_wait_pass_values_are_blocking_and_deferred() -> None:
+    payloads = _json_lines([WaitStarted(total=1, progress_line_s=300.0, kind=kind) for kind in WaitKind])
+    assert [payload["wait_pass"] for payload in payloads] == ["blocking", "deferred"]
+
+
+def test_json_release_skipped_reasons_are_the_skip_reason_names() -> None:
+    payloads = _json_lines([ReleaseSkipped(group="G", tracker="Nyaa", reason=reason) for reason in SkipReason])
+    assert [payload["reason"] for payload in payloads] == [
+        "private_only",
+        "unsupported_tracker",
+        "tracker_not_selected",
+        "misnumbered",
+        "episode_titles_contradict",
+        "placed_elsewhere",
+        "placement_input_unread",
+    ]
 
 
 def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> None:
@@ -1107,7 +1122,7 @@ def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> Non
         ArrRunSummary(
             arr=Arr.SONARR,
             dry_run_note=None,
-            added_count=1,
+            grabbed_count=1,
             tally=ArrRunTally.from_stats(stats),
             wait_mode_on=False,
             warnings=0,
@@ -1127,8 +1142,8 @@ def test_json_events_in_a_scope_carry_their_scope_path() -> None:
     ]
     payloads = _json_lines(events)
     header = payloads[-1]
-    assert header["event"] == "entry_header"
-    assert header["path"] == "sonarr › [3/182] Frieren › entry"
+    assert header["event"] == "title_header"
+    assert header["path"] == "sonarr › [3/182] Frieren › title"
 
 
 def _exemplars() -> list[Event]:
@@ -1162,14 +1177,14 @@ def _exemplars() -> list[Event]:
         TitleRow(state=TitleState.IGNORED, label="AniList #1"),
         ReleaseSkipped(group="G", tracker="AB", reason=SkipReason.PRIVATE_ONLY),
         GrabFailed(group="G", url="u", error="e"),
-        GrabAction(status=GrabStatus.ADDING, groups=(), added=(), in_qbit=()),
+        GrabAction(status=GrabStatus.GRABBING, groups=(), grabbed=(), in_qbit=()),
         CapReached(cap=25),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
-        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.MONITOR),
+        WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         RowFinished(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
-        WaitFinished(imported=1, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.MONITOR),
+        WaitFinished(imported=1, left=0, failed=0, elapsed_s=1.0, in_progress=0, kind=WaitKind.BLOCKING),
         ArrRunFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
         PathsShown(
@@ -1212,7 +1227,7 @@ def test_a_newline_in_a_scope_label_cannot_break_the_line_grammar() -> None:
     context = (
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="evil\ntitle"),
-        ScopeOpened(scope=_TITLE_SCOPE, label="entry"),
+        ScopeOpened(scope=_TITLE_SCOPE, label="title"),
     )
     detail = TitleDetail(label="files", value=StyledValue("S01"), scope=_TITLE_SCOPE)
     line = _format(detail, *context)
@@ -1233,7 +1248,7 @@ _JSON_ENVELOPE_KEYS = frozenset(
         "path",
         "exc",
         "needs_action_records",
-        "added_records",
+        "grabbed_records",
     }
 )
 
@@ -1268,7 +1283,7 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
                     case _:
                         offenders.append(f"unrecognized Field key expression at line {node.lineno}")
             case ast.Tuple(elts=[ast.Constant(value=str(key)), _]):
-                # ("queued", tally.queued)-style pairs feeding the Field loops.
+                # ("downloading", tally.downloading)-style pairs feeding the Field loops.
                 keys.append(key)
             case _:
                 pass
@@ -1345,7 +1360,7 @@ def test_json_summary_admission_is_data_dependent_at_a_warning_threshold() -> No
     renderer = JsonRenderer(stream)
     renderer.set_level(logging.WARNING)
     renderer.handle(_summary_ready(), _EPOCH)
-    assert "run_summary" in stream.getvalue()  # needs-action content admits
+    assert "arr_run_summary" in stream.getvalue()  # needs-action content admits
 
     quiet = io.StringIO()
     quiet_renderer = JsonRenderer(quiet)

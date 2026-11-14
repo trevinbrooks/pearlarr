@@ -321,10 +321,13 @@ class OutcomeKind(Enum):
 
 
 class Outcome(Enum):
-    """A pending import's outcome in the wait pass, with its rendering vocab."""
+    """A pending import's outcome in the wait pass, with its rendering vocab.
+
+    A member's name is the webhook's `outcome` value.
+    """
 
     IMPORTED = ("imported", "imported", OutcomeKind.IMPORTED, True)
-    MISSING = ("gone", "gone from qBittorrent; title checked again next run", OutcomeKind.FAILED, True)
+    GONE = ("gone", "gone from qBittorrent; title checked again next run", OutcomeKind.FAILED, True)
     DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeKind.FAILED, False)
     DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeKind.LEFT, False)
     NO_CONTENT_PATH = (
@@ -336,7 +339,7 @@ class Outcome(Enum):
     STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeKind.LEFT, False)
     SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeKind.LEFT, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeKind.LEFT, False)
-    UNMATCHED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeKind.LEFT, False)
+    NOTHING_PLACED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeKind.LEFT, False)
     PARTIAL = (
         "partial",
         "imported in part; import the held-back files by hand in Sonarr",
@@ -344,7 +347,12 @@ class Outcome(Enum):
         False,
     )
     ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeKind.LEFT, False)
-    NOT_CHECKED = ("not checked", "qBittorrent unreachable; checked again next run", OutcomeKind.LEFT, False)
+    QBITTORRENT_UNREACHABLE = (
+        "not checked",
+        "qBittorrent unreachable; checked again next run",
+        OutcomeKind.LEFT,
+        False,
+    )
     IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeKind.IN_PROGRESS, False)
     AWAITING_IMPORT = ("awaiting", "awaiting import; checked again next run", OutcomeKind.IN_PROGRESS, False)
     STILL_DOWNLOADING = ("downloading", "still downloading; checked again next run", OutcomeKind.IN_PROGRESS, False)
@@ -360,7 +368,7 @@ class Outcome(Enum):
 
     dropped: bool
     """Whether the wait pass removes the pending import from the store on this outcome.
-    True for `IMPORTED` (every episode done) and `MISSING` (gone from qBittorrent)."""
+    True for `IMPORTED` (every episode done) and `GONE` (gone from qBittorrent)."""
 
     def __init__(
         self,
@@ -386,18 +394,18 @@ class Outcome(Enum):
         return self.kind.glyph_for(use_unicode=use_unicode)
 
 
-# Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, MISSING) leave the store,
+# Each non-dropped Outcome's tally bucket. Dropped outcomes (IMPORTED, GONE) leave the store,
 # so a wait pass notes every pending import it keeps stored through exactly this table.
 PENDING_IMPORT_STATE_FOR_OUTCOME: dict[Outcome, PendingImportState] = {
     Outcome.STILL_DOWNLOADING: PendingImportState.DOWNLOADING,
     Outcome.DOWNLOAD_TIMED_OUT: PendingImportState.DOWNLOADING,
-    Outcome.NOT_CHECKED: PendingImportState.DOWNLOADING,
+    Outcome.QBITTORRENT_UNREACHABLE: PendingImportState.DOWNLOADING,
     Outcome.AWAITING_IMPORT: PendingImportState.DOWNLOADED,
     Outcome.IMPORT_IN_PROGRESS: PendingImportState.DOWNLOADED,
     Outcome.STILL_IMPORTING: PendingImportState.DOWNLOADED,
     Outcome.SONARR_BUSY: PendingImportState.DOWNLOADED,
     Outcome.NOT_READY: PendingImportState.DOWNLOADED,
-    Outcome.UNMATCHED: PendingImportState.DOWNLOADED,
+    Outcome.NOTHING_PLACED: PendingImportState.DOWNLOADED,
     Outcome.PARTIAL: PendingImportState.DOWNLOADED,
     Outcome.ATTEMPT_FAILED: PendingImportState.DOWNLOADED,
     Outcome.NO_CONTENT_PATH: PendingImportState.DOWNLOADED,

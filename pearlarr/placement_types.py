@@ -190,7 +190,7 @@ class PlacementVerdict(StrEnum):
     """A file whose own numbers disagree, or whose number no title confirms, that no sequence places. Or a file of
     a batch of specials whose numbers don't match the titles listing it, when its special aliases can't place it
     either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
-    TITLE_REFUTED = "refuted by its run's titles"
+    EPISODE_TITLES_CONTRADICT = "refuted by its run's titles"
     """A plain member of a numbered sequence whose members carrying titles contradict the sequence's numbers, when
     nothing else placed it. A provisional verdict: another window may still place it. Left for a hand import when
     none does."""
@@ -358,8 +358,8 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         # and ALIAS_OUTSIDE_WINDOW beats OUTSIDE_WINDOW because the aliases name the file as this series' special.
         # ORDER_ONLY beats NO_EPISODE_FOUND, so a file one window's order reads as no episode of Sonarr's stays a hand
         # import where another window found no episode for it, and a window that proves it a duplicate still wins.
-        # OTHER_ORDER_OUTSIDE_WINDOW and TITLE_REFUTED are highest, so a file whose numbers a window rejected or a
-        # title contradicted stays a hand import.
+        # OTHER_ORDER_OUTSIDE_WINDOW and EPISODE_TITLES_CONTRADICT are highest, so a file whose numbers a window
+        # rejected or a title contradicted stays a hand import.
         PlacementVerdict.EXTRA: _Provisional(leaves=_Leaves.EXCLUDED, rank=0),
         PlacementVerdict.OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.EXCLUDED, rank=1, other_order_may_place=True),
         PlacementVerdict.ALIAS_OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.STAYS, rank=2, from_alias=True),
@@ -367,7 +367,9 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         PlacementVerdict.ORDER_ONLY: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=4),
         PlacementVerdict.DUPLICATE: _Provisional(leaves=_Leaves.EXCLUDED, rank=5),
         PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=6),
-        PlacementVerdict.TITLE_REFUTED: _Provisional(leaves=_Leaves.HAND_IMPORT, rank=7, other_order_may_place=True),
+        PlacementVerdict.EPISODE_TITLES_CONTRADICT: _Provisional(
+            leaves=_Leaves.HAND_IMPORT, rank=7, other_order_may_place=True
+        ),
         PlacementVerdict.ANOTHER_TITLES: _AfterMerge(_Leaves.EXCLUDED),
     }
 )

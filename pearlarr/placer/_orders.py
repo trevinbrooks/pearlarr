@@ -172,7 +172,7 @@ def _place_season_episode_files(state: PlacerState) -> None:
             continue
         if not any(file in fit.episodes_by_file for fit in placing_fits):
             continue
-        if ids == file.parsed_episodes.ids and file.verdict is not PlacementVerdict.TITLE_REFUTED:
+        if ids == file.parsed_episodes.ids and file.verdict is not PlacementVerdict.EPISODE_TITLES_CONTRADICT:
             continue
         if all(state.target.admits(ep_id) and ep_id not in state.used for ep_id in ids):
             state.place(file, ids, PlacementVerdict.OTHER_ORDER)

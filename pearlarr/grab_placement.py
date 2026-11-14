@@ -64,8 +64,9 @@ class ListedFile:
     """The listed size, carried onto the episodes the planner compares by size."""
 
     parse: ParsedFileInfo | None
-    """Sonarr's parse of the name, or None when no fresh parse cache row exists. An unknown parse keeps the name
-    number passes from placing, and skips the release while it has a file left to place (`SkipReason.INPUT_UNREAD`)."""
+    """Sonarr's parse of the name, or None when no fresh parse cache row exists. An unknown parse keeps the name number
+    passes from placing, and skips the release while it has a file left to place
+    (`SkipReason.PLACEMENT_INPUT_UNREAD`)."""
 
     name: str = field(init=False, repr=False, compare=False)
     """The normalized file name (`normalize_file_name` of its `file_name`): what the batch, the sizes and the stored file
@@ -386,7 +387,7 @@ def _skip_reason_of(
     Four inputs, since their order is the rule. `misnumbered`: a file of the grabbing title's window is misnumbered
     (`TitleView.misnumbered`). `unread`: a read the placement needs failed. `hand_import_verdict`: the hand-import
     verdict the grabbing title's window gave a file no window placed (`TitleView.hand_import_verdict`), when nothing
-    of the whole file map lands on the title. A file episode titles contradict skips the release as `TITLE_REFUTED`,
+    of the whole file map lands on the title. A file episode titles contradict skips the release as `EPISODE_TITLES_CONTRADICT`,
     and a file another TVDB order reads outside every listed title as `MISNUMBERED`. It outranks `another_titles`,
     since a file the grabbing title's window left for a hand import is that title's hand import, and saying it's
     another title's would be wrong. `another_titles`: nothing of the whole file map lands on the title, and some file
@@ -396,9 +397,9 @@ def _skip_reason_of(
     if misnumbered:
         return SkipReason.MISNUMBERED
     if unread:
-        return SkipReason.INPUT_UNREAD
-    if hand_import_verdict is PlacementVerdict.TITLE_REFUTED:
-        return SkipReason.TITLE_REFUTED
+        return SkipReason.PLACEMENT_INPUT_UNREAD
+    if hand_import_verdict is PlacementVerdict.EPISODE_TITLES_CONTRADICT:
+        return SkipReason.EPISODE_TITLES_CONTRADICT
     if hand_import_verdict is not None:
         return SkipReason.MISNUMBERED
     return SkipReason.PLACED_ELSEWHERE if another_titles else None

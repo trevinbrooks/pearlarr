@@ -664,34 +664,33 @@ _SPECIMEN_TIME = "2026-01-01T18:00:00+00:00"
 _SPECIMEN_EPOCH = 1_767_290_400.0
 
 _BOOT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.BOOT_STEP, serial=1)
-_TITLE_SCOPE = ev.ScopeId(kind=ev.ScopeKind.ENTRY, serial=2)
-_WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT_REGION, serial=3)
+_TITLE_SCOPE = ev.ScopeId(kind=ev.ScopeKind.TITLE, serial=2)
+_WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT, serial=3)
 
 
 # What each wire event means, keyed by its serialized name. The catalog build fails when an on-wire
 # event has no entry here or an entry is out of date, so a new event type cannot ship undocumented.
 EVENT_DESCRIPTIONS: dict[str, str] = {
-    "run_started": "The process banner: the installed version and the resolved data directory. "
+    "pearlarr_started": "The process banner: the installed version and the resolved data directory. "
     "The first event of every invocation.",
-    "cycle_started": "Scheduled mode only: a new cycle begins (`number` counts from 1).",
+    "scheduled_run_started": "Scheduled mode only: a new run begins (`number` counts from 1).",
     "boot_step_finished": "One preflight step finished. `outcome` is `ok`, `warned`, or `failed`, "
     "with an optional `detail`.",
     "boot_ready": "Preflight finished. The scan begins.",
     "scan_started": "The per-arr scan opened: which arr, and how many library titles it will walk.",
-    "item_started": "The scan moved to the next library title (`index` of `total`).",
-    "diagnostic": "A problem or notice at any level. `origin` names the subsystem. A position-free "
-    "diagnostic carries `during` plus `placed: frontier` (its position is the frontier's best guess), "
-    "and one with a captured traceback carries it in `exc`.",
+    "item_started": "The scan moved to the next library item (`index` of `total`, `name` its name).",
+    "diagnostic": "A problem or notice at any level. `origin` names the subsystem. A diagnostic raised outside "
+    "any scope carries `during`, the scope that was open then, and one with a captured traceback carries it in "
+    "`exc`.",
     "scope_opened": "A nested scope opened (`kind` + `serial` identify it). Events inside carry a "
     "human-readable `path` breadcrumb instead of the id.",
-    "entry_header": "A SeaDex entry block opened for the current title. `message` is the entry state word.",
-    "entry_detail": "A labeled line inside an entry block. `message` is `label: value`.",
-    "ledger_row": "A self-contained one-line result for a title: `message` is the state word, "
-    "`title` the library title.",
+    "title_header": "A title's block opened. `message` is the title's state word.",
+    "title_detail": "A labeled line inside a title's block. `message` is `label: value`.",
+    "title_row": "A one-line result for a title: `message` is the state word, `title` the title's name.",
     "release_skipped": "A release was skipped at add time. `reason` is `private_only`, "
-    "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `title_refuted`, `placed_elsewhere`, or "
-    "`input_unread`. On `placed_elsewhere`, `elsewhere` counts the release's files another title holds and "
-    "`unplaced` the rest, which nothing placed.",
+    "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, "
+    "`placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files "
+    "placed on another title's episodes and `unplaced` the rest, which nothing placed.",
     "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
     "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
     "would-add, and already in qBittorrent.",
@@ -700,18 +699,19 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "titles without grabbing, so a torrent already downloading stays matched to every entry that lists it, and "
     "the held titles are grabbed on later runs.",
     "scan_finished": "The per-arr scan closed (a boundary event, the summary carries the facts).",
-    "run_summary": "The end-of-run scoreboard: the tally counters (`held_by_cap` only when the run held titles "
-    "past the cap), plus `needs_action_records` and `added_records` arrays mirroring the summary's per-title lines.",
-    "wait_started": "The end-of-run pass opened, watching `total` torrents. `kind` is `monitor` (waits for "
-    "downloads to finish, then imports) or `check` (one non-blocking poll of earlier runs' downloads).",
-    "torrent_graduated": "One watched torrent reached a terminal outcome. `message` is the outcome word. "
-    "`unmatched_files` names the files left for a hand import, only on the `unmatched` and `partial` outcomes. "
+    "arr_run_summary": "The arr run's summary: the tally counters (`held_by_cap` only when the run held titles "
+    "past the cap), plus `needs_action_records` and `grabbed_records` arrays mirroring the summary's per-title "
+    "lines.",
+    "wait_started": "A wait pass opened on `total` pending imports. `wait_pass` is `blocking` (waits for the "
+    "downloads to finish, then imports) or `deferred` (one poll of the pending imports from earlier runs).",
+    "wait_row_finished": "The wait pass finished one row: a pending import got its outcome for this run. "
+    "`message` is the outcome word. `hand_import_files` names the files left for a hand import, on the "
+    "`unmatched` and `partial` outcomes. "
     "On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that "
     "number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and "
     "why the files are held.",
-    "wait_finished": "The pass closed, with its imported/pending/deferred/failed tally (`pending` counts the "
-    "check's rows left for the next run on purpose).",
-    "run_finished": "The per-arr run closed (a boundary event).",
+    "wait_finished": "The wait pass closed, with its `imported`, `in_progress`, `left` and `failed` counts.",
+    "arr_run_finished": "The per-arr run closed (a boundary event).",
     "next_run_scheduled": "Scheduled mode only: when the next cycle fires.",
     "paths_shown": "The `paths` command: the resolved data directory and the files within it.",
     "starter_config_written": "`config init` wrote a starter template to `path`.",
@@ -736,7 +736,7 @@ JSON_SILENT: dict[str, str] = {
     "BootStepProgressed": "ephemeral progress for the live cockpit only",
     "BootStepSlow": "a text-surface heads-up. The JSON stream sees the step finish",
     "WaitProgress": "the per-poll wait snapshot. On the JSON stream, wait progress is the "
-    "`wait_started` / `torrent_graduated` / `wait_finished` sequence",
+    "`wait_started` / `wait_row_finished` / `wait_finished` sequence",
 }
 
 
@@ -745,7 +745,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
 
     tally = ev.ArrRunTally(
         checked=42,
-        added=(
+        grabbed=(
             ev.GrabbedRow(
                 title="Sousou no Frieren",
                 coverage="S01",
@@ -779,7 +779,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
     summary = ev.ArrRunSummary(
         arr=Arr.SONARR,
         dry_run_note=None,
-        added_count=1,
+        grabbed_count=1,
         tally=tally,
         wait_mode_on=True,
         warnings=1,
@@ -842,9 +842,9 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             scope=_TITLE_SCOPE,
         ),
         ev.GrabAction(
-            status=ev.GrabStatus.ADDING,
+            status=ev.GrabStatus.GRABBING,
             groups=(ev.GroupLabel(name="SubsPlease", tags=("best",)),),
-            added=(ev.ReleaseLabel(name="[SubsPlease] Sousou no Frieren", group="SubsPlease"),),
+            grabbed=(ev.ReleaseLabel(name="[SubsPlease] Sousou no Frieren", group="SubsPlease"),),
             in_qbit=(),
             waiting_to_import=True,
             scope=_TITLE_SCOPE,
@@ -854,7 +854,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ScanFinished(arr=Arr.SONARR),
         ev.ArrRunSummaryReady(summary=summary),
         ev.ScopeOpened(scope=_WAIT_SCOPE, label="wait"),
-        ev.WaitStarted(total=1, progress_line_s=300.0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE),
+        ev.WaitStarted(total=1, progress_line_s=300.0, kind=ev.WaitKind.BLOCKING, scope=_WAIT_SCOPE),
         ev.WaitProgress(snapshot=ev.WaitSnapshot(torrents=(), elapsed_s=30.0), scope=_WAIT_SCOPE),
         ev.RowFinished(
             label="[SubsPlease] Sousou no Frieren",
@@ -864,7 +864,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
             scope=_WAIT_SCOPE,
         ),
         ev.WaitFinished(
-            imported=1, left=0, failed=0, elapsed_s=430.0, in_progress=0, kind=ev.WaitKind.MONITOR, scope=_WAIT_SCOPE
+            imported=1, left=0, failed=0, elapsed_s=430.0, in_progress=0, kind=ev.WaitKind.BLOCKING, scope=_WAIT_SCOPE
         ),
         ev.ScopeClosed(scope=_WAIT_SCOPE),
         ev.ArrRunFinished(arr=Arr.SONARR),

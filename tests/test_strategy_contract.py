@@ -2674,7 +2674,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         run = _run_title_check(files, [_EP1, _EP2], _ScriptedListings(unreachable=True))
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.INPUT_UNREAD
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
         assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ("NAN0",)
 
@@ -2778,7 +2778,7 @@ class TestPlacementDebugLine:
         with caplog.at_level("DEBUG"):
             strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
 
-        assert placement.skip_reason is SkipReason.INPUT_UNREAD
+        assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
 
     def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
