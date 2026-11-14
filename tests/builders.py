@@ -423,7 +423,9 @@ class FakeCacheStore(AbstractCacheStore):
         """Only titles with a live pending import (mirrors the real store's join)."""
 
         live = {
-            claim.get("al_id") for rec in self._pending.get(str(arr), {}).values() for claim in rec.get("claims", [])
+            claim.get("anilist_id")
+            for rec in self._pending.get(str(arr), {}).values()
+            for claim in rec.get("claims", [])
         }
         return {anilist_id: g for anilist_id, g in self._guards.get(str(arr), {}).items() if anilist_id in live}
 
