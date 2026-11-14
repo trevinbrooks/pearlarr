@@ -705,10 +705,10 @@ class ScriptedEpisodes:
             raise ValueError("ambiguous")
         return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(anilist_id)
 
-    def sonarr_files(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
+    def sonarr_files(self, episodes: list[SonarrEpisode]) -> ArrFiles:
         """The arr has no files."""
 
-        del ep_list
+        del episodes
         return ArrFiles()
 
     def orders_for(self, series_id: int) -> IndexOrders:

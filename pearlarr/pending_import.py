@@ -156,14 +156,14 @@ class TitleWindow:
         *,
         anilist_id: int,
         series_id: int,
-        ep_list: Iterable[SonarrEpisode],
+        episodes: Iterable[SonarrEpisode],
         names: TitleNames,
         ignored: bool = False,
         episode_count: int | None = None,
     ) -> "TitleWindow":
-        """The window over `ep_list`: each episode with an id, once, in the list's order."""
+        """The window over `episodes`: each episode with an id, once, in the list's order."""
 
-        ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
+        ids = tuple(dict.fromkeys(ep.id for ep in episodes if ep.id))
         return cls(
             anilist_id=anilist_id,
             series_id=series_id,

@@ -96,10 +96,10 @@ class EpisodeIndex:
         return titles
 
 
-def episode_index(ep_list: Iterable[SonarrEpisode], ordering: IndexOrders = NO_INDEX_ORDERS) -> EpisodeIndex:
+def episode_index(episodes: Iterable[SonarrEpisode], ordering: IndexOrders = NO_INDEX_ORDERS) -> EpisodeIndex:
     """Convert one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
 
-    with_ids = [ep for ep in ep_list if ep.id]
+    with_ids = [ep for ep in episodes if ep.id]
     id_by_tvdb = {ep.tvdb_id: ep.id for ep in with_ids if ep.tvdb_id}
     return EpisodeIndex(
         by_id={ep.id: ep for ep in with_ids},
@@ -679,7 +679,7 @@ class GrabbingTitle:
         window = TitleWindow.of(
             anilist_id=self.anilist_id,
             series_id=self.series_id,
-            ep_list=self.title_index.by_id.values(),
+            episodes=self.title_index.by_id.values(),
             names=self.title_names,
             episode_count=self.episode_count,
         )

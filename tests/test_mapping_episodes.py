@@ -42,12 +42,12 @@ class _FakeSonarr:
     no `quiet`).
     """
 
-    def __init__(self, ep_list: list[SonarrEpisode]) -> None:
-        self._ep_list = ep_list
+    def __init__(self, episodes: list[SonarrEpisode]) -> None:
+        self._episodes = episodes
 
     def episodes(self, series_id: int) -> list[SonarrEpisode]:
         del series_id
-        return self._ep_list
+        return self._episodes
 
 
 class _RecordingAniList:

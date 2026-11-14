@@ -68,16 +68,16 @@ class SeriesListings:
                     return None
                 continue
             try:
-                ep_list = self._episodes.mapping_episodes(series_id, anilist_id, mapping)
+                title_episodes = self._episodes.mapping_episodes(series_id, anilist_id, mapping)
             except ValueError:
                 continue
             window = (
                 None
-                if ep_list is None
+                if title_episodes is None
                 else TitleWindow.of(
                     anilist_id=anilist_id,
                     series_id=series_id,
-                    ep_list=ep_list,
+                    episodes=title_episodes,
                     names=self._names(anilist_id),
                     ignored=anilist_id in resolved.ignored,
                     episode_count=self._episodes.episode_count(anilist_id),

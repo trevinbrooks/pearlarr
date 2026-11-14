@@ -1031,10 +1031,10 @@ class ImportReconciler:
 
         lists: dict[int, list[SonarrEpisode]] = {}
         for series_id in pending.series_ids:
-            ep_list = self._episodes.read_episodes(series_id)
-            if ep_list is None:
+            episodes = self._episodes.read_episodes(series_id)
+            if episodes is None:
                 return None
-            lists[series_id] = ep_list
+            lists[series_id] = episodes
         return self._statuses_from(pending, file_map_episode_ids, lists)
 
     def _last_known_statuses(self, pending: PendingImport, file_map_episode_ids: list[int]) -> _FileMapStatuses:

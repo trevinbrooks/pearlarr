@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These read the episode collaborator's private per-run state (eps._ep_list_cache /
+# These read the episode collaborator's private per-run state (eps._series_episodes /
 # eps._config) and call the module-private _parse_is_fresh / SonarrParseCache._parse_for.
 # Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
@@ -387,13 +387,13 @@ class TestPrefetchEpisodes:
     def test_warms_only_mapped_series(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps.prefetch([_item(1), _item(2), _item(3)])
-        assert eps._ep_list_cache == {1: _eps_for(1), 2: _eps_for(2)}
+        assert eps._series_episodes == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_leaves_out_unmonitored_when_ignored(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
         eps.prefetch([_item(1, monitored=False), _item(2)])
-        assert eps._ep_list_cache == {2: _eps_for(2)}
+        assert eps._series_episodes == {2: _eps_for(2)}
 
     def test_dedups_series_ids(self) -> None:
         eps, sonarr = self._eps(mapped={1})
@@ -405,7 +405,7 @@ class TestPrefetchEpisodes:
         eps, sonarr = self._eps(mapped={9})
         sonarr.return_none = True
         eps.prefetch([_item(9)])
-        assert eps._ep_list_cache == {}
+        assert eps._series_episodes == {}
 
     def test_raising_series_does_not_abort_sweep(self) -> None:
         # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
@@ -414,13 +414,13 @@ class TestPrefetchEpisodes:
         sonarr.raise_on = {1}
         warmed = eps.prefetch([_item(1), _item(2)])
 
-        assert eps._ep_list_cache == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
+        assert eps._series_episodes == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
         assert warmed == 2  # both attempted
 
     def test_sequential_path_matches_concurrent(self) -> None:
         eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
         eps.prefetch([_item(1), _item(2)])
-        assert eps._ep_list_cache == {1: _eps_for(1), 2: _eps_for(2)}
+        assert eps._series_episodes == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_returns_warmed_count(self) -> None:
         # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
@@ -459,7 +459,7 @@ class TestPrefetchEpisodes:
         sonarr.return_none = True
         rec = _Recorder()
         assert eps.prefetch([_item(9)], progress=rec) == 1
-        assert eps._ep_list_cache == {}  # nothing cached
+        assert eps._series_episodes == {}  # nothing cached
         assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
 
 
@@ -484,7 +484,7 @@ class TestCachedEpisodes:
         eps, _ = self._eps(return_none=True)
 
         assert eps.cached_episodes(1) is None
-        assert eps._ep_list_cache == {}
+        assert eps._series_episodes == {}
 
 
 def _entry(dt: datetime) -> EntryRecord:
@@ -606,13 +606,13 @@ class TestPrefetchLeavesOutUnchanged:
     def test_leaves_out_series_with_no_title_to_check(self) -> None:
         eps, sonarr = self._eps(needs_scan={1})
         assert eps.prefetch([_item(1), _item(2)]) == 1
-        assert eps._ep_list_cache == {1: _eps_for(1)}  # series 2 never fetched
+        assert eps._series_episodes == {1: _eps_for(1)}  # series 2 never fetched
         assert sonarr.calls == [(1, True)]
 
     def test_warms_none_when_all_unchanged(self) -> None:
         eps, sonarr = self._eps(needs_scan=set())
         assert eps.prefetch([_item(1), _item(2)]) == 0
-        assert eps._ep_list_cache == {}
+        assert eps._series_episodes == {}
         assert sonarr.calls == []
 
     def test_warms_series_with_any_title_to_check(self) -> None:
@@ -625,7 +625,7 @@ class TestPrefetchLeavesOutUnchanged:
             _config=make_config(sleep_time=0),
         )
         assert eps.prefetch([_item(5)]) == 1
-        assert eps._ep_list_cache == {5: _eps_for(5)}
+        assert eps._series_episodes == {5: _eps_for(5)}
 
 
 class _ParseSonarr:

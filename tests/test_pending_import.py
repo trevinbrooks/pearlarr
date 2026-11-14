@@ -438,7 +438,7 @@ class TestTitleWindow:
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
         episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
 
-        window = TitleWindow.of(anilist_id=5, series_id=7, ep_list=episodes, names=TitleNames("Show"))
+        window = TitleWindow.of(anilist_id=5, series_id=7, episodes=episodes, names=TitleNames("Show"))
 
         assert window == title_window(5, (103, 101), series_id=7, names=TitleNames("Show"))
 

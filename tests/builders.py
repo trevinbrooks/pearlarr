@@ -1114,11 +1114,11 @@ def sonarr_ep(
     return SonarrEpisode.model_validate(raw)
 
 
-def arr_files(ep_list: Iterable[SonarrEpisode]) -> ArrFiles:
+def arr_files(episodes: Iterable[SonarrEpisode]) -> ArrFiles:
     """The episodes' files merged per group, files with no group left out, as `sonarr_files` reports them."""
 
     return ArrFiles.from_files(
-        [f for ep in ep_list if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_no_group=False
+        [f for ep in episodes if ep.episode_file_id != 0 and (f := ep.episode_file) is not None], keep_no_group=False
     )
 
 
@@ -1532,7 +1532,7 @@ def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
 
     defaults: dict[str, Any] = {
-        "_ep_list_cache": {},
+        "_series_episodes": {},
         "_series_hash": "",
         "_order_facts": {},
         "_orderings": {},
@@ -1564,12 +1564,12 @@ def make_sonarr_sync(
     sonarr: AbstractSonarrClient | None = None,
     config: AppConfig | None = None,
     cache_store: AbstractCacheStore | None = None,
-    ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
+    series_episodes: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> SonarrStrategy:
-    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `ep_list_cache`."""
+    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`."""
 
     deps = make_run_deps(
         config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client, categories=categories
@@ -1580,8 +1580,8 @@ def make_sonarr_sync(
         services,
         sonarr_client=sonarr if sonarr is not None else FakeSonarrClient(),
     )
-    if ep_list_cache is not None:
-        strat._episodes._ep_list_cache = ep_list_cache
+    if series_episodes is not None:
+        strat._episodes._series_episodes = series_episodes
     return strat
 
 
