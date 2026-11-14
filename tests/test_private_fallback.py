@@ -389,7 +389,7 @@ class TestPlanGrabsNotice:
         # INFO, the truly-blocked set at WARNING.
         info = _info_texts(recording)
         warnings = _warning_texts(recording)
-        assert any("PrivA private-only; grabbing public alternative PubA" in m for m in info), info
+        assert any("PrivA private-only; grabbing public release PubA instead" in m for m in info), info
         assert any("PrivB private-only (private releases not supported)" in m for m in warnings), warnings
         # The skip flag + group names land on the arr run state for the grab tail
         # (a promotion succeeded, so the outdated bit stays unset).
@@ -627,7 +627,7 @@ class TestSurvivingPrivateCoverage:
         assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
-        assert "no public alternative" in state.stats.needs_action[0].reason
+        assert "no fallback" in state.stats.needs_action[0].reason
 
 
 class TestPromotionGeneralization:
@@ -686,7 +686,7 @@ class TestPromotionGeneralization:
         assert plan.seadex_dict["Pub"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         info = _info_texts(recording)
-        assert any("grabbing public alternative Pub" in m for m in info), info
+        assert any("grabbing public release Pub instead" in m for m in info), info
         assert _warning_texts(recording) == []
         assert state.per_title.private_only_skipped is False
 

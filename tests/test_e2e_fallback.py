@@ -881,7 +881,7 @@ def test_absolute_batch_imports_the_grabs_map_and_the_excluded_sibling_stays_qui
 
     # The grab mapped the title's files and excluded the sibling as outside the window.
     _assert_converged_imported(outcome, out)
-    assert "could not be matched to an episode" not in out
+    assert "could not be placed on an episode" not in out
     assert outcome.world.requests_for("/api/v3/parse") == []
 
     # ONE ManualImport carrying exactly the two episode files on their mapped
@@ -934,8 +934,8 @@ def test_files_with_no_numbers_finish_unmatched_on_the_first_poll(
     # names the files, and leaves the pending import for a human.
     assert outcome.ok is True
     assert outcome.pending_imports_after == frozenset({_INFOHASH})
-    assert out.count('unmatched torrent="Demo Batch · Thighs"') == 1
-    assert f'unmatched torrent="Demo Batch · Thighs" hand_import_files="{"; ".join(_NO_NUMBER_FILES)}"' in out
+    assert out.count('unplaced torrent="Demo Batch · Thighs"') == 1
+    assert f'unplaced torrent="Demo Batch · Thighs" hand_import_files="{"; ".join(_NO_NUMBER_FILES)}"' in out
     assert "complete wait_pass=blocking imported=0 in_progress=0 left=1 failed=0" in out
     assert current_hub().counts.mark().errors == 0
 
@@ -944,7 +944,7 @@ def test_files_with_no_numbers_finish_unmatched_on_the_first_poll(
     assert outcome.world.folder_fetches == 1
     assert outcome.world.manual_commands == []
     assert outcome.world.category_moves == []
-    assert "could not be matched" not in out
+    assert "could not be placed" not in out
     assert "not ready" not in out
 
 
@@ -971,8 +971,8 @@ def test_files_with_no_numbers_imported_by_hand_verify_on_the_first_poll(
     assert outcome.world.folder_fetches == 1
     assert outcome.world.manual_commands == []
     assert outcome.world.category_moves == [(_INFOHASH, _IMPORTED_CATEGORY)]
-    assert "unmatched title=" not in out
-    assert "could not be matched" not in out
+    assert "unplaced torrent=" not in out
+    assert "could not be placed" not in out
 
 
 def test_unscannable_download_is_left_with_folder_warn(

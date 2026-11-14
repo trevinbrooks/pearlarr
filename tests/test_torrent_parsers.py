@@ -240,7 +240,7 @@ def test_fetch_animetosho_link_missing_title_raises() -> None:
     page_url = "https://animetosho.org/view/no-title.1"
 
     respx.get(page_url).respond(html="<html><body><p>no title here</p></body></html>")
-    with pytest.raises(TrackerPageError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
+    with pytest.raises(TrackerPageError, match=f"Could not find the torrent name on {re.escape(page_url)}"):
         fetch_animetosho_link(page_url, client=httpx.Client())
 
 
@@ -251,7 +251,7 @@ def test_fetch_animetosho_link_two_titles_raises() -> None:
     page_url = "https://animetosho.org/view/two-titles.1"
 
     respx.get(page_url).respond(html='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>')
-    with pytest.raises(TrackerPageError, match="more than one torrent title"):
+    with pytest.raises(TrackerPageError, match="more than one torrent name"):
         fetch_animetosho_link(page_url, client=httpx.Client())
 
 
@@ -319,7 +319,7 @@ def test_fetch_rutracker_link_missing_title_raises() -> None:
     url = "https://rutracker.org/forum/viewtopic.php?t=7654321"
 
     respx.get(url).respond(html="<html><body><div>no maintitle</div></body></html>")
-    with pytest.raises(TrackerPageError, match=f"Could not find the torrent title on {re.escape(url)}"):
+    with pytest.raises(TrackerPageError, match=f"Could not find the torrent name on {re.escape(url)}"):
         fetch_rutracker_link(url, "deadbeef", client=httpx.Client())
 
 

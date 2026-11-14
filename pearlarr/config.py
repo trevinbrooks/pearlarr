@@ -795,7 +795,7 @@ class AppConfig(_ConfigBase):
 
         if not os.path.exists(path):
             write_starter_config(path)
-            raise FileNotFoundError(f"No config file at {path}; a starter template was written - fill it in and re-run")
+            raise FileNotFoundError(f"No config file at {path}; a template was written - fill it in and re-run")
 
         with open(path, "rb") as f:
             raw = f.read()

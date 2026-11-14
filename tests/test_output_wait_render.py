@@ -140,7 +140,11 @@ class TestWaitBuilders:
                 "Waiting on 1 download to complete and import...",
                 "Waiting on 2 downloads to complete and import...",
             ),
-            (WaitKind.DEFERRED, "Checking 1 carried-over download...", "Checking 2 carried-over downloads..."),
+            (
+                WaitKind.DEFERRED,
+                "Looking at 1 pending import from earlier runs...",
+                "Looking at 2 pending imports from earlier runs...",
+            ),
         ],
     )
     def test_start_line_words_and_pluralizes_by_kind(self, kind: WaitKind, one: str, two: str) -> None:
@@ -153,7 +157,7 @@ class TestWaitBuilders:
         ("kind", "expected"),
         [
             (WaitKind.BLOCKING, "  wait complete · 1 imported · 1m 00s"),
-            (WaitKind.DEFERRED, "  check complete · 1 imported · 2 pending · 1m 00s"),
+            (WaitKind.DEFERRED, "  wait complete · 1 imported · 2 in progress · 1m 00s"),
         ],
     )
     def test_tally_head_and_pending_bucket_by_kind(self, kind: WaitKind, expected: str) -> None:
@@ -223,7 +227,7 @@ def test_live_model_orders_and_bounds_the_box() -> None:
     assert "17" in model.overflow  # 20 downloads + 1 importing, 4 shown -> 17 hidden
 
 
-@pytest.mark.parametrize(("kind", "left"), [(WaitKind.BLOCKING, "waiting 1/2"), (WaitKind.DEFERRED, "checking 1/2")])
+@pytest.mark.parametrize(("kind", "left"), [(WaitKind.BLOCKING, "waiting 1/2"), (WaitKind.DEFERRED, "looking 1/2")])
 def test_live_model_header_reports_aggregate_under_the_kinds_verb(kind: WaitKind, left: str) -> None:
     snap = WaitSnapshot(
         (
@@ -295,7 +299,7 @@ def test_live_model_download_row_layout() -> None:
     assert "/" not in row.size
 
     queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), _WIDE, WaitKind.BLOCKING).rows[0]
-    assert queued.status == "queued"
+    assert queued.status == "not polled"
 
 
 def test_sparkline_scales_to_the_window_peak() -> None:
@@ -372,7 +376,7 @@ def test_outcome_line_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.NOT_READY,
         Outcome.ATTEMPT_FAILED,
     ):
-        assert row_finished_note(_grad("A", outcome)) == "retries next run"
+        assert row_finished_note(_grad("A", outcome)) == "left for the next run"
 
 
 def test_outcome_line_tail_counts_unmatched_files_and_names_the_action() -> None:
@@ -380,15 +384,15 @@ def test_outcome_line_tail_counts_unmatched_files_and_names_the_action() -> None
     event = _grad(
         "A", Outcome.NOTHING_PLACED, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv")
     )
-    assert row_finished_note(event) == "2 files matched no episode · import by hand in Sonarr"
+    assert row_finished_note(event) == "2 unplaced files · import by hand in Sonarr"
     assert row_finished_note(
         _grad("A", Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import("a.mkv"))
-    ) == ("1 file matched no episode · import by hand in Sonarr")
+    ) == ("1 unplaced file · import by hand in Sonarr")
 
 
 def test_outcome_line_tail_counts_files_left_for_hand_import_and_names_the_action() -> None:
     event = _grad("A", Outcome.PARTIAL, waited=15, left_for_hand_import=files_left_for_hand_import("a.mkv", "b.mkv"))
-    assert row_finished_note(event) == "2 files held back · import by hand in Sonarr"
+    assert row_finished_note(event) == "2 files left for hand import in Sonarr"
 
 
 _SEVERAL = order_only_hand_import_files(
@@ -407,15 +411,15 @@ _SEVERAL = order_only_hand_import_files(
         ),
         pytest.param(
             order_only_hand_import_files(missing=(), untrusted=(EpisodeKey(4, 1),)),
-            "S04 E01 has a file that isn't from a recommended release",
-            "S04 E01 has a file in Sonarr, but it isn't from a recommended release.",
+            "S04 E01 has a file that isn't from a trusted group",
+            "S04 E01 has a file in Sonarr, but it isn't from a trusted group.",
             id="one holding another file",
         ),
         pytest.param(
             _SEVERAL,
-            f"S04 E01-E02 still missing in Sonarr{SEP}S04 E05-E06 have files that aren't from a recommended release",
+            f"S04 E01-E02 still missing in Sonarr{SEP}S04 E05-E06 have files that aren't from a trusted group",
             "S04 E01-E02 are still missing in Sonarr. "
-            "S04 E05-E06 have files in Sonarr, but they aren't from a recommended release.",
+            "S04 E05-E06 have files in Sonarr, but they aren't from a trusted group.",
             id="several of each",
         ),
     ],
@@ -433,7 +437,7 @@ def test_a_lone_order_only_file_reads_in_the_singular() -> None:
         files=(HandImportFile(name, OrderOnlyKey("dvd", EpisodeKey(7, 1))),), missing=(EpisodeKey(4, 1),)
     )
     assert hand_import_sentences(left)[1] == (
-        "This pack is numbered by the DVD order, and 1 of its files is one of the DVD episodes "
+        "This torrent is numbered by the DVD order, and 1 of its files is one of the DVD episodes "
         "that aren't in Sonarr's list, so Pearlarr can't tell where it belongs"
     )
 
@@ -441,9 +445,10 @@ def test_a_lone_order_only_file_reads_in_the_singular() -> None:
 def test_a_long_reason_wraps_onto_rows_that_fit_a_100_column_console() -> None:
     left = LeftForHandImport(files=order_only_hand_import_files().files[:1], missing=(EpisodeKey(4, 1),))
     lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_features(None))
-    assert [line.message for line in lines[1:3]] == [
-        "    reason      this pack is numbered by the DVD order, and 1 of its files is one of the DVD",
-        "                episodes that aren't in Sonarr's list, so Pearlarr can't tell where it belongs",
+    assert [line.message for line in lines[1:4]] == [
+        "    reason      this torrent is numbered by the DVD order, and 1 of its files is one of the",
+        "                DVD episodes that aren't in Sonarr's list, so Pearlarr can't tell where it",
+        "                belongs",
     ]
 
 
@@ -453,7 +458,7 @@ def test_files_keyed_by_two_orders_name_both_orders() -> None:
         HandImportFile("b.mkv", OrderOnlyKey("altdvd", EpisodeKey(3, 1))),
     )
     reason = hand_import_sentences(LeftForHandImport(files=files, missing=(EpisodeKey(4, 1),)))[1]
-    assert reason.startswith("This pack is numbered by the DVD and alternate DVD orders, and 2 of its files are")
+    assert reason.startswith("This torrent is numbered by the DVD and alternate DVD orders, and 2 of its files are")
 
 
 def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> None:
@@ -463,7 +468,7 @@ def test_an_order_only_row_says_why_then_lists_each_file_behind_its_key() -> Non
     lines = row_finished_lines(event, detect_features(None))
     assert [line.message for line in lines] == [
         "  ~ partial     Show Ending · grp · S04 E01-E12  (S04 E01 still missing in Sonarr)",
-        "    reason      this pack is numbered by the DVD order, and 2 of its files are DVD episodes",
+        "    reason      this torrent is numbered by the DVD order, and 2 of its files are DVD episodes",
         "                that aren't in Sonarr's list, so Pearlarr can't tell where they belong",
         "    files       DVD S07E01  [grp] Show Ending S1 - 01 [ABCD1234].mkv",
         "                DVD S07E02  [grp] Show Ending S1 - 02 [ABCD1234].mkv",
@@ -490,7 +495,7 @@ def test_a_mixed_pending_import_keeps_its_count_and_keys_the_order_only_file() -
     )
     lines = row_finished_lines(_grad("A", Outcome.PARTIAL, left_for_hand_import=left), detect_features(None))
     assert [line.message for line in lines] == [
-        f"  ~ partial     A  (2 files held back{SEP}import by hand in Sonarr)",
+        "  ~ partial     A  (2 files left for hand import in Sonarr)",
         "    files       DVD S07E01  [grp] Show Ending S1 - 01 [ABCD1234].mkv",
         "                [grp] Show Ending S1 - 05 [ABCD1234].mkv",
     ]

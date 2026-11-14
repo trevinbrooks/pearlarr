@@ -1707,7 +1707,7 @@ class TestRunBlocking:
     def test_pause_is_capped_so_a_wedged_command_ends_the_watch(self) -> None:
         # A command wedged in flight forever: paused polls stop pausing the
         # clock at the cap, the ordinary deadline resumes, and the watch ends
-        # bounded ("still importing; left pending") instead of hanging until
+        # bounded ("still importing; left for the next run") instead of hanging until
         # Ctrl-C. Ready 60s + cap (6x) 360s -> finished by t=420.
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.IMPORT),
@@ -1739,7 +1739,7 @@ class TestRunBlocking:
 
     def test_pause_cap_reads_sonarr_busy_for_another_downloads_disk_command(self) -> None:
         # A foreign disk command holding the line to the cap: "sonarr busy",
-        # left pending, never a false "still importing".
+        # left for the next run, never a false "still importing".
         strategy = _RecordingStrategy(completed=attempt_result(all_done=False, pause_reason=PauseReason.BUSY))
         mgr, view = _run_blocking_wait(
             strategy,
@@ -1926,7 +1926,7 @@ class TestRunBlocking:
         # The break is announced as an INFO hub Diagnostic with the left count.
         (note,) = recording.of_type(Diagnostic)
         assert note.severity is Severity.INFO
-        assert "1 left pending" in note.message
+        assert "1 left for the next run" in note.message
         assert note.origin == LOG_NAME
 
     def test_a_sigterm_stop_notes_what_is_left_and_propagates(self) -> None:
@@ -1949,7 +1949,7 @@ class TestRunBlocking:
 
         assert set(mgr._pending_imports.rows()) == {"h"}
         (note,) = recording.of_type(Diagnostic)
-        assert "1 left pending" in note.message
+        assert "1 left for the next run" in note.message
 
     def test_interrupt_mid_poll_still_finishes_that_polls_finished_rows(self) -> None:
         # A torrent that finished in the SAME poll the interrupt lands in
@@ -1992,7 +1992,7 @@ class TestRunBlocking:
         assert set(mgr._pending_imports.rows()) == {"h"}
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
-        assert "Manual import failed" in error.message
+        assert "Auto import failed" in error.message
         assert error.trace is not None
 
     def test_imported_finished_row_carries_files_count(self) -> None:
@@ -3631,7 +3631,7 @@ class TestCleanupRetry:
         assert [c.infohash for c in run2_strategy.close_calls] == ["h"]
         assert run2._pending_imports.rows() == {}
         assert any(
-            "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
+            "Finished the leftover post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
         )
 
     def test_a_cleanup_that_still_fails_keeps_the_pending_import_uncounted(self) -> None:
@@ -3819,7 +3819,7 @@ class TestCleanupRetryVerification:
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert mgr._pending_imports.rows() == {}
         assert any(
-            "Completed the deferred post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
+            "Finished the leftover post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO)
         )
 
     def test_unobserved_qbittorrent_stays_awaiting_cleanup_without_effects(self) -> None:
@@ -3897,7 +3897,7 @@ class TestCleanupRetryVerification:
         assert mgr._pending_imports.rows()["h"].get("awaiting_cleanup") is False
         assert mgr._state.pending_import_states["h"] is PendingImportState.DOWNLOADED
         [warn] = diagnostic_messages(recording, Severity.WARNING)
-        assert "no longer present" in warn
+        assert "no longer has every file imported" in warn
 
         result = mgr.run_deferred(view=RecordingWaitView())
 
@@ -3922,7 +3922,7 @@ class TestCleanupRetryVerification:
 
     def test_auto_import_command_in_flight_holds_without_a_false_demote(self) -> None:
         # An auto import command from an earlier wait pass is still running: files may
-        # be fine, so no demote and no "files no longer present" warn.
+        # be fine, so no demote and no "files no longer has every file imported" warn.
         recording = install_recording_hub()
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.IMPORT),

@@ -969,7 +969,7 @@ class TestUnsupportedTrackerSkip:
 
         assert pipeline._state.per_title.private_only_skipped is True
         assert [r.reason for r in pipeline._state.stats.needs_action] == [
-            "private-only release; no public alternative covers these files"
+            "private-only release; no fallback covers these files"
         ]
         assert [r.cause for r in pipeline._state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         assert pipeline.cache_store.get_cached_title(Arr.SONARR, 7) is None
@@ -1212,7 +1212,7 @@ class TestPlacementSkips:
                 SkipReason.EPISODE_TITLES_CONTRADICT,
                 SkipReport(
                     NeedsActionCause.EPISODE_TITLES_CONTRADICT,
-                    "file titles contradict its numbering; import it by hand",
+                    "episode titles contradict its numbers; import it by hand",
                 ),
             ),
         ],
@@ -1516,7 +1516,7 @@ class TestGrabFailureContainment:
 
     def test_partial_grab_with_a_failure_stays_uncached(self) -> None:
         # Like private_only_no_fallback: a failure blocks the cache even when a sibling
-        # grabbed, so the failed release retries next run (the add dedups).
+        # grabbed, so the failed release left for the next run (the add dedups).
         bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hbad")
         good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hgood")
         seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
@@ -1619,7 +1619,7 @@ class TestFallbackModePrivateOnlySkipNeverCaches:
         rows = pipeline._state.stats.needs_action
         assert [r.cause for r in rows] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_private_only_in_fallback_mode_surfaces_no_alternative.
-        assert "no public alternative" in rows[0].reason
+        assert "no fallback" in rows[0].reason
 
     def test_interactive_partial_grab_still_caches(self) -> None:
         # Interactive: the skip is a hand-picked private release, so

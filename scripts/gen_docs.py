@@ -516,7 +516,7 @@ class CommandDoc:
 # No runtime interface enumerates them, so they are authored here.
 EXIT_CODE_ROWS = (
     ("0", "Success. A run stopped with SIGTERM also exits 0 (a clean stop)."),
-    ("1", "Failure: invalid or missing configuration, a refused selection, a failed run, or a failed command."),
+    ("1", "Failure: invalid or missing configuration, an invalid selection, a failed run, or a failed command."),
     ("2", "Usage error: an unknown command, option, or option value."),
     ("130", "Interrupted with Ctrl-C."),
 )
@@ -668,36 +668,38 @@ _TITLE_SCOPE = ev.ScopeId(kind=ev.ScopeKind.TITLE, serial=2)
 _WAIT_SCOPE = ev.ScopeId(kind=ev.ScopeKind.WAIT, serial=3)
 
 
+_SKIP_REASONS = [f"`{reason.name.lower()}`" for reason in SkipReason]
+
 # What each wire event means, keyed by its serialized name. The catalog build fails when an on-wire
 # event has no entry here or an entry is out of date, so a new event type cannot ship undocumented.
 EVENT_DESCRIPTIONS: dict[str, str] = {
     "pearlarr_started": "The process banner: the installed version and the resolved data directory. "
     "The first event of every invocation.",
     "scheduled_run_started": "Scheduled mode only: a new run begins (`number` counts from 1).",
-    "boot_step_finished": "One preflight step finished. `outcome` is `ok`, `warned`, or `failed`, "
+    "boot_step_finished": "One boot step finished. `outcome` is `ok`, `warned`, or `failed`, "
     "with an optional `detail`.",
-    "boot_ready": "Preflight finished. The scan begins.",
-    "scan_started": "The per-arr scan opened: which arr, and how many library titles it will walk.",
+    "boot_ready": "The boot finished. The scan begins.",
+    "scan_started": "The per-arr scan opened: which arr, and how many library items it will walk.",
     "item_started": "The scan moved to the next library item (`index` of `total`, `name` its name).",
     "diagnostic": "A problem or notice at any level. `origin` names the subsystem. A diagnostic raised outside "
     "any scope carries `during`, the scope that was open then, and one with a captured traceback carries it in "
     "`exc`.",
-    "scope_opened": "A nested scope opened (`kind` + `serial` identify it). Events inside carry a "
-    "human-readable `path` breadcrumb instead of the id.",
+    "scope_opened": "A nested scope opened (`kind` + `serial` identify it). Events inside carry the "
+    "scope path as `path` instead of the id.",
     "title_header": "A title's block opened. `message` is the title's state word.",
     "title_detail": "A labeled line inside a title's block. `message` is `label: value`.",
     "title_row": "A one-line result for a title: `message` is the state word, `title` the title's name.",
-    "release_skipped": "A release was skipped at add time. `reason` is `private_only`, "
-    "`unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, "
-    "`placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files "
-    "placed on another title's episodes and `unplaced` the rest, which nothing placed.",
-    "grab_failed": "Adding a release to qBittorrent failed. The title is retried next run.",
-    "grab_action": "The grab decision for a title. `message` distinguishes a real add, a dry-run "
-    "would-add, and already in qBittorrent.",
+    "release_skipped": "A release was skipped at the grab. "
+    f"`reason` is {', '.join(_SKIP_REASONS[:-1])}, or {_SKIP_REASONS[-1]}. "
+    "On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and "
+    "`unplaced` the rest, which nothing placed.",
+    "grab_failed": "Grabbing a release failed: qBittorrent did not take the torrent. The title is retried next run.",
+    "grab_action": "The grab decision for a title. `message` says which: grabbing, would grab "
+    "(a dry run), or already in qBittorrent.",
     "scope_closed": "The matching close of a `scope_opened` (anything nested deeper closes with it).",
     "cap_reached": "The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining "
-    "titles without grabbing, so a torrent already downloading stays matched to every entry that lists it, and "
-    "the held titles are grabbed on later runs.",
+    "titles without grabbing, so a torrent already in qBittorrent is still tied to every title that lists it, and "
+    "the held grabs are made on later runs.",
     "scan_finished": "The per-arr scan closed (a boundary event, the summary carries the facts).",
     "arr_run_summary": "The arr run's summary: the tally counters (`held_by_cap` only when the run held titles "
     "past the cap), plus `needs_action_records` and `grabbed_records` arrays mirroring the summary's per-title "
@@ -706,36 +708,36 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "downloads to finish, then imports) or `deferred` (one poll of the pending imports from earlier runs).",
     "wait_row_finished": "The wait pass finished one row: a pending import got its outcome for this run. "
     "`message` is the outcome word. `hand_import_files` names the files left for a hand import, on the "
-    "`unmatched` and `partial` outcomes. "
+    "`unplaced` and `partial` outcomes. "
     "On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that "
     "number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and "
-    "why the files are held.",
+    "why the files are left for a hand import.",
     "wait_finished": "The wait pass closed, with its `imported`, `in_progress`, `left` and `failed` counts.",
     "arr_run_finished": "The per-arr run closed (a boundary event).",
-    "next_run_scheduled": "Scheduled mode only: when the next cycle fires.",
+    "next_run_scheduled": "Scheduled mode only: when the next run fires.",
     "paths_shown": "The `paths` command: the resolved data directory and the files within it.",
-    "starter_config_written": "`config init` wrote a starter template to `path`.",
+    "starter_config_written": "`config init` wrote the template to `path`.",
     "config_validated": "`config validate` succeeded. `migrated` flags an in-memory schema migration "
     "(with `migration_notes`), and the `*_missing_keys` arrays and `qbit_configured` say what a run would use.",
     "config_up_to_date": "`config migrate` had nothing to do: the file is already at the current schema.",
     "config_migrated": "`config migrate` rewrote the file at the current schema. `backup_path` is the saved "
-    "previous file and `notes` lists what was folded.",
+    "previous file and `notes` lists what changed.",
     "effective_config_shown": "`config show`: the effective config (defaults applied) as `config`, with secrets "
     "already redacted.",
     "cache_backed_up": "`cache backup` wrote a fresh snapshot to `backup_path`.",
     "cache_restored": "`cache restore` restored the database from `backup_path`.",
     "cache_removed": "`cache remove` deleted the database at `path`.",
-    "cache_stats_reported": "`cache stats`: per-block row counts and the on-disk `size_bytes`.",
-    "cache_integrity_reported": "`cache check`'s success arm: the SQLite integrity-check `result`.",
+    "cache_stats_reported": "`cache stats`: per-block row counts and the database file's `size_bytes`.",
+    "cache_integrity_reported": "`cache check` passed: the SQLite integrity-check `result`.",
 }
 
 # Event types that never reach the JSON stream, with the reason readers need.
 # The catalog build fails if the serializer's actual drop set drifts from this.
 JSON_SILENT: dict[str, str] = {
-    "BootStepStarted": "a live-cockpit affordance. `boot_step_finished` carries the step's facts",
-    "BootStepProgressed": "ephemeral progress for the live cockpit only",
-    "BootStepSlow": "a text-surface heads-up. The JSON stream sees the step finish",
-    "WaitProgress": "the per-poll wait snapshot. On the JSON stream, wait progress is the "
+    "BootStepStarted": "for the live console only. `boot_step_finished` carries the step's facts",
+    "BootStepProgressed": "progress for the live console only",
+    "BootStepSlow": "a notice for the console and the text log. The JSON stream sees the step finish",
+    "WaitProgress": "the wait pass's progress at each poll. On the JSON stream, wait progress is the "
     "`wait_started` / `wait_row_finished` / `wait_finished` sequence",
 }
 
@@ -766,7 +768,7 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
                 coverage="S02",
                 group="Vodes",
                 url="https://seadex.moe/108/",
-                reason="private-only release; no public alternative covers these files",
+                reason="private-only release; no fallback covers these files",
                 cause=ev.NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
             ),
         ),
@@ -941,7 +943,7 @@ def build_event_catalog() -> tuple[EventSpecimen, ...]:
         for raw in lines[emitted:]:
             parsed: object = loads(raw)
             if not is_json_obj(parsed):
-                raise GenerationError(f"the JSON sink emitted a non-object line: {raw[:60]!r}")
+                raise GenerationError(f"the JSON renderer emitted a non-object line: {raw[:60]!r}")
             payload = dict(parsed)
             payload["time"] = _SPECIMEN_TIME
             name = payload.get("event")
@@ -1056,7 +1058,7 @@ def main() -> int:
 
     if drifted:
         names = ", ".join(str(path.relative_to(REPO_ROOT)) for path in drifted)
-        sys.stderr.write(f"gen_docs: stale generated docs: {names} - regenerate: {REGEN_COMMAND}\n")
+        sys.stderr.write(f"gen_docs: generated docs are out of date: {names} - regenerate: {REGEN_COMMAND}\n")
         return 1
     return 0
 

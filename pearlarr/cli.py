@@ -164,7 +164,7 @@ def _refused_by_active_run(acquired: bool, data_dir: str, *, what: str = "the ca
 
     if acquired:
         return False
-    hub_error(f"Another Pearlarr run is active in {data_dir} - refusing to modify {what}")
+    hub_error(f"Another Pearlarr run is active in {data_dir} - not modifying {what}")
     return True
 
 

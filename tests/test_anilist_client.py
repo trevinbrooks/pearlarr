@@ -443,13 +443,13 @@ def test_give_up_marks_anilist_unreachable(
         pytest.param(
             httpx.Response(403, json=_DISABLED_BODY),
             _DISABLED_BODY,
-            f"refused the request (HTTP 403: {_DISABLED_MESSAGE})",
+            f"rejected the request (HTTP 403: {_DISABLED_MESSAGE})",
             id="403 refusal",
         ),
         pytest.param(
             httpx.Response(200, json=_DISABLED_BODY),
             _DISABLED_BODY,
-            f"refused the request (HTTP 200: {_DISABLED_MESSAGE})",
+            f"rejected the request (HTTP 200: {_DISABLED_MESSAGE})",
             id="refusal riding 200",
         ),
         pytest.param(
@@ -495,7 +495,7 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
     _client().query(1)
 
     (warning,) = _warnings(recording)
-    quoted = warning.message.removeprefix("AniList refused the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
+    quoted = warning.message.removeprefix("AniList rejected the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
     assert quoted.startswith("down for maintenance xxx")
     assert len(quoted) == 160
 

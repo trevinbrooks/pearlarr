@@ -197,10 +197,10 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert embed.title == "Radarr wait complete"
     assert f"2 imported{SEP}1 left{SEP}1 failed" in embed.description
     names = [field.name for field in embed.fields]
-    assert names == ["Imported (2)", "Left pending (1)", "Failed (1)"]
+    assert names == ["Imported (2)", "Left for the next run (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
     # Left/failed rows carry the outcome detail. A failure colors the embed red.
-    assert embed.fields[2].value == "Bleach TYBW - download errored; left pending"
+    assert embed.fields[2].value == "Bleach TYBW - download errored; left for the next run"
     assert embed.color == COLOR_FAILED
 
 
@@ -224,9 +224,9 @@ def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: lis
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
-    assert field.name == "Left pending (1)"
+    assert field.name == "Left for the next run (1)"
     assert field.value == (
-        "Demo Batch - no file matched an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`"
+        "Demo Batch - no file was placed on an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`"
     )
     assert pushes[0].color == COLOR_DEFERRED
 
@@ -239,10 +239,8 @@ def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
-    assert field.name == "Left pending (1)"
-    assert field.value == (
-        "Demo Batch - imported in part; import the held-back files by hand in Sonarr\n`show - 03 [grp].mkv`"
-    )
+    assert field.name == "Left for the next run (1)"
+    assert field.value == ("Demo Batch - imported in part; files left for hand import in Sonarr\n`show - 03 [grp].mkv`")
 
 
 def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pushes: list[DiscordEmbed]) -> None:
@@ -255,7 +253,7 @@ def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pu
     [field] = pushes[0].fields
     assert field.value == (
         "Show Ending · grp · S04 E01-E12 - S04 E01 is still missing in Sonarr.\n"
-        "This pack is numbered by the DVD order, and 2 of its files are DVD episodes "
+        "This torrent is numbered by the DVD order, and 2 of its files are DVD episodes "
         "that aren't in Sonarr's list, so Pearlarr can't tell where they belong:\n"
         "DVD S07E01: `[grp] Show Ending S1 - 01 [ABCD1234].mkv`\n"
         "DVD S07E02: `[grp] Show Ending S1 - 02 [ABCD1234].mkv`"
@@ -275,7 +273,7 @@ def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: l
     [field] = cast("list[dict[str, str]]", pushes[0].to_payload()["fields"])
     assert len(field["value"]) <= _MAX_VALUE_LEN
     assert field["value"].startswith(
-        "Title 0 - no file matched an episode; import by hand in Sonarr\n`Demo Batch Part 0"
+        "Title 0 - no file was placed on an episode; import by hand in Sonarr\n`Demo Batch Part 0"
     )
 
 
@@ -580,7 +578,7 @@ class TestGrabLayout:
         assert embed.description == ""
         assert [f.name for f in embed.fields] == [
             "Grabbed · Fresh",
-            "Already downloading · InFlight",
+            "Already in qBittorrent · InFlight",
             "Failed · Errored",
             "Skipped · Held",
             "Replacing",

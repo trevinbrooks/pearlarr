@@ -414,7 +414,7 @@ class OutputHub:
     def _overflow_note(self) -> Diagnostic:
         return Diagnostic(
             severity=Severity.WARNING,
-            message=f"output queue overflowed ({QUEUE_CAP} pending); shedding newest events until it drains",
+            message=f"output queue overflowed at {QUEUE_CAP} events; shedding newest events until it drains",
             origin="output.hub",
             file_only=True,
         )
@@ -542,7 +542,7 @@ class OutputHub:
         self._stderr_fallback(event)
         # Notes go out after the event, so survivors keep the emit order.
         for sub, exc in failures:
-            quarantined = " (quarantined until next cycle)" if sub.strikes >= self._strike_limit else ""
+            quarantined = " (disabled until the next run)" if sub.strikes >= self._strike_limit else ""
             message = f"renderer {type(sub.renderer).__name__} failed on {type(event).__name__}: {exc}{quarantined}"
             self._note(message, exc, when, skip=sub)
 

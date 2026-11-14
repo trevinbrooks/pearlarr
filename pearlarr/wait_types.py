@@ -86,7 +86,7 @@ class PendingImportState(StrEnum):
     counters, so one vocabulary describes a carried-over pending import everywhere.
     """
 
-    DOWNLOADING = "queued"
+    DOWNLOADING = "downloading"
     """Still downloading."""
 
     DOWNLOADED = "downloaded"
@@ -99,7 +99,7 @@ class PendingImportState(StrEnum):
     ERRORED = "errored"
     """The download errored in qBittorrent. Left for a later run."""
 
-    GONE = "missing"
+    GONE = "gone"
     """The torrent is gone from qBittorrent. The pending import is dropped."""
 
 
@@ -328,34 +328,34 @@ class Outcome(Enum):
 
     IMPORTED = ("imported", "imported", OutcomeKind.IMPORTED, True)
     GONE = ("gone", "gone from qBittorrent; title checked again next run", OutcomeKind.FAILED, True)
-    DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeKind.FAILED, False)
-    DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeKind.LEFT, False)
+    DOWNLOAD_ERRORED = ("errored", "download errored; left for the next run", OutcomeKind.FAILED, False)
+    DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left for the next run", OutcomeKind.LEFT, False)
     NO_CONTENT_PATH = (
         "no path",
-        "complete but no content path reported; left pending",
+        "complete but no content path reported; left for the next run",
         OutcomeKind.LEFT,
         False,
     )
-    STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeKind.LEFT, False)
-    SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left pending", OutcomeKind.LEFT, False)
-    NOT_READY = ("not ready", "import not ready; left pending", OutcomeKind.LEFT, False)
-    NOTHING_PLACED = ("unmatched", "no file matched an episode; import by hand in Sonarr", OutcomeKind.LEFT, False)
+    STILL_IMPORTING = ("unfinished", "still importing; left for the next run", OutcomeKind.LEFT, False)
+    SONARR_BUSY = ("sonarr busy", "Sonarr busy with a disk command; left for the next run", OutcomeKind.LEFT, False)
+    NOT_READY = ("not ready", "import not ready; left for the next run", OutcomeKind.LEFT, False)
+    NOTHING_PLACED = ("unplaced", "no file was placed on an episode; import by hand in Sonarr", OutcomeKind.LEFT, False)
     PARTIAL = (
         "partial",
-        "imported in part; import the held-back files by hand in Sonarr",
+        "imported in part; files left for hand import in Sonarr",
         OutcomeKind.LEFT,
         False,
     )
-    ATTEMPT_FAILED = ("failed", "import attempt failed; left pending", OutcomeKind.LEFT, False)
+    ATTEMPT_FAILED = ("will retry", "import attempt failed; left for the next run", OutcomeKind.LEFT, False)
     QBITTORRENT_UNREACHABLE = (
-        "not checked",
-        "qBittorrent unreachable; checked again next run",
+        "unreachable",
+        "qBittorrent unreachable; picked up again next run",
         OutcomeKind.LEFT,
         False,
     )
-    IMPORT_IN_PROGRESS = ("in progress", "import in progress; checked again next run", OutcomeKind.IN_PROGRESS, False)
-    AWAITING_IMPORT = ("awaiting", "awaiting import; checked again next run", OutcomeKind.IN_PROGRESS, False)
-    STILL_DOWNLOADING = ("downloading", "still downloading; checked again next run", OutcomeKind.IN_PROGRESS, False)
+    IMPORT_IN_PROGRESS = ("in progress", "import in progress; picked up again next run", OutcomeKind.IN_PROGRESS, False)
+    AWAITING_IMPORT = ("awaiting", "awaiting import; picked up again next run", OutcomeKind.IN_PROGRESS, False)
+    STILL_DOWNLOADING = ("downloading", "still downloading; picked up again next run", OutcomeKind.IN_PROGRESS, False)
 
     word: str
     """The short outcome line token (every one fits `STATE_WIDTH` = 11)."""

@@ -88,7 +88,7 @@ def validate_each[ModelT: ApiModel](
 
             hub_warn(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
     if strict and raw and not validated:
-        msg = f"none of the {len(raw)} {model.__name__} records validated - refusing to treat it as empty"
+        msg = f"none of the {len(raw)} {model.__name__} records validated - not treating it as empty"
         raise BoundaryContractError(msg)
     return validated
 

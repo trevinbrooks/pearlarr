@@ -256,7 +256,7 @@ class TorrentService:
             self._look = _CategoryLook(self.qbit, {})
             hub_warn(
                 f"Could not read qBittorrent's torrents ({type(e).__name__}"
-                ") - this run may add a release that another torrent already holds"
+                ") - this run may grab a release that another torrent already has"
             )
 
     def add(
@@ -277,7 +277,7 @@ class TorrentService:
         if (present := self._already_added(item)) is not None:
             return present
         if item.cross_seed_hash is not None:
-            raise TorrentAddError("the torrent holding this release's files left qBittorrent during the run")
+            raise TorrentAddError("the torrent that has this release's files left qBittorrent during the run")
         parsed_url, source_name = parser(item.url, item.infohash, self.web)
 
         if parsed_url is None:

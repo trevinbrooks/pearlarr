@@ -29,8 +29,8 @@ class TitleState(StrEnum):
     NO_EPISODES = "no episodes"
     IGNORED = "ignored"
     NO_ENTRY = "no entry"
-    NOT_CHECKED = "skipped"
-    DOWNLOADING = "queued"
+    NOT_CHECKED = "not checked"
+    DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
     IMPORTED = "imported"
 
@@ -550,29 +550,21 @@ class WaitKind(Enum):
     A member's name, lowercased, is the JSON `wait_pass` value.
     """
 
-    BLOCKING = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
+    BLOCKING = ("Waiting on {n} download{s} to complete and import...", "waiting")
     """The blocking wait pass: waits for downloads to finish, then imports."""
 
-    DEFERRED = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
+    DEFERRED = ("Looking at {n} pending import{s} from earlier runs...", "looking")
     """The deferred wait pass: polls once, imports the finished ones, never waits."""
 
     start_template: str
     """The progress lines' opening sentence, with `{n}` count and `{s}` plural-suffix slots."""
 
-    tally_head: str
-    """The closing summary's lead phrase."""
-
     live_verb: str
     """The wait region header's progress verb, also the structured log's start word."""
 
-    interrupt_noun: str
-    """The Ctrl-C notice's pass name."""
-
-    def __init__(self, start_template: str, tally_head: str, live_verb: str, interrupt_noun: str) -> None:
+    def __init__(self, start_template: str, live_verb: str) -> None:
         self.start_template = start_template
-        self.tally_head = tally_head
         self.live_verb = live_verb
-        self.interrupt_noun = interrupt_noun
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,7 +660,7 @@ class PathsShown:
 
 @dataclass(frozen=True, slots=True)
 class StarterConfigWritten:
-    """`config init` wrote a starter template."""
+    """`config init` wrote the template."""
 
     path: str
 

@@ -241,7 +241,7 @@ def _merge_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str,
 
     first = rows[0]
     if any(row.release_group != first.release_group or row.is_dual_audio != first.is_dual_audio for row in rows):
-        _LOG.debug(f"pending records of {infohash} disagree on their release; keeping entry {first.al_id}'s")
+        _LOG.debug(f"pending import rows of {infohash} disagree on their release; keeping title {first.al_id}'s")
     stamps = [moment for row in rows if (moment := parse_stamp_or_none(row.added_at)) is not None]
     file_episode_map: dict[str, list[int]] = {}
     for row in rows:
@@ -335,7 +335,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         except BaseException:
             conn.rollback()
             raise
-        hub_note(f"Upgraded cache database schema v{step} -> v{step + 1}")
+        hub_note(f"Migrated the cache database schema v{step} -> v{step + 1}")
 
 
 def row_payload(row: dict[str, Any] | None, key: str) -> dict[str, Any] | None:

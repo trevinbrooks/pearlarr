@@ -235,7 +235,7 @@ class TestPerTitleErrorContainment:
         # The per-title failure is an ERROR Diagnostic with its traceback (containment
         # is observable).
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A (AniList #1): unexpected error (boom on al_id 1) - skipping this AniList id"
+        assert error.message == "A (AniList #1): unexpected error (boom on al_id 1) - moving on to the next title"
         assert error.trace is not None
         # The single finalize still ran once on the normal path to the arr run's end.
         assert finalize.calls == 1
@@ -290,7 +290,7 @@ class TestPerItemErrorContainment:
         assert strategy.process_calls == [5]
         # The per-item failure is an ERROR Diagnostic with its traceback.
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A: unexpected error (mapping lookup exploded) - skipping this title"
+        assert error.message == "A: unexpected error (mapping lookup exploded) - moving on to the next library item"
         assert error.trace is not None
         # The arr run still reached the single post-loop finalize site.
         assert finalize.calls == 1
@@ -572,7 +572,7 @@ class TestBootNotes:
     def test_healthy_anilist_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
         step = self._step(self._run(logger, client=ScriptedAniListClient()), "Fetching AniList metadata")
 
-        assert step.detail == "1 entry"  # the one mapped id needed fetching
+        assert step.detail == "1 title"  # the one mapped id needed fetching
         assert step.outcome is OutcomeKind.IMPORTED
 
 
@@ -605,7 +605,7 @@ class TestSelectionRecheck:
     OTHER hash reads changed. With no hash stored, nothing reads changed.
     """
 
-    _NOTE = "Matching settings changed - rechecking cached entries"
+    _NOTE = "Selection settings changed - checking cached titles again"
 
     def _run(
         self,

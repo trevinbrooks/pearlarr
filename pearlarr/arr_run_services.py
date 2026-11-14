@@ -189,7 +189,7 @@ class ArrRunDeps:
             # No credentials -> perpetual dry run. Say so in the boot step lines (a ⚠
             # step) instead of silently grabbing nothing all run.
             with boot.step("Connecting to qBittorrent") as step:
-                step.warn("not configured - preview mode")
+                step.warn("not configured - dry run")
 
         # Load the cache (or create its schema) and reconcile the version text against
         # the current package version + config hash. Each arr builds its own

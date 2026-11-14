@@ -161,7 +161,7 @@ class TestBootRegion:
                 "Connecting to qBittorrent",
                 serial=2,
                 outcome=OutcomeKind.LEFT,
-                detail="not configured - preview mode",
+                detail="not configured - dry run",
                 elapsed_s=0.05,
             ),
             BootReady(elapsed_s=1.27),
@@ -170,7 +170,7 @@ class TestBootRegion:
 
         out = _plain(stream)
         assert f"  ✔ Reading config{SEP}config.yml{SEP}0.61s" in out
-        assert f"  ⚠ Connecting to qBittorrent{SEP}not configured - preview mode{SEP}0.05s" in out
+        assert f"  ⚠ Connecting to qBittorrent{SEP}not configured - dry run{SEP}0.05s" in out
         assert "  ready in 1.27s" in out
 
     def test_labels_render_literally_never_as_markup(self) -> None:

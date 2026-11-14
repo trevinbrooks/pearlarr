@@ -1321,7 +1321,7 @@ class TestImportCompletedQueueState:
         assert len(sonarr.execute_calls) == 1
         assert mgr._pending_imports.rows()[pending.infohash].get("awaiting_cleanup") is False
         assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
-        assert any("no longer present" in w for w in diagnostic_messages(recording, Severity.WARNING))
+        assert any("no longer has every file imported" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_store_persisted_guard_row_protects_through_the_pending_import_snapshot(self) -> None:
         # THE fix path end to end: the persisted blob carries NO guards - the
@@ -3035,7 +3035,7 @@ class TestAutoImportWarningGating:
     def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         # A sibling pending import's part of a shared torrent was placed at grab time:
         # this pending import still imports its own file, and the unplaceable sibling
-        # file is a debug note, not a "could not be matched" warning.
+        # file is a debug note, not a "could not be placed" warning.
         sibling = "Show - S00E01 [1080p].mkv"
         pending = pending_import(
             seadex_files=["Show - 01 [1080p].mkv", sibling], excluded_files=[normalize_file_name(sibling)]
@@ -3048,8 +3048,11 @@ class TestAutoImportWarningGating:
 
         assert result.command_issued is True
         assert len(sonarr.execute_calls) == 1
-        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
-        assert any("1 file excluded on record" in r.message and r.levelname == "DEBUG" for r in caplog.records)
+        assert not any("could not be placed" in m for m in diagnostic_messages(recording, Severity.WARNING))
+        assert any(
+            "1 excluded file already reported at the grab" in r.message and r.levelname == "DEBUG"
+            for r in caplog.records
+        )
 
     def test_partial_exclusion_warns_the_remainder_once(self) -> None:
         # One excluded plus one genuinely unplaceable file: the warning names
@@ -3065,9 +3068,9 @@ class TestAutoImportWarningGating:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
         assert len(warnings) == 1
-        assert "1 file could not be matched" in warnings[0]
+        assert "1 file could not be placed" in warnings[0]
 
     def test_a_disk_file_seadexs_list_lacks_warns_as_a_skip(self) -> None:
         pending = pending_import(seadex_files=["Show - 01 [1080p].mkv"])
@@ -3077,7 +3080,7 @@ class TestAutoImportWarningGating:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
         assert len(warnings) == 1
 
     def test_a_duplicate_file_name_the_map_lacks_is_reported_once(self) -> None:
@@ -3088,9 +3091,9 @@ class TestAutoImportWarningGating:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
         assert len(warnings) == 1
-        assert "1 file could not be matched" in warnings[0]
+        assert "1 file could not be placed" in warnings[0]
 
 
 class TestUnmatchedAttemptResult:
@@ -3215,7 +3218,7 @@ class TestUnmatchedAttemptResult:
         assert first.command_issued is True
         assert first.unplaced_files == ()
         assert sonarr.execute_calls[0][0][0].path == "/d/Show - 01 [1080p].mkv"
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
         assert len(warnings) == 1
 
 
@@ -3269,7 +3272,7 @@ class TestLeftForHandImportFiles:
         assert first.all_done is False
         assert second == first
         assert sonarr.execute_calls == []
-        assert not any("could not be matched" in m for m in diagnostic_messages(recording, Severity.WARNING))
+        assert not any("could not be placed" in m for m in diagnostic_messages(recording, Severity.WARNING))
 
     def test_a_pending_import_stored_without_hand_import_files_still_leaves_its_unplaced_file_for_hand_import(
         self,
@@ -3315,9 +3318,9 @@ class TestLeftForHandImportFiles:
         strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
 
         assert result.left_for_hand_import.names == (self._NAMES[2],)
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be matched" in m]
+        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
         assert len(warnings) == 1
-        assert ": 1 file could not be matched" in warnings[0]
+        assert ": 1 file could not be placed" in warnings[0]
 
     def test_a_plain_skip_alone_finishes(self) -> None:
         strat, _ = _make_sonarr_for_import(
@@ -3708,7 +3711,7 @@ class TestFolderFetchFallback:
         assert result.all_done is False
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
-        assert "a scan of /d/Show found no files" in warning
+        assert "reading /d/Show found no files" in warning
 
     def test_history_closed_empty_folder_warns_for_a_pending_import_with_an_empty_file_map_at_the_deadline(
         self,
@@ -3787,7 +3790,7 @@ class TestFolderFetchFallback:
         assert result.placements == {}
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
-        assert "a scan of /d/Show found no files" in warning
+        assert "reading /d/Show found no files" in warning
 
     def test_covered_pending_import_never_rebuilds(self) -> None:
         # A pending import with a file map is done or waits on its own file map: the rows are
@@ -4126,7 +4129,7 @@ class TestUnwatchedTorrentImport:
         assert sonarr.execute_calls == []
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
-        assert "a scan of /d/Show found no files" in warning
+        assert "reading /d/Show found no files" in warning
 
 
 class TestResolveLanguageObjects:

@@ -130,8 +130,8 @@ class TitleMapping:
         still EPISODE_RANGES.
         """
 
-        # Invariant: an empty tvdb_mappings dict is still EPISODE_RANGES. A truthiness check would fall back to the
-        # Anime-IDs season offset and over-grab.
+        # Invariant: an empty tvdb_mappings dict is still EPISODE_RANGES. A truthiness check would use the
+        # Anime-IDs season offset instead and over-grab.
         return MappingKind.EPISODE_RANGES if self.tvdb_mappings is not None else MappingKind.SEASON_OFFSET
 
 
@@ -510,11 +510,11 @@ class MappingResolver(KnownExternalIds):
                 if mappings_db == ":memory:":
                     raise
                 hub_warn(
-                    f"Mapping cache at {mappings_db} could not be written - rebuilding it "
-                    "in memory for this run (slower startup, no data lost)"
+                    f"Mappings database at {mappings_db} could not be written - rebuilding it "
+                    "in memory for this run (slower boot, no data lost)"
                 )
                 if self.logger is not None:
-                    self.logger.debug("Mapping cache rebuild cause:", exc_info=True)
+                    self.logger.debug("Mappings database rebuild cause:", exc_info=True)
                 self._store.close()
                 self._store = MappingStore.open(":memory:")
                 self._build(sources)
@@ -655,17 +655,17 @@ class MappingResolver(KnownExternalIds):
         t0 = time.perf_counter()
         rows = _anime_ids_rows(_parse_anime_mappings(self._anime_ids_path))
         self._store.replace_anime_ids(file_hash, rows)
-        self._log(f"Indexed anime_ids.json ({len(rows)} records, {time.perf_counter() - t0:.2f}s)")
+        self._log(f"Indexed anime_ids.json ({len(rows)} rows, {time.perf_counter() - t0:.2f}s)")
 
     def _load_anidb(self) -> None:
         """Download + (re)index the AniDB anime-list XML only if its content changed."""
 
-        self._maybe_download(self._anidb_path, ANIDB_MAPPINGS_URL, "anidb anime-list")
+        self._maybe_download(self._anidb_path, ANIDB_MAPPINGS_URL, "anime-lists")
         file_hash = _file_hash(self._anidb_path)
         if self._store.is_fresh(SOURCE_ANIDB, file_hash):
-            self._log("anidb anime-list unchanged; using cached index")
+            self._log("anime-lists unchanged; using cached index")
             return
-        self._log("Parsing + indexing anidb anime-list ...")
+        self._log("Parsing + indexing anime-lists ...")
         t0 = time.perf_counter()
         parsed = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
         self._store.replace_anidb(file_hash, parsed.rows, parsed.ambiguous)
@@ -675,7 +675,7 @@ class MappingResolver(KnownExternalIds):
         if parsed.unsupported:
             skips += f", {parsed.unsupported} unsupported mapping forms"
         self._log(
-            f"Indexed anidb anime-list ({len(parsed.rows)} mappings, {time.perf_counter() - t0:.2f}s{skips})",
+            f"Indexed anime-lists ({len(parsed.rows)} mappings, {time.perf_counter() - t0:.2f}s{skips})",
         )
 
     def _load_anibridge(self) -> None:
@@ -713,7 +713,7 @@ class MappingResolver(KnownExternalIds):
         if self._anime_enabled:
             names.append("anime-ids")
         if self._anidb_enabled:
-            names.append("anidb")
+            names.append("anime-lists")
         if self.anibridge is not None:
             names.append("anibridge")
         return " · ".join(names) if names else "none enabled"
@@ -762,7 +762,7 @@ class MappingResolver(KnownExternalIds):
             return {}
         if self._store.anidb_is_ambiguous(anidb_id):
             raise ValueError(
-                f"AniDB id {anidb_id} appears in multiple anime-list entries; cannot resolve its episode mapping",
+                f"AniDB id {anidb_id} appears in more than one anime-lists mapping; cannot resolve its episode mapping",
             )
         rows = self._store.anidb_rows(anidb_id, tvdb_season)
         if not rows:

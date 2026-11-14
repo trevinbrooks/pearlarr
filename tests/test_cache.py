@@ -318,7 +318,7 @@ class TestSchemaVersionGate:
         # Each step announces itself as an INFO hub Diagnostic, one per step walked.
         steps = recording.of_type(Diagnostic)
         assert [s.message for s in steps] == [
-            f"Upgraded cache database schema v{n} -> v{n + 1}" for n in range(SCHEMA_VERSION)
+            f"Migrated the cache database schema v{n} -> v{n + 1}" for n in range(SCHEMA_VERSION)
         ]
         assert all(s.severity is Severity.INFO and s.origin == LOG_NAME for s in steps)
 

@@ -71,15 +71,14 @@ _CAP_MESSAGE: Final = (
     "checking the remaining titles without grabbing"
 )
 
-# Causes without a tip render no line. The PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by
+# Causes without a tip render no line. The PRIVATE_ONLY > NO_FALLBACK > OUTDATED precedence is settled by
 # whoever populates `ArrRunSummary.tip`, never re-derived here.
 _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
     NeedsActionCause.PRIVATE_ONLY: (
-        "Tip: manually grab private releases or set private_releases: fallback to "
-        "automatically grab public alternatives."
+        "Tip: manually grab private releases or set private_releases: fallback to grab a public release instead."
     ),
     NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK: (
-        "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
+        "Tip: no public release covers these files yet; the title is re-checked every run until one does."
     ),
     NeedsActionCause.PRIVATE_ONLY_OUTDATED: (
         "Tip: your copies of these releases are outdated (their file sizes no longer match); "
@@ -218,7 +217,7 @@ def _skip_text(event: ReleaseSkipped) -> str:
         case SkipReason.MISNUMBERED:
             return f"{event.url or event.group} (numbering does not match its SeaDex listing)"
         case SkipReason.EPISODE_TITLES_CONTRADICT:
-            return f"{event.url or event.group} (file titles contradict its numbering)"
+            return f"{event.url or event.group} (episode titles contradict its numbers)"
         case SkipReason.PLACED_ELSEWHERE:
             counts = event.counts
             text = f"{count_noun(counts.another_titles, 'file')} {'is' if counts.another_titles == 1 else 'are'} another title's"
@@ -262,21 +261,21 @@ def grab_action_lines(event: GrabAction) -> tuple[ConsoleLine, ...]:
     lines: list[ConsoleLine] = []
     match event.status:
         case GrabStatus.GRABBING:
-            lines.append(_detail_kv("status", "adding SeaDex's recommended release", value_style=None))
+            lines.append(_detail_kv("status", "grabbing", value_style=None))
         case GrabStatus.WOULD_GRAB:
-            lines.append(_detail_kv("status", "would add SeaDex's recommended release (dry run)", value_style=None))
+            lines.append(_detail_kv("status", "would grab (dry run)", value_style=None))
         case GrabStatus.ALREADY_IN_QBIT:
-            message = "SeaDex's pick is already in qBittorrent"
+            message = "already in qBittorrent"
             if event.waiting_to_import:
                 message += " - waiting to import"
             lines.append(_detail_kv("status", message, value_style="yellow"))
     for group in event.groups:
         lines.append(_detail_kv("group", group.display, value_style="cyan"))
-    added_label = "would add" if event.status is GrabStatus.WOULD_GRAB else "added"
+    grabbed_label = "would grab" if event.status is GrabStatus.WOULD_GRAB else "grabbed"
     for release in event.grabbed:
-        lines.append(_detail_kv(added_label, release.display, value_style="green"))
+        lines.append(_detail_kv(grabbed_label, release.display, value_style="green"))
     for release in event.in_qbit:
-        lines.append(_detail_kv("downloading", release.display, value_style="yellow"))
+        lines.append(_detail_kv("torrent", release.display, value_style="yellow"))
     return tuple(lines)
 
 
@@ -327,7 +326,7 @@ def _needs_block(item: NeedsActionRow) -> Iterator[ConsoleLine]:
     yield from _summary_block(item.title or "(unknown title)", "yellow", rows)
 
 
-def _added_block(item: GrabbedRow, *, dry_run: bool) -> Iterator[ConsoleLine]:
+def _grabbed_block(item: GrabbedRow, *, dry_run: bool) -> Iterator[ConsoleLine]:
     # A dry run dims the whole block (group accent included) so the would-be grabs don't read as real.
     torrent_value = group_highlight(
         item.name,
@@ -344,7 +343,7 @@ def _added_block(item: GrabbedRow, *, dry_run: bool) -> Iterator[ConsoleLine]:
 
 
 def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
-    """The arr run summary: checked / needs-action / added tallies plus the closing rule."""
+    """The arr run summary: checked / needs-action / grabbed tallies plus the closing rule."""
 
     summary = event.summary
     tally = summary.tally
@@ -363,23 +362,23 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
         _summary_kv("checked", str(tally.checked)),
     ]
 
-    # Needs-action ahead of "added": anything waiting on a decision surfaces first.
+    # Needs-action ahead of "grabbed": anything waiting on a decision surfaces first.
     needs = tally.needs_action
     lines.append(_summary_kv("needs action", str(len(needs)), value_style="yellow" if needs else None))
     for item in needs:
         lines.extend(_needs_block(item))
 
     lines.append(
-        _summary_kv("added", str(summary.grabbed_count), value_style="green" if summary.grabbed_count else None)
+        _summary_kv("grabbed", str(summary.grabbed_count), value_style="green" if summary.grabbed_count else None)
     )
     for grab in tally.grabbed:
-        lines.extend(_added_block(grab, dry_run=summary.dry_run))
+        lines.extend(_grabbed_block(grab, dry_run=summary.dry_run))
     if tally.held_by_cap:
         lines.append(_summary_kv("held by cap", str(tally.held_by_cap), value_style="yellow"))
 
     if summary.wait_mode_on:
         if tally.downloading:
-            lines.append(_summary_kv("queued", str(tally.downloading), value_style="grey50"))
+            lines.append(_summary_kv("downloading", str(tally.downloading), value_style="grey50"))
         if tally.downloaded:
             lines.append(_summary_kv("downloaded", str(tally.downloaded), value_style="yellow"))
         if tally.imported:
@@ -396,7 +395,7 @@ def arr_run_summary_lines(event: ArrRunSummaryReady) -> tuple[ConsoleLine, ...]:
     if tally.no_seadex_entry:
         lines.append(_summary_kv("no entry", str(tally.no_seadex_entry)))
     if tally.seadex_unreachable:
-        lines.append(_summary_kv("seadex down", str(tally.seadex_unreachable), value_style="yellow"))
+        lines.append(_summary_kv("not checked", str(tally.seadex_unreachable), value_style="yellow"))
     if tally.no_releases:
         lines.append(_summary_kv("no release", str(tally.no_releases)))
     if tally.unmonitored:

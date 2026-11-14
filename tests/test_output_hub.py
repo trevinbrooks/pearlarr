@@ -536,8 +536,8 @@ def test_the_final_strike_announces_the_quarantine() -> None:
         hub.emit(_EVENT)
 
     notes = [e for e in survivor.events if isinstance(e, Diagnostic)]
-    assert "quarantined until next cycle" in notes[-1].message
-    assert all("quarantined" not in note.message for note in notes[:-1])
+    assert "disabled until the next run" in notes[-1].message
+    assert all("disabled until the next run" not in note.message for note in notes[:-1])
 
 
 def test_emit_never_raises_even_when_every_renderer_fails() -> None:

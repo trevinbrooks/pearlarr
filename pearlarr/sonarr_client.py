@@ -383,7 +383,7 @@ class SonarrClient(AbstractSonarrClient):
 
         raw = self._http.get_json_list(
             "/api/v3/qualitydefinition",
-            warn="Could not fetch quality definitions from Sonarr ({detail}) - falling back to other quality sources",
+            warn="Could not fetch quality definitions from Sonarr ({detail}) - using other quality sources",
         )
         if raw is None:
             return []

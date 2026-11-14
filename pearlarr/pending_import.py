@@ -399,7 +399,7 @@ class PendingImport:
 
         claim = next((claim for claim in self.claims if claim.series_id == series_id), None)
         if claim is None:
-            raise LookupError(f"record {self.infohash} has no claim on series {series_id}")
+            raise LookupError(f"pending import {self.infohash} has no claim on series {series_id}")
         return claim
 
     @property

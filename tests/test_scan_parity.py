@@ -240,16 +240,14 @@ CACHED_BARE_LINES: tuple[Line, ...] = (
 
 UNREACHABLE_ROW = TitleRow(state=TitleState.NOT_CHECKED, label="Cached Show")
 UNREACHABLE_ANILIST_DETAIL = TitleDetail(label="anilist", value=StyledValue("1"))
-UNREACHABLE_STATUS_DETAIL = TitleDetail(
-    label="status", value=StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM)
-)
+UNREACHABLE_STATUS_DETAIL = TitleDetail(label="status", value=StyledValue("SeaDex unreachable", Accent.DIM))
 UNREACHABLE_LINES: tuple[Line, ...] = (
     _blank(),
-    _styled("  skipped     Cached Show", "grey50"),
+    _styled("  not checked Cached Show", "grey50"),
     # The anilist id repeats on its own detail row under any real name, the
     # cached name included. Only the id-form label omits it (it names the id itself).
     _detail("    anilist   1", "anilist", "1", style=None),
-    _detail("    status    lookup skipped (SeaDex unreachable)", "status", "lookup skipped (SeaDex unreachable)"),
+    _detail("    status    SeaDex unreachable", "status", "SeaDex unreachable"),
 )
 
 NO_ENTRY_RESOLVED_ROW = TitleRow(state=TitleState.NO_ENTRY, label="Resolved Title")
@@ -291,7 +289,7 @@ def _pending_import_lines(row: Line) -> tuple[Line, ...]:
 
 
 PENDING_IMPORT_QUEUED = _pending_import_header(TitleState.DOWNLOADING)
-PENDING_QUEUED_LINES = _pending_import_lines(_styled("  queued      My Show · SubGroup", "grey50"))
+PENDING_QUEUED_LINES = _pending_import_lines(_styled("  downloading My Show · SubGroup", "grey50"))
 
 PENDING_IMPORT_DOWNLOADED = _pending_import_header(TitleState.DOWNLOADED)
 PENDING_DOWNLOADED_LINES = _pending_import_lines(_styled("  downloaded  My Show · SubGroup", "grey50"))
@@ -317,35 +315,26 @@ _FRESH_ADDED = (
 
 ACTION_FRESH = GrabAction(status=GrabStatus.GRABBING, groups=_FRESH_GROUPS, grabbed=_FRESH_ADDED, in_qbit=())
 ACTION_FRESH_LINES: tuple[Line, ...] = (
-    _detail(
-        "    status    adding SeaDex's recommended release",
-        "status",
-        "adding SeaDex's recommended release",
-        style=None,
-    ),
+    _detail("    status    grabbing", "status", "grabbing", style=None),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
     _detail("    group     GroupB", "group", "GroupB", style="cyan"),
-    _detail("    added     [GroupA] Frieren S01 1080p.mkv", "added", "[GroupA] Frieren S01 1080p.mkv", style="green"),
-    _detail("    added     GroupB", "added", "GroupB", style="green"),
+    _detail("    grabbed   [GroupA] Frieren S01 1080p.mkv", "grabbed", "[GroupA] Frieren S01 1080p.mkv", style="green"),
+    _detail("    grabbed   GroupB", "grabbed", "GroupB", style="green"),
 )
 
 ACTION_DRY = GrabAction(status=GrabStatus.WOULD_GRAB, groups=_FRESH_GROUPS, grabbed=_FRESH_ADDED, in_qbit=())
+# "would grab" (10 chars) overflows key width 9, so its value sits one space past the key.
 ACTION_DRY_LINES: tuple[Line, ...] = (
-    _detail(
-        "    status    would add SeaDex's recommended release (dry run)",
-        "status",
-        "would add SeaDex's recommended release (dry run)",
-        style=None,
-    ),
+    _detail("    status    would grab (dry run)", "status", "would grab (dry run)", style=None),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
     _detail("    group     GroupB", "group", "GroupB", style="cyan"),
     _detail(
-        "    would add [GroupA] Frieren S01 1080p.mkv",
-        "would add",
+        "    would grab [GroupA] Frieren S01 1080p.mkv",
+        "would grab",
         "[GroupA] Frieren S01 1080p.mkv",
         style="green",
     ),
-    _detail("    would add GroupB", "would add", "GroupB", style="green"),
+    _detail("    would grab GroupB", "would grab", "GroupB", style="green"),
 )
 
 _DOWNLOADING = (ReleaseLabel(name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),)
@@ -360,17 +349,15 @@ ACTION_DOWNLOADING_WAITING = GrabAction(
 )
 ACTION_DOWNLOADING_WAITING_LINES: tuple[Line, ...] = (
     _detail(
-        "    status    SeaDex's pick is already in qBittorrent - waiting to import",
+        "    status    already in qBittorrent - waiting to import",
         "status",
-        "SeaDex's pick is already in qBittorrent - waiting to import",
+        "already in qBittorrent - waiting to import",
         style="yellow",
     ),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
-    # Quirk: "downloading" (11 chars) overflows key width 9, so its value sits
-    # one space past the key instead of in the aligned column.
     _detail(
-        "    downloading [GroupA] Frieren S01 1080p.mkv",
-        "downloading",
+        "    torrent   [GroupA] Frieren S01 1080p.mkv",
+        "torrent",
         "[GroupA] Frieren S01 1080p.mkv",
         style="yellow",
     ),
@@ -384,15 +371,15 @@ ACTION_DOWNLOADING_NO_WAIT = GrabAction(
 )
 ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
     _detail(
-        "    status    SeaDex's pick is already in qBittorrent",
+        "    status    already in qBittorrent",
         "status",
-        "SeaDex's pick is already in qBittorrent",
+        "already in qBittorrent",
         style="yellow",
     ),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
     _detail(
-        "    downloading [GroupA] Frieren S01 1080p.mkv",
-        "downloading",
+        "    torrent   [GroupA] Frieren S01 1080p.mkv",
+        "torrent",
         "[GroupA] Frieren S01 1080p.mkv",
         style="yellow",
     ),
@@ -407,18 +394,13 @@ ACTION_MIXED = GrabAction(
     in_qbit=_DOWNLOADING,
 )
 ACTION_MIXED_LINES: tuple[Line, ...] = (
-    _detail(
-        "    status    adding SeaDex's recommended release",
-        "status",
-        "adding SeaDex's recommended release",
-        style=None,
-    ),
+    _detail("    status    grabbing", "status", "grabbing", style=None),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
     _detail("    group     GroupB", "group", "GroupB", style="cyan"),
-    _detail("    added     [GroupB] Frieren S01 1080p.mkv", "added", "[GroupB] Frieren S01 1080p.mkv", style="green"),
+    _detail("    grabbed   [GroupB] Frieren S01 1080p.mkv", "grabbed", "[GroupB] Frieren S01 1080p.mkv", style="green"),
     _detail(
-        "    downloading [GroupA] Frieren S01 1080p.mkv",
-        "downloading",
+        "    torrent   [GroupA] Frieren S01 1080p.mkv",
+        "torrent",
         "[GroupA] Frieren S01 1080p.mkv",
         style="yellow",
     ),
@@ -438,9 +420,9 @@ CAP_REACHED_LINES: tuple[Line, ...] = (
 _RULE_LINE: Line = (_I, "=" * 80, SeparatorRule(char="="))
 
 PRIVATE_ONLY_TIP = (
-    "  Tip: manually grab private releases or set private_releases: fallback to automatically grab public alternatives."
+    "  Tip: manually grab private releases or set private_releases: fallback to grab a public release instead."
 )
-NO_FALLBACK_TIP = "  Tip: no public alternative exists yet; the title is re-checked every run until one appears."
+NO_FALLBACK_TIP = "  Tip: no public release covers these files yet; the title is re-checked every run until one does."
 OUTDATED_TIP = (
     "  Tip: your copies of these releases are outdated (their file sizes no longer match); "
     "update them from their private tracker, or delete the outdated files to let the "
@@ -531,7 +513,7 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
     _styled("    (unknown title)", "yellow"),
     _brow("      group   OddTracker", "group", "OddTracker", "yellow"),
     _brow("      reason  tracker not supported", "reason", "tracker not supported", "yellow"),
-    _srow("  added        : 2", "added", "2", style="green"),
+    _srow("  grabbed      : 2", "grabbed", "2", style="green"),
     _styled("    Frieren", ""),
     _brow("      files   S01 E01-E28", "files", "S01 E01-E28", "grey50"),
     _brow("      link    https://releases.moe/111852", "link", "https://releases.moe/111852", "grey50"),
@@ -546,14 +528,14 @@ SUMMARY_RICH_LINES: tuple[Line, ...] = (
     # Quirk: a name-less grab renders "[group] " with a trailing space.
     _brow("      torrent [PrivGrp] ", "torrent", _torrent_text(None, "PrivGrp", dry=False), "green"),
     _srow("  held by cap  : 3", "held by cap", "3", style="yellow"),
-    _srow("  queued       : 1", "queued", "1", style="grey50"),
+    _srow("  downloading  : 1", "downloading", "1", style="grey50"),
     _srow("  downloaded   : 1", "downloaded", "1", style="yellow"),
     _srow("  imported     : 2", "imported", "2", style="green"),
     _srow("  up to date   : 1", "up to date", "1"),
     _srow("  unchanged    : 3  (since last run)", "unchanged", "3  (since last run)", style="grey50"),
     _srow("  no mapping   : 1", "no mapping", "1"),
     _srow("  no entry     : 2", "no entry", "2"),
-    _srow("  seadex down  : 1", "seadex down", "1", style="yellow"),
+    _srow("  not checked  : 1", "not checked", "1", style="yellow"),
     _srow("  no release   : 1", "no release", "1"),
     _srow("  unmonitored  : 1", "unmonitored", "1"),
     _srow("  issues       : 2 warnings, 1 error", "issues", "2 warnings, 1 error", style="bold red"),
@@ -581,7 +563,7 @@ def _dry_stats() -> ArrRunStats:
                 coverage="S01 E01-E12",
                 group="PrivGrp",
                 url="https://releases.moe/7",
-                reason="no public alternative covers these files",
+                reason="no fallback covers these files",
                 cause=NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
             ),
         ],
@@ -616,13 +598,13 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
     _brow("      files   S01 E01-E12", "files", "S01 E01-E12", "grey50"),
     _brow("      group   PrivGrp", "group", "PrivGrp", "yellow"),
     _brow(
-        "      reason  no public alternative covers these files",
+        "      reason  no fallback covers these files",
         "reason",
-        "no public alternative covers these files",
+        "no fallback covers these files",
         "yellow",
     ),
     _brow("      link    https://releases.moe/7", "link", "https://releases.moe/7", "grey50"),
-    _srow("  added        : 1", "added", "1", style="green"),
+    _srow("  grabbed      : 1", "grabbed", "1", style="green"),
     _styled("    Dry Show", "grey50"),
     _brow("      files   S01 E01-E12", "files", "S01 E01-E12", "grey50"),
     _brow("      link    https://releases.moe/5", "link", "https://releases.moe/5", "grey50"),
@@ -678,7 +660,7 @@ SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
     _srow("  checked      : 1", "checked", "1"),
     _srow("  needs action : 0", "needs action", "0"),
-    _srow("  added        : 1", "added", "1", style="green"),
+    _srow("  grabbed      : 1", "grabbed", "1", style="green"),
     _styled("    Preview Movie", "grey50"),
     _brow("      link    https://releases.moe/12", "link", "https://releases.moe/12", "grey50"),
     _brow(
@@ -713,7 +695,7 @@ SUMMARY_MINIMAL_LINES: tuple[Line, ...] = (
     _blank(),
     _srow("  checked      : 0", "checked", "0"),
     _srow("  needs action : 0", "needs action", "0"),
-    _srow("  added        : 0", "added", "0"),
+    _srow("  grabbed      : 0", "grabbed", "0"),
     _srow("  up to date   : 0", "up to date", "0"),
     _srow("  unchanged    : 0", "unchanged", "0", style="grey50"),
     _srow("  issues       : 0 warnings, 0 errors", "issues", "0 warnings, 0 errors"),
@@ -771,7 +753,7 @@ SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
         "yellow",
     ),
     _brow("      link    https://releases.moe/33", "link", "https://releases.moe/33", "grey50"),
-    _srow("  added        : 0", "added", "0"),
+    _srow("  grabbed      : 0", "grabbed", "0"),
     _srow("  up to date   : 5", "up to date", "5"),
     _srow("  unchanged    : 0", "unchanged", "0", style="grey50"),
     _srow("  issues       : 0 warnings, 0 errors", "issues", "0 warnings, 0 errors"),
@@ -1030,9 +1012,9 @@ class TestExternalDetailParity:
             ),
             _xdetail(
                 _W,
-                "    skipped   https://x/1 (file titles contradict its numbering)",
+                "    skipped   https://x/1 (episode titles contradict its numbers)",
                 "skipped",
-                "https://x/1 (file titles contradict its numbering)",
+                "https://x/1 (episode titles contradict its numbers)",
                 "yellow",
             ),
         ),

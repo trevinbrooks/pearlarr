@@ -29,7 +29,7 @@ In the section headings, `...` stands for the parts of a message that change bet
 ## Nothing is ever grabbed
 
 ```text
-not configured (preview mode - nothing is grabbed)
+not configured (dry runs only - nothing is grabbed)
 qBittorrent not configured; nothing grabbed
 ```
 
@@ -41,7 +41,7 @@ This is a feature while you tune the config (see [getting-started.md](getting-st
 
 ```text
 Another Pearlarr run is active in ... - skipping this run
-Another Pearlarr run is active in ... - refusing to modify ...
+Another Pearlarr run is active in ... - not modifying ...
 ```
 
 Pearlarr takes a lock in the data directory so overlapping runs cannot corrupt the cache. The cache commands and `pearlarr config migrate` take the same lock, refusing to modify the cache or the config while a run is live.
@@ -61,7 +61,7 @@ Under Docker this is almost always a PUID/PGID mismatch with the mounted `./conf
 ## The config is missing or invalid
 
 ```text
-No config file at ... - a starter template was written - fill it in and re-run
+No config file at ... - a template was written - fill it in and re-run
 Invalid configuration in ...
 Unreadable YAML in ...
 ```
@@ -103,7 +103,7 @@ Upgrade Pearlarr back, restore a cache backup taken with the older version (`pea
 
 ```text
 Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or
-... is set but ... is not - skipping
+... is set but ... is not - ... is not run
 ```
 
 A run needs at least one arr's `url` AND `api_key`. Setting only one of the pair reads as "not configured" and the arr is skipped, with a warning naming the missing key.
@@ -132,8 +132,8 @@ If the WebUI has "Bypass authentication for clients on localhost" enabled, usern
 ## The ID-mapping sources cannot be downloaded
 
 ```text
-Could not download the id-mapping sources (...) - check your network connection
-Could not fetch/parse the id-mapping sources - skipping this run
+Could not download the mapping sources (...) - check your network connection
+Could not fetch/parse the mapping sources - skipping this run
 ```
 
 Pearlarr downloads the ID-mapping sources at the start of a run and cannot resolve any title without them, so a fetch or parse failure skips the whole run rather than one title.
@@ -145,7 +145,7 @@ Fix the connection or allowlist those hosts and the run succeeds. A scheduled cy
 
 ```text
 private-only release; private releases not supported
-private-only release; no public alternative covers these files
+private-only release; no fallback covers these files
 Tip: manually grab private releases or set private_releases: fallback to
 ```
 
@@ -181,12 +181,12 @@ The import warns "N files could not be matched to an episode and were not import
 
 ```text
 ... still missing in Sonarr
-... has a file that isn't from a recommended release
-this pack is numbered by the ... order, and ... of its files are ... episodes
+... has a file that isn't from a trusted group
+this torrent is numbered by the ... order, and ... of its files are ... episodes
 that aren't in Sonarr's list, so Pearlarr can't tell where they belong
 ```
 
-An import's row ends with an episode that is "still missing in Sonarr", or one that "has a file that isn't from a recommended release". Under it are a `reason` row and the files it is about, each behind an episode number such as `DVD S07E01`. The wait notification and the log say the same in sentences.
+An import's row ends with an episode that is "still missing in Sonarr", or one that "has a file that isn't from a trusted group". Under it are a `reason` row and the files it is about, each behind an episode number such as `DVD S07E01`. The wait notification and the log say the same in sentences.
 
 TVDB keeps several episode orders for a series: the aired order Sonarr lists, and often a DVD order or others. Another order can number an episode Sonarr doesn't list, such as each half of an opener that aired as one double-length episode. When a pack is numbered by such an order, Pearlarr imports the files whose numbers stand for an episode Sonarr lists and leaves the rest in the download folder. Nothing in TVDB's data says which aired episode a half belongs to, so Pearlarr never places one.
 
@@ -200,9 +200,9 @@ When more than one TVDB order accounts for a pack, Pearlarr can't always tell wh
 ## A torrent Pearlarr never added
 
 ```text
-SeaDex's pick is already in qBittorrent
-recommended release already in qBittorrent
-Could not read qBittorrent's torrents (...) - this run may add a release that another torrent already holds
+already in qBittorrent
+release already in qBittorrent
+Could not read qBittorrent's torrents (...) - this run may grab a release that another torrent already has
 ```
 
 The first two lines are a title's status when qBittorrent already has its release. That can be a torrent Pearlarr never added: SeaDex's own torrent that someone else added, or one that holds exactly the files of SeaDex's pick, by name and size, under another hash, such as Sonarr's grab of the release from another tracker. Pearlarr treats that torrent as its own grab instead of adding SeaDex's torrent into the same download folder.
@@ -225,7 +225,7 @@ tracker not yet supported; grab manually
 ## Unknown tracker names
 
 ```text
-Unknown seadex.trackers value(s) ignored by matching:
+Unknown seadex.trackers value(s) ignored:
 ```
 
 A name in `seadex.trackers` matched no tracker SeaDex uses, so it filters nothing, usually a typo.
@@ -243,8 +243,8 @@ The warning names the exact `chmod` command to run. `pearlarr config init` creat
 ## Slow or unusually busy runs
 
 ```text
-history gap - rechecking all entries
-Matching settings changed - rechecking cached entries
+history gap - checking every title again
+Selection settings changed - checking cached titles again
 ```
 
 Four situations make a run noticeably slower, all expected:
@@ -252,7 +252,7 @@ Four situations make a run noticeably slower, all expected:
 - **The first run** downloads and parses the ID-mapping sources, fetches the TVDB episode orders of each Sonarr series it checks from Sonarr's metadata service (SkyHook), and evaluates the whole library from scratch.
   On a large library this takes minutes. Later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
 - **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once (the "history gap" note above).
-- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`), or an upgrade whose release notes say it re-checks cached titles, makes the next full run re-check every cached title once (the "Matching settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
+- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`), or an upgrade whose release notes say it re-checks cached titles, makes the next full run re-check every cached title once (the "Selection settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
 - **A SeaDex, SkyHook, AniList, or mapping-source hiccup** makes affected titles count as unchecked. They are simply retried next run. A SkyHook hiccup (`SkyHook failed ... - re-checking cached titles until it answers`) leaves unchecked the titles of a Sonarr series whose TVDB episode orders were never fetched. Like a SeaDex hiccup, it also holds back the end of the run: the next run re-reads the same Sonarr activity, and a pending "Matching settings changed" re-check runs again. An AniList hiccup (`AniList ..., skipping further lookups this run`) leaves unchecked the titles of a Sonarr series when Pearlarr has no stored AniList record, air dates included, for an entry it looked up. It holds nothing else back.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
