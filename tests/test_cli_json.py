@@ -102,6 +102,23 @@ class TestJsonSuccessCases:
         assert obj["radarr_missing_keys"] == ["radarr.url", "radarr.api_key"]
         assert captured.err == ""
 
+    def test_config_validate_warns_about_outdated_env_names(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_config(tmp_path, "sonarr:\n  url: http://s\n  api_key: k\n")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "7")
+        assert config_validate(json_output=True) is True
+        warning, validated = _envelope_lines(capsys.readouterr().out)
+        assert warning["event"] == "diagnostic"
+        assert warning["message"] == (
+            "Outdated environment variables (they stop working in 1.7.0): "
+            "PEARLARR_IMPORTS__WAIT_TIMEOUT is now PEARLARR_IMPORTS__DOWNLOAD_TIMEOUT"
+        )
+        assert validated["event"] == "config_validated"
+
     def test_config_migrate_old_schema(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         _write_config(tmp_path, "seadex:\n  public_only: true\nsonarr:\n  url: http://s\n")
         assert config_migrate(json_output=True) is True

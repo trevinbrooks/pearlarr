@@ -6,7 +6,7 @@
   "$defs": {
     "AdvancedSettings": {
       "additionalProperties": false,
-      "description": "Rate limiting, caching, run caps, and logging.",
+      "description": "Rate limiting, the run cap, and logging.",
       "properties": {
         "sleep_time": {
           "default": 0,
@@ -15,22 +15,15 @@
           "title": "Sleep Time",
           "type": "integer"
         },
-        "cache_time": {
-          "default": 1,
-          "description": "Days downloaded mapping sources are kept before re-downloading. `0` re-downloads every run.",
-          "minimum": 0,
-          "title": "Cache Time",
-          "type": "integer"
-        },
         "interactive": {
           "default": false,
-          "description": "Prompt for a choice when several torrents match, instead of taking the best automatically.",
+          "description": "Prompt for a choice when a title has several releases to grab, instead of choosing automatically.",
           "title": "Interactive",
           "type": "boolean"
         },
         "max_torrents_to_add": {
           "default": 10,
-          "description": "Cap on torrents added per run. `0` removes the cap. Keeps a first run on a large library from flooding qBittorrent. Past the cap a run still checks every title, so a torrent already downloading stays matched to every entry that lists it, and the held titles are grabbed on later runs. Preview runs ignore the cap, so a preview always reports the whole library.",
+          "description": "Cap on torrents added per run. `0` removes the cap. Keeps a first run on a large library from flooding qBittorrent. Past the cap a run still checks every title, so a torrent already in qBittorrent is still tied to every title that lists it, and the held grabs are made on later runs. Dry runs ignore the cap, so a dry run always reports the whole library.",
           "minimum": 0,
           "title": "Max Torrents To Add",
           "type": "integer"
@@ -84,7 +77,7 @@
             }
           ],
           "default": null,
-          "description": "Base URL of the instance's web UI, e.g. `http://localhost:8989` for Sonarr or `http://localhost:7878` for Radarr. Blank leaves this arr unconfigured and its runs are skipped.",
+          "description": "Base URL of the instance's web UI, e.g. `http://localhost:8989` for Sonarr or `http://localhost:7878` for Radarr. Blank leaves this arr unconfigured, and it is not run.",
           "title": "Url"
         },
         "api_key": {
@@ -99,7 +92,7 @@
             }
           ],
           "default": null,
-          "description": "API key of the instance, from Settings > General in its web UI. Blank leaves this arr unconfigured and its runs are skipped.",
+          "description": "API key of the instance, from Settings > General in its web UI. Blank leaves this arr unconfigured, and it is not run.",
           "title": "Api Key"
         },
         "verify_ssl": {
@@ -110,7 +103,7 @@
         },
         "ignore_unmonitored": {
           "default": false,
-          "description": "Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr, unmonitored series or entries whose episodes are all unmonitored.",
+          "description": "Ignore library items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr, unmonitored series or titles whose episodes are all unmonitored.",
           "title": "Ignore Unmonitored",
           "type": "boolean"
         },
@@ -124,7 +117,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (the arr's own per-download pick is not predictable from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch. When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a category from its download folder itself (not with `imports.wait_mode: off`). Radarr imports nothing from such a category.",
+          "description": "qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set on this arr's own qBittorrent download client; an explicit blank (`\"\"`) keeps no category at all. The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several enabled, the lowest priority number wins (which client the arr uses for a download is not predictable from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch. When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a category from its download folder itself (not with `imports.wait_mode: off`). Radarr imports nothing from such a category.",
           "title": "Torrent Category"
         },
         "post_import_category": {
@@ -137,7 +130,7 @@
             }
           ],
           "default": null,
-          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several entries, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client pick as `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. A torrent in a category this arr doesn't watch is never moved into one it does, where the arr would import it a second time its own way. Ignored when `imports.wait_mode` is `off`.",
+          "description": "qBittorrent category applied once every import using a torrent grabbed for this arr has completed. Lets finished torrents carry their own seeding rules. A torrent shared by several titles, or by Sonarr and Radarr, moves only after all of them have imported. Point delete-with-data cleanup scripts at this category alone - a SeaDex update can list an already-moved torrent under another title, and deleted data is re-downloaded. Omitted adopts the post-import category set on this arr's own qBittorrent download client (the same client as for `torrent_category`); an explicit blank (`\"\"`) keeps the add-time category. A torrent in a category this arr doesn't watch is never moved into one it does, where the arr would import it a second time its own way. Ignored when `imports.wait_mode` is `off`.",
           "title": "Post Import Category"
         }
       },
@@ -145,37 +138,36 @@
       "type": "object"
     },
     "ImportWaitMode": {
-      "description": "Controls if and when the manual-import wait/import runs.",
+      "description": "If and when the wait pass runs.",
       "enum": [
         "off",
         "deferred",
-        "blocking",
-        "hybrid"
+        "blocking"
       ],
       "title": "ImportWaitMode",
       "type": "string"
     },
     "ImportsSettings": {
       "additionalProperties": false,
-      "description": "Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import bookkeeping.",
+      "description": "The wait pass: waiting for grabbed torrents and importing them. Sonarr only, except the pending-import bookkeeping.",
       "properties": {
         "wait_mode": {
           "$ref": "#/$defs/ImportWaitMode",
-          "default": "hybrid",
+          "default": "blocking",
           "description": "When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."
         },
-        "wait_timeout": {
+        "download_timeout": {
           "default": 3600,
           "description": "Seconds to wait per torrent for qBittorrent to finish downloading it.",
           "minimum": 1,
-          "title": "Wait Timeout",
+          "title": "Download Timeout",
           "type": "integer"
         },
-        "ready_timeout": {
+        "import_timeout": {
           "default": 600,
-          "description": "Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last file Pearlarr saw land rather than the download's completion, so a season pack imported file-by-file times out only after this long with no visible progress. Time spent waiting on Sonarr's import work (its own import of the download, an import Pearlarr issued, or a disk command holding the line) does not count, up to six times this value. A record still waiting at that bound is left pending.",
+          "description": "Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last file Pearlarr saw imported rather than the download's completion, so a season pack imported file-by-file times out only after this long with no visible progress. Time spent waiting on Sonarr's import work (its own import of the download, an import Pearlarr issued, or a disk command holding the line) does not count, up to six times this value. A pending import still waiting at that bound is left for the next run.",
           "minimum": 1,
-          "title": "Ready Timeout",
+          "title": "Import Timeout",
           "type": "integer"
         },
         "poll_interval": {
@@ -192,7 +184,7 @@
           "title": "Progress Poll Interval",
           "type": "integer"
         },
-        "mode": {
+        "import_mode": {
           "default": "auto",
           "description": "How the import takes finished files into the library. `auto` lets Sonarr choose between moving and copying (a still-seeding torrent is copied). When Pearlarr reads a download's folder itself, because Sonarr isn't serving that download, `auto` copies. `copy` is used as set. So is `move`, except for a torrent Pearlarr tracks instead of adding SeaDex's (Sonarr's own grab of the same files, say): that one is imported as `auto`.",
           "enum": [
@@ -200,12 +192,12 @@
             "move",
             "copy"
           ],
-          "title": "Mode",
+          "title": "Import Mode",
           "type": "string"
         },
         "remove_from_queue": {
           "default": true,
-          "description": "Remove a torrent's leftover Sonarr queue entry once every record on it has imported. Sonarr clears an entry itself only when a single import covers the grab's full episode count, so a torrent finished across several passes (some files imported by Sonarr, the rest by Pearlarr) stays parked in its queue, where completed-download handling may import it again. Removing the entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps seeding in qBittorrent. Sonarr only. Ignored when `wait_mode` is `off`.",
+          "description": "Remove a torrent's leftover Sonarr queue record once its import is done. Sonarr clears a queue record itself only when a single import covers the grab's full episode count, so a torrent imported in several steps (some files imported by Sonarr, the rest by Pearlarr) stays parked in its queue, where completed-download handling may import it again. Removing the record closes that window: Sonarr marks the download as manually ignored, and the torrent keeps seeding in qBittorrent. Sonarr only. Ignored when `wait_mode` is `off`.",
           "title": "Remove From Queue",
           "type": "boolean"
         },
@@ -223,7 +215,7 @@
           "title": "Default Quality"
         },
         "languages_dual": {
-          "description": "Languages tagged on files imported from dual-audio releases. An empty list falls back to the default. A file is never imported with no language (Sonarr would read it as Unknown and could re-grab it).",
+          "description": "Languages tagged on files imported from dual-audio releases. An empty list uses the default. A file is never imported with no language (Sonarr would read it as Unknown and could re-grab it).",
           "items": {
             "type": "string"
           },
@@ -231,18 +223,18 @@
           "type": "array"
         },
         "languages_single": {
-          "description": "Languages tagged on files imported from single-audio releases. Empty falls back like `languages_dual`.",
+          "description": "Languages tagged on files imported from single-audio releases. Empty uses the default, like `languages_dual`.",
           "items": {
             "type": "string"
           },
           "title": "Languages Single",
           "type": "array"
         },
-        "digest_interval": {
+        "progress_line_interval": {
           "default": 300,
-          "description": "Target seconds between wait-progress digest lines on a non-interactive console (Docker, cron).",
+          "description": "Target seconds between progress lines on a non-interactive console (Docker, cron) while a wait pass runs.",
           "minimum": 1,
-          "title": "Digest Interval",
+          "title": "Progress Line Interval",
           "type": "integer"
         }
       },
@@ -260,9 +252,16 @@
     },
     "MappingsSettings": {
       "additionalProperties": false,
-      "description": "ID and episode mapping sources. `anibridge_mappings` is the primary. The others fill anything it misses.",
+      "description": "ID and episode mapping sources. `anibridge` is the primary. The others fill anything it misses.",
       "properties": {
-        "anime_mappings": {
+        "refresh_days": {
+          "default": 1,
+          "description": "Days downloaded mapping sources are kept before re-downloading. `0` re-downloads every run.",
+          "minimum": 0,
+          "title": "Refresh Days",
+          "type": "integer"
+        },
+        "anime_ids": {
           "anyOf": [
             {
               "additionalProperties": true,
@@ -277,10 +276,10 @@
             }
           ],
           "default": null,
-          "description": "Kometa `Anime-IDs` source, a fallback for IDs the primary graph misses. Blank auto-downloads it. `false` disables it. An inline mapping is accepted.",
-          "title": "Anime Mappings"
+          "description": "Kometa `Anime-IDs` source, used for IDs the primary graph misses. Blank auto-downloads it. `false` disables it. An inline mapping is accepted.",
+          "title": "Anime Ids"
         },
-        "anidb_mappings": {
+        "anime_lists": {
           "anyOf": [
             {
               "const": false,
@@ -291,10 +290,10 @@
             }
           ],
           "default": null,
-          "description": "AniDB `anime-lists` XML source, a fallback used for specials. Blank auto-downloads it. `false` disables it.",
-          "title": "Anidb Mappings"
+          "description": "AniDB `anime-lists` XML source, used for specials. Blank auto-downloads it. `false` disables it.",
+          "title": "Anime Lists"
         },
-        "anibridge_mappings": {
+        "anibridge": {
           "anyOf": [
             {
               "additionalProperties": true,
@@ -310,7 +309,7 @@
           ],
           "default": null,
           "description": "`anibridge-mappings` v3 graph, the primary source of IDs and per-season episode maps. Blank auto-downloads it. `false` disables it. An inline mapping is accepted.",
-          "title": "Anibridge Mappings"
+          "title": "Anibridge"
         }
       },
       "title": "MappingsSettings",
@@ -371,7 +370,7 @@
     },
     "QbittorrentSettings": {
       "additionalProperties": false,
-      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab. Leave any blank to run in preview mode (everything is reported, nothing is added).",
+      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab. Leave any blank for dry runs only (everything is reported, nothing is grabbed).",
       "properties": {
         "host": {
           "anyOf": [
@@ -383,7 +382,7 @@
             }
           ],
           "default": null,
-          "description": "WebUI address of qBittorrent, e.g. `http://localhost:8080`. Leave any of `host`, `username`, or `password` blank to run in preview mode: runs report what they would grab, but nothing is added.",
+          "description": "WebUI address of qBittorrent, e.g. `http://localhost:8080`. Leave any of `host`, `username`, or `password` blank for dry runs only: runs report what they would grab and grab nothing.",
           "title": "Host"
         },
         "username": {
@@ -396,7 +395,7 @@
             }
           ],
           "default": null,
-          "description": "WebUI username. Blank switches to preview mode (see `host`).",
+          "description": "WebUI username. Blank makes every run a dry run (see `host`).",
           "title": "Username"
         },
         "password": {
@@ -411,7 +410,7 @@
             }
           ],
           "default": null,
-          "description": "WebUI password. Blank switches to preview mode (see `host`).",
+          "description": "WebUI password. Blank makes every run a dry run (see `host`).",
           "title": "Password"
         },
         "tags": {
@@ -446,7 +445,7 @@
       "properties": {
         "interval_hours": {
           "default": 6.0,
-          "description": "Hours between scheduled cycles.",
+          "description": "Hours between scheduled runs.",
           "exclusiveMinimum": 0,
           "title": "Interval Hours",
           "type": "number"
@@ -504,7 +503,7 @@
         },
         "ignore_seadex_update_times": {
           "default": false,
-          "description": "Re-check entries even when SeaDex has not updated them since the last check.",
+          "description": "Check titles again even when SeaDex has not updated their entries since the last check.",
           "title": "Ignore Seadex Update Times",
           "type": "boolean"
         }
@@ -517,7 +516,7 @@
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
     "config_version": {
-      "default": 6,
+      "default": 7,
       "description": "Schema version of the config file's keys and values. A file from an older Pearlarr is migrated automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping a backup).",
       "minimum": 1,
       "title": "Config Version",
@@ -533,14 +532,14 @@
     },
     "qbittorrent": {
       "$ref": "#/$defs/QbittorrentSettings",
-      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab. Leave any blank to run in preview mode (everything is reported, nothing is added)."
+      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab. Leave any blank for dry runs only (everything is reported, nothing is grabbed)."
     },
     "seadex": {
       "$ref": "#/$defs/SeadexSettings"
     },
     "imports": {
       "$ref": "#/$defs/ImportsSettings",
-      "description": "Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import bookkeeping."
+      "description": "The wait pass: waiting for grabbed torrents and importing them. Sonarr only, except the pending-import bookkeeping."
     },
     "notifications": {
       "$ref": "#/$defs/NotificationsSettings",
@@ -552,11 +551,11 @@
     },
     "advanced": {
       "$ref": "#/$defs/AdvancedSettings",
-      "description": "Rate limiting, caching, run caps, and logging."
+      "description": "Rate limiting, the run cap, and logging."
     },
     "mappings": {
       "$ref": "#/$defs/MappingsSettings",
-      "description": "ID and episode mapping sources. `anibridge_mappings` is the primary. The others fill anything it misses."
+      "description": "ID and episode mapping sources. `anibridge` is the primary. The others fill anything it misses."
     }
   },
   "type": "object"

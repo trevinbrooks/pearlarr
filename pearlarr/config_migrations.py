@@ -14,13 +14,14 @@ each step brings a mapping exactly one version forward.
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Final
 
 import yaml
 
 from .boundary import Json
 from .json_narrow import is_json_obj
 
-CONFIG_VERSION = 6
+CONFIG_VERSION = 7
 
 # The one remediation sentence, shared by every surface that reports an
 # old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
@@ -62,6 +63,19 @@ def _group(config: dict[str, Json], key: str) -> dict[str, Json] | None:
     return value if is_json_obj(value) else None
 
 
+def _group_to_fill(config: dict[str, Json], key: str) -> dict[str, Json] | None:
+    """A settings group to move keys into: the existing one, a new one when absent or blank, else None.
+
+    A malformed group (not a mapping) is left for validation to reject by name.
+    """
+
+    group: dict[str, Json] | None = _group(config, key)
+    if group is None and config.get(key) is None:
+        group = {}
+        config[key] = group
+    return group
+
+
 def _to_v1(config: dict[str, Json]) -> list[str]:
     """v0 -> v1: convert the pre-versioning schema that 1.0.0 removed.
 
@@ -85,7 +99,7 @@ def _to_v1(config: dict[str, Json]) -> list[str]:
         if seadex.get("private_releases") == "allow":
             seadex["private_releases"] = "warn"
             notes.append(
-                "seadex.private_releases 'allow' was removed - folded to 'warn' (private releases were never grabbed)",
+                "seadex.private_releases 'allow' was removed - converted to 'warn' (private releases were never grabbed)",
             )
     return notes
 
@@ -97,7 +111,7 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
     groups (inert on an unconfigured arr). A group that is absent or blank is
     created to carry it; a malformed group is left for validation to reject by
     name. The `wait_mode` note is informational: a file that relied on the old
-    `off` default now gets `hybrid`, and only an explicit `off` disables.
+    `off` default now gets `blocking`, and only an explicit `off` disables.
     """
 
     notes: list[str] = []
@@ -105,18 +119,15 @@ def _to_v2(config: dict[str, Json]) -> list[str]:
     if imports is not None and "post_import_category" in imports:
         category = imports.pop("post_import_category")
         for arr in ("sonarr", "radarr"):
-            group = _group(config, arr)
-            if group is not None:
+            if (group := _group_to_fill(config, arr)) is not None:
                 group["post_import_category"] = category
-            elif config.get(arr) is None:
-                config[arr] = {"post_import_category": category}
         notes.append(
             "imports.post_import_category is now per-arr - moved to sonarr.post_import_category "
             "and radarr.post_import_category (same value, same behavior)",
         )
     if imports is None or imports.get("wait_mode") is None:
         notes.append(
-            "imports.wait_mode now defaults to hybrid (wait for downloads + manual import) - "
+            "imports.wait_mode now defaults to blocking (wait for downloads, then import them) - "
             "set it to off to keep the previous disabled behavior",
         )
     return notes
@@ -171,7 +182,7 @@ def _to_v5(config: dict[str, Json]) -> list[str]:
     return [
         (
             "sonarr.ignore_movies_in_radarr was removed - dropped (Sonarr now checks a movie Radarr also has, "
-            "so it can be grabbed for Sonarr too. To skip one, unmonitor its episode in Sonarr and turn on "
+            "so it can be grabbed for Sonarr too. To ignore one, unmonitor its episode in Sonarr and turn on "
             "sonarr.ignore_unmonitored)"
         ),
     ]
@@ -190,12 +201,60 @@ def _to_v6(config: dict[str, Json]) -> list[str]:
         return ["seadex.use_torrent_hash_to_filter was removed - dropped (it was off, so nothing changes)"]
     return [
         (
-            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now matched against the files "
-            "the library holds, by release group and file size, so one whose files are gone or changed is grabbed "
-            "again even if Pearlarr grabbed it before. To skip a title, add its AniList ID to "
+            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now compared with the files "
+            "the arr has, by release group and file size, so one whose files are gone or changed is grabbed "
+            "again even if Pearlarr grabbed it before. To ignore a title, add its AniList ID to "
             "seadex.ignore_anilist_ids)"
         ),
     ]
+
+
+@dataclass(frozen=True)
+class ConfigKey:
+    """A config key by its group and name."""
+
+    group: str
+    key: str
+
+
+V7_KEY_RENAMES: Final[Mapping[ConfigKey, ConfigKey]] = {
+    ConfigKey("imports", "wait_timeout"): ConfigKey("imports", "download_timeout"),
+    ConfigKey("imports", "ready_timeout"): ConfigKey("imports", "import_timeout"),
+    ConfigKey("imports", "digest_interval"): ConfigKey("imports", "progress_line_interval"),
+    ConfigKey("imports", "mode"): ConfigKey("imports", "import_mode"),
+    ConfigKey("advanced", "cache_time"): ConfigKey("mappings", "refresh_days"),
+    ConfigKey("mappings", "anime_mappings"): ConfigKey("mappings", "anime_ids"),
+    ConfigKey("mappings", "anidb_mappings"): ConfigKey("mappings", "anime_lists"),
+    ConfigKey("mappings", "anibridge_mappings"): ConfigKey("mappings", "anibridge"),
+}
+"""The key each version 7 key replaced, old to new."""
+
+
+def _to_v7(config: dict[str, Json]) -> list[str]:
+    """v6 -> v7: rename the keys in `V7_KEY_RENAMES`, and rewrite `imports.wait_mode: hybrid` to `blocking`.
+
+    A key moves into its new group, created when absent or blank (as in `_to_v2`). When the new
+    key is already set, the old one stays and validation rejects it as unknown.
+    """
+
+    renamed: list[str] = []
+    for old, new in V7_KEY_RENAMES.items():
+        source = _group(config, old.group)
+        if source is None or old.key not in source:
+            continue
+        target = _group_to_fill(config, new.group)
+        if target is None or new.key in target:
+            continue
+        target[new.key] = source.pop(old.key)
+        renamed.append(f"{old.group}.{old.key} is now {new.group}.{new.key}")
+    notes: list[str] = []
+    if renamed:
+        notes.append(f"config keys were renamed - {'; '.join(renamed)} (same values, same behavior)")
+    imports = _group(config, "imports")
+    if imports is not None and imports.get("wait_mode") == "hybrid":
+        imports["wait_mode"] = "blocking"
+        notes.append("imports.wait_mode hybrid was removed - rewritten to blocking (the same behavior)")
+    return notes
 
 
 @dataclass(frozen=True)
@@ -213,6 +272,7 @@ _MIGRATIONS: tuple[_Migration, ...] = (
     _Migration(to_version=4, apply=_to_v4),
     _Migration(to_version=5, apply=_to_v5),
     _Migration(to_version=6, apply=_to_v6),
+    _Migration(to_version=7, apply=_to_v7),
 )
 
 

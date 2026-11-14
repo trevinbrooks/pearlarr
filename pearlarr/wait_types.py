@@ -11,21 +11,18 @@ from .releases import EpisodeKey, OrderOnlyKey
 
 
 class ImportWaitMode(StrEnum):
-    """Controls if and when the manual-import wait/import runs."""
+    """If and when the wait pass runs."""
 
     OFF = "off"
-    """Disabled: no waiting, no pending-import records, no manual import."""
+    """Disabled: no wait pass, no pending imports kept, no auto import."""
 
     DEFERRED = "deferred"
-    """Never wait on a download: record this run's grabs and import earlier runs' finished downloads in one
-    pass at the end of the run."""
+    """Never wait on a download: keep this run's grabs as pending imports and import earlier runs' finished
+    ones, in one poll at the end of the run."""
 
     BLOCKING = "blocking"
-    """Same as `hybrid`."""
-
-    HYBRID = "hybrid"
     """The default: wait at the end of the run for downloads to finish, then import - this run's grabs and
-    any download still pending from an earlier run."""
+    any pending import from an earlier run."""
 
 
 class TorrentStatus(Enum):

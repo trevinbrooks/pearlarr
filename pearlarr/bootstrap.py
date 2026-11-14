@@ -28,6 +28,7 @@ from .config import (
     config_permissions_loose,
     env_variables_for,
     migrate_config_file,
+    outdated_env_notes,
 )
 from .config_migrations import CONFIG_VERSION, MIGRATE_HINT
 from .log import apply_log_level
@@ -151,6 +152,13 @@ def _rewrite_old_config(config: str, loaded: AppConfig, *, dry_run: bool) -> Non
         hub_note(f"Config migrated to the current schema - previous file saved as {migrated.backup_path}{hint}")
 
 
+def warn_outdated_env() -> None:
+    """Warn once about the config override variables that use a name or value version 7 replaced."""
+
+    if notes := outdated_env_notes():
+        hub_warn(f"Outdated environment variables (they stop working in 1.7.0): {'; '.join(notes)}")
+
+
 def load_shared_config(
     config: str,
     boot: BootFlow,
@@ -187,6 +195,7 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
+        warn_outdated_env()
         return loaded
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
@@ -245,12 +254,12 @@ def build_resolver(
     try:
         with boot.step("Refreshing mappings") as mapping_step:
             resolver = MappingResolver(
-                cache_time=app_config.advanced.cache_time,
+                refresh_days=app_config.mappings.refresh_days,
                 ignore_anilist_ids=app_config.seadex.ignore_anilist_ids,
                 sources=MappingSources(
-                    anime=app_config.mappings.anime_mappings,
-                    anidb=app_config.mappings.anidb_mappings,
-                    anibridge=app_config.mappings.anibridge_mappings,
+                    anime=app_config.mappings.anime_ids,
+                    anidb=app_config.mappings.anime_lists,
+                    anibridge=app_config.mappings.anibridge,
                 ),
                 web=web,
                 mappings_db=mappings_db,

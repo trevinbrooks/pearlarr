@@ -28,6 +28,7 @@ from pearlarr.config import (
     AppConfig,
     Arr,
     ImportsSettings,
+    MappingsSettings,
     NotificationsSettings,
     PrivateReleaseAction,
     QbittorrentSettings,
@@ -102,7 +103,7 @@ class TestFileLifecycle:
             AppConfig.load(str(cfg_path))  # copies the template
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
-        assert cfg.imports.wait_mode is ImportWaitMode.HYBRID
+        assert cfg.imports.wait_mode is ImportWaitMode.BLOCKING
         assert cfg.advanced.log_level == "INFO"
 
     def test_config_hash_matches_file_bytes(self, tmp_path: Path) -> None:
@@ -242,7 +243,7 @@ class TestDefaults:
         assert cfg.seadex.ignore_seadex_update_times is False
         assert cfg.advanced.interactive is False
         assert cfg.advanced.sleep_time == 0
-        assert cfg.advanced.cache_time == 1
+        assert cfg.mappings.refresh_days == 1
         assert cfg.advanced.log_level == "INFO"
         assert cfg.advanced.max_torrents_to_add == 10
         assert cfg.advanced.detect_arr_activity is True
@@ -253,7 +254,7 @@ class TestDefaults:
         assert cfg.sonarr.torrent_category is None
         assert cfg.sonarr.verify_ssl is True
         assert cfg.radarr.verify_ssl is True
-        assert cfg.mappings.anime_mappings is None
+        assert cfg.mappings.anime_ids is None
 
     def test_verify_ssl_parses_per_arr(self) -> None:
         cfg = AppConfig.model_validate({"radarr": {"verify_ssl": False}})
@@ -266,16 +267,16 @@ class TestDefaults:
             with pytest.raises(ValidationError):
                 AppConfig.model_validate({"schedule": {"interval_hours": bad}})
 
-    def test_wait_timeout_bounds(self) -> None:
+    def test_download_timeout_bounds(self) -> None:
         # ge=1: a zero wait window is a degenerate busy-loop, not a disable.
-        assert ImportsSettings.model_validate({"wait_timeout": 1}).wait_timeout == 1
+        assert ImportsSettings.model_validate({"download_timeout": 1}).download_timeout == 1
         with pytest.raises(ValidationError):
-            ImportsSettings.model_validate({"wait_timeout": 0})
+            ImportsSettings.model_validate({"download_timeout": 0})
 
-    def test_ready_timeout_bounds(self) -> None:
-        assert ImportsSettings.model_validate({"ready_timeout": 1}).ready_timeout == 1
+    def test_import_timeout_bounds(self) -> None:
+        assert ImportsSettings.model_validate({"import_timeout": 1}).import_timeout == 1
         with pytest.raises(ValidationError):
-            ImportsSettings.model_validate({"ready_timeout": 0})
+            ImportsSettings.model_validate({"import_timeout": 0})
 
     def test_poll_interval_bounds(self) -> None:
         assert ImportsSettings.model_validate({"poll_interval": 1}).poll_interval == 1
@@ -288,9 +289,9 @@ class TestDefaults:
             ImportsSettings.model_validate({"progress_poll_interval": -1})
 
     def test_progress_line_interval_bounds(self) -> None:
-        assert ImportsSettings.model_validate({"digest_interval": 1}).digest_interval == 1
+        assert ImportsSettings.model_validate({"progress_line_interval": 1}).progress_line_interval == 1
         with pytest.raises(ValidationError):
-            ImportsSettings.model_validate({"digest_interval": 0})
+            ImportsSettings.model_validate({"progress_line_interval": 0})
 
     def test_sleep_time_bounds(self) -> None:
         # 0 disables rate limiting (valid). A negative would crash time.sleep mid-run.
@@ -298,10 +299,10 @@ class TestDefaults:
         with pytest.raises(ValidationError):
             AdvancedSettings.model_validate({"sleep_time": -1})
 
-    def test_cache_time_bounds(self) -> None:
-        assert AdvancedSettings.model_validate({"cache_time": 0}).cache_time == 0
+    def test_refresh_days_bounds(self) -> None:
+        assert MappingsSettings.model_validate({"refresh_days": 0}).refresh_days == 0
         with pytest.raises(ValidationError):
-            AdvancedSettings.model_validate({"cache_time": -1})
+            MappingsSettings.model_validate({"refresh_days": -1})
 
     def test_max_torrents_to_add_bounds(self) -> None:
         # 0 removes the cap (the download-tool convention). Blank falls back to
@@ -314,16 +315,16 @@ class TestDefaults:
 
     def test_import_defaults_when_absent(self) -> None:
         imp = ImportsSettings()
-        assert imp.wait_mode is ImportWaitMode.HYBRID
-        assert imp.wait_timeout == 3600
-        assert imp.ready_timeout == 600
+        assert imp.wait_mode is ImportWaitMode.BLOCKING
+        assert imp.download_timeout == 3600
+        assert imp.import_timeout == 600
         assert imp.poll_interval == 30
         assert imp.progress_poll_interval == 5
-        assert imp.mode == "auto"
+        assert imp.import_mode == "auto"
         assert imp.default_quality is None
         assert imp.languages_dual == ["Japanese", "English"]
         assert imp.languages_single == ["Japanese"]
-        assert imp.digest_interval == 300
+        assert imp.progress_line_interval == 300
 
     def test_progress_poll_interval_zero_disables_the_fast_poll(self) -> None:
         # 0 is the documented "disable the cheap progress poll" value.
@@ -352,16 +353,16 @@ class TestBlankCoalescing:
         # flow into time.sleep(None) / be rejected by the int field.
         imp = ImportsSettings.model_validate(
             {
-                "wait_timeout": None,
+                "download_timeout": None,
                 "poll_interval": None,
-                "ready_timeout": None,
-                "mode": None,
+                "import_timeout": None,
+                "import_mode": None,
             },
         )
-        assert imp.wait_timeout == 3600
+        assert imp.download_timeout == 3600
         assert imp.poll_interval == 30
-        assert imp.ready_timeout == 600
-        assert imp.mode == "auto"
+        assert imp.import_timeout == 600
+        assert imp.import_mode == "auto"
 
     def test_blank_language_lists_fall_back_to_defaults(self) -> None:
         imp = ImportsSettings.model_validate({"languages_dual": None, "languages_single": None})
@@ -425,7 +426,6 @@ class TestStrictValidation:
             SeadexSettings.model_validate({"public_only": True})
 
     def test_wait_mode_coerces_valid_strings(self) -> None:
-        assert ImportsSettings.model_validate({"wait_mode": "hybrid"}).wait_mode is ImportWaitMode.HYBRID
         assert ImportsSettings.model_validate({"wait_mode": "deferred"}).wait_mode is ImportWaitMode.DEFERRED
         assert ImportsSettings.model_validate({"wait_mode": "blocking"}).wait_mode is ImportWaitMode.BLOCKING
         assert ImportsSettings.model_validate({"wait_mode": "off"}).wait_mode is ImportWaitMode.OFF
@@ -436,13 +436,13 @@ class TestStrictValidation:
             ImportsSettings.model_validate({"wait_mode": "bogus"})
 
     def test_import_mode_accepts_documented_values(self) -> None:
-        assert ImportsSettings.model_validate({"mode": "move"}).mode == "move"
-        assert ImportsSettings.model_validate({"mode": "copy"}).mode == "copy"
+        assert ImportsSettings.model_validate({"import_mode": "move"}).import_mode == "move"
+        assert ImportsSettings.model_validate({"import_mode": "copy"}).import_mode == "copy"
 
     def test_import_mode_invalid_raises(self) -> None:
         # Strict: a typo'd importMode is a ValidationError at load, not a Sonarr API error.
         with pytest.raises(ValidationError):
-            ImportsSettings.model_validate({"mode": "moove"})
+            ImportsSettings.model_validate({"import_mode": "moove"})
 
     def test_wait_mode_unquoted_yaml_off_maps_to_off(self) -> None:
         # YAML 1.1 parses a bare `off` (the documented disabled value) as the bool
@@ -455,8 +455,8 @@ class TestStrictValidation:
     def test_mapping_true_is_rejected(self) -> None:
         # Only false (disable) / blank (auto-download) / inline dict are valid.
         with pytest.raises(ValidationError):
-            AppConfig.model_validate({"mappings": {"anime_mappings": True}})
-        assert AppConfig.model_validate({"mappings": {"anime_mappings": False}}).mappings.anime_mappings is False
+            AppConfig.model_validate({"mappings": {"anime_ids": True}})
+        assert AppConfig.model_validate({"mappings": {"anime_ids": False}}).mappings.anime_ids is False
 
 
 class TestNormalization:
@@ -680,7 +680,7 @@ class TestSelectionHash:
     def test_ignores_non_selection_settings(self) -> None:
         base = make_config().selection_hash()
         assert make_config(discord_url="https://discord.example/hook").selection_hash() == base
-        assert make_config(import_wait_timeout=99).selection_hash() == base
+        assert make_config(download_timeout=99).selection_hash() == base
         assert make_config(max_torrents_to_add=1).selection_hash() == base
 
     def test_sets_canonicalize_sorted_not_iteration_ordered(self) -> None:

@@ -34,7 +34,7 @@ def _resolver(
     """Build a resolver from in-memory configs, all on-disk sources disabled."""
 
     return MappingResolver(
-        cache_time=1,
+        refresh_days=1,
         ignore_anilist_ids=set(),
         web=httpx.Client(),
         sources=MappingSources(anime=anime, anidb=False, anibridge=anibridge),

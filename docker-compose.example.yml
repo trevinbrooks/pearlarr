@@ -17,7 +17,7 @@ services:
     volumes:
       - ./config:/config               # config.yml, caches and logs, all in one dir
     restart: unless-stopped
-    # A blocking imports.wait_mode can hold a run for up to imports.wait_timeout.
+    # A blocking imports.wait_mode can hold a run for up to imports.download_timeout.
     # Give SIGTERM room before Docker's 10s default SIGKILLs a mid-import run.
     # stop_grace_period: 1h
 

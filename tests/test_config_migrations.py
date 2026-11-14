@@ -74,11 +74,12 @@ class TestMigrateMapping:
         assert mapping == {
             "config_version": CONFIG_VERSION,
             "seadex": {"want_best": False},
-            "imports": {"mode": "hardlink", "wait_mode": "off"},
+            "imports": {"import_mode": "hardlink", "wait_mode": "off"},
         }
-        assert len(outcome.notes) == 2
+        assert len(outcome.notes) == 3
         assert "public_only" in outcome.notes[0]
         assert "torrent_category" in outcome.notes[1]
+        assert "imports.mode is now imports.import_mode" in outcome.notes[2]
 
     def test_v0_tolerates_absent_and_malformed_groups(self) -> None:
         # A group that is not a mapping is validation's complaint, not a crash here.
@@ -94,7 +95,7 @@ class TestMigrateMapping:
         mapping: dict[str, Json] = {
             "config_version": 1,
             "sonarr": {"url": "http://s", "torrent_category": "anime"},
-            "imports": {"post_import_category": "seadex-done", "wait_mode": "hybrid"},
+            "imports": {"post_import_category": "seadex-done", "wait_mode": "blocking"},
         }
         outcome = migrate_mapping(mapping)
         assert outcome is not None
@@ -102,7 +103,7 @@ class TestMigrateMapping:
             "config_version": CONFIG_VERSION,
             "sonarr": {"url": "http://s", "torrent_category": "anime", "post_import_category": "seadex-done"},
             "radarr": {"post_import_category": "seadex-done"},
-            "imports": {"wait_mode": "hybrid"},
+            "imports": {"wait_mode": "blocking"},
         }
         assert "post_import_category is now per-arr" in outcome.notes[0]
 
@@ -123,7 +124,7 @@ class TestMigrateMapping:
         assert "post_import_category" not in imports
 
     def test_v1_defaulted_wait_mode_gets_the_flip_notice(self) -> None:
-        # A file relying on the old off default now gets hybrid: note it, but
+        # A file relying on the old off default now gets blocking: note it, but
         # rewrite nothing. An explicit mode (even blank-invalid False from a
         # bare YAML `off`) is the user's own and silences the notice.
         defaulted: dict[str, Json] = {"config_version": 1, "imports": {"poll_interval": 10}}
@@ -159,10 +160,10 @@ class TestMigrateMapping:
         assert len(outcome.notes) == 1
 
     def test_v3_to_v4_drops_pending_max_age_days_with_a_note(self) -> None:
-        mapping: dict[str, Json] = {"config_version": 3, "imports": {"pending_max_age_days": 30, "mode": "copy"}}
+        mapping: dict[str, Json] = {"config_version": 3, "imports": {"pending_max_age_days": 30, "poll_interval": 10}}
         outcome = migrate_mapping(mapping)
         assert outcome is not None
-        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"mode": "copy"}}
+        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"poll_interval": 10}}
         (note,) = outcome.notes
         assert note == (
             "imports.pending_max_age_days was removed - dropped "
@@ -170,10 +171,10 @@ class TestMigrateMapping:
         )
 
     def test_v3_without_pending_max_age_days_migrates_with_no_note(self) -> None:
-        mapping: dict[str, Json] = {"config_version": 3, "imports": {"mode": "copy"}}
+        mapping: dict[str, Json] = {"config_version": 3, "imports": {"poll_interval": 10}}
         outcome = migrate_mapping(mapping)
         assert outcome is not None
-        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"mode": "copy"}}
+        assert mapping == {"config_version": CONFIG_VERSION, "imports": {"poll_interval": 10}}
         assert outcome.notes == ()
 
     # A quoted "true" loaded as on, so it gets the note too.
@@ -189,7 +190,7 @@ class TestMigrateMapping:
         (note,) = outcome.notes
         assert note == (
             "sonarr.ignore_movies_in_radarr was removed - dropped (Sonarr now checks a movie Radarr also has, "
-            "so it can be grabbed for Sonarr too. To skip one, unmonitor its episode in Sonarr and turn on "
+            "so it can be grabbed for Sonarr too. To ignore one, unmonitor its episode in Sonarr and turn on "
             "sonarr.ignore_unmonitored)"
         )
 
@@ -226,9 +227,9 @@ class TestMigrateMapping:
         assert mapping == {"config_version": CONFIG_VERSION, "seadex": {"want_best": False}}
         (note,) = outcome.notes
         assert note == (
-            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now matched against the files "
-            "the library holds, by release group and file size, so one whose files are gone or changed is grabbed "
-            "again even if Pearlarr grabbed it before. To skip a title, add its AniList ID to "
+            "seadex.use_torrent_hash_to_filter was removed - dropped (a release is now compared with the files "
+            "the arr has, by release group and file size, so one whose files are gone or changed is grabbed "
+            "again even if Pearlarr grabbed it before. To ignore a title, add its AniList ID to "
             "seadex.ignore_anilist_ids)"
         )
 
@@ -254,12 +255,110 @@ class TestMigrateMapping:
         assert mapping == {"config_version": CONFIG_VERSION, "seadex": seadex}
         assert outcome.notes == ()
 
+    def test_v6_to_v7_renames_a_key_within_its_group(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "imports": {"wait_timeout": 7, "poll_interval": 10}}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping["imports"] == {"download_timeout": 7, "poll_interval": 10}
+
+    @pytest.mark.parametrize("blank", [False, True])
+    def test_v6_to_v7_moves_cache_time_into_a_group_that_is_absent_or_blank(self, *, blank: bool) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "advanced": {"cache_time": 3}}
+        if blank:
+            mapping["mappings"] = None
+        migrate_mapping(mapping)
+        assert mapping["mappings"] == {"refresh_days": 3}
+        assert mapping["advanced"] == {}
+
+    def test_v6_to_v7_leaves_a_malformed_target_group_for_validation(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "advanced": {"cache_time": 3}, "mappings": 5}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert outcome.notes == ()
+        assert mapping["mappings"] == 5
+        assert mapping["advanced"] == {"cache_time": 3}
+
+    def test_v6_to_v7_keeps_the_old_key_when_the_new_one_is_already_set(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "imports": {"wait_timeout": 7, "download_timeout": 9}}
+        migrate_mapping(mapping)
+        assert mapping["imports"] == {"wait_timeout": 7, "download_timeout": 9}
+
+    def test_v6_to_v7_rewrites_hybrid_to_blocking_with_a_note(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "imports": {"wait_mode": "hybrid"}}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert mapping["imports"] == {"wait_mode": "blocking"}
+        assert outcome.notes == ("imports.wait_mode hybrid was removed - rewritten to blocking (the same behavior)",)
+
+    def test_v6_to_v7_gives_one_note_for_all_the_renamed_keys(self) -> None:
+        mapping: dict[str, Json] = {
+            "config_version": 6,
+            "imports": {"wait_timeout": 7, "ready_timeout": 8},
+            "advanced": {"cache_time": 3},
+        }
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        (note,) = outcome.notes
+        assert note == (
+            "config keys were renamed - imports.wait_timeout is now imports.download_timeout; "
+            "imports.ready_timeout is now imports.import_timeout; "
+            "advanced.cache_time is now mappings.refresh_days (same values, same behavior)"
+        )
+
+    def test_v6_to_v7_without_a_renamed_key_or_hybrid_has_no_note(self) -> None:
+        mapping: dict[str, Json] = {"config_version": 6, "imports": {"wait_mode": "off"}, "advanced": 5}
+        outcome = migrate_mapping(mapping)
+        assert outcome is not None
+        assert outcome.notes == ()
+
     def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
         # Declaration order IS application order: pin that the steps run 1..N
         # with no gap, and that bumping CONFIG_VERSION without its step (or
         # reordering the tuple) fails here instead of mis-migrating in the field.
         versions = tuple(step.to_version for step in config_migrations._MIGRATIONS)
         assert versions == tuple(range(1, CONFIG_VERSION + 1))
+
+
+class TestV7KeyRenamesLoad:
+    """An older file loads onto each new key through validation, so a typo in the table fails here."""
+
+    @pytest.mark.parametrize(
+        ("old", "new", "value"),
+        [
+            pytest.param(("imports", "wait_timeout"), ("imports", "download_timeout"), 7, id="download_timeout"),
+            pytest.param(("imports", "ready_timeout"), ("imports", "import_timeout"), 8, id="import_timeout"),
+            pytest.param(("imports", "digest_interval"), ("imports", "progress_line_interval"), 9, id="line_interval"),
+            pytest.param(("imports", "mode"), ("imports", "import_mode"), "copy", id="import_mode"),
+            pytest.param(("advanced", "cache_time"), ("mappings", "refresh_days"), 3, id="refresh_days"),
+            pytest.param(("mappings", "anime_mappings"), ("mappings", "anime_ids"), False, id="anime_ids"),
+            pytest.param(("mappings", "anidb_mappings"), ("mappings", "anime_lists"), False, id="anime_lists"),
+            pytest.param(("mappings", "anibridge_mappings"), ("mappings", "anibridge"), False, id="anibridge"),
+        ],
+    )
+    def test_each_renamed_key_loads_under_its_new_name(
+        self,
+        tmp_path: Path,
+        old: tuple[str, str],
+        new: tuple[str, str],
+        value: Json,
+    ) -> None:
+        path = tmp_path / "config.yml"
+        path.write_text(yaml.safe_dump({"config_version": 6, old[0]: {old[1]: value}}), encoding="utf-8")
+
+        loaded = AppConfig.load(str(path))
+
+        assert loaded.model_dump()[new[0]][new[1]] == value
+
+    def test_a_version_3_file_loads_a_renamed_key_beside_a_removed_one(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yml"
+        path.write_text(
+            yaml.safe_dump({"config_version": 3, "imports": {"pending_max_age_days": 30, "wait_timeout": 7}}),
+            encoding="utf-8",
+        )
+
+        loaded = AppConfig.load(str(path))
+
+        assert loaded.imports.download_timeout == 7
 
 
 class TestRenderMigratedConfig:
@@ -356,6 +455,21 @@ class TestMigrateConfigFile:
         assert "api_key: hunter2" in rewritten
         assert "public_only" not in rewritten
         assert "# API key of the instance" in rewritten
+        after = AppConfig.load(path)
+        assert after.migration() is None
+        assert after.model_dump() == before.model_dump()
+
+    def test_a_file_with_renamed_keys_is_rewritten_under_the_new_names(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "config_version: 3\nimports:\n  wait_timeout: 7\nadvanced:\n  cache_time: 3\n")
+        before = AppConfig.load(path)
+
+        migrate_config_file(path, expected_hash=before.config_hash())
+
+        rewritten = Path(path).read_text(encoding="utf-8")
+        assert "  download_timeout: 7\n" in rewritten
+        assert "  refresh_days: 3\n" in rewritten
+        assert "wait_timeout" not in rewritten
+        assert "cache_time" not in rewritten
         after = AppConfig.load(path)
         assert after.migration() is None
         assert after.model_dump() == before.model_dump()

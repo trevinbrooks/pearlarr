@@ -230,7 +230,7 @@ def test_arr_run_deps_build_binds_arr_http_when_configured(tmp_path: Path) -> No
     assert deps.arr_http is not None
     assert deps.arr_http.label == "Sonarr"
     assert deps.arr_http.base_url == "http://sonarr"
-    # digest_interval is the Sonarr client's own replace, never build's bind.
+    # progress_line_interval is the Sonarr client's own replace, never build's bind.
     assert deps.arr_http.rewarn_s == REWARN_INTERVAL_S
 
 

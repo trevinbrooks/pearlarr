@@ -14,7 +14,7 @@ external network leaves faked:
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
 agreement: the Arr item's external id (the `series` fixture's `tvdbId`, the
-inline movie body's `tmdbId`) -> an inline `anime_mappings` mapping -> an
+inline movie body's `tmdbId`) -> an inline `anime_ids` mapping -> an
 AniList id -> the faked SeaDex entry. The fakes record, so the assertions prove
 that id actually flowed end to end (a vacuous run that resolved nothing would
 still return True - the recorded calls are what make this non-hollow).
@@ -118,9 +118,9 @@ def test_sonarr_run_drives_real_composition_root(
     config = make_config(
         url="http://sonarr.test",
         api_key="testkey",
-        anime_mappings={"Bahamut": {"anilist_id": _ANILIST, "tvdb_id": _TVDB}},
-        anidb_mappings=False,
-        anibridge_mappings=False,
+        anime_ids={"Bahamut": {"anilist_id": _ANILIST, "tvdb_id": _TVDB}},
+        anime_lists=False,
+        anibridge=False,
     )
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
@@ -259,9 +259,9 @@ def test_radarr_run_drives_real_composition_root(
     config = make_config(
         radarr_url="http://radarr.test",
         radarr_api_key="testkey",
-        anime_mappings={"Your Name": {"anilist_id": _RADARR_ANILIST, "tmdb_movie_id": _RADARR_TMDB}},
-        anidb_mappings=False,
-        anibridge_mappings=False,
+        anime_ids={"Your Name": {"anilist_id": _RADARR_ANILIST, "tmdb_movie_id": _RADARR_TMDB}},
+        anime_lists=False,
+        anibridge=False,
         sleep_time=0,
     )
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))

@@ -79,7 +79,7 @@ Do a single Pearlarr run (every configured arr, unless narrowed by the flags bel
 | `--movie-id` | `TMDB_ID` | Only process the movie with this TMDB ID (implies --radarr) |
 | `--series-id` | `TVDB_ID` | Only process the series with this TVDB ID (implies --sonarr) |
 | `--dry-run` |  | Simulate the run: no grabs, no cache writes, no notifications |
-| `--import-wait-mode` | `off` / `deferred` / `blocking` / `hybrid` | Override the configured imports.wait_mode for this run |
+| `--import-wait-mode` | `off` / `deferred` / `blocking` | Override the configured imports.wait_mode for this run |
 | `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` | Override the configured advanced.log_level for this run |
 
 ## `pearlarr config`

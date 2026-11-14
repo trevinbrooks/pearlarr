@@ -551,7 +551,7 @@ class TestAnimeIdsParity:
     )
     def test_lookup_matches_oracle(self, ids: ExternalIds) -> None:
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -572,7 +572,7 @@ class TestAnimeIdsParity:
         # works exactly as the pre-SQL code (which carried the None through harmlessly).
         amap = {"N": {"anilist_id": 500, "tvdb_id": 5000, "tvdb_season": None, "tvdb_epoffset": None}}
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -592,7 +592,7 @@ class TestAnimeIdsParity:
         # The former full-dict walk added external ids even from anilist-less objects
         # (object E). The SQL distinct must keep that, even though lookups skip them.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -619,7 +619,7 @@ class TestResolveMerge:
         # mappings. The result is sorted by AniList id.
         amap = {"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}}
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids={270},
             web=_WEB,
             sources=MappingSources(
@@ -660,7 +660,7 @@ class TestArrRunServicesIgnoredIds:
     def _services(log: _IgnoredIdLog) -> Generator[ArrRunServices]:
         # tvdb 74796 maps 269 (both sources) and 270 (AniBridge only), and 270 is on the ignore list.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids={270},
             web=_WEB,
             sources=MappingSources(
@@ -701,7 +701,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
         # -> an AniBridge mapping without TVDB mappings. Kometa carries the precise season for the same id on
         # the series' tvdb. In the Sonarr context (tvdb_id passed) Kometa must win.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -727,7 +727,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
         # so the special is never grabbed. Guards that the fix does not break (it
         # RESTORES) Sonarr grabbing movies as specials.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -749,7 +749,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
         # in the Radarr context (NO tvdb_id) the override must NOT fire, so AniBridge
         # stays the winning source - the documented "AniBridge is primary" invariant.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -769,7 +769,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
         # feeding THAT real mapping to mapping_episodes returns [] - the series is skipped,
         # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -816,7 +816,7 @@ ANIDB_XML = """<anime-list>
 def _anidb_resolver() -> MappingResolver:
     root = ElementTree.fromstring(ANIDB_XML)
     return MappingResolver(
-        cache_time=1,
+        refresh_days=1,
         ignore_anilist_ids=set(),
         web=_WEB,
         sources=MappingSources(
@@ -868,7 +868,7 @@ class TestAnidbMappingDict:
 
     def test_disabled_source_is_empty_and_not_available(self) -> None:
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -958,7 +958,7 @@ class TestAnidbSkipTallies:
 
         try:
             MappingResolver(
-                cache_time=1,
+                refresh_days=1,
                 ignore_anilist_ids=set(),
                 web=_WEB,
                 sources=MappingSources(anime=False, anidb=None, anibridge=False),
@@ -1003,7 +1003,7 @@ class TestSourceHashGate:
 
         def build() -> MappingResolver:
             return MappingResolver(
-                cache_time=1,
+                refresh_days=1,
                 ignore_anilist_ids=set(),
                 web=_WEB,
                 sources=MappingSources(
@@ -1052,7 +1052,7 @@ class TestConstructionFailureClosesStore:
 
         with pytest.raises(ValueError, match="parse blew up"):
             MappingResolver(
-                cache_time=1,
+                refresh_days=1,
                 ignore_anilist_ids=set(),
                 web=_WEB,
                 sources=MappingSources(
@@ -1088,7 +1088,7 @@ class TestUnwritableDbFallback:
         recording = install_recording_hub()
 
         resolver = MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(anime={"x": {"anilist_id": 1, "tvdb_id": 10}}, anidb=False, anibridge=False),
@@ -1114,7 +1114,7 @@ class TestUnwritableDbFallback:
 
         with pytest.raises(sqlite3.OperationalError):
             MappingResolver(
-                cache_time=1,
+                refresh_days=1,
                 ignore_anilist_ids=set(),
                 web=_WEB,
                 sources=MappingSources(anime={"x": {"anilist_id": 1}}, anidb=False, anibridge=False),
@@ -1217,7 +1217,7 @@ class TestRealDataParity:
     def test_anime_ids_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
         amap = m._parse_anime_mappings(real_sources.anime_ids)
         resolver = MappingResolver(
-            cache_time=99999,
+            refresh_days=99999,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -1247,7 +1247,7 @@ class TestRealDataParity:
     def test_anidb_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
         root = m._parse_anidb_mappings(real_sources.anidb)
         resolver = MappingResolver(
-            cache_time=99999,
+            refresh_days=99999,
             ignore_anilist_ids=set(),
             web=_WEB,
             sources=MappingSources(
@@ -1289,12 +1289,12 @@ class TestMaybeDownloadFailOpen:
         # error must NOT abort the run: fall open to the on-disk copy and warn.
         source = tmp_path / "anime_ids.json"
         source.write_text("{}")
-        old = time.time() - 10 * 86400  # 10 days old, past cache_time
+        old = time.time() - 10 * 86400  # 10 days old, past refresh_days
         os.utime(source, (old, old))
         monkeypatch.setattr(MappingResolver, "_download_file", _boom)
 
         recording = install_recording_hub()
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, refresh_days=1, _web=_WEB)
         resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
         # Warned (not aborted): the fall-open notice goes through the hub.
@@ -1308,7 +1308,7 @@ class TestMaybeDownloadFailOpen:
         # With no file on disk there is nothing to fall open to, so a first-ever
         # download failure stays fatal (the run cannot proceed without the source).
         monkeypatch.setattr(MappingResolver, "_download_file", _boom)
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, refresh_days=1, _web=_WEB)
 
         with pytest.raises(OSError):
             resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")

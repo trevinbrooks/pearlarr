@@ -19,7 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from pearlarr.bootstrap import format_validation_errors
-from pearlarr.config import AppConfig, _env_overrides, _hash_config_bytes
+from pearlarr.config import AppConfig, _env_overrides, _hash_config_bytes, outdated_env_notes
 from pearlarr.wait_types import ImportWaitMode
 
 
@@ -111,10 +111,10 @@ class TestOverridesThroughLoad:
 
     def test_env_beats_the_file_and_parses_the_value(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         path = self._write(tmp_path, "imports:\n  wait_mode: off\nadvanced:\n  sleep_time: 9\n")
-        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_MODE", "hybrid")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_MODE", "deferred")
         monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "0")
         loaded = AppConfig.load(path)
-        assert loaded.imports.wait_mode is ImportWaitMode.HYBRID
+        assert loaded.imports.wait_mode is ImportWaitMode.DEFERRED
         assert loaded.advanced.sleep_time == 0
 
     def test_free_form_option_key_lands_case_intact(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,6 +188,83 @@ class TestErrorLinesNameTheVariable:
         monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "'unterminated")
         error = self._error(tmp_path, "")
         assert error == "  - PEARLARR_ADVANCED__SLEEP_TIME: is not valid YAML - fix or unset the environment variable"
+
+
+class TestVersion6Names:
+    """Override variables spelled the version 6 way keep working until 1.7.0."""
+
+    def test_an_old_name_sets_its_new_key(self) -> None:
+        assert _env_overrides({"PEARLARR_IMPORTS__WAIT_TIMEOUT": "7"}) == {"imports": {"download_timeout": 7}}
+
+    def test_an_old_name_under_a_free_form_mapping_keeps_the_sub_key_case(self) -> None:
+        overrides = _env_overrides({"PEARLARR_MAPPINGS__ANIME_MAPPINGS__Bahamut": "{anilist_id: 1}"})
+        assert overrides == {"mappings": {"anime_ids": {"Bahamut": {"anilist_id": 1}}}}
+
+    def test_the_new_name_wins_when_both_are_set(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text("", encoding="utf-8")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "7")
+        monkeypatch.setenv("PEARLARR_IMPORTS__DOWNLOAD_TIMEOUT", "9")
+        assert AppConfig.load(str(cfg)).imports.download_timeout == 9
+
+    def test_a_bad_value_is_attributed_to_the_old_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text("", encoding="utf-8")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "soon")
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.load(str(cfg))
+        assert format_validation_errors(excinfo.value).startswith(
+            "  - imports.download_timeout (set by PEARLARR_IMPORTS__WAIT_TIMEOUT): Input should be",
+        )
+
+    def test_the_outdated_names_are_listed_with_their_replacements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "7")
+        monkeypatch.setenv("PEARLARR_ADVANCED__CACHE_TIME", "3")
+        monkeypatch.setenv("PEARLARR_MAPPINGS__ANIME_MAPPINGS__BAHAMUT", "{}")
+        monkeypatch.setenv("PEARLARR_IMPORTS__DOWNLOAD_TIMEOUT", "9")
+        assert outdated_env_notes() == (
+            "PEARLARR_ADVANCED__CACHE_TIME is now PEARLARR_MAPPINGS__REFRESH_DAYS",
+            "PEARLARR_IMPORTS__WAIT_TIMEOUT is now PEARLARR_IMPORTS__DOWNLOAD_TIMEOUT",
+            "PEARLARR_MAPPINGS__ANIME_MAPPINGS__BAHAMUT is now PEARLARR_MAPPINGS__ANIME_IDS__BAHAMUT",
+        )
+
+    @pytest.mark.parametrize("value", ["hybrid", '"hybrid"', "'hybrid'"])
+    def test_hybrid_reads_as_blocking_and_is_listed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text("imports:\n  wait_mode: deferred\n", encoding="utf-8")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_MODE", value)
+        assert AppConfig.load(str(cfg)).imports.wait_mode is ImportWaitMode.BLOCKING
+        assert outdated_env_notes() == (
+            "PEARLARR_IMPORTS__WAIT_MODE=hybrid is now PEARLARR_IMPORTS__WAIT_MODE=blocking",
+        )
+
+    def test_hybrid_under_another_key_is_still_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text("", encoding="utf-8")
+        monkeypatch.setenv("PEARLARR_IMPORTS__IMPORT_MODE", "hybrid")
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.load(str(cfg))
+        assert format_validation_errors(excinfo.value).startswith(
+            "  - imports.import_mode (set by PEARLARR_IMPORTS__IMPORT_MODE): Input should be",
+        )
+        assert outdated_env_notes() == ()
+
+    def test_an_unparseable_wait_mode_is_reported_as_itself_with_no_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "config.yml"
+        cfg.write_text("", encoding="utf-8")
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_MODE", "'hybrid")
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.load(str(cfg))
+        assert format_validation_errors(excinfo.value) == (
+            "  - PEARLARR_IMPORTS__WAIT_MODE: is not valid YAML - fix or unset the environment variable"
+        )
+        assert outdated_env_notes() == ()
 
 
 class TestConfigHashIncludesEnv:

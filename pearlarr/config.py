@@ -42,6 +42,8 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from .boundary import Json
 from .config_migrations import (
     CONFIG_VERSION,
+    V7_KEY_RENAMES,
+    ConfigKey,
     MigrationOutcome,
     migrate_mapping,
     render_migrated_config,
@@ -111,10 +113,10 @@ class PrivateReleaseAction(StrEnum):
     """
 
     WARN = "warn"
-    """Warn and skip without caching, so the title is re-checked every run until a public release appears."""
+    """Warn and grab nothing. The title is re-checked every run until a public release covers the files."""
 
     FALLBACK = "fallback"
-    """Grab the entry's best public alternative instead. Warn only when none exists at all."""
+    """Grab a public release instead, chosen by the same settings. Warn only when none covers the files."""
 
 
 def template_path() -> str:
@@ -246,13 +248,13 @@ class ArrSettings(_ConfigBase):
     url: str | None = None
     """Base URL of the instance's web UI, e.g. `http://localhost:8989` for Sonarr or `http://localhost:7878` for Radarr.
 
-    Blank leaves this arr unconfigured and its runs are skipped.
+    Blank leaves this arr unconfigured, and it is not run.
     """
 
     api_key: SecretStr | None = None
     """API key of the instance, from Settings > General in its web UI.
 
-    Blank leaves this arr unconfigured and its runs are skipped.
+    Blank leaves this arr unconfigured, and it is not run.
     """
 
     verify_ssl: bool = True
@@ -263,10 +265,10 @@ class ArrSettings(_ConfigBase):
     """
 
     ignore_unmonitored: bool = False
-    """Skip items the arr does not monitor.
+    """Ignore library items the arr does not monitor.
 
     For Radarr this means unmonitored movies. For Sonarr, unmonitored series or
-    entries whose episodes are all unmonitored.
+    titles whose episodes are all unmonitored.
     """
 
     torrent_category: str | None = None
@@ -275,8 +277,8 @@ class ArrSettings(_ConfigBase):
     Omitted adopts the category set on this arr's own qBittorrent download
     client; an explicit blank (`""`) keeps no category at all. The adopted
     client should be the qBittorrent instance Pearlarr itself talks to; with
-    several enabled, the lowest priority number wins (the arr's own
-    per-download pick is not predictable from outside). The arr never sees
+    several enabled, the lowest priority number wins (which client the arr uses
+    for a download is not predictable from outside). The arr never sees
     a torrent in a category none of its qBittorrent clients watch. When
     Sonarr has an enabled qBittorrent client, Pearlarr imports each
     finished torrent in such a category from its download folder itself
@@ -290,11 +292,11 @@ class ArrSettings(_ConfigBase):
     """qBittorrent category applied once every import using a torrent grabbed for this arr has completed.
 
     Lets finished torrents carry their own seeding rules. A torrent shared by
-    several entries, or by Sonarr and Radarr, moves only after all of them have
+    several titles, or by Sonarr and Radarr, moves only after all of them have
     imported. Point delete-with-data cleanup scripts at this category alone - a
-    SeaDex update can attach a new entry to an already-moved torrent, and
+    SeaDex update can list an already-moved torrent under another title, and
     deleted data is re-downloaded. Omitted adopts the post-import category set
-    on this arr's own qBittorrent download client (the same client pick as
+    on this arr's own qBittorrent download client (the same client as for
     `torrent_category`); an explicit blank (`""`) keeps the add-time category.
     A torrent in a category this arr doesn't watch is never moved into one
     it does, where the arr would import it a second time its own way.
@@ -314,15 +316,15 @@ class QbittorrentSettings(_ConfigBase):
     host: str | None = None
     """WebUI address of qBittorrent, e.g. `http://localhost:8080`.
 
-    Leave any of `host`, `username`, or `password` blank to run in preview mode:
-    runs report what they would grab, but nothing is added.
+    Leave any of `host`, `username`, or `password` blank for dry runs only:
+    runs report what they would grab and grab nothing.
     """
 
     username: str | None = None
-    """WebUI username. Blank switches to preview mode (see `host`)."""
+    """WebUI username. Blank makes every run a dry run (see `host`)."""
 
     password: SecretStr | None = None
-    """WebUI password. Blank switches to preview mode (see `host`)."""
+    """WebUI password. Blank makes every run a dry run (see `host`)."""
 
     tags: list[str] | None = None
     """Tags applied to every torrent added. Blank applies no tags."""
@@ -386,7 +388,7 @@ class SeadexSettings(_ConfigBase):
     """AniList IDs never processed. Empty ignores none."""
 
     ignore_seadex_update_times: bool = False
-    """Re-check entries even when SeaDex has not updated them since the last check."""
+    """Check titles again even when SeaDex has not updated their entries since the last check."""
 
     @field_validator("trackers", mode="before")
     @classmethod
@@ -426,23 +428,23 @@ class ImportsSettings(_ConfigBase):
     cover Radarr grabs (which Radarr's own completed-download handling imports).
     """
 
-    wait_mode: ImportWaitMode = ImportWaitMode.HYBRID
+    wait_mode: ImportWaitMode = ImportWaitMode.BLOCKING
     """When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."""
 
     # ge=1: a zero timeout/poll cadence is a degenerate busy-loop, never a
     # documented disable (that's `wait_mode: off`).
-    wait_timeout: int = Field(default=3600, ge=1)
+    download_timeout: int = Field(default=3600, ge=1)
     """Seconds to wait per torrent for qBittorrent to finish downloading it."""
 
-    ready_timeout: int = Field(default=600, ge=1)
+    import_timeout: int = Field(default=600, ge=1)
     """Seconds to then wait for Sonarr to rescan and import the finished files.
 
-    Measured from the last file Pearlarr saw land rather than the download's
+    Measured from the last file Pearlarr saw imported rather than the download's
     completion, so a season pack imported file-by-file times out only after
     this long with no visible progress. Time spent waiting on Sonarr's import
     work (its own import of the download, an import Pearlarr issued, or a disk
     command holding the line) does not count, up to six times this value. A
-    record still waiting at that bound is left pending.
+    pending import still waiting at that bound is left for the next run.
     """
 
     poll_interval: int = Field(default=30, ge=1)
@@ -459,7 +461,7 @@ class ImportsSettings(_ConfigBase):
     """
 
     # Constrained so a typo is a clean ValidationError at load, not a Sonarr API error.
-    mode: Literal["auto", "move", "copy"] = "auto"
+    import_mode: Literal["auto", "move", "copy"] = "auto"
     """How the import takes finished files into the library.
 
     `auto` lets Sonarr choose between moving and copying (a still-seeding
@@ -471,13 +473,13 @@ class ImportsSettings(_ConfigBase):
     """
 
     remove_from_queue: bool = True
-    """Remove a torrent's leftover Sonarr queue entry once every record on it has imported.
+    """Remove a torrent's leftover Sonarr queue record once its import is done.
 
-    Sonarr clears an entry itself only when a single import covers the grab's
-    full episode count, so a torrent finished across several passes (some
+    Sonarr clears a queue record itself only when a single import covers the grab's
+    full episode count, so a torrent imported in several steps (some
     files imported by Sonarr, the rest by Pearlarr) stays parked in its queue,
-    where completed-download handling may import it again. Removing the entry
-    closes that window: Sonarr records the download as manually ignored, and
+    where completed-download handling may import it again. Removing the record
+    closes that window: Sonarr marks the download as manually ignored, and
     the torrent keeps seeding in qBittorrent. Sonarr only. Ignored when
     `wait_mode` is `off`.
     """
@@ -492,16 +494,16 @@ class ImportsSettings(_ConfigBase):
     languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
     """Languages tagged on files imported from dual-audio releases.
 
-    An empty list falls back to the default. A file is never imported with no
+    An empty list uses the default. A file is never imported with no
     language (Sonarr would read it as Unknown and could re-grab it).
     """
 
     languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))
-    """Languages tagged on files imported from single-audio releases. Empty falls back like `languages_dual`."""
+    """Languages tagged on files imported from single-audio releases. Empty uses the default, like `languages_dual`."""
 
     # ge=1: 0 is degenerate (the wait view floors the cadence to the poll interval).
-    digest_interval: int = Field(default=300, ge=1)
-    """Target seconds between wait-progress digest lines on a non-interactive console (Docker, cron)."""
+    progress_line_interval: int = Field(default=300, ge=1)
+    """Target seconds between progress lines on a non-interactive console (Docker, cron) while a wait pass runs."""
 
     @field_validator("wait_mode", mode="before")
     @classmethod
@@ -581,7 +583,7 @@ class ScheduleSettings(_ConfigBase):
     """Scheduled-mode cadence (hours between scheduled runs)."""
 
     interval_hours: float = Field(default=6.0, gt=0, allow_inf_nan=False)
-    """Hours between scheduled cycles."""
+    """Hours between scheduled runs."""
 
 
 type LogFormat = Literal["auto", "rich", "plain", "json"]
@@ -592,28 +594,24 @@ type LogFormat = Literal["auto", "rich", "plain", "json"]
 
 
 class AdvancedSettings(_ConfigBase):
-    """Advanced knobs (rate limiting, caching, run cap, logging)."""
+    """Advanced knobs (rate limiting, run cap, logging)."""
 
     # ge=0: 0 disables the rate-limit sleep (load-bearing for the concurrent
     # episode fetch). A negative value would crash time.sleep mid-run.
     sleep_time: int = Field(default=0, ge=0)
     """Seconds slept between API queries, as rate limiting. `0` disables the sleep."""
 
-    # ge=0: 0 = always re-download the mapping sources (a valid dev choice).
-    cache_time: int = Field(default=1, ge=0)
-    """Days downloaded mapping sources are kept before re-downloading. `0` re-downloads every run."""
-
     interactive: bool = False
-    """Prompt for a choice when several torrents match, instead of taking the best automatically."""
+    """Prompt for a choice when a title has several releases to grab, instead of choosing automatically."""
 
     # ge=0: 0 disables the cap (the download-tool convention, per qBittorrent/Sonarr).
     max_torrents_to_add: int = Field(default=10, ge=0)
     """Cap on torrents added per run. `0` removes the cap.
 
     Keeps a first run on a large library from flooding qBittorrent. Past the cap a
-    run still checks every title, so a torrent already downloading stays matched to
-    every entry that lists it, and the held titles are grabbed on later runs.
-    Preview runs ignore the cap, so a preview always reports the whole library.
+    run still checks every title, so a torrent already in qBittorrent is still tied to
+    every title that lists it, and the held grabs are made on later runs.
+    Dry runs ignore the cap, so a dry run always reports the whole library.
     """
 
     detect_arr_activity: bool = True
@@ -662,23 +660,27 @@ class AdvancedSettings(_ConfigBase):
 
 
 class MappingsSettings(_ConfigBase):
-    """ID/episode mapping sources: `False` disables, blank auto-downloads.
+    """The ID-mapping sources and how often they refresh. For a source, `False` disables it and blank downloads it.
 
-    `anime`/`anibridge` also accept an inline mapping dict (a power-user path the
-    resolver supports). `anidb`'s inline form is an XML element that can't come from
+    `anime_ids`/`anibridge` also accept an inline mapping dict (a power-user path the
+    resolver supports). `anime_lists`' inline form is an XML element that can't come from
     a YAML file, so only disable/auto-download are offered there.
     """
 
-    anime_mappings: dict[str, Any] | Literal[False] | None = None
-    """Kometa `Anime-IDs` source, a fallback for IDs the primary graph misses.
+    # ge=0: 0 = always re-download the mapping sources (a valid dev choice).
+    refresh_days: int = Field(default=1, ge=0)
+    """Days downloaded mapping sources are kept before re-downloading. `0` re-downloads every run."""
+
+    anime_ids: dict[str, Any] | Literal[False] | None = None
+    """Kometa `Anime-IDs` source, used for IDs the primary graph misses.
 
     Blank auto-downloads it. `false` disables it. An inline mapping is accepted.
     """
 
-    anidb_mappings: Literal[False] | None = None
-    """AniDB `anime-lists` XML source, a fallback used for specials. Blank auto-downloads it. `false` disables it."""
+    anime_lists: Literal[False] | None = None
+    """AniDB `anime-lists` XML source, used for specials. Blank auto-downloads it. `false` disables it."""
 
-    anibridge_mappings: dict[str, Any] | Literal[False] | None = None
+    anibridge: dict[str, Any] | Literal[False] | None = None
     """`anibridge-mappings` v3 graph, the primary source of IDs and per-season episode maps.
 
     Blank auto-downloads it. `false` disables it. An inline mapping is accepted.
@@ -738,14 +740,14 @@ class AppConfig(_ConfigBase):
     """qBittorrent connection.
 
     All of `host`, `username`, and `password` are needed to grab. Leave any
-    blank to run in preview mode (everything is reported, nothing is added).
+    blank for dry runs only (everything is reported, nothing is grabbed).
     """
 
     seadex: SeadexSettings = Field(default_factory=SeadexSettings)
     """SeaDex release-selection filters."""
 
     imports: ImportsSettings = Field(default_factory=ImportsSettings)
-    """Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import bookkeeping."""
+    """The wait pass: waiting for grabbed torrents and importing them. Sonarr only, except the pending-import bookkeeping."""
 
     notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
     """Notification webhooks. Either, both, or neither may be set."""
@@ -754,10 +756,10 @@ class AppConfig(_ConfigBase):
     """Scheduled-mode cadence (the default command, `run scheduled`)."""
 
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
-    """Rate limiting, caching, run caps, and logging."""
+    """Rate limiting, the run cap, and logging."""
 
     mappings: MappingsSettings = Field(default_factory=MappingsSettings)
-    """ID and episode mapping sources. `anibridge_mappings` is the primary. The others fill anything it misses."""
+    """ID and episode mapping sources. `anibridge` is the primary. The others fill anything it misses."""
 
     # Set once by `load` after construction (frozen models still allow private-attr
     # assignment). The config hash is what the cache stores, the path feeds error text.
@@ -910,19 +912,35 @@ def _mapping_annotation(annotation: object) -> bool:
     return False
 
 
+def _name_segments(name: str) -> list[str]:
+    """The segments of a qualifying variable's name after the prefix."""
+
+    return name.removeprefix(ENV_CONFIG_PREFIX).split(ENV_CONFIG_DELIMITER)
+
+
+def _renamed_key(segments: Sequence[str]) -> ConfigKey | None:
+    """The current key when the first two segments of a qualifying name are a key version 7 renamed."""
+
+    return V7_KEY_RENAMES.get(ConfigKey(segments[0].lower(), segments[1].lower()))
+
+
 def _override_key_path(name: str) -> list[str]:
     """The key path a qualifying variable's name addresses.
 
     Model-addressed segments are lowercased (matching the file's key style).
     Once the path enters a free-form mapping field (e.g. `qbittorrent.options`,
     whose keys reach qbittorrentapi verbatim and case-sensitively), the
-    remaining segments keep the variable's exact case.
+    remaining segments keep the variable's exact case. A name version 7
+    renamed addresses the key that replaced it.
     """
 
+    segments = _name_segments(name)
+    if renamed := _renamed_key(segments):
+        segments[:2] = [renamed.group, renamed.key]
     model: type[BaseModel] | None = AppConfig
     freeform = False
     path: list[str] = []
-    for segment in name.removeprefix(ENV_CONFIG_PREFIX).split(ENV_CONFIG_DELIMITER):
+    for segment in segments:
         if freeform:
             path.append(segment)
             continue
@@ -933,6 +951,31 @@ def _override_key_path(name: str) -> list[str]:
         freeform = _mapping_annotation(annotation)
         model = annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) else None
     return path
+
+
+def _sets_removed_wait_mode(name: str, raw_value: str) -> bool:
+    """Whether a qualifying variable sets `imports.wait_mode` to `hybrid`, quoted or not, which version 7 removed."""
+
+    if _override_key_path(name) != ["imports", "wait_mode"]:
+        return False
+    try:
+        return yaml.safe_load(raw_value) == "hybrid"
+    except yaml.YAMLError:
+        return False
+
+
+def outdated_env_notes() -> tuple[str, ...]:
+    """One `OLD is now NEW` note per override variable that uses a name or value version 7 replaced, sorted by name."""
+
+    notes: list[str] = []
+    for name, raw_value in _qualifying_env(os.environ):
+        segments = _name_segments(name)
+        if renamed := _renamed_key(segments):
+            current = ENV_CONFIG_DELIMITER.join([renamed.group.upper(), renamed.key.upper(), *segments[2:]])
+            notes.append(f"{name} is now {ENV_CONFIG_PREFIX}{current}")
+        elif _sets_removed_wait_mode(name, raw_value):
+            notes.append(f"{name}=hybrid is now {name}={ImportWaitMode.BLOCKING}")
+    return tuple(notes)
 
 
 def env_variables_for(key_path: Sequence[str]) -> list[str]:
@@ -959,11 +1002,13 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     empty string parses to None, which the blank-key handling then coalesces to
     the default). A malformed value raises a `ValidationError` naming only the
     variable, so it renders through the invalid-configuration handlers like a bad
-    file key.
+    file key. Names version 7 renamed apply first, so the current name for the same key wins,
+    and `imports.wait_mode`'s removed `hybrid` reads as `blocking`, the same mode.
     """
 
     overrides: dict[str, object] = {}
-    for name, raw_value in _qualifying_env(environ):
+    ordered = sorted(_qualifying_env(environ), key=lambda item: _renamed_key(_name_segments(item[0])) is None)
+    for name, raw_value in ordered:
         try:
             value: object = yaml.safe_load(raw_value)
         except yaml.YAMLError:
@@ -982,6 +1027,8 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
                 ],
                 hide_input=True,
             ) from None
+        if _sets_removed_wait_mode(name, raw_value):
+            value = ImportWaitMode.BLOCKING.value
         path = _override_key_path(name)
         cursor = overrides
         for segment in path[:-1]:

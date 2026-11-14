@@ -285,10 +285,7 @@ class ArrRunLoop:
         dry_run = self._services.is_dry_run()
 
         supports_blocking_wait = self._active_strategy is not None and self._active_strategy.supports_blocking_wait
-        end_pass_waits = supports_blocking_wait and self._state.import_wait_mode in (
-            ImportWaitMode.BLOCKING,
-            ImportWaitMode.HYBRID,
-        )
+        end_pass_waits = supports_blocking_wait and self._state.import_wait_mode is ImportWaitMode.BLOCKING
 
         # The finally guards the whole tail: a raise in either wait pass, tally or summary must not let bootstrap's
         # close roll back the arr run's staged writes. The save trails the blocking wait pass to also capture its drops.

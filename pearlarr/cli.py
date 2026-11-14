@@ -706,6 +706,7 @@ def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JS
             return False
 
         outcome = app_config.migration()
+        bootstrap.warn_outdated_env()
         emit_to_hub(
             ConfigValidated(
                 path=paths.config_file,

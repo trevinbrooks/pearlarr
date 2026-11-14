@@ -545,7 +545,7 @@ class WaitKind(Enum):
     """Which wait pass a wait region narrates, with its rendering vocab."""
 
     MONITOR = ("Waiting on {n} download{s} to complete and import...", "wait complete", "waiting", "Wait")
-    """The blocking/hybrid wait pass: waits for downloads to finish, then imports."""
+    """The blocking wait pass: waits for downloads to finish, then imports."""
 
     CHECK = ("Checking {n} carried-over download{s}...", "check complete", "checking", "Check")
     """The deferred wait pass: polls once, imports the finished ones, never waits."""
@@ -575,7 +575,7 @@ class WaitStarted:
 
     total: int
     progress_line_s: float
-    """The renderer's progress line throttle interval (`max(poll_s, digest_interval)`)."""
+    """The renderer's progress line throttle interval (`max(poll_s, progress_line_interval)`)."""
     kind: WaitKind
     scope: ScopeId | None = None
 

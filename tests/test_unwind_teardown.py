@@ -60,7 +60,7 @@ def _memory_resolver(
 
     del app_config, mappings_db, boot, retry
     return MappingResolver(
-        cache_time=1,
+        refresh_days=1,
         ignore_anilist_ids=set(),
         web=web,
         sources=MappingSources(anime={}, anidb=False, anibridge=False),

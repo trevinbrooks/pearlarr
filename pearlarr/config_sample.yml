@@ -4,43 +4,43 @@
 # Schema version of the config file's keys and values. A file from an older Pearlarr is migrated
 # automatically: every load brings it forward in memory, and a run rewrites the file itself (keeping
 # a backup).
-config_version: 6
+config_version: 7
 
 # Sonarr connection and behavior. url and api_key are required only when a Sonarr run actually
 # executes. A Radarr-only config still loads.
 sonarr:
   # Base URL of the instance's web UI, e.g. http://localhost:8989 for Sonarr or
-  # http://localhost:7878 for Radarr. Blank leaves this arr unconfigured and its runs are skipped.
+  # http://localhost:7878 for Radarr. Blank leaves this arr unconfigured, and it is not run.
   url:
 
   # API key of the instance, from Settings > General in its web UI. Blank leaves this arr
-  # unconfigured and its runs are skipped.
+  # unconfigured, and it is not run.
   api_key:
 
   # Verify the instance's HTTPS certificate. Turn off only for a self-signed instance whose CA
   # cannot be trusted via the OS store or SSL_CERT_FILE.
   verify_ssl: true
 
-  # Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr,
-  # unmonitored series or entries whose episodes are all unmonitored.
+  # Ignore library items the arr does not monitor. For Radarr this means unmonitored movies. For
+  # Sonarr, unmonitored series or titles whose episodes are all unmonitored.
   ignore_unmonitored: false
 
   # qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set
   # on this arr's own qBittorrent download client; an explicit blank ("") keeps no category at all.
   # The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several
-  # enabled, the lowest priority number wins (the arr's own per-download pick is not predictable
-  # from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch.
-  # When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a
-  # category from its download folder itself (not with imports.wait_mode: off). Radarr imports
-  # nothing from such a category.
+  # enabled, the lowest priority number wins (which client the arr uses for a download is not
+  # predictable from outside). The arr never sees a torrent in a category none of its qBittorrent
+  # clients watch. When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished
+  # torrent in such a category from its download folder itself (not with imports.wait_mode: off).
+  # Radarr imports nothing from such a category.
   torrent_category:
 
   # qBittorrent category applied once every import using a torrent grabbed for this arr has
   # completed. Lets finished torrents carry their own seeding rules. A torrent shared by several
-  # entries, or by Sonarr and Radarr, moves only after all of them have imported. Point
-  # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
-  # to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import
-  # category set on this arr's own qBittorrent download client (the same client pick as
+  # titles, or by Sonarr and Radarr, moves only after all of them have imported. Point
+  # delete-with-data cleanup scripts at this category alone - a SeaDex update can list an
+  # already-moved torrent under another title, and deleted data is re-downloaded. Omitted adopts the
+  # post-import category set on this arr's own qBittorrent download client (the same client as for
   # torrent_category); an explicit blank ("") keeps the add-time category. A torrent in a category
   # this arr doesn't watch is never moved into one it does, where the arr would import it a second
   # time its own way. Ignored when imports.wait_mode is off.
@@ -50,53 +50,53 @@ sonarr:
 # executes. A Sonarr-only config still loads.
 radarr:
   # Base URL of the instance's web UI, e.g. http://localhost:8989 for Sonarr or
-  # http://localhost:7878 for Radarr. Blank leaves this arr unconfigured and its runs are skipped.
+  # http://localhost:7878 for Radarr. Blank leaves this arr unconfigured, and it is not run.
   url:
 
   # API key of the instance, from Settings > General in its web UI. Blank leaves this arr
-  # unconfigured and its runs are skipped.
+  # unconfigured, and it is not run.
   api_key:
 
   # Verify the instance's HTTPS certificate. Turn off only for a self-signed instance whose CA
   # cannot be trusted via the OS store or SSL_CERT_FILE.
   verify_ssl: true
 
-  # Skip items the arr does not monitor. For Radarr this means unmonitored movies. For Sonarr,
-  # unmonitored series or entries whose episodes are all unmonitored.
+  # Ignore library items the arr does not monitor. For Radarr this means unmonitored movies. For
+  # Sonarr, unmonitored series or titles whose episodes are all unmonitored.
   ignore_unmonitored: false
 
   # qBittorrent category applied to torrents grabbed for this arr. Omitted adopts the category set
   # on this arr's own qBittorrent download client; an explicit blank ("") keeps no category at all.
   # The adopted client should be the qBittorrent instance Pearlarr itself talks to; with several
-  # enabled, the lowest priority number wins (the arr's own per-download pick is not predictable
-  # from outside). The arr never sees a torrent in a category none of its qBittorrent clients watch.
-  # When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished torrent in such a
-  # category from its download folder itself (not with imports.wait_mode: off). Radarr imports
-  # nothing from such a category.
+  # enabled, the lowest priority number wins (which client the arr uses for a download is not
+  # predictable from outside). The arr never sees a torrent in a category none of its qBittorrent
+  # clients watch. When Sonarr has an enabled qBittorrent client, Pearlarr imports each finished
+  # torrent in such a category from its download folder itself (not with imports.wait_mode: off).
+  # Radarr imports nothing from such a category.
   torrent_category:
 
   # qBittorrent category applied once every import using a torrent grabbed for this arr has
   # completed. Lets finished torrents carry their own seeding rules. A torrent shared by several
-  # entries, or by Sonarr and Radarr, moves only after all of them have imported. Point
-  # delete-with-data cleanup scripts at this category alone - a SeaDex update can attach a new entry
-  # to an already-moved torrent, and deleted data is re-downloaded. Omitted adopts the post-import
-  # category set on this arr's own qBittorrent download client (the same client pick as
+  # titles, or by Sonarr and Radarr, moves only after all of them have imported. Point
+  # delete-with-data cleanup scripts at this category alone - a SeaDex update can list an
+  # already-moved torrent under another title, and deleted data is re-downloaded. Omitted adopts the
+  # post-import category set on this arr's own qBittorrent download client (the same client as for
   # torrent_category); an explicit blank ("") keeps the add-time category. A torrent in a category
   # this arr doesn't watch is never moved into one it does, where the arr would import it a second
   # time its own way. Ignored when imports.wait_mode is off.
   post_import_category:
 
-# qBittorrent connection. All of host, username, and password are needed to grab. Leave any blank to
-# run in preview mode (everything is reported, nothing is added).
+# qBittorrent connection. All of host, username, and password are needed to grab. Leave any blank
+# for dry runs only (everything is reported, nothing is grabbed).
 qbittorrent:
   # WebUI address of qBittorrent, e.g. http://localhost:8080. Leave any of host, username, or
-  # password blank to run in preview mode: runs report what they would grab, but nothing is added.
+  # password blank for dry runs only: runs report what they would grab and grab nothing.
   host:
 
-  # WebUI username. Blank switches to preview mode (see host).
+  # WebUI username. Blank makes every run a dry run (see host).
   username:
 
-  # WebUI password. Blank switches to preview mode (see host).
+  # WebUI password. Blank makes every run a dry run (see host).
   password:
 
   # Tags applied to every torrent added. Blank applies no tags.
@@ -112,10 +112,10 @@ seadex:
   # never grabbed: SeaDex carries no download link for them, and no private-tracker auth is
   # supported.
   # Values:
-  #   warn     - Warn and skip without caching, so the title is re-checked every run until a public
-  #              release appears.
-  #   fallback - Grab the entry's best public alternative instead. Warn only when none exists at
-  #              all.
+  #   warn     - Warn and grab nothing. The title is re-checked every run until a public release
+  #              covers the files.
+  #   fallback - Grab a public release instead, chosen by the same settings. Warn only when none
+  #              covers the files.
   private_releases: warn
 
   # Prefer dual-audio releases, even over a single-audio release marked best. When off, prefer
@@ -139,33 +139,32 @@ seadex:
   # AniList IDs never processed. Empty ignores none.
   ignore_anilist_ids:
 
-  # Re-check entries even when SeaDex has not updated them since the last check.
+  # Check titles again even when SeaDex has not updated their entries since the last check.
   ignore_seadex_update_times: false
 
-# Waiting for grabbed torrents and Sonarr manual import. Sonarr only, except the pending-import
-# bookkeeping.
+# The wait pass: waiting for grabbed torrents and importing them. Sonarr only, except the
+# pending-import bookkeeping.
 imports:
   # When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's
   # import.
   # Values:
-  #   off      - Disabled: no waiting, no pending-import records, no manual import.
-  #   deferred - Never wait on a download: record this run's grabs and import earlier runs' finished
-  #              downloads in one pass at the end of the run.
-  #   blocking - Same as hybrid.
-  #   hybrid   - The default: wait at the end of the run for downloads to finish, then import - this
-  #              run's grabs and any download still pending from an earlier run.
-  wait_mode: hybrid
+  #   off      - Disabled: no wait pass, no pending imports kept, no auto import.
+  #   deferred - Never wait on a download: keep this run's grabs as pending imports and import
+  #              earlier runs' finished ones, in one poll at the end of the run.
+  #   blocking - The default: wait at the end of the run for downloads to finish, then import - this
+  #              run's grabs and any pending import from an earlier run.
+  wait_mode: blocking
 
   # Seconds to wait per torrent for qBittorrent to finish downloading it.
-  wait_timeout: 3600
+  download_timeout: 3600
 
   # Seconds to then wait for Sonarr to rescan and import the finished files. Measured from the last
-  # file Pearlarr saw land rather than the download's completion, so a season pack imported
+  # file Pearlarr saw imported rather than the download's completion, so a season pack imported
   # file-by-file times out only after this long with no visible progress. Time spent waiting on
   # Sonarr's import work (its own import of the download, an import Pearlarr issued, or a disk
-  # command holding the line) does not count, up to six times this value. A record still waiting at
-  # that bound is left pending.
-  ready_timeout: 600
+  # command holding the line) does not count, up to six times this value. A pending import still
+  # waiting at that bound is left for the next run.
+  import_timeout: 600
 
   # Seconds between polls of qBittorrent and the Sonarr queue while waiting.
   poll_interval: 30
@@ -181,14 +180,14 @@ imports:
   # for a torrent Pearlarr tracks instead of adding SeaDex's (Sonarr's own grab of the same files,
   # say): that one is imported as auto.
   # Values: auto / move / copy
-  mode: auto
+  import_mode: auto
 
-  # Remove a torrent's leftover Sonarr queue entry once every record on it has imported. Sonarr
-  # clears an entry itself only when a single import covers the grab's full episode count, so a
-  # torrent finished across several passes (some files imported by Sonarr, the rest by Pearlarr)
-  # stays parked in its queue, where completed-download handling may import it again. Removing the
-  # entry closes that window: Sonarr records the download as manually ignored, and the torrent keeps
-  # seeding in qBittorrent. Sonarr only. Ignored when wait_mode is off.
+  # Remove a torrent's leftover Sonarr queue record once its import is done. Sonarr clears a queue
+  # record itself only when a single import covers the grab's full episode count, so a torrent
+  # imported in several steps (some files imported by Sonarr, the rest by Pearlarr) stays parked in
+  # its queue, where completed-download handling may import it again. Removing the record closes
+  # that window: Sonarr marks the download as manually ignored, and the torrent keeps seeding in
+  # qBittorrent. Sonarr only. Ignored when wait_mode is off.
   remove_from_queue: true
 
   # Sonarr quality name, e.g. Bluray-2160p, filling the gaps when a file's quality cannot be
@@ -196,19 +195,19 @@ imports:
   # definition is warned about and ignored.
   default_quality:
 
-  # Languages tagged on files imported from dual-audio releases. An empty list falls back to the
-  # default. A file is never imported with no language (Sonarr would read it as Unknown and could
-  # re-grab it).
+  # Languages tagged on files imported from dual-audio releases. An empty list uses the default. A
+  # file is never imported with no language (Sonarr would read it as Unknown and could re-grab it).
   # Default: [Japanese, English]
   languages_dual:
 
-  # Languages tagged on files imported from single-audio releases. Empty falls back like
+  # Languages tagged on files imported from single-audio releases. Empty uses the default, like
   # languages_dual.
   # Default: [Japanese]
   languages_single:
 
-  # Target seconds between wait-progress digest lines on a non-interactive console (Docker, cron).
-  digest_interval: 300
+  # Target seconds between progress lines on a non-interactive console (Docker, cron) while a wait
+  # pass runs.
+  progress_line_interval: 300
 
 # Notification webhooks. Either, both, or neither may be set.
 notifications:
@@ -225,24 +224,22 @@ notifications:
 
 # Scheduled-mode cadence (the default command, run scheduled).
 schedule:
-  # Hours between scheduled cycles.
+  # Hours between scheduled runs.
   interval_hours: 6.0
 
-# Rate limiting, caching, run caps, and logging.
+# Rate limiting, the run cap, and logging.
 advanced:
   # Seconds slept between API queries, as rate limiting. 0 disables the sleep.
   sleep_time: 0
 
-  # Days downloaded mapping sources are kept before re-downloading. 0 re-downloads every run.
-  cache_time: 1
-
-  # Prompt for a choice when several torrents match, instead of taking the best automatically.
+  # Prompt for a choice when a title has several releases to grab, instead of choosing
+  # automatically.
   interactive: false
 
   # Cap on torrents added per run. 0 removes the cap. Keeps a first run on a large library from
-  # flooding qBittorrent. Past the cap a run still checks every title, so a torrent already
-  # downloading stays matched to every entry that lists it, and the held titles are grabbed on later
-  # runs. Preview runs ignore the cap, so a preview always reports the whole library.
+  # flooding qBittorrent. Past the cap a run still checks every title, so a torrent already in
+  # qBittorrent is still tied to every title that lists it, and the held grabs are made on later
+  # runs. Dry runs ignore the cap, so a dry run always reports the whole library.
   max_torrents_to_add: 10
 
   # Re-check titles whose files Sonarr or Radarr changed since the last run. Polls each arr's
@@ -262,17 +259,18 @@ advanced:
   # backup. Backups older than this many days are deleted once the run's configuration loads.
   log_retention_days: 14
 
-# ID and episode mapping sources. anibridge_mappings is the primary. The others fill anything it
-# misses.
+# ID and episode mapping sources. anibridge is the primary. The others fill anything it misses.
 mappings:
-  # Kometa Anime-IDs source, a fallback for IDs the primary graph misses. Blank auto-downloads it.
-  # false disables it. An inline mapping is accepted.
-  anime_mappings:
+  # Days downloaded mapping sources are kept before re-downloading. 0 re-downloads every run.
+  refresh_days: 1
 
-  # AniDB anime-lists XML source, a fallback used for specials. Blank auto-downloads it. false
-  # disables it.
-  anidb_mappings:
+  # Kometa Anime-IDs source, used for IDs the primary graph misses. Blank auto-downloads it. false
+  # disables it. An inline mapping is accepted.
+  anime_ids:
+
+  # AniDB anime-lists XML source, used for specials. Blank auto-downloads it. false disables it.
+  anime_lists:
 
   # anibridge-mappings v3 graph, the primary source of IDs and per-season episode maps. Blank
   # auto-downloads it. false disables it. An inline mapping is accepted.
-  anibridge_mappings:
+  anibridge:

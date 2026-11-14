@@ -72,8 +72,8 @@ class ArrRunDeps:
     `ArrRunLoop` arr run loop, and the Arr-specific strategy.
     Keeping construction here (where every collaborator type is already imported)
     and injection at the root means none of them constructs another's
-    dependencies - each receives the subset it needs. `anime_mappings` /
-    `anidb_mappings` / `anibridge` are read off `mappings` by consumers, not
+    dependencies - each receives the subset it needs. `anime_ids` /
+    `anime_lists` / `anibridge` are read off `mappings` by consumers, not
     stored separately.
     """
 

@@ -584,7 +584,7 @@ class TestConfiguredArrs:
 # Mapping stanza shared by the runnable-config helpers: disabled sources keep
 # the resolver off the network, so a run gets past the shared-deps stage and
 # into the per-arr loop without any I/O.
-_NO_MAPPINGS = "mappings:\n  anime_mappings: false\n  anidb_mappings: false\n  anibridge_mappings: false\n"
+_NO_MAPPINGS = "mappings:\n  anime_ids: false\n  anime_lists: false\n  anibridge: false\n"
 
 
 def _write_runnable_config() -> None:
@@ -1293,6 +1293,27 @@ class TestMissingConfigExitsNonzero:
         assert "starter template was written" in result.output
         # This handler exits now. The skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
+
+
+class TestOutdatedEnvNamesWarning:
+    """A version 6 override variable name warns once per load, every run."""
+
+    def test_old_names_warn_in_one_line(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        recording = install_recording_hub()
+        monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "7")
+        monkeypatch.setenv("PEARLARR_ADVANCED__CACHE_TIME", "3")
+        config = tmp_path / "config.yml"
+        config.write_text(f"config_version: {CONFIG_VERSION}\n", encoding="utf-8")
+        config.chmod(0o600)
+
+        assert load_shared_config(str(config), BootFlow(), "") is not None
+
+        (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
+        assert warning.message == (
+            "Outdated environment variables (they stop working in 1.7.0): "
+            "PEARLARR_ADVANCED__CACHE_TIME is now PEARLARR_MAPPINGS__REFRESH_DAYS; "
+            "PEARLARR_IMPORTS__WAIT_TIMEOUT is now PEARLARR_IMPORTS__DOWNLOAD_TIMEOUT"
+        )
 
 
 class TestUnknownTrackerWarning:

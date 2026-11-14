@@ -496,7 +496,7 @@ class ImportWaitManager:
         self._cleanup.finish_cleanups()
 
     def run_blocking(self, *, view: WaitView | None = None) -> WaitResult | None:
-        """The blocking (or hybrid) wait pass: waiting and importing interleaved over every pending import."""
+        """The blocking wait pass: waiting and importing interleaved over every pending import."""
 
         if self.pollers.strategy is None:
             return None
@@ -551,7 +551,7 @@ class ImportWaitManager:
             view = make_wait_view(
                 self.logger,
                 poll_s=self.imports.poll_interval,
-                progress_line_interval=self.imports.digest_interval,
+                progress_line_interval=self.imports.progress_line_interval,
                 kind=wait_pass.kind,
             )
         try:
@@ -838,8 +838,8 @@ class WaitPass:
         self._mgr = manager
         self.kind = kind
         self._clock = manager.clock
-        self._dl_timeout = manager.imports.wait_timeout
-        self._import_timeout = manager.imports.ready_timeout
+        self._dl_timeout = manager.imports.download_timeout
+        self._import_timeout = manager.imports.import_timeout
         self._start = self._clock.monotonic()
         # Stamped at construction: an imported fresh grab leaves `grabbed_this_run` mid-pass,
         # so a later membership check would misread it as carried-over.

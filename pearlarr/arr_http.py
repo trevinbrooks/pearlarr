@@ -35,7 +35,7 @@ RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
 # Streak re-warn cadence default. The Sonarr client swaps in the configured
-# `imports.digest_interval` (same default) via `replace`; everything else keeps this.
+# `imports.progress_line_interval` (same default) via `replace`; everything else keeps this.
 REWARN_INTERVAL_S = 300.0
 
 # Coalesced-repeat DEBUG lines go through the stdlib channel (first-party child of
@@ -156,7 +156,7 @@ class ArrHttp:
     would only stretch each poll."""
     rewarn_s: float = REWARN_INTERVAL_S
     """Seconds between "still failing" re-warns while a streak runs (the Sonarr
-    client swaps in `imports.digest_interval` via `replace` - ArrHttp knows no config)."""
+    client swaps in `imports.progress_line_interval` via `replace` - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
     streaks: FailureStreaks = field(default_factory=FailureStreaks, compare=False)
     """The failure streaks. MUST stay `init=True`: `dataclasses.replace`
