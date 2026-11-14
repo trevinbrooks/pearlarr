@@ -136,7 +136,7 @@ class PlacementVerdict(StrEnum):
 
     EXACT = "exact"
     """Its parsed season and episode, or Sonarr's matched episode, resolved inside the window."""
-    SEQUENCE_OVER_PARSE = "release run"
+    SEQUENCE_OVER_PARSE = "numbered sequence over the parse"
     """A numbered sequence's own numbers placed it onto the consecutive unused episodes, overriding Sonarr's
     inconsistent parse."""
     ABSOLUTE = "absolute"
@@ -146,7 +146,7 @@ class PlacementVerdict(StrEnum):
     NAME_ORDER = "ordered"
     """A batch of files with no parsed number that no earlier pass touched, paired with the unused ids in natural
     name order."""
-    SEQUENCE = "numbered run"
+    SEQUENCE = "numbered sequence"
     """A `1..N` sequence among the files Sonarr found no episode for, paired with the consecutive unused episodes."""
     TITLE_NAME = "titled"
     """The file with no parsed number that an AniList name of the title points at, onto the only unused id."""
@@ -168,7 +168,7 @@ class PlacementVerdict(StrEnum):
     ALIAS_OUTSIDE_WINDOW = "aliased special outside the window"
     """Not placed here: a file of a batch of misnumbered specials whose alias points at a special outside this
     window. A provisional verdict, so the window that holds that special may still place it."""
-    OUTSIDE_WINDOW = "other slice"
+    OUTSIDE_WINDOW = "outside the window"
     """Parses wholly outside the window, or carries the title of an episode outside it, confirmed by its parse, by
     that parse's rejection while its episodes are used, or by no unused id being left: not this pending import's to
     import under its current claims."""
@@ -183,14 +183,14 @@ class PlacementVerdict(StrEnum):
     episode a version of the same file is placed on."""
     EXTRA = "extra"
     """An opening, an ending, a preview, a menu, a commercial, a trailer, a teaser, or a promo: never an episode."""
-    WAITING_ON_PARSE = "held"
+    WAITING_ON_PARSE = "waiting on a parse"
     """A file of the sequence the sequence-over-parse pass picked, while a parse is unknown: no other pass may
     place it, and it is re-checked."""
     MISNUMBERED = "misnumbered"
     """A file whose own numbers disagree, or whose number no title confirms, that no sequence places. Or a file of
     a batch of specials whose numbers don't match the titles listing it, when its special aliases can't place it
     either or another window places it elsewhere. Never placed by its numbers, left for a hand import."""
-    EPISODE_TITLES_CONTRADICT = "refuted by its run's titles"
+    EPISODE_TITLES_CONTRADICT = "episode titles contradict its number"
     """A plain member of a numbered sequence whose members carrying titles contradict the sequence's numbers, when
     nothing else placed it. A provisional verdict: another window may still place it. Left for a hand import when
     none does."""
@@ -202,7 +202,7 @@ class PlacementVerdict(StrEnum):
     """A file whose number the TVDB order explaining the torrent gives to an episode Sonarr doesn't list (one half
     of an episode that order splits in two, say). Not placed under its window, and left for a hand import unless
     another window places it or proves it a duplicate. `Placement.order_only` names the order and the key."""
-    NO_EPISODE_FOUND = "skipped"
+    NO_EPISODE_FOUND = "no episode found"
     """Nothing placed it and nothing proved it outside the window."""
 
     @property
