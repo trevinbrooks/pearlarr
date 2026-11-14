@@ -37,7 +37,6 @@ from .events import (
 )
 from .scan_lines import kv_line
 from ..coverage import coverage_string
-from ..releases import EpisodeKey, ReleaseEpisode
 from ..tvdb_orders import order_display_name
 from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
@@ -60,12 +59,6 @@ _MAX_FILE_ROWS = 5
 _REASON_WIDTH = 78
 # An outcome line's label starts two columns past a title row's, behind the glyph and its space.
 _ROW_KEY_WIDTH = DETAIL_KEY_WIDTH + 2
-
-
-def _episodes(keys: tuple[EpisodeKey, ...]) -> str:
-    """Episode keys in a row label's notation, as "S04 E01, E05-E08"."""
-
-    return coverage_string([ReleaseEpisode(season=key.season, episode=key.episode) for key in keys])
 
 
 def _order_only_reason(left: LeftForHandImport) -> str:
@@ -107,11 +100,11 @@ def hand_import_sentences(left: LeftForHandImport) -> tuple[str, str]:
     lead: list[str] = []
     if left.missing:
         verb = "is" if len(left.missing) == 1 else "are"
-        lead.append(f"{_episodes(left.missing)} {verb} still missing in Sonarr.")
+        lead.append(f"{coverage_string(left.missing)} {verb} still missing in Sonarr.")
     if len(left.untrusted) == 1:
-        lead.append(f"{_episodes(left.untrusted)} has a file in Sonarr, but it isn't from a trusted group.")
+        lead.append(f"{coverage_string(left.untrusted)} has a file in Sonarr, but it isn't from a trusted group.")
     elif left.untrusted:
-        lead.append(f"{_episodes(left.untrusted)} have files in Sonarr, but they aren't from a trusted group.")
+        lead.append(f"{coverage_string(left.untrusted)} have files in Sonarr, but they aren't from a trusted group.")
     reason = _order_only_reason(left)
     return " ".join(lead), reason[0].upper() + reason[1:]
 
@@ -121,11 +114,11 @@ def _still_needed_note(left: LeftForHandImport) -> str:
 
     parts: list[str] = []
     if left.missing:
-        parts.append(f"{_episodes(left.missing)} still missing in Sonarr")
+        parts.append(f"{coverage_string(left.missing)} still missing in Sonarr")
     if len(left.untrusted) == 1:
-        parts.append(f"{_episodes(left.untrusted)} has a file that isn't from a trusted group")
+        parts.append(f"{coverage_string(left.untrusted)} has a file that isn't from a trusted group")
     elif left.untrusted:
-        parts.append(f"{_episodes(left.untrusted)} have files that aren't from a trusted group")
+        parts.append(f"{coverage_string(left.untrusted)} have files that aren't from a trusted group")
     return " · ".join(parts)
 
 

@@ -154,11 +154,7 @@ def test_the_grab_places_the_captured_shape(case: ShapeCase) -> None:
     assert placements.placed == {normalize_file_name(name): ids for name, ids in case.expected.items()}
     assert {p.name for p in placements.excluded} == {normalize_file_name(name) for name in case.expected_excluded}
     assert list(placement.episodes) == [
-        ReleaseEpisode(
-            grabbing_title.series_index.by_id[ep_id].season_number,
-            grabbing_title.series_index.by_id[ep_id].episode_number,
-            size,
-        )
+        ReleaseEpisode(*grabbing_title.series_index.key_by_id[ep_id], size)
         for size, name in enumerate(case.parses, start=1)
         for ep_id in case.expected.get(name, ())
     ]

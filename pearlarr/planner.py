@@ -24,10 +24,8 @@ from .releases import (
     EpisodeKey,
     GroupReleases,
     Release,
-    ReleaseEpisode,
     SeadexDict,
     normalize_group,
-    season_episode_key,
 )
 
 
@@ -121,19 +119,6 @@ def _doubled_sizes(
     return sorted(size for size, count in arr_counts.items() if size in sizes and placed[size] < count)
 
 
-def get_episode_keys(
-    all_episodes: Iterable[ReleaseEpisode],
-) -> set[tuple[int | None, int | None]]:
-    """Build the set of (season, episode) keys an episode list covers.
-
-    Reduces a release's parsed episode list to the set of (season, episode)
-    pairs it contains, so different SeaDex release groups can be compared by
-    what files they cover.
-    """
-
-    return {(ep.season, ep.episode) for ep in all_episodes}
-
-
 def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     """Group SeaDex release groups that cover exactly the same files.
 
@@ -148,14 +133,11 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     # The grouping key is one of three shapes: a shared "all cover one movie"
     # sentinel str, a per-group "couldn't parse" sentinel tuple, or the parsed
     # episode-coverage frozenset that equates groups covering identical files.
-    grouped: dict[
-        str | tuple[str, str] | frozenset[tuple[int | None, int | None]],
-        list[str],
-    ] = {}
+    grouped: dict[str | tuple[str, str] | frozenset[EpisodeKey], list[str]] = {}
     for rg, group_releases in seadex_dict.items():
         all_episodes = group_releases.all_episodes
 
-        key: str | tuple[str, str] | frozenset[tuple[int | None, int | None]]
+        key: str | tuple[str, str] | frozenset[EpisodeKey]
         if all_episodes is None:
             # No episode parsing for this Arr (e.g., Radarr): treat as one movie
             key = "__no_episode_parsing__"
@@ -164,7 +146,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
             # never drop content we couldn't verify
             key = ("__unparsed__", rg)
         else:
-            key = frozenset(get_episode_keys(all_episodes))
+            key = frozenset(ep.key for ep in all_episodes)
 
         # Insertion-ordered dict preserves first-seen group order for us
         grouped.setdefault(key, []).append(rg)
@@ -280,13 +262,8 @@ def episode_coverage(
                 blanket.add(seadex_rg_normalized)
 
             for seadex_ep in seadex_episodes:
-                season = seadex_ep.season
-                episode = seadex_ep.episode
-                if season is None or episode is None:
-                    continue
-                key = EpisodeKey(season, episode)
-                if key in sonarr_by_key:
-                    by_key.setdefault(key, set()).add(seadex_rg_normalized)
+                if seadex_ep.key in sonarr_by_key:
+                    by_key.setdefault(seadex_ep.key, set()).add(seadex_rg_normalized)
 
     return EpisodeCoverage(frozenset(blanket), {key: frozenset(groups) for key, groups in by_key.items()})
 
@@ -367,9 +344,7 @@ def _file_release_groups(
                         identities[key] = _FileReleaseGroup(normalized, by_size=True, size=size)
                 continue
             for seadex_ep in release.episodes:
-                if seadex_ep.season is None or seadex_ep.episode is None:
-                    continue
-                key = season_episode_key(seadex_ep.season, seadex_ep.episode)
+                key = seadex_ep.key
                 if key in identities or seadex_ep.size <= 0 or untagged.get(key) != seadex_ep.size:
                     continue
                 identities[key] = _FileReleaseGroup(normalized, by_size=True, size=seadex_ep.size)
@@ -749,19 +724,8 @@ class GrabPlanner:
         arr_size_by_key: dict[EpisodeKey, int] = {}
 
         for seadex_idx, seadex_ep in enumerate(seadex_episodes):
-            seadex_ep_season = seadex_ep.season
-            seadex_ep_episode = seadex_ep.episode
             seadex_ep_size = seadex_ep.size
-
-            # A parsed episode with no season/episode can't key into the Sonarr
-            # index (its keys are always concrete ints), and the SxxExx label
-            # below needs both anyway, so skip it.
-            if seadex_ep_season is None or seadex_ep_episode is None:
-                continue
-
-            # O(1) lookup into the indexed Sonarr episodes instead of
-            # re-searching the whole list for every parsed episode
-            episode_key = season_episode_key(seadex_ep_season, seadex_ep_episode)
+            episode_key = seadex_ep.key
             sonarr_ep = ctx.sonarr_by_key.get(episode_key)
             if sonarr_ep is None:
                 continue
@@ -775,7 +739,7 @@ class GrabPlanner:
             # when neither side actually has a size.
             size_match = sonarr_ep_size is not None and sonarr_ep_size == seadex_ep_size
 
-            season_ep_str = f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
+            season_ep_str = episode_key.label
 
             # The file's effective identity, resolved once per entry: its own
             # tag, or - where a rename stripped it - the group whose listed size
@@ -1126,14 +1090,14 @@ class GrabPlanner:
         # What the set will actually obtain: surviving releases to grab the add-time
         # gate accepts (private releases are skipped there, so they never count).
         survivor_keys = {
-            key
+            ep.key
             for rg in same_files.names
             for u in seadex_dict[rg].releases.values()
             if u.to_grab and u.is_public
-            for key in get_episode_keys(u.episodes)
+            for ep in u.episodes
         }
         for u in rescuable:
-            release_keys = get_episode_keys(u.episodes)
+            release_keys = {ep.key for ep in u.episodes}
             if release_keys <= survivor_keys:
                 continue
             self.logger.debug(f"Marking {u.url} to grab again: no surviving release covers its episodes")

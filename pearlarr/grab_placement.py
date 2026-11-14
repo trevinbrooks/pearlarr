@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Self
 
 from .arr_models import ParsedFileInfo
-from .coverage import coverage_string, episodes_from_ep_list
+from .coverage import coverage_of_episodes
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
 from .file_paths import normalize_file_name
 from .numberings import NumberingStep
@@ -699,7 +699,7 @@ def build_title_claim(release: PlacedGrab, grabbing_title: GrabbingTitle, facts:
         for ep_id, status in grab_snapshot.statuses(sorted(claimed), release.placed.intended_sizes).by_id.items()
         if status is EpisodeFileStatus.TRUSTED
     )
-    claimed_coverage = coverage_string(episodes_from_ep_list(claimed_episodes)) or None
+    claimed_coverage = coverage_of_episodes(claimed_episodes) or None
     window = grabbing_title.window
     return facts.claim(
         ClaimTerms(
