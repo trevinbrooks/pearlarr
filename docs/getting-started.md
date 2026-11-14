@@ -1,7 +1,7 @@
 # Getting started
 
 This guide takes you from a fresh install to grabbing your first release.
-Pearlarr only downloads once qBittorrent is connected in the final step, so every run before then is a read-only preview.
+Pearlarr only grabs once qBittorrent is connected in step 6, so every run before then is a dry run.
 It shows exactly what would be grabbed without touching anything, letting you rerun and refine your setup as often as you like.
 
 You will need:
@@ -26,7 +26,7 @@ One catch: inside the container `localhost` is Pearlarr itself, so point `sonarr
 
 ```console
 $ pearlarr config init
-Wrote a starter config to /home/you/.local/share/pearlarr/config.yml
+Wrote the config template to /home/you/.local/share/pearlarr/config.yml
 ```
 
 The path varies by OS. `pearlarr paths` prints where everything lives:
@@ -43,7 +43,7 @@ logs:        /home/you/.local/share/pearlarr/logs
 ## 3. Connect Sonarr
 
 Open `config.yml` in your editor.
-Every key is documented in place, and the `$schema` line at the top gives most editors completion and validation as you type.
+Every key is documented in the file itself, and the `$schema` line at the top gives most editors completion and validation as you type.
 
 For now, fill in just the two connection keys:
 
@@ -61,15 +61,15 @@ Leave everything else blank. Blank keys take the built-in defaults.
 $ pearlarr config validate
 OK: /home/you/.local/share/pearlarr/config.yml is valid
   sonarr:      configured
-  radarr:      not configured (runs will skip it)
-  qbittorrent: not configured (preview mode - nothing is grabbed)
+  radarr:      not configured (it is not run)
+  qbittorrent: not configured (dry runs only - nothing is grabbed)
 ```
 
-That last line is the point of the next step: with no qBittorrent credentials, runs are previews.
+That last line is the point of the next step: with no qBittorrent credentials, runs are dry runs.
 A typo'd or unknown key fails here with an error naming it, so a clean `OK` means the file itself is sound.
-Validation never touches the network, though, so a wrong API key or dead URL passes here and surfaces only on the first run.
+Validation never touches the network, though, so a wrong API key or dead URL passes here and shows up only on the first run.
 
-## 5. Run a preview
+## 5. Do a dry run
 
 ```console
 $ pearlarr run single
@@ -77,15 +77,15 @@ $ pearlarr run single
 
 Watch it work, top to bottom:
 
-- A **boot ledger** first: one line per startup step (reading the config, refreshing the ID mappings, fetching your library, fetching the SeaDex entries).
+- The **boot steps** first: one line per step (reading the config, refreshing the ID mappings, fetching your library, fetching the SeaDex entries).
   The first run downloads and parses the mapping sources, so it is the slowest. Later runs reuse them.
-- Then a **block per library title**: the SeaDex entry it resolved to, what your library already has, and what Pearlarr would do about it.
-- Finally a **summary scoreboard**: how many titles were checked, what it *would grab*, what is already up to date, and what needs your attention.
-  Each "added" line names its release, and each "needs action" line names the title and why Pearlarr stopped.
+- Then a **block per title**: the SeaDex entry it resolved to, what your library already has, and what Pearlarr would do about it.
+- Finally the **summary**: how many titles were checked, what it *would grab*, what is already up to date, and what needs your attention.
+  Each block under "grabbed" names its release, and each block under "needs action" names the title and why Pearlarr stopped.
   The summary is marked `DRY RUN - qBittorrent not configured; nothing grabbed`.
 
-Nothing was grabbed and nothing was recorded, so you can run this as often as you like.
-This is the tuning loop: read the preview, adjust the release choices in the `seadex` group (tracker and tag filters, audio preference, all in [configuration.md](configuration.md#seadex)), and run it again until the picks are what you would pick.
+Nothing was grabbed and nothing was cached, so you can run this as often as you like.
+This is the tuning loop: read the dry run's output, adjust the release choices in the `seadex` group (tracker and tag filters, audio preference, all in [configuration.md](configuration.md#seadex)), and run it again until it chooses what you would choose.
 
 ## 6. Add qBittorrent and grab for real
 
@@ -104,13 +104,13 @@ Then the same command grabs for real:
 $ pearlarr run single
 ```
 
-The blocks now read "adding SeaDex's recommended release" instead of "would add", and the results are cached, so handled titles are skipped on later runs until SeaDex or your library changes.
-A real run adds at most `advanced.max_torrents_to_add` torrents (default 10) and holds the rest, so on a large library later runs grab the titles the first run held. The preview ignored that cap.
+The blocks now read "grabbing" and "grabbed" instead of "would grab", and the results are cached, so later runs don't check those titles again until SeaDex or your library changes.
+A real run adds at most `advanced.max_torrents_to_add` torrents (default 10) and holds the rest, so on a large library later runs grab the titles the first run held. The dry run ignored that cap.
 (`pearlarr run single --dry-run` still simulates with credentials set, if you want one more rehearsal.)
 
 ## 7. Confirm the grab
 
-The summary's "added" lines name each grabbed release. You will find torrents with those names in qBittorrent.
+Under "grabbed", the summary names each release Pearlarr grabbed. You will find torrents with those names in qBittorrent.
 From there the usual arr flow takes over: Sonarr sees the finished download and imports it like any other.
 Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their own qBittorrent category (Sonarr's qBittorrent client doesn't watch that category, so Pearlarr imports those downloads itself), and `notifications.discord_url` if you want each grab posted to Discord.
 
@@ -118,11 +118,11 @@ Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their o
 
 One run every few hours is all Pearlarr needs:
 
-- **Bare metal**: bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`. Keep it alive under a process supervisor, or wire `pearlarr run single` into cron or a systemd timer if you prefer your own scheduler ([deployment.md](deployment.md#bare-metal-scheduling)).
+- **Bare metal**: bare `pearlarr` runs the scheduled loop, one run every `schedule.interval_hours`. Keep it alive under a process supervisor, or wire `pearlarr run single` into cron or a systemd timer if you prefer your own scheduler ([deployment.md](deployment.md#bare-metal-scheduling)).
 - **Docker**: the container schedules itself. Set `PEARLARR_CRON` to change the cadence ([deployment.md](deployment.md#scheduling-and-tz)).
 
 From here:
 
 - Every setting, with defaults and allowed values: [configuration.md](configuration.md)
-- Sonarr users: the `imports` group waits for downloads and shepherds stuck imports into Sonarr automatically - on by default, `imports.wait_mode: off` disables it ([configuration.md](configuration.md#imports))
+- Sonarr users: the `imports` group waits for downloads and gets them imported into Sonarr - on by default, `imports.wait_mode: off` disables it ([configuration.md](configuration.md#imports))
 - Something looks off: [troubleshooting.md](troubleshooting.md)

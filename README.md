@@ -15,18 +15,18 @@ Each download can then flow into Sonarr and arrive as a notification on Discord:
 
 ## How it works
 
-Each run walks your library title by title:
+Each run goes through your library one title at a time:
 
 1. **Map** - Sonarr series and Radarr movies are resolved to AniList IDs (the key SeaDex indexes by) through three public ID-mapping sources.
 2. **Check** - the title's SeaDex entry is fetched, unless the cache shows nothing relevant changed since the last run.
 3. **Select** - the entry's torrents are cut down to the preferred release: your tag and tracker filters, SeaDex's "best" marks, your audio preference.
-4. **Compare** - the picks are matched against what the arr already has (release groups, episodes, file sizes), so only missing or outdated releases go further.
-5. **Grab** - the release is added to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
-6. **Import** (optional, Sonarr) - Pearlarr waits for the downloads to finish and shepherds them into Sonarr, stepping in with a manual import when Sonarr can't place the files itself.
+4. **Compare** - the preferred releases are compared with what the arr already has (release groups, episodes, file sizes), so only missing or outdated releases go further.
+5. **Grab** - the release is sent to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
+6. **Import** (optional, Sonarr) - Pearlarr waits for the downloads to finish and gets them imported into Sonarr, with an auto import when Sonarr can't place the files itself.
 
-Here is that walk on a three-title library - one title already has SeaDex's pick, two get grabbed, and the wait pass drives both imports home:
+Here is that walk on a three-title library - one title already has its preferred release, two get grabbed, and the wait pass gets both imported:
 
-![A Pearlarr run: the boot steps connect to Sonarr and qBittorrent, three series are checked - Cowboy Bebop already has SeaDex's pick, while Frieren and Fullmetal Alchemist: Brotherhood are grabbed - and the wait pass shows live download progress until both imports land in Sonarr](https://raw.githubusercontent.com/trevinbrooks/pearlarr-assets/main/demo_run.gif)
+![A Pearlarr run: the boot steps connect to Sonarr and qBittorrent, three series are checked - Cowboy Bebop already has its preferred release, while Frieren and Fullmetal Alchemist: Brotherhood are grabbed - and the wait pass shows live download progress until both imports land in Sonarr](https://raw.githubusercontent.com/trevinbrooks/pearlarr-assets/main/demo_run.gif)
 
 Runs are incremental and safe to repeat: results live in a SQLite cache, a title is re-checked only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
 
@@ -46,7 +46,7 @@ Plain `pip install pearlarr` works too, as does `pip install -e .` from a clone 
 
 ### Docker Compose
 
-Copy [docker-compose.example.yml](docker-compose.example.yml) to `docker-compose.yml` (or fold the `pearlarr` service into an existing stack), create the config directory yourself, and bring it up:
+Copy [docker-compose.example.yml](docker-compose.example.yml) to `docker-compose.yml` (or merge the `pearlarr` service into an existing stack), create the config directory yourself, and bring it up:
 
 ```console
 $ mkdir -p ./config
@@ -77,7 +77,7 @@ The step-by-step version of this section, with expected output, is [docs/getting
 
 ```console
 $ pearlarr config init
-$ pearlarr paths          # shows where config.yml landed
+$ pearlarr paths          # shows where config.yml was written
 ```
 
 Fill in just your Sonarr and/or Radarr connection first, then run one pass:
@@ -86,25 +86,25 @@ Fill in just your Sonarr and/or Radarr connection first, then run one pass:
 $ pearlarr run single
 ```
 
-Without qBittorrent credentials, every run is a **preview**: Pearlarr evaluates your whole library and reports everything it *would* grab, but grabs nothing and records nothing.
-That is the recommended way to check a new setup - read the preview's summary, adjust the config, repeat.
-When the preview picks what you'd pick, add `qbittorrent.host`, `username`, and `password`, and the same command grabs for real.
+Without qBittorrent credentials, every run is a **dry run**: Pearlarr evaluates your whole library and reports everything it *would* grab, but grabs nothing and caches nothing.
+That is the recommended way to check a new setup - read the dry run's summary, adjust the config, repeat.
+When the dry run chooses what you would choose, add `qbittorrent.host`, `username`, and `password`, and the same command grabs for real.
 (`run single --dry-run` simulates a run with no side effects even after credentials are set.)
 
-Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`. Under Docker the container's cron owns the cadence instead.
+Bare `pearlarr` runs the scheduled loop, one run every `schedule.interval_hours`. Under Docker the container's cron owns the cadence instead.
 
 ## Configuration
 
 `config.yml` is nested YAML in nine groups:
 
 - `sonarr` / `radarr` - connection details and per-arr behavior (unmonitored handling, torrent category).
-- `qbittorrent` - WebUI credentials (blank = preview mode), tags, extra client options.
+- `qbittorrent` - WebUI credentials (blank = dry runs only), tags, extra client options.
 - `seadex` - how a release is chosen: tracker and tag filters, best/dual-audio preference, the private-release policy.
-- `imports` - the wait-for-completion and Sonarr manual-import pass.
+- `imports` - the wait pass: waiting for downloads to finish and getting them imported into Sonarr.
 - `notifications` - the Discord webhook and a generic JSON webhook.
 - `schedule` - the bare-metal loop's cadence.
-- `mappings` - override or disable the ID-mapping sources.
-- `advanced` - request pacing, cache lifetime, arr-activity detection, log level and format.
+- `mappings` - how often the ID-mapping sources refresh, or override or disable them.
+- `advanced` - request pacing, arr-activity detection, log level and format.
 
 Every key, with its default, allowed values, and description, is in [docs/configuration.md](docs/configuration.md) - generated from the source, so it is always current.
 The starter config carries the same documentation as comments, and a `$schema` line gives editors completion and validation.
