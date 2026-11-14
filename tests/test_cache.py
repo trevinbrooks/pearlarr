@@ -198,6 +198,28 @@ CREATE TABLE guard_facts (
 )
 
 
+# The tables that named the AniList ID `al_id` through v7, beside `pending_imports` as it has stood since v5.
+# The v7 -> v8 step renames the three columns and each stored claim's `al_id` key.
+_V7_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    fallback_satisfied INTEGER NOT NULL DEFAULT 0, season_type TEXT,
+    PRIMARY KEY (arr, al_id));
+CREATE TABLE anilist_meta (
+    al_id INTEGER PRIMARY KEY, record BLOB NOT NULL,
+    fetched_at TEXT GENERATED ALWAYS AS (record ->> 'fetched_at') VIRTUAL);
+CREATE INDEX ix_anilist_meta_fetched ON anilist_meta (fetched_at);
+CREATE TABLE pending_imports (
+    arr TEXT NOT NULL, infohash TEXT NOT NULL, record BLOB NOT NULL,
+    PRIMARY KEY (arr, infohash));
+CREATE TABLE guard_facts (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL, record BLOB NOT NULL,
+    PRIMARY KEY (arr, al_id));
+"""
+
+
 def _seed_v4_db(
     db: Path, rows: Sequence[tuple[str, str, int, str]], guards: Sequence[tuple[str, int, str]] = ()
 ) -> None:
@@ -455,6 +477,25 @@ class TestSchemaVersionGate:
         with _open(tmp_path) as store:
             assert store.get_guards(Arr.SONARR) == {9: OwnedAtGrab(entry_groups=("Kept",))}
 
+    def test_v2_guard_backfill_fills_the_table_an_unfinished_upgrade_left(self, tmp_path: Path) -> None:
+        # A release before v8 created `guard_facts` with `al_id`, and its upgrade stopped before the v2 -> v3
+        # step ran. The backfill fills that table, and the v7 -> v8 step renames its column.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V4_PENDING_SCHEMA)
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, al_id, record) VALUES ('sonarr', 'h', 9, jsonb(?))",
+            (json.dumps({"al_id": 9, "added_at": "2026-07-05 00:00:00", "guards": {"entry_groups": ["Grp"]}}),),
+        )
+        raw.execute("PRAGMA user_version=2")
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as store:
+            assert store.get_guards(Arr.SONARR) == {9: OwnedAtGrab(entry_groups=("Grp",))}
+        assert _user_version(db) == SCHEMA_VERSION
+        assert "al_id" not in _columns(db, "guard_facts")
+
     def test_v3_id_form_names_are_nulled(self, tmp_path: Path) -> None:
         # The v3 -> v4 step: a name stored as the id-form fallback (AniList
         # unreachable at write time) is nulled so a later cached read resolves it. A
@@ -521,7 +562,7 @@ class TestSchemaVersionGate:
                     "file_episode_map": {"a.mkv": [101], "b.mkv": [202]},
                     "claims": [
                         {
-                            "al_id": 11,
+                            "anilist_id": 11,
                             "series_id": 5,
                             "title": "Entry 11",
                             "coverage": "S01",
@@ -532,7 +573,7 @@ class TestSchemaVersionGate:
                             "slice_coverage": "S01 E01",
                         },
                         {
-                            "al_id": 22,
+                            "anilist_id": 22,
                             "series_id": 5,
                             "title": "Second",
                             "coverage": "S02",
@@ -720,6 +761,64 @@ class TestSchemaVersionGate:
             assert (cached.name, cached.url) == ("Frieren", "u")
         assert _user_version(db) == SCHEMA_VERSION
         assert _columns(db, "torrent_hashes") == []
+
+    def test_v7_al_id_columns_and_claim_keys_become_anilist_id(self, tmp_path: Path) -> None:
+        # The v7 -> v8 step: every row reads back as it was stored, under the new name. The guards still join to
+        # the claims (title 33 has a guard row and no claim), and the record round-trips byte for byte.
+        db = tmp_path / "cache.db"
+        claims = [
+            {"al_id": 11, "series_id": 5, "title": "First", "coverage": "S01", "url": "u1"},
+            {"al_id": 22, "series_id": 5, "title": "Second", "coverage": "S02", "url": "u2"},
+        ]
+        names = {"series": "Series", "anilist": ["Alias"]}
+        window: dict[str, Any] = {
+            "ordered_episode_ids": [101],
+            "names": names,
+            "preowned_episode_ids": [],
+            "slice_coverage": None,
+        }
+        record: dict[str, Any] = {
+            "infohash": "h",
+            "release_group": "Grp",
+            "is_dual_audio": False,
+            "seadex_files": ["a.mkv"],
+            "added_at": "2026-07-01 00:00:00",
+            "file_episode_map": {"a.mkv": [101]},
+            "claims": [claim | window for claim in claims],
+            "excluded_files": [],
+            "release_sizes": [10],
+            "awaiting_cleanup": False,
+        }
+        answer = {"fetched_at": "2026-07-01 00:00:00", "data": {"title": "First"}}
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V7_SCHEMA)
+        raw.execute("INSERT INTO entries (arr, al_id, name, url) VALUES ('sonarr', 11, 'First', 'u1')")
+        raw.execute("INSERT INTO anilist_meta (al_id, record) VALUES (11, jsonb(?))", (json.dumps(answer),))
+        raw.executemany(
+            "INSERT INTO guard_facts (arr, al_id, record) VALUES ('sonarr', ?, jsonb(?))",
+            [(11, json.dumps({"entry_groups": ["A"]})), (33, json.dumps({"entry_groups": ["Orphan"]}))],
+        )
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, record) VALUES ('sonarr', 'h', jsonb(?))",
+            (json.dumps(record),),
+        )
+        raw.execute("PRAGMA user_version=7")
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as store:
+            cached = store.get_cached_title(Arr.SONARR, 11)
+            assert cached is not None
+            assert (cached.name, cached.url) == ("First", "u1")
+            assert store.get_anilist_meta(11) == answer
+            assert store.get_guards(Arr.SONARR) == {11: OwnedAtGrab(entry_groups=("A",))}
+            rows = store.get_pending_import_rows(Arr.SONARR)
+            assert claim_anilist_ids(PendingImport.from_json(rows["h"], guards={})) == (11, 22)
+            _assert_round_trips(rows)
+        assert _user_version(db) == SCHEMA_VERSION
+        for table in ("entries", "anilist_meta", "guard_facts"):
+            assert "anilist_id" in _columns(db, table)
+            assert "al_id" not in _columns(db, table)
 
     def test_fresh_db_starts_current_without_an_al_id_column(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
@@ -1091,7 +1190,7 @@ class TestPendingImports:
             store.put_pending_import_row(Arr.SONARR, "c", c)
             store.put_pending_import_row(Arr.SONARR, "t", both)
             # A claim with no series id, and a row with no claims: never matched.
-            store.put_pending_import_row(Arr.SONARR, "d", {"infohash": "d", "claims": [{"al_id": 4}]})
+            store.put_pending_import_row(Arr.SONARR, "d", {"infohash": "d", "claims": [{"anilist_id": 4}]})
             store.put_pending_import_row(Arr.SONARR, "e", {"infohash": "e"})
 
             # Only rows with a claim on the series come back. The integer series_id binds directly.
@@ -1105,7 +1204,7 @@ class TestPendingImports:
 
 
 class TestGuardFacts:
-    """One guard-evidence row per (arr, al_id), read-filtered to titles with a live claim."""
+    """One guard-evidence row per (arr, anilist_id), read-filtered to titles with a live claim."""
 
     def test_roundtrip_and_arr_isolation(self, tmp_path: Path) -> None:
         with _open(tmp_path) as store:

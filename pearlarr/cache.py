@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS kv (
 
 CREATE TABLE IF NOT EXISTS entries (
     arr        TEXT    NOT NULL,
-    al_id      INTEGER NOT NULL,
+    anilist_id INTEGER NOT NULL,
     name       TEXT,
     url        TEXT,
     coverage   TEXT,
@@ -45,11 +45,11 @@ CREATE TABLE IF NOT EXISTS entries (
     fallback_satisfied INTEGER NOT NULL DEFAULT 0,
     -- The TVDB order the entry's Sonarr series was numbered by when it was checked, NULL when none was recorded.
     season_type TEXT,
-    PRIMARY KEY (arr, al_id)
+    PRIMARY KEY (arr, anilist_id)
 );
 
 CREATE TABLE IF NOT EXISTS anilist_meta (
-    al_id      INTEGER PRIMARY KEY,
+    anilist_id INTEGER PRIMARY KEY,
     record     BLOB NOT NULL,
     fetched_at TEXT GENERATED ALWAYS AS (record ->> 'fetched_at') VIRTUAL
 );
@@ -72,11 +72,11 @@ CREATE TABLE IF NOT EXISTS pending_imports (
 );
 
 CREATE TABLE IF NOT EXISTS guard_facts (
-    arr    TEXT    NOT NULL,
-    al_id  INTEGER NOT NULL,
+    arr        TEXT    NOT NULL,
+    anilist_id INTEGER NOT NULL,
     -- One guard-evidence row per entry, refreshed whole at each seed. No FK: an orphan row is inert.
-    record BLOB    NOT NULL,
-    PRIMARY KEY (arr, al_id)
+    record     BLOB    NOT NULL,
+    PRIMARY KEY (arr, anilist_id)
 );
 
 CREATE TABLE IF NOT EXISTS history_checkpoints (
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS tvdb_orders (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _LOG = logging.getLogger(f"{LOG_NAME}.cache")
 
@@ -142,10 +142,12 @@ def _migrate_2_to_3(conn: sqlite3.Connection) -> None:
 
     if conn.execute("SELECT EXISTS (SELECT 1 FROM guard_facts)").fetchone()[0]:
         return
+    # The table is the one `_SCHEMA` just created, unless a release before v8 began this upgrade and never finished it.
+    title_column = "al_id" if _has_column(conn, "guard_facts", "al_id") else "anilist_id"
     # `record` stays a BARE column, so SQLite's min/max guarantee picks it from the MAX(added_at) row.
     # `json_type` drops a JSON-null guards value, which `->` would pass as 'null'.
     conn.execute(
-        "INSERT INTO guard_facts (arr, al_id, record) "
+        f"INSERT INTO guard_facts (arr, {title_column}, record) "
         "SELECT arr, al_id, jsonb(record -> 'guards') FROM ("
         "SELECT arr, al_id, record, MAX(record ->> 'added_at') "
         "FROM pending_imports "
@@ -298,6 +300,26 @@ def _migrate_6_to_7(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS torrent_hashes")
 
 
+def _migrate_7_to_8(conn: sqlite3.Connection) -> None:
+    """Rename the `al_id` columns, and each stored claim's `al_id` key, to `anilist_id`."""
+
+    for table in ("entries", "anilist_meta", "guard_facts"):
+        # `_SCHEMA` already created a table an older db lacked, under the new name.
+        if _has_column(conn, table, "al_id"):
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN al_id TO anilist_id")
+    for arr, infohash, rec_json in conn.execute("SELECT arr, infohash, json(record) FROM pending_imports").fetchall():
+        record = json.loads(rec_json)
+        # Each claim keeps its keys in order, so a migrated record reads as one written today.
+        record["claims"] = [
+            {"anilist_id" if key == "al_id" else key: value for key, value in claim.items()}
+            for claim in record.get("claims", [])
+        ]
+        conn.execute(
+            "UPDATE pending_imports SET record = jsonb(?) WHERE arr = ? AND infohash = ?",
+            (json.dumps(record), arr, infohash),
+        )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
@@ -306,6 +328,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_4_to_5,
     5: _migrate_5_to_6,
     6: _migrate_6_to_7,
+    7: _migrate_7_to_8,
 }
 
 
@@ -407,10 +430,10 @@ class _JsonTable(NamedTuple):
     key_cols: tuple[str, ...]
 
 
-_ANILIST_META = _JsonTable("anilist_meta", ("al_id",))
+_ANILIST_META = _JsonTable("anilist_meta", ("anilist_id",))
 _SONARR_PARSE = _JsonTable("sonarr_parse", ("filename",))
 _PENDING_IMPORTS = _JsonTable("pending_imports", ("arr", "infohash"))
-_GUARD_FACTS = _JsonTable("guard_facts", ("arr", "al_id"))
+_GUARD_FACTS = _JsonTable("guard_facts", ("arr", "anilist_id"))
 _TVDB_ORDERS = _JsonTable("tvdb_orders", ("tvdb_id",))
 
 
@@ -634,7 +657,7 @@ class CacheStore(AbstractCacheStore):
 
         row = self._conn.execute(
             "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
-            "WHERE arr = ? AND al_id = ?",
+            "WHERE arr = ? AND anilist_id = ?",
             (_arr_key(arr), anilist_id),
         ).fetchone()
         return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
@@ -666,8 +689,8 @@ class CacheStore(AbstractCacheStore):
         placeholders = ", ".join("?" for _ in supplied)
         assignments = ", ".join(f"{c} = excluded.{c}" for c in supplied)
         self._conn.execute(
-            f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "
-            f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
+            f"INSERT INTO entries (arr, anilist_id, {cols}) VALUES (?, ?, {placeholders}) "
+            f"ON CONFLICT (arr, anilist_id) DO UPDATE SET {assignments}",
             (_arr_key(arr), anilist_id, *(details[c] for c in supplied)),
         )
 
@@ -679,7 +702,7 @@ class CacheStore(AbstractCacheStore):
         """
 
         self._conn.execute(
-            "UPDATE entries SET updated_at = NULL WHERE arr = ? AND al_id = ?",
+            "UPDATE entries SET updated_at = NULL WHERE arr = ? AND anilist_id = ?",
             (_arr_key(arr), anilist_id),
         )
 
@@ -729,7 +752,7 @@ class CacheStore(AbstractCacheStore):
         """Yield `(anilist_id, answer)` for every cached answer, age unfiltered (see `stamp_is_fresh`)."""
 
         for anilist_id, rec_json in self._conn.execute(
-            "SELECT al_id, json(record) FROM anilist_meta",
+            "SELECT anilist_id, json(record) FROM anilist_meta",
         ):
             yield anilist_id, json.loads(rec_json)
 
@@ -824,8 +847,8 @@ class CacheStore(AbstractCacheStore):
         return {
             anilist_id: OwnedAtGrab.from_json(json.loads(rec_json))
             for anilist_id, rec_json in self._conn.execute(
-                "SELECT al_id, json(record) FROM guard_facts WHERE arr = ? AND al_id IN ("
-                "SELECT e.value ->> 'al_id' FROM pending_imports p, json_each(p.record, '$.claims') e WHERE p.arr = ?)",
+                "SELECT anilist_id, json(record) FROM guard_facts WHERE arr = ? AND anilist_id IN ("
+                "SELECT e.value ->> 'anilist_id' FROM pending_imports p, json_each(p.record, '$.claims') e WHERE p.arr = ?)",
                 (_arr_key(arr), _arr_key(arr)),
             )
         }

@@ -267,7 +267,7 @@ class TitleClaim:
         """The plain dict stored in the pending import (its guards go in a separate row): the schema, spelled out."""
 
         return {
-            "al_id": self.anilist_id,
+            "anilist_id": self.anilist_id,
             "series_id": self.series_id,
             "title": self.title,
             "coverage": self.window_coverage,
@@ -282,7 +282,7 @@ class TitleClaim:
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, OwnedAtGrab]) -> "TitleClaim":
         """Rebuild a claim from its persisted dict, fed the arr's guard rows by title."""
 
-        anilist_id = raw.get("al_id", 0)
+        anilist_id = raw.get("anilist_id", 0)
         return cls(
             anilist_id=anilist_id,
             series_id=raw.get("series_id", 0),

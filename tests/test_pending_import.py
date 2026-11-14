@@ -279,7 +279,7 @@ class TestPendingImportClaims:
         )
 
         assert json.dumps(claim.to_json()) == (
-            '{"al_id": 1, "series_id": 7, "title": "Show", "coverage": "S1", "url": "https://example.invalid/1", '
+            '{"anilist_id": 1, "series_id": 7, "title": "Show", "coverage": "S1", "url": "https://example.invalid/1", '
             '"ordered_episode_ids": [101, 102], "names": {"series": "Show", "anilist": ["Show!"]}, '
             '"preowned_episode_ids": [101], "slice_coverage": "S1 E1-2"}'
         )
@@ -520,7 +520,7 @@ class TestPendingImportRoundTrip:
         # A grab-time copy saved in the blob (the divergence the guard_facts row exists to kill)
         # must never resurrect, on the pending import or inside a claim.
         stale = {"entry_groups": ["Stale"]}
-        raw = {"infohash": "h", "guards": stale, "claims": [{"al_id": 1, "series_id": 1, "guards": stale}]}
+        raw = {"infohash": "h", "guards": stale, "claims": [{"anilist_id": 1, "series_id": 1, "guards": stale}]}
 
         assert PendingImport.from_json(raw, guards={}).claims[0].guards == OwnedAtGrab()
 
@@ -602,7 +602,7 @@ class TestPendingImportRoundTrip:
             "episode_ids": [1],
             "seadex_sizes": [1000],
             "title": "T",
-            "claims": [{"al_id": 1, "series_id": 1, "key": "h"}],
+            "claims": [{"anilist_id": 1, "series_id": 1, "key": "h"}],
         }
 
         rebuilt = PendingImport.from_json(raw, guards={})
