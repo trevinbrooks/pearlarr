@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 
 from .arr_models import SonarrEpisode
-from .releases import ReleaseEpisode
+from .releases import EpisodeKey
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
@@ -33,73 +33,26 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     return ", ".join(f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}" for start, end in runs)
 
 
-def format_episode_coverage(episodes: list[ReleaseEpisode]) -> list[tuple[str, str]] | None:
-    """Summarize per-season Sonarr episode coverage over a list of `ReleaseEpisode`, whatever the source.
+def coverage_string(keys: Iterable[EpisodeKey]) -> str:
+    """One-line season and episode coverage, as "S04 E01-E12" or "S00 E10, S02 E01-E12".
 
-    The episodes may come from a release's `episodes` or be built from
-    a Sonarr ep_list. The summary is the same either way.
-
-    Returns a list of (season_label, episode_ranges) tuples, one per season
-    present in the episodes, ordered by season. The season label is e.g. "S01"
-    and the episode ranges condense contiguous ranges, e.g. "E01-E12" or
-    "E01-E03, E07-E12" for a season with a gap, or "E05" for a lone episode.
-
-    Returns None when there is no parsed episode info (e.g., Radarr movies,
-    or a Sonarr parse failure).
+    The seasons run in order, each with its episodes condensed by `format_episode_ranges`. "" when there are no
+    keys (a Radarr movie, or a release none of whose files placed), so callers can treat it as "URL only".
     """
 
-    if not episodes:
-        return None
-
-    # Collect the episode numbers seen for each season
     episodes_by_season: dict[int, set[int]] = {}
-    for ep in episodes:
-        season = ep.season
-        episode = ep.episode
-        if season is None or episode is None:
-            continue
-        episodes_by_season.setdefault(season, set()).add(episode)
-
-    if not episodes_by_season:
-        return None
-
-    return [
-        (f"S{season:02d}", format_episode_ranges(episodes_by_season[season])) for season in sorted(episodes_by_season)
-    ]
+    for key in keys:
+        episodes_by_season.setdefault(key.season, set()).add(key.episode)
+    return ", ".join(
+        f"S{season:02d} {format_episode_ranges(episodes_by_season[season])}" for season in sorted(episodes_by_season)
+    )
 
 
-def coverage_string(episodes: list[ReleaseEpisode]) -> str:
-    """One-line season/episode coverage, e.g. "S04 E01-E12" or "S00 E10, S02 E01-E12".
+def coverage_of_episodes(episodes: Iterable[SonarrEpisode]) -> str:
+    """The `coverage_string` of Sonarr episodes, leaving out any Sonarr sent without its numbers."""
 
-    Returns "" when there's no parsed episode info (e.g., a Radarr movie), so
-    callers can treat it as "URL only".
-    """
-
-    coverage = format_episode_coverage(episodes)
-    if not coverage:
-        return ""
-    return ", ".join(f"{label} {ranges}" for label, ranges in coverage)
-
-
-def episodes_from_ep_list(
-    ep_list: list[SonarrEpisode] | None,
-    missing_only: bool = False,
-) -> list[ReleaseEpisode]:
-    """Convert a Sonarr ep_list into coverage `ReleaseEpisode`s.
-
-    Sonarr episodes carry "seasonNumber"/"episodeNumber". The coverage helpers
-    read `ReleaseEpisode.season`/`.episode`. `missing_only` keeps only missing
-    episodes (with no file), to summarize what is still needed.
-    """
-
-    episodes: list[ReleaseEpisode] = []
-    for ep in ep_list or []:
-        if missing_only and ep.episode_file_id != 0:
-            continue
-        episodes.append(
-            ReleaseEpisode(
-                season=ep.season_number,
-                episode=ep.episode_number,
-            ),
-        )
-    return episodes
+    return coverage_string(
+        EpisodeKey(ep.season_number, ep.episode_number)
+        for ep in episodes
+        if ep.season_number is not None and ep.episode_number is not None
+    )

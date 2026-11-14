@@ -25,9 +25,8 @@ from .output import hub_warn
 from .output.console_text import count_noun, pluralize
 from .pending_import import PendingImport
 from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
-from .planner import get_episode_keys
 from .progress import ProgressCallback
-from .releases import SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
+from .releases import EpisodeKey, SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
@@ -39,15 +38,14 @@ from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress
 def releases_overlap(seadex_dict: SeadexDict) -> bool:
     """See if SeaDex releases have overlapping episodes."""
 
-    # Shares get_episode_keys with get_same_files_groups (planner) but
+    # Compares groups by their episode keys as get_same_files_groups (planner) does, but
     # deliberately differs on unparsed releases: here an unparsed release is
     # assumed to overlap (we can't prove it doesn't), whereas get_same_files_groups
     # keeps it separate (so we never drop content we couldn't verify). Keep both
     # consistent if the coverage semantics change.
-    episode_sets: dict[str, set[tuple[int | None, int | None]]] = {}
+    episode_sets: dict[str, set[EpisodeKey]] = {}
     for rg, group_releases in seadex_dict.items():
-        all_episodes = group_releases.all_episodes or []
-        episode_sets[rg] = get_episode_keys(all_episodes)
+        episode_sets[rg] = {ep.key for ep in group_releases.all_episodes or ()}
 
     release_groups: list[str] = list(episode_sets.keys())
     for i, rg1 in enumerate(release_groups):
@@ -261,14 +259,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         if services.is_unchanged(
             anilist_id,
             sd_entry,
-            lambda: _coverage.coverage_string(
-                _coverage.episodes_from_ep_list(
-                    self._episodes.mapping_episodes(
-                        sonarr_series_id=sonarr_series_id,
-                        anilist_id=anilist_id,
-                        mapping=mapping,
-                    ),
-                ),
+            lambda: _coverage.coverage_of_episodes(
+                self._episodes.mapping_episodes(
+                    sonarr_series_id=sonarr_series_id,
+                    anilist_id=anilist_id,
+                    mapping=mapping,
+                )
+                or (),
             ),
         ):
             return
@@ -313,9 +310,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Now that we have the episodes, log the active title with its
         # season/episode coverage + URL, and remember them for the cache so
         # a later run that finds it unchanged can show the same detail
-        coverage = _coverage.coverage_string(
-            _coverage.episodes_from_ep_list(ep_list),
-        )
+        coverage = _coverage.coverage_of_episodes(ep_list)
         services.open_title_block(
             title=title.name,
             sd_entry=sd_entry,
@@ -438,12 +433,12 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def _report_missing_episodes(self, ep_list: list[SonarrEpisode]) -> None:
         """Report the title's episodes that have no file."""
 
-        missing = _coverage.episodes_from_ep_list(ep_list, missing_only=True)
+        missing = [ep for ep in ep_list if ep.episode_file_id == 0]
         if missing:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
             # a count, so it's clear what's absent. Fall back to the count if the
             # episodes can't be condensed.
-            missing_coverage = _coverage.coverage_string(missing)
+            missing_coverage = _coverage.coverage_of_episodes(missing)
             self._services.log_missing_episodes(missing_coverage or f"{len(missing)}/{len(ep_list)}")
 
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
@@ -486,7 +481,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 not placement.inputs_read and placement.skip_reason is not SkipReason.PLACEMENT_INPUT_UNREAD
             )
             self.logger.debug(
-                f"{url}: placed {_coverage.coverage_string(list(placement.episodes)) or 'nothing'}"
+                f"{url}: placed {_coverage.coverage_string(ep.key for ep in placement.episodes) or 'nothing'}"
                 f"{' (a read failed)' if note_read_failed else ''}{not_grabbed_note}"
                 f"{f'; set aside: {aside}' if aside else ''}"
                 f"{f'; left for a hand import: {by_hand}' if by_hand else ''}"

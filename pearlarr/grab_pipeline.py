@@ -266,7 +266,9 @@ class GrabPipeline:
         if result.outcome is AddStatus.ADDED:
             # Prefer the release's own parsed file list, falling back to the title's coverage so the summary's
             # files are never blank when a release's filenames couldn't be parsed.
-            coverage_str = _coverage.coverage_string(release.episodes) or self._state.per_title.entry_coverage
+            coverage_str = (
+                _coverage.coverage_string(ep.key for ep in release.episodes) or self._state.per_title.entry_coverage
+            )
             self._state.stats.grabbed.append(
                 GrabbedRow(
                     title=self._state.per_title.title_name,

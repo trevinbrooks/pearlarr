@@ -4,66 +4,37 @@
 These helpers live in `coverage.py`.
 """
 
-from pearlarr.coverage import (
-    coverage_string,
-    episodes_from_ep_list,
-    format_episode_coverage,
-)
-from pearlarr.releases import ReleaseEpisode
+from pearlarr.coverage import coverage_of_episodes, coverage_string
+from pearlarr.releases import EpisodeKey
 
 from .builders import sonarr_ep
 
 
-class TestFormatEpisodeCoverage:
-    """`format_episode_coverage` returns `None` for no episodes, else per-season `(label, range)` pairs sorted by season."""
-
-    def test_none_when_empty(self) -> None:
-        assert format_episode_coverage([]) is None
-
-    def test_none_when_all_keys_missing(self) -> None:
-        assert format_episode_coverage([ReleaseEpisode()]) is None
-
-    def test_single_season(self) -> None:
-        eps = [ReleaseEpisode(season=1, episode=1), ReleaseEpisode(season=1, episode=2)]
-        assert format_episode_coverage(eps) == [("S01", "E01-E02")]
-
-    def test_multi_season_sorted(self) -> None:
-        eps = [ReleaseEpisode(season=2, episode=1), ReleaseEpisode(season=0, episode=10)]
-        assert format_episode_coverage(eps) == [
-            ("S00", "E10"),
-            ("S02", "E01"),
-        ]
-
-
 class TestCoverageString:
-    """`coverage_string` renders episodes as a joined season/episode-range string, blank when empty."""
+    """`coverage_string` renders episode keys season by season in order, each season's episodes as ranges."""
 
-    def test_empty_is_blank(self) -> None:
+    def test_no_keys_is_blank(self) -> None:
         assert coverage_string([]) == ""
 
-    def test_joins_seasons(self) -> None:
-        eps = [
-            ReleaseEpisode(season=0, episode=10),
-            ReleaseEpisode(season=2, episode=1),
-            ReleaseEpisode(season=2, episode=2),
-        ]
-        assert coverage_string(eps) == "S00 E10, S02 E01-E02"
+    def test_one_season(self) -> None:
+        assert coverage_string([EpisodeKey(1, 1), EpisodeKey(1, 2)]) == "S01 E01-E02"
+
+    def test_seasons_run_in_order(self) -> None:
+        keys = [EpisodeKey(2, 1), EpisodeKey(0, 10), EpisodeKey(2, 2)]
+        assert coverage_string(keys) == "S00 E10, S02 E01-E02"
+
+    def test_a_key_given_twice_counts_once(self) -> None:
+        assert coverage_string([EpisodeKey(1, 1), EpisodeKey(1, 1)]) == "S01 E01"
 
 
-class TestEpisodesFromEpList:
-    """`episodes_from_ep_list` maps Sonarr episode dicts to `ReleaseEpisode`s. `missing_only` filters to episodes without a file."""
+class TestCoverageOfEpisodes:
+    """`coverage_of_episodes` is the coverage string of Sonarr episodes."""
 
-    def test_none_returns_empty(self) -> None:
-        assert episodes_from_ep_list(None) == []
+    def test_no_episodes_is_blank(self) -> None:
+        assert coverage_of_episodes([]) == ""
 
-    def test_maps_field_names(self) -> None:
-        eps = [sonarr_ep(1, 3, episode_file_id=0)]
-        assert episodes_from_ep_list(eps) == [ReleaseEpisode(season=1, episode=3)]
+    def test_reads_each_episodes_numbers(self) -> None:
+        assert coverage_of_episodes([sonarr_ep(1, 3), sonarr_ep(1, 4), sonarr_ep(0, 2)]) == "S00 E02, S01 E03-E04"
 
-    def test_missing_only_drops_episodes_with_files(self) -> None:
-        eps = [
-            sonarr_ep(1, 1, episode_file_id=0),  # missing (no file)
-            sonarr_ep(1, 2, episode_file_id=42),  # has a file
-        ]
-        result = episodes_from_ep_list(eps, missing_only=True)
-        assert result == [ReleaseEpisode(season=1, episode=1)]
+    def test_an_episode_without_its_numbers_is_left_out(self) -> None:
+        assert coverage_of_episodes([sonarr_ep(None, None), sonarr_ep(1, 3)]) == "S01 E03"

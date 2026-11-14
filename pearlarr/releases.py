@@ -10,13 +10,35 @@ from seadex import Tag, TorrentRecord, Tracker
 from .tvdb_orders import order_display_name
 
 
-@dataclass
-class ReleaseEpisode:
-    """One parsed `{season, episode, size}` triple for a SeaDex file."""
+class EpisodeKey(NamedTuple):
+    """The converted `(season, episode)` index key, always concrete ints."""
 
-    season: int | None = None
-    episode: int | None = None
-    size: int = 0
+    season: int
+    episode: int
+
+    @property
+    def label(self) -> str:
+        """The key as `S01E02`."""
+
+        return f"S{self.season:02d}E{self.episode:02d}"
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseEpisode:
+    """One file of a release on one episode the placement put it on: the episode's numbers and the file's size.
+
+    A file on two episodes is two of these, and so are two files on one episode.
+    """
+
+    season: int
+    episode: int
+    size: int
+
+    @property
+    def key(self) -> EpisodeKey:
+        """The episode's `(season, episode)`."""
+
+        return EpisodeKey(self.season, self.episode)
 
 
 def normalized_infohash(raw: str | None) -> str | None:
@@ -205,19 +227,6 @@ SELECTION_RULES_VERSION: int = 17
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
-
-
-class EpisodeKey(NamedTuple):
-    """The converted `(season, episode)` index key, always concrete ints."""
-
-    season: int
-    episode: int
-
-    @property
-    def label(self) -> str:
-        """The key as `S01E02`."""
-
-        return f"S{self.season:02d}E{self.episode:02d}"
 
 
 @dataclass(frozen=True, slots=True)
