@@ -1662,7 +1662,7 @@ class TestShouldCacheAsDone:
             pipeline._state.per_title.grab_failed_groups.append("RG")
         if misnumbered:
             pipeline._state.per_title.add_skipped(SkipReason.MISNUMBERED, ("RG",))
-        return pipeline._should_cache_as_done(added_this_title=added_this_title)
+        return pipeline._may_cache_title(added_this_title=added_this_title)
 
     def test_plain_grab_caches(self) -> None:
         assert self._predicate(added_this_title=1) is True

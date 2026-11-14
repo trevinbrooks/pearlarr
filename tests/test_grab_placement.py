@@ -10,11 +10,11 @@ import pytest
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import (
-    EntryPlacements,
     FetchedSeadex,
     KnownTorrent,
     ListedFile,
     PendingImportUpdate,
+    PlacedEntry,
     PlacedGrab,
     PlacedRelease,
     SizeOverName,
@@ -389,12 +389,12 @@ class TestPlaceOntoResident:
         )
         files = _season_files(3)
 
-        stale = place_release(files, _grabbing_title(_SEASON[:2]), _torrent(pending))
-        fresh = place_release(files, _grabbing_title(_SEASON), _torrent(pending))
+        under_stored = place_release(files, _grabbing_title(_SEASON[:2]), _torrent(pending))
+        under_new = place_release(files, _grabbing_title(_SEASON), _torrent(pending))
 
-        assert stale.placements.placed == {"show - s01e02.mkv": (102,)}
-        assert fresh.placements.placed == {"show - s01e02.mkv": (102,), "show - s01e03.mkv": (103,)}
-        assert fresh.covered_ids == {101, 102, 103}
+        assert under_stored.placements.placed == {"show - s01e02.mkv": (102,)}
+        assert under_new.placements.placed == {"show - s01e02.mkv": (102,), "show - s01e03.mkv": (103,)}
+        assert under_new.covered_ids == {101, 102, 103}
 
     def test_a_regrab_runs_the_new_window_in_the_stored_ones_place(self) -> None:
         # The title's stored claim is a two-episode window, and the pair Sonarr read nothing of indexes
@@ -824,7 +824,7 @@ class TestPlaceSkipped:
         seadex_dict: SeadexDict = {
             "RG": rg_group({u: make_release(url=u, infohash=f"h{i}", download=True) for i, u in enumerate(urls, 1)})
         }
-        placed = EntryPlacements.place(
+        placed = PlacedEntry.place(
             self._specials_grabbing_title(2, 4),
             dict.fromkeys(urls, self._specials()),
             {
@@ -879,7 +879,7 @@ class TestPlaceBesideAnotherListedTitle:
         # Title 3's specials window places nothing of the season pack the two season titles take.
         seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=True)})}
         torrent = _torrent(listed=[title_window(1, (101, 102)), title_window(2, (103, 104))])
-        placed = EntryPlacements.place(_grabbing_title([_SPECIAL], al_id=3), {"u1": _season_files()}, {"u1": torrent})
+        placed = PlacedEntry.place(_grabbing_title([_SPECIAL], al_id=3), {"u1": _season_files()}, {"u1": torrent})
 
         placed.attach_placements(seadex_dict)
 
@@ -1427,13 +1427,13 @@ class TestEntryPlacements:
     """The per-title merge: episodes onto the release dict, the groups a failed read skipped, and the updates."""
 
     @staticmethod
-    def _entry(names: TitleNames | None = None) -> tuple[EntryPlacements, SeadexDict]:
+    def _entry(names: TitleNames | None = None) -> tuple[PlacedEntry, SeadexDict]:
         grabbing_title = _grabbing_title(_SEASON, names)
         run = [ListedFile(name, 10 * n, _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)]
         listed_files = [
             ListedFile(name, 1, None if n == 1 else _number_with_no_match(n)) for n, name in enumerate(_RUN, start=1)
         ]
-        placed = EntryPlacements.place(
+        placed = PlacedEntry.place(
             grabbing_title, {"u1": run, "u2": listed_files, "u3": []}, dict.fromkeys(("u1", "u2", "u3"), _NEW)
         )
         seadex_dict: SeadexDict = {
@@ -1490,13 +1490,13 @@ class TestEntryPlacements:
         listed_files = build_pending_import_updates(seadex_dict, placed, title_facts())
 
         assert set(listed_files) == {"c1", "h2"}
-        pending_imports = {key: update.pending_import_at(_STAMP, fresh=True) for key, update in listed_files.items()}
+        pending_imports = {key: update.pending_import_at(_STAMP, restart=True) for key, update in listed_files.items()}
         assert (pending_imports["c1"].infohash, pending_imports["c1"].is_cross_seed) == ("c1", True)
         assert pending_imports["h2"].is_cross_seed is False
 
     def test_a_release_with_a_stored_pending_import_is_stored_on_it(self) -> None:
         pending = _stored_pending_import()
-        placed = EntryPlacements.place(_grabbing_title(_SEASON), {"u1": _season_files()}, {"u1": _torrent(pending)})
+        placed = PlacedEntry.place(_grabbing_title(_SEASON), {"u1": _season_files()}, {"u1": _torrent(pending)})
         seadex_dict: SeadexDict = {
             "RG": rg_group(
                 {"u1": make_release(url="u1", files=_SEASON_NAMES, size=[10, 20, 30, 40], infohash="h1", download=True)}
@@ -1537,7 +1537,7 @@ class TestOrderOnlyUpdate:
             normalize_file_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
             normalize_file_name(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
         }
-        assert update.pending_import_at(_STAMP, fresh=True).order_only == update.order_only
+        assert update.pending_import_at(_STAMP, restart=True).order_only == update.order_only
 
 
 class TestPendingImportAt:
@@ -1555,7 +1555,7 @@ class TestPendingImportAt:
             pending_import=None,
         )
 
-        pending = update.pending_import_at(_STAMP, fresh=True)
+        pending = update.pending_import_at(_STAMP, restart=True)
 
         assert update.joined() is None
         assert pending == PendingImport(
@@ -1571,7 +1571,7 @@ class TestPendingImportAt:
             sizes_by_name={"show - 01.mkv": 10},
         )
         # A new pending import starts at the stamp whether or not the add was new.
-        assert update.pending_import_at(_STAMP, fresh=False) == pending
+        assert update.pending_import_at(_STAMP, restart=False) == pending
 
     def test_joined_merges_the_placements_exclusions_and_claim(self) -> None:
         stored = pending_import(
@@ -1593,7 +1593,7 @@ class TestPendingImportAt:
             pending_import=stored,
         )
 
-        pending = update.pending_import_at(_STAMP, fresh=False)
+        pending = update.pending_import_at(_STAMP, restart=False)
 
         assert update.joined() == pending
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
@@ -1609,7 +1609,7 @@ class TestPendingImportAt:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
         update = pending_import_update("h1", stored=stored, al_id=2)
 
-        pending = update.pending_import_at(_STAMP, fresh=False)
+        pending = update.pending_import_at(_STAMP, restart=False)
 
         assert pending.claims == (*stored.claims, update.claim)
 
@@ -1625,7 +1625,7 @@ class TestPendingImportAt:
             pending_import=stored,
         )
 
-        assert update.pending_import_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 10}
+        assert update.pending_import_at(_STAMP, restart=False).sizes_by_name == {"show - 01.mkv": 10}
 
     def test_joined_keeps_the_stored_sizes_by_name(self) -> None:
         stored = pending_import(infohash="h1", sizes_by_name={"show - 01.mkv": 99})
@@ -1639,19 +1639,19 @@ class TestPendingImportAt:
             pending_import=stored,
         )
 
-        assert update.pending_import_at(_STAMP, fresh=False).sizes_by_name == {"show - 01.mkv": 99}
+        assert update.pending_import_at(_STAMP, restart=False).sizes_by_name == {"show - 01.mkv": 99}
 
     def test_a_new_pending_import_keeps_the_hand_import_files(self) -> None:
         update = pending_import_update("h1", hand_import_files=("show - 02.mkv",))
 
-        assert update.pending_import_at(_STAMP, fresh=True).hand_import_files == ("show - 02.mkv",)
+        assert update.pending_import_at(_STAMP, restart=True).hand_import_files == ("show - 02.mkv",)
 
     def test_joined_merges_the_hand_import_files(self) -> None:
         stored = pending_import(infohash="h1", hand_import_files=("show - 02.mkv",))
 
-        kept = pending_import_update("h1", stored=stored).pending_import_at(_STAMP, fresh=False)
+        kept = pending_import_update("h1", stored=stored).pending_import_at(_STAMP, restart=False)
         joined = pending_import_update("h1", stored=stored, hand_import_files=("show - 03.mkv",)).pending_import_at(
-            _STAMP, fresh=False
+            _STAMP, restart=False
         )
 
         assert kept.hand_import_files == ("show - 02.mkv",)
@@ -1664,7 +1664,7 @@ class TestPendingImportAt:
 
         joined = pending_import_update(
             "h1", stored=stored, hand_import_files=(halves[1],), order_only={halves[1]: keys[halves[1]]}
-        ).pending_import_at(_STAMP, fresh=False)
+        ).pending_import_at(_STAMP, restart=False)
 
         assert joined.order_only == keys
 
@@ -1672,7 +1672,7 @@ class TestPendingImportAt:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
         update = pending_import_update("h1", stored=stored, al_id=2)
 
-        pending = update.pending_import_at(_STAMP, fresh=True)
+        pending = update.pending_import_at(_STAMP, restart=True)
 
         assert pending.added_at == _STAMP
 
@@ -1701,7 +1701,7 @@ class TestBuildUpdateWithNoWindow:
 
         pending = build_update_without_window(
             self._planned_grab(), title_facts(al_id=2, series_id=0), stored
-        ).pending_import_at(_STAMP, fresh=False)
+        ).pending_import_at(_STAMP, restart=False)
 
         assert pending.release_group == stored.release_group
         assert [claim.al_id for claim in pending.claims] == [1, 2]

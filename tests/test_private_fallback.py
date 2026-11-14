@@ -4,7 +4,7 @@
 # Strict re-flags that, and the repo disables reportPrivateUsage for tests.
 """End-to-end regressions for `seadex.private_releases: fallback`.
 
-Drive the full build -> filter_downloads -> grab_and_cache path over one SeaDex
+Drive the full build -> plan_grabs -> grab_and_cache path over one SeaDex
 entry, pinning the fallback contract: when a preferred release is private-only,
 grab the entry's best public fallback. Warn when no public fallback
 exists, or when the Arr owns the preferred private release at an outdated size (a
@@ -29,7 +29,6 @@ from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
     FakeTorrents,
-    cached_as_done,
     make_entry_record,
     make_grab_pipeline,
     make_planner,
@@ -37,6 +36,7 @@ from .builders import (
     make_services,
     make_torrent_record,
     sonarr_ep,
+    title_is_cached,
 )
 from .fakes import RecordingHub
 
@@ -161,7 +161,7 @@ class TestUpgradePendingSkipsForOwnedOutdated:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
 
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -192,7 +192,7 @@ class TestUpgradePendingSkipsForOwnedOutdated:
         sd = filt.build(_entry_private_preferred_plus_public_alt())
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), None)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), None)
 
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -234,7 +234,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (999,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (999,)}), ep_list)
 
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
@@ -247,7 +247,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert state.stats.up_to_date == 1
         assert state.stats.needs_action == []
         cached = cache.get_cached_title(Arr.SONARR, 11)
-        assert cached_as_done(cached, entry) is True
+        assert title_is_cached(cached, entry) is True
         assert cached is not None
         # The owned PREFERRED private release satisfied the title, not the idle
         # fallback pool - the false positive the coarse any(is_fallback) had.
@@ -268,7 +268,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (999,)}), None)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (999,)}), None)
 
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is False
@@ -281,7 +281,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert state.stats.up_to_date == 1
         assert state.stats.needs_action == []
         cached = cache.get_cached_title(Arr.RADARR, 22)
-        assert cached_as_done(cached, entry) is True
+        assert title_is_cached(cached, entry) is True
         assert cached is not None
         assert cached.fallback_satisfied is False
 
@@ -305,7 +305,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
@@ -318,8 +318,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
 
 
-class TestFilterGrabsNotice:
-    """filter_downloads renders each PrivateOnlyNotice at its level and stamps the state."""
+class TestPlanGrabsNotice:
+    """plan_grabs renders each PrivateOnlyNotice at its level and stamps the state."""
 
     PRIVA_URL = "https://animebytes.tv/torrents.php?id=10"
     PRIVB_URL = "https://animebytes.tv/torrents.php?id=20"
@@ -380,7 +380,7 @@ class TestFilterGrabsNotice:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"PrivA": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"PrivA": (100,)}), ep_list)
 
         assert plan.seadex_dict["PubA"].releases[self.PUBA_URL].to_grab is True
         assert plan.seadex_dict["PrivA"].releases[self.PRIVA_URL].to_grab is False
@@ -476,7 +476,7 @@ class TestMixedGroupKeeperPreference:
 
         # Sonarr is missing both episodes: every release is marked to grab before the reducer.
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
 
         assert plan.seadex_dict["H"].releases[self.H_URL].to_grab is True
         assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is False
@@ -496,7 +496,7 @@ class TestMixedGroupKeeperPreference:
         pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, entry))
         assert torrents.calls == [self.H_HASH]
         assert state.stats.needs_action == []
-        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 55), entry) is True
+        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 55), entry) is True
 
     def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
         # No fully-addable group exists: the keeper degrades to the mixed group,
@@ -525,7 +525,7 @@ class TestMixedGroupKeeperPreference:
             },
         )
 
-        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
         assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["G"].releases[PRIV_URL].to_grab is True
 
@@ -545,7 +545,7 @@ class TestMixedGroupKeeperPreference:
         assert state.per_title.private_only_skipped is True
         assert state.per_title.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
-        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 56), entry) is True
+        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 56), entry) is True
 
 
 class TestSurvivingPrivateCoverage:
@@ -600,7 +600,7 @@ class TestSurvivingPrivateCoverage:
         )
 
         # Sonarr is missing BOTH episodes: the torrent and the fallback are both marked to grab.
-        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
         assert plan.seadex_dict["A"].releases[PRIV_URL].to_grab is True
         assert plan.seadex_dict["A"].releases[PUB_URL].to_grab is True
 
@@ -623,7 +623,7 @@ class TestSurvivingPrivateCoverage:
         # A non-interactive private-only skip in fallback mode blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
         # in every run's summary until a covering public release lands.
-        assert cached_as_done(cache.get_cached_title(Arr.SONARR, 33), entry) is False
+        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 33), entry) is False
         assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
         # Exact wording pinned once, in test_grab_pipeline's
         # test_private_only_in_fallback_mode_surfaces_no_alternative.
@@ -681,7 +681,7 @@ class TestPromotionGeneralization:
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), ep_list)
 
         assert plan.seadex_dict["Pub"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -704,7 +704,7 @@ class TestPromotionGeneralization:
         assert state.stats.needs_action == []
         # Nothing is skipped, so the private-only skip's uncache must not fire.
         cached = cache.get_cached_title(Arr.SONARR, 66)
-        assert cached_as_done(cached, entry) is True
+        assert title_is_cached(cached, entry) is True
         assert cached is not None
         # A promoted PREFERRED public group is not a fallback: no marker.
         assert cached.fallback_satisfied is False
@@ -723,7 +723,7 @@ class TestPromotionGeneralization:
         sd = filt.build(self._preferred_pair_entry(73))
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"Priv": (100,)}), None)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"Priv": (100,)}), None)
 
         assert plan.seadex_dict["Pub"].releases[PUB_URL].to_grab is True
         assert plan.seadex_dict["Priv"].releases[PRIV_URL].to_grab is False
@@ -800,7 +800,7 @@ class TestPromotionGeneralization:
         ]
 
         with _record() as recording:
-            plan = filt.filter_downloads(sd, ArrFiles(by_group={"M": (555, 100)}), ep_list)
+            plan = filt.plan_grabs(sd, ArrFiles(by_group={"M": (555, 100)}), ep_list)
 
         assert plan.seadex_dict["F"].releases[self.F_URL].to_grab is False
         assert plan.seadex_dict["M"].releases[self.M_PUB_URL].to_grab is False
@@ -893,7 +893,7 @@ class TestEqualUnionMixedGroups:
             )
 
             # Sonarr is missing both episodes: every release is marked to grab before the reducer.
-            plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
             assert plan.seadex_dict["A"].releases[self.A_PUB_URL].to_grab is True, f"order={al_id}"
             assert plan.seadex_dict["B"].releases[self.B_PUB_URL].to_grab is True, f"order={al_id}"
 
@@ -919,7 +919,7 @@ class TestEqualUnionMixedGroups:
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events
             assert state.per_title.private_only_skipped is True
-            assert cached_as_done(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
+            assert title_is_cached(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
 
 
 class _CachedTitleReporter:
@@ -958,7 +958,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
                 PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
             },
         )
-        plan = filt.filter_downloads(sd, ArrFiles(), [sonarr_ep(1, 1)])
+        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1)])
         assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is True
 
         torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Fall S01")})
@@ -1014,7 +1014,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _attach_episodes(sd_warn, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
-            warn_plan = warn_filt.filter_downloads(sd_warn, ArrFiles(by_group={"Fall": (555,)}), ep_list)
+            warn_plan = warn_filt.plan_grabs(sd_warn, ArrFiles(by_group={"Fall": (555,)}), ep_list)
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 

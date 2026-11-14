@@ -37,7 +37,7 @@ from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import CachedOrders, OrderRow
 
-from .builders import cached_as_done, claim_al_ids, make_entry_record, pending_import, title_claim
+from .builders import claim_al_ids, make_entry_record, pending_import, title_claim, title_is_cached
 from .fakes import RecordingHub
 
 # Stand-in for a config hash. `CacheStore` only stores and compares the
@@ -1288,7 +1288,7 @@ class TestRunLifecycle:
         # Run 2: reopen -> cache hit, carried-over pending.
         with _open(tmp_path) as again:
             stamped_under = make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5))
-            assert cached_as_done(again.get_cached_title(Arr.SONARR, 7), stamped_under)
+            assert title_is_cached(again.get_cached_title(Arr.SONARR, 7), stamped_under)
             assert again.get_pending_import_rows(Arr.SONARR) == {"aaa": carried}
             # A completed import is dropped, and that drop persists across a save.
             again.drop_pending_import_row(Arr.SONARR, "aaa")

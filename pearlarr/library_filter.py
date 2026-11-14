@@ -25,7 +25,7 @@ class IdField:
     candidate set built for that id space.
     """
 
-    mapping_key: IdKind  # e.g. "tmdb_movie_id" / "tvdb_id"
+    id_kind: IdKind  # e.g. "tmdb_movie_id" / "tvdb_id"
     item_attr: str  # e.g. "tmdbId" / "tvdbId"
 
 
@@ -100,8 +100,8 @@ def build_id_filters(
     return tuple(
         IdFilter(
             field,
-            anime_ids=known_ids.known_external_ids(field.mapping_key),
-            anibridge_ids=anibridge.known_external_ids(field.mapping_key) if anibridge else set(),
+            anime_ids=known_ids.known_external_ids(field.id_kind),
+            anibridge_ids=anibridge.known_external_ids(field.id_kind) if anibridge else set(),
         )
         for field in fields
     )

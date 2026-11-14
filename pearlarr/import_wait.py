@@ -394,7 +394,7 @@ class ImportWaitManager:
     def fresh_grab_keys(self) -> set[str]:
         """Keys of the pending imports written THIS run, tallied as `added` and never carried over."""
 
-        return self._pending_imports.fresh_keys()
+        return self._pending_imports.grabbed_keys()
 
     def _reported_in_title_blocks(self) -> set[str]:
         """Keys a title's block already reported this run, which `report_imports_for_series` skips.

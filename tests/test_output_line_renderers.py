@@ -1249,9 +1249,9 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     import ast
     import inspect
 
-    from pearlarr.output import line_renderers as _textline
+    from pearlarr.output import line_renderers
 
-    tree = ast.parse(inspect.getsource(_textline))
+    tree = ast.parse(inspect.getsource(line_renderers))
     offenders: list[str] = []
     keys: list[str] = []
     for node in ast.walk(tree):

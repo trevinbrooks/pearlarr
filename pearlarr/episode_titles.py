@@ -206,7 +206,7 @@ class EpisodeTitles:
         titled = _sole(ep for ep in led if ep.distinct and opens_title(words, ep.words))
         return TitleLead(titled, frozenset(ep.ep_id for ep in led), words)
 
-    def exact_match(self, words: tuple[str, ...], keyed: Collection[int]) -> TitledEpisode | None:
+    def exact_match(self, words: tuple[str, ...], numbered: Collection[int]) -> TitledEpisode | None:
         """The one episode whose episode title names it alone and equals a name's words, series words dropped from both.
 
         `keyed` are the episodes the name's numbers point at (`episodes_numbered_by`). An episode title that is just the
@@ -216,7 +216,7 @@ class EpisodeTitles:
 
         beyond = tuple(word for word in words if word not in self.series_words)
         equal = _sole(self.alone_by_beyond.get(beyond, ()))
-        if equal is not None and equal.spelled_id != equal.ep_id and equal.spelled_id in keyed:
+        if equal is not None and equal.spelled_id != equal.ep_id and equal.spelled_id in numbered:
             return None
         return equal
 

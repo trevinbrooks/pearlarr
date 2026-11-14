@@ -2,7 +2,7 @@
 """Characterization tests for the `TitleMapping` resolution boundary.
 
 These pin the two mapping source paths (Kometa Anime-IDs and AniBridge) end-to-end
-through `MappingResolver.get_anilist_ids`, plus the `.kind` discriminant and
+through `MappingResolver.resolve`, plus the `.kind` discriminant and
 the field defaults. The boundary had no coverage before the TypedDict ->
 dataclass deepening, so these guard the behavior the dataclass must preserve:
 which kind a mapping has, and the exact `.get(..., default)` values the

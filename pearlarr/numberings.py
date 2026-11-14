@@ -79,7 +79,7 @@ NO_PROPOSALS = NumberingProposals({})
 """The step proposing nothing."""
 
 
-def _norm_title(title: str) -> str:
+def _name_key(title: str) -> str:
     """The name lowercased, `&` read as "and", every other run of non-alphanumerics one space.
 
     `file_names._raw_words` splits a name into words the same way, casefolded and without reading `&` as "and". This
@@ -90,7 +90,7 @@ def _norm_title(title: str) -> str:
     return " ".join(folded.split())
 
 
-def _raw_title(title: str) -> str:
+def _raw_name_key(title: str) -> str:
     """The name lowercased with the " - " and ": " separators converted to a space, punctuation kept.
 
     Two parsed series names that differ only in how Sonarr joined their parts ("Show - Arc", "Show: Arc") are one
@@ -103,11 +103,11 @@ def _raw_title(title: str) -> str:
 _SEP_TAIL = re.compile(r"[\s\-:~\)\]\}]+$")
 """The separators a name can end in once its number is cut off."""
 _MARKS = re.compile(r"[!+'’.?]+$")
-"""The run of marks a name ends in, the only punctuation `_marked_title` keeps."""
+"""The run of marks a name ends in, the only punctuation `_marked_name_key` keeps."""
 
 
-def _marked_title(title: str) -> str:
-    """`_norm_title` plus the name's trailing marks, after a bar.
+def _marked_name_key(title: str) -> str:
+    """`_name_key` plus the name's trailing marks, after a bar.
 
     The marks tell K-ON! from K-ON!!, New Game! from New Game!!, Needless from Needless+ and Dog Days from Dog
     Days', which the normalization merges. A typographic apostrophe counts as the plain one.
@@ -116,7 +116,7 @@ def _marked_title(title: str) -> str:
     core = _SEP_TAIL.sub("", title.strip())
     found = _MARKS.search(core)
     marks = found.group(0).replace("’", "'") if found else ""
-    return f"{_norm_title(core)}|{marks}"
+    return f"{_name_key(core)}|{marks}"
 
 
 # `file_names.folded_words` isn't reused for these keys: it converts roman numerals, ordinals and accents and drops
@@ -176,9 +176,9 @@ class _Window:
     season_rows: Mapping[int, int]
     """Episode number -> id over the regular rows of the window's first regular season."""
     titles: frozenset[str]
-    """`_norm_title` of each AniList name of the title, the blank left out."""
+    """`_name_key` of each AniList name of the title, the blank left out."""
     marked: frozenset[str]
-    """`_marked_title` of each AniList name of the title whose `_norm_title` isn't blank."""
+    """`_marked_name_key` of each AniList name of the title whose `_name_key` isn't blank."""
 
     @classmethod
     def of(cls, window: TitleWindow, index: EpisodeIndex) -> Self:
@@ -201,8 +201,8 @@ class _Window:
                 for ep in regular_ids
                 if ep.season_number == first_season and ep.episode_number is not None
             },
-            titles=frozenset(_norm_title(title) for title in titles) - {""},
-            marked=frozenset(_marked_title(title) for title in titles if _norm_title(title)),
+            titles=frozenset(_name_key(title) for title in titles) - {""},
+            marked=frozenset(_marked_name_key(title) for title in titles if _name_key(title)),
         )
 
     def row(self, k: int) -> int | None:
@@ -252,9 +252,9 @@ class _AbsoluteOnlyFile:
 
     @property
     def marked(self) -> str:
-        """The parsed series name's `_marked_title`, the partition's key."""
+        """The parsed series name's `_marked_name_key`, the partition's key."""
 
-        return _marked_title(self.title)
+        return _marked_name_key(self.title)
 
 
 def _is_absolute_only(info: ParsedFileInfo) -> bool:
@@ -286,11 +286,11 @@ class _Pool:
     """The numbers more than one file carries."""
     fits: tuple[_Fit, ...]
     """The numberings under which every number of the pool reads inside the torrent's windows together. Empty when
-    the pool repeats a number and carries more than one parsed series name (`_raw_title`): that may be two seasons
+    the pool repeats a number and carries more than one parsed series name (`_raw_name_key`): that may be two seasons
     each numbered from one, so no file is read over the whole torrent, and each is read under the one window its name
     names, or gets no proposal. In a pool of one name a repeated number leaves out only the files carrying it."""
     parts: Mapping[str, tuple[_Fit, ...]]
-    """`_marked_title` of a parsed series name -> the numberings under which every number of the name's files reads
+    """`_marked_name_key` of a parsed series name -> the numberings under which every number of the name's files reads
     inside the one window that name names, for the names that name exactly one window and repeat no number among
     themselves."""
 
@@ -339,7 +339,7 @@ class NumberingStep:
     union_monotone: bool
     """Whether the union's regular rows all carry absolutes that strictly increase."""
     known_titles: frozenset[str]
-    """`_norm_title` of the series' name, of each alternate name, and of each window's AniList names."""
+    """`_name_key` of the series' name, of each alternate name, and of each window's AniList names."""
     aired_order: bool
     """Whether Sonarr numbers the series as aired. Off it the step proposes nothing: the regular rows are then
     not the rows a group counts."""
@@ -353,7 +353,7 @@ class NumberingStep:
         regular_ids = _regular(index.by_id.values())
         union = frozenset(ep_id for window in own for ep_id in window.ids)
         union_regular_ids = [ep for ep in regular_ids if ep.id in union]
-        known = {_norm_title(title) for title in (grabbing_title.title_names.series, *grabbing_title.alternate_titles)}
+        known = {_name_key(title) for title in (grabbing_title.title_names.series, *grabbing_title.alternate_titles)}
         known.update(title for window in own for title in window.titles)
         return cls(
             series=index,
@@ -374,7 +374,7 @@ class NumberingStep:
         AniList's count. Two files proposed overlapping ids are both dropped: one id, one file.
         """
 
-        if not self.aired_order or not self.windows or not batch.all_parses_known:
+        if not self.aired_order or not self.windows or not batch.all_parses_read:
             return NO_PROPOSALS
         # A window whose rows aren't what AniList counts for the title (Panty & Stocking: 13 double episodes on
         # AniList, 26 rows in Sonarr) isn't the thing the group counted, so no position in it means what it seems.
@@ -392,7 +392,7 @@ class NumberingStep:
 
         counts = Counter(k for file in files for k in file.numbers)
         repeated = frozenset(k for k, count in counts.items() if count > 1)
-        one_title = len({_raw_title(file.title) for file in files}) == 1
+        one_title = len({_raw_name_key(file.title) for file in files}) == 1
         numbers = tuple(sorted(counts))
         # A marked name two windows share (two titles both named "K-ON!") names neither.
         owners = Counter(marked for window in self.windows for marked in window.marked)
@@ -442,7 +442,7 @@ class NumberingStep:
             return None
         # A parsed series name the run doesn't know (a recut's, another series') says the group may have counted
         # something other than this series' episodes, whatever the numbers agree on.
-        if _norm_title(file.title) not in self.known_titles:
+        if _name_key(file.title) not in self.known_titles:
             return None
         return distinct.pop()
 

@@ -156,7 +156,7 @@ class WindowedFile:
     """The file's verdict over every window, or the numbering step's: `NUMBERINGS_AGREE`, a verdict no window gives."""
     per_window: tuple[Placement, ...]
     """What the placer gave the file under each window, in window order. The numbering step changes none of them."""
-    decided_at: int | None
+    final_window_at: int | None
     """The position of the window that gave the file a final verdict, or, for a file the numbering step placed, of
     the window that holds its ids. A file whose aliases and numbers disagree keeps the window that gave its final
     verdict. None when no window gave a final verdict and the numbering step placed nothing."""
@@ -181,8 +181,8 @@ class WindowedFile:
 
         verdict = self.merged.verdict
         if verdict.placed:
-            assert self.decided_at is not None
-            return self.decided_at not in positions
+            assert self.final_window_at is not None
+            return self.final_window_at not in positions
         return verdict.left_for_hand_import and not self.involves(positions)
 
 
@@ -254,7 +254,7 @@ class WindowedPlacements:
             if episode_by_title is not None and episode_by_title not in ids:
                 continue
             agreed = Placement(file.name, ids, PlacementVerdict.NUMBERINGS_AGREE)
-            files[index] = replace(file, merged=agreed, decided_at=position)
+            files[index] = replace(file, merged=agreed, final_window_at=position)
             used.update(ids)
         return replace(self, files=tuple(files))
 
@@ -280,7 +280,7 @@ class WindowedPlacements:
         """
 
         another_titles = PlacementVerdict.ANOTHER_TITLES
-        hand_claims = {
+        hand_import_verdicts = {
             file.merged.verdict
             for file in self.files
             if file.per_window[grabbing_window_at].verdict in _HAND_IMPORT_VERDICTS
@@ -297,7 +297,7 @@ class WindowedPlacements:
                 file.merged.verdict is PlacementVerdict.MISNUMBERED and file.involves((grabbing_window_at,))
                 for file in self.files
             ),
-            hand_import_verdict=max(hand_claims, key=lambda verdict: verdict.rank, default=None),
+            hand_import_verdict=max(hand_import_verdicts, key=lambda verdict: verdict.rank, default=None),
             another_titles=frozenset(file.name for file in self.files if file.is_another_titles((grabbing_window_at,))),
         )
 
@@ -317,7 +317,7 @@ class _FileMerge:
     """Every window's verdict, in window order."""
     weighed: list[Placement] = field(default_factory=list[Placement])
     """The verdicts the merge weighs: `per_window`, less a placement off the episodes in `other_order_episodes`."""
-    decided_at: int | None = None
+    final_window_at: int | None = None
     """The position of the first window that gave the file a final verdict."""
     other_order_episodes: tuple[int, ...] | None = None
     """The episodes the first `OTHER_ORDER_OUTSIDE_WINDOW` verdict read the file onto
@@ -336,14 +336,14 @@ class _FileMerge:
             self.other_order_episodes = placement.other_order_episodes
         self.weighed.append(placement)
         # A final verdict with no ids counts too, so no later window can place the file by its numbers.
-        if self.decided_at is None and verdict.final:
-            self.decided_at = at
+        if self.final_window_at is None and verdict.final:
+            self.final_window_at = at
 
     @property
     def placed_on(self) -> tuple[int, ...]:
         """The ids the window with the final verdict placed the file on: none before a final verdict, or with no ids."""
 
-        return () if self.decided_at is None else self.per_window[self.decided_at].ids
+        return () if self.final_window_at is None else self.per_window[self.final_window_at].ids
 
     def over_windows(self) -> WindowedFile:
         """The file's verdict over every window.
@@ -354,13 +354,13 @@ class _FileMerge:
 
         if _alias_and_numbers_disagree(self.weighed):
             merged = Placement(self.name, (), PlacementVerdict.MISNUMBERED)
-        elif self.decided_at is not None:
-            merged = self.per_window[self.decided_at]
+        elif self.final_window_at is not None:
+            merged = self.per_window[self.final_window_at]
         elif not self.weighed:
             merged = Placement(self.name, (), PlacementVerdict.NO_EPISODE_FOUND)
         else:
-            merged = max(self.weighed, key=lambda claim: claim.verdict.rank)
-        return WindowedFile(merged, tuple(self.per_window), self.decided_at)
+            merged = max(self.weighed, key=lambda placement: placement.verdict.rank)
+        return WindowedFile(merged, tuple(self.per_window), self.final_window_at)
 
 
 def _alias_and_numbers_disagree(judged: Collection[Placement]) -> bool:

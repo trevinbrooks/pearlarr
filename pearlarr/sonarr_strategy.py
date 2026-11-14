@@ -11,8 +11,8 @@ from .arr_strategy import ArrStrategy
 from .config import Arr
 from .grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from .grab_placement import (
-    EntryPlacements,
     PendingImportUpdate,
+    PlacedEntry,
     SizeOverName,
     TitleFacts,
     TorrentFetches,
@@ -363,7 +363,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
             aired_order=self._episodes.aired_order(sonarr_series_id),
         )
-        placed = EntryPlacements.place(
+        placed = PlacedEntry.place(
             grabbing_title,
             self._parse.parsed_files(seadex_dict, series_hash=self._episodes.series_hash),
             TorrentFetches(stored, indexes, listings).known(seadex_dict),
@@ -386,7 +386,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Filter grabs by whether the episodes in each torrent match the release
         # group we have in Sonarr
-        plan = services.filter_seadex_downloads(
+        plan = services.plan_grabs(
             seadex_dict=seadex_dict,
             arr_files=sonarr_files,
             ep_list=ep_list,
@@ -453,7 +453,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             if (episodes := self._episodes.cached_episodes(sid)) is not None
         }
 
-    def _warn_overrides(self, placed: EntryPlacements, seadex_dict: SeadexDict) -> None:
+    def _warn_overrides(self, placed: PlacedEntry, seadex_dict: SeadexDict) -> None:
         """Warn once per release this run grabs if any of its files were placed by size over their names.
 
         The warning shows the first such file, and the rest go to the debug log. `seadex_dict` must be the
@@ -468,7 +468,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 for override in rest:
                     self.logger.debug(_override_line(planned.url, override))
 
-    def _log_placements(self, placed: EntryPlacements) -> None:
+    def _log_placements(self, placed: PlacedEntry) -> None:
         """One debug line per release with video files: coverage, then each file excluded or left for a hand import."""
 
         for url, placement in placed.by_url.items():

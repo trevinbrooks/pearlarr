@@ -68,18 +68,18 @@ class _SeasonEpisodeFiles:
         for sequence in state.sequences_among(keys):
             for file in sequence.superseded:
                 del keys[file]
-        keyed_files = tuple(
+        spelled_files = tuple(
             _SeasonEpisodeFile(file, named, _aired(state, named), _final_ids(state, file))
             for file, named in keys.items()
         )
-        provisional = {keyed.file: keyed for keyed in keyed_files if keyed.placed_ids is None}
+        provisional = {spelled.file: spelled for spelled in spelled_files if spelled.placed_ids is None}
         still_to_place = tuple(file for file in state.placing if file in provisional and _other_order_may_place(file))
         outside_files = tuple(
-            keyed.file
-            for keyed in provisional.values()
-            if keyed.aired_ids is not None and not _in_window_or_listing(state, keyed.aired_ids)
+            spelled.file
+            for spelled in provisional.values()
+            if spelled.aired_ids is not None and not _in_window_or_listing(state, spelled.aired_ids)
         )
-        return cls(keyed_files, still_to_place, outside_files)
+        return cls(spelled_files, still_to_place, outside_files)
 
 
 def pass_other_orders(state: PlacerState) -> None:
@@ -234,44 +234,45 @@ def _season_episode_fit(state: PlacerState, files: _SeasonEpisodeFiles, name: st
     order_only: dict[TorrentFile, OrderOnlyKey] = {}
     whole = True
     answers = False
-    for keyed in files.files:
-        file = keyed.file
-        if not order.keys.issuperset(keyed.keys):
-            if keyed.placed_ids is not None:
+    for spelled in files.files:
+        file = spelled.file
+        if not order.keys.issuperset(spelled.keys):
+            if spelled.placed_ids is not None:
                 return None
             whole = False
             continue
-        if order_only_keys := [key for key in keyed.keys if key not in order.id_by_key]:
+        if order_only_keys := [key for key in spelled.keys if key not in order.id_by_key]:
             order_only[file] = OrderOnlyKey(name, order_only_keys[0])
         else:
-            episodes_by_file[file] = tuple(order.id_by_key[key] for key in keyed.keys)
-        answers |= _answers(keyed, episodes_by_file.get(file))
+            episodes_by_file[file] = tuple(order.id_by_key[key] for key in spelled.keys)
+        answers |= _answers(spelled, episodes_by_file.get(file))
     placed = [ep_id for ids in episodes_by_file.values() for ep_id in ids]
     if not (answers or _brings_outside_files_in(state, files, episodes_by_file)) or len(placed) != len(set(placed)):
         return None
     confirmed = False
-    for keyed in files.files:
-        file = keyed.file
+    for spelled in files.files:
+        file = spelled.file
         if (ids := episodes_by_file.get(file)) is None:
             continue
         bracketed = _bracketed_number_episodes(state, file)
         if any(ep_id not in ids for ep_id in bracketed) or file.contradicts(ids):
             return None
-        if _final_unplaced_special(keyed) and listed and not listed.issuperset(ids):
+        if _final_unplaced_special(spelled) and listed and not listed.issuperset(ids):
             return None
         if _other_order_may_place(file):
             confirmed |= any(ep_id in ids for ep_id in bracketed) or file.confirms(ids)
     if not (whole or confirmed):
         return None
     moves_final = any(
-        keyed.placed_ids is not None and episodes_by_file.get(keyed.file) != keyed.placed_ids for keyed in files.files
+        spelled.placed_ids is not None and episodes_by_file.get(spelled.file) != spelled.placed_ids
+        for spelled in files.files
     )
     return _OrderFit(
         episodes_by_file, order_only, moves_final or _repeats_misnumbered(episodes_by_file, files.still_to_place)
     )
 
 
-def _final_unplaced_special(keyed: _SeasonEpisodeFile) -> bool:
+def _final_unplaced_special(spelled: _SeasonEpisodeFile) -> bool:
     """Whether a number or a title left the file for a hand import and its keys are specials'.
 
     A special's number is rejected for missing the listing, so an order has to put it on the listing to explain
@@ -279,10 +280,10 @@ def _final_unplaced_special(keyed: _SeasonEpisodeFile) -> bool:
     special in, whether or not SeaDex lists that special.
     """
 
-    return _final_unplaced_by_name(keyed.file) and all(key.season == 0 for key in keyed.keys)
+    return _final_unplaced_by_name(spelled.file) and all(key.season == 0 for key in spelled.keys)
 
 
-def _answers(keyed: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
+def _answers(spelled: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
     """Whether an order answers a season-episode file the aired order can't read.
 
     `ids` is how the order reads it, None when the order gives the file's key to an episode Sonarr doesn't list. The
@@ -291,12 +292,12 @@ def _answers(keyed: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
     episode Sonarr doesn't list answers only a file whose key the aired list lacks.
     """
 
-    aired = keyed.aired_ids
+    aired = spelled.aired_ids
     if aired is None:
         return True
     if ids is None or ids == aired:
         return False
-    return _final_unplaced_by_name(keyed.file) or keyed.file.contradicts(aired)
+    return _final_unplaced_by_name(spelled.file) or spelled.file.contradicts(aired)
 
 
 def _brings_outside_files_in(

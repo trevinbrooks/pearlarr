@@ -458,7 +458,7 @@ class PlacementBatch:
     """The distinct names the placer reads: the names to place, then the rest of `parsed` (file map, gone). A name
     in the file map with no parse entry is left out."""
 
-    all_parses_known: bool = field(init=False, repr=False, compare=False)
+    all_parses_read: bool = field(init=False, repr=False, compare=False)
     """Every parse came from Sonarr this run: no miss (None). File map and gone files are parsed by name too, so a
     miss on any of them counts, as does a file to place that has no parse entry."""
 
@@ -475,7 +475,7 @@ class PlacementBatch:
         torrent_names = tuple(dict.fromkeys([*names, *self.parsed]))
         object.__setattr__(self, "new_names", names)
         object.__setattr__(self, "all_names", torrent_names)
-        object.__setattr__(self, "all_parses_known", all(self.parsed.get(name) is not None for name in torrent_names))
+        object.__setattr__(self, "all_parses_read", all(self.parsed.get(name) is not None for name in torrent_names))
 
 
 type EpisodeBySize = Mapping[int, int]

@@ -180,8 +180,8 @@ class LeftForHandImport:
     def explained_by_order(self) -> bool:
         """Whether the order explains the pending import: files, each with an order-only key, and a needed episode."""
 
-        keyed = bool(self.files) and all(file.order_only is not None for file in self.files)
-        return keyed and bool(self.missing or self.untrusted)
+        all_order_only = bool(self.files) and all(file.order_only is not None for file in self.files)
+        return all_order_only and bool(self.missing or self.untrusted)
 
 
 NO_HAND_IMPORT_FILES = LeftForHandImport()

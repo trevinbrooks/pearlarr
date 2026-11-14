@@ -25,20 +25,20 @@ class EpisodeTitleMatches:
     A member carries the titles its words after the number start with.
     """
 
-    in_window: int
-    outside_window: int
+    for_unused: int
+    for_others: int
 
     @property
     def selects(self) -> bool:
         """Whether at least `MIN_TITLE_HITS` members carry unused episodes' titles, and more than carry other titles."""
 
-        return self.in_window >= MIN_TITLE_HITS and self.in_window > self.outside_window
+        return self.for_unused >= MIN_TITLE_HITS and self.for_unused > self.for_others
 
     @property
     def contradicts(self) -> bool:
         """Whether at least `MIN_TITLE_HITS` members carry other titles and none carries an unused episode's title."""
 
-        return self.outside_window >= MIN_TITLE_HITS and not self.in_window
+        return self.for_others >= MIN_TITLE_HITS and not self.for_unused
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +225,7 @@ def _sole_specials_sequence(state: PlacerState, width: int) -> NumberedSequence 
     repeats or spans several episodes, or every member's title confirms its number.
     """
 
-    if not state.all_parses_known or state.pairing_off or not state.only_extras_judged:
+    if not state.all_parses_read or state.pairing_off or not state.only_extras_judged:
         return None
     sequences = state.non_extra_sequences
     if len(sequences) != 1 or set(sequences[0].all_versions) != set(state.non_extras):
@@ -270,12 +270,12 @@ class _Candidate:
 class _SequenceFit:
     """The consecutive unused episodes and the unjudged sequences the sequence-over-parse pass fits to them.
 
-    `window` and `sequences` are taken once when the pass starts. A sequence holds the live file objects, so every
+    `unused` and `sequences` are taken once when the pass starts. A sequence holds the live file objects, so every
     check sees the latest parsed episodes and verdicts.
     """
 
     state: PlacerState
-    window: ConsecutiveEpisodes
+    unused: ConsecutiveEpisodes
     sequences: tuple[NumberedSequence, ...]
     """The numbered sequences among the unjudged files, in sequence order."""
 
@@ -283,17 +283,17 @@ class _SequenceFit:
     def of(cls, state: PlacerState) -> Self | None:
         """The fit when the unused ids are consecutive episodes, else None."""
 
-        window = state.consecutive_unused()
-        return None if window is None else cls(state, window, tuple(state.sequences_among(state.unjudged_files())))
+        unused = state.consecutive_unused()
+        return None if unused is None else cls(state, unused, tuple(state.sequences_among(state.unjudged_files())))
 
     def candidates(self) -> list[_Candidate]:
         """Every sequence that fits the unused episodes, at its best fit kind, sorted by that then by sequence order."""
 
-        width = len(self.window.ids)
+        width = len(self.unused.ids)
         fit_kinds = {
             _FitKind.ONE_TO_N: [sequence for sequence in self.sequences if sequence.from_one(width)],
             _FitKind.EPISODE_NUMBERS: [
-                sequence for sequence in self.sequences if sequence.numbers == self.window.numbers
+                sequence for sequence in self.sequences if sequence.numbers == self.unused.numbers
             ],
             _FitKind.WHOLE_SEASON: self.whole_season(),
             _FitKind.ANY_CONSECUTIVE: self.at_any_start(),
@@ -317,7 +317,7 @@ class _SequenceFit:
 
         inside = outside = 0
         for file in sequence.members:
-            sides = {ep_id in self.window.id_set for ep_id in file.leading_title_ids}
+            sides = {ep_id in self.unused.id_set for ep_id in file.leading_title_ids}
             if sides == {True}:
                 inside += 1
             elif sides == {False}:
@@ -327,13 +327,13 @@ class _SequenceFit:
     def whole_season(self) -> list[NumberedSequence]:
         """The sequences numbered `1..N` for the unused episodes' whole season, when there are fewer than N of them."""
 
-        season = self.window.season
+        season = self.unused.season
         if season is None:
             return []
         count = self.state.index.season_counts.get(season, 0)
         return (
             [sequence for sequence in self.sequences if sequence.from_one(count)]
-            if count > len(self.window.ids)
+            if count > len(self.unused.ids)
             else []
         )
 
@@ -343,8 +343,8 @@ class _SequenceFit:
         True when they span seasons or are specials, and for a season whose numbering has a gap.
         """
 
-        season = self.window.season
-        if season is None or self.window.is_specials:
+        season = self.unused.season
+        if season is None or self.unused.is_specials:
             return True
         count = self.state.index.season_counts.get(season, 0)
         return any(EpisodeKey(season, n) not in self.state.target.id_by_key for n in range(1, count + 1))
@@ -358,7 +358,7 @@ class _SequenceFit:
 
         if self.state.used:
             return []
-        width = len(self.window.ids)
+        width = len(self.unused.ids)
         return [
             sequence
             for sequence in self.sequences
@@ -371,10 +371,10 @@ class _SequenceFit:
         key_by_id = self.state.index.key_by_id
         return {key_by_id[ep_id].season for file in sequence.members for ep_id in file.parsed_episodes.ids}
 
-    def parsed_outside_window(self, sequence: NumberedSequence) -> bool:
+    def parsed_into_another_season(self, sequence: NumberedSequence) -> bool:
         """Whether a member is parsed into a season other than the unused episodes', against the sequence's numbers."""
 
-        return any(read != self.window.season for read in self.seasons_parsed(sequence))
+        return any(read != self.unused.season for read in self.seasons_parsed(sequence))
 
     def final_outside_window(self, sequence: NumberedSequence) -> bool:
         """Whether Sonarr matched every member to its own distinct episode outside the window (another season or cour).
@@ -393,7 +393,7 @@ class _SequenceFit:
     def final_unplaced(self, sequence: NumberedSequence) -> bool:
         """Whether the batch shows the sequence cannot take all the unused episodes."""
 
-        state, window_set = self.state, self.window.id_set
+        state, unused_set = self.state, self.unused.id_set
         for file in sequence.members:
             info = file.parse
             # A missing parse, or a name that itself names several episodes, blocks the sequence. A multi-episode
@@ -401,22 +401,22 @@ class _SequenceFit:
             if info is None or names_several_episodes(info):
                 return True
             parsed = file.parsed_episodes
-            spelled_outside_window = not parsed.from_matched and parsed.complete and window_set.isdisjoint(parsed.ids)
+            spelled_outside_unused = not parsed.from_matched and parsed.complete and unused_set.isdisjoint(parsed.ids)
             # A member whose spelled-out season and episode lie outside the unused episodes blocks the sequence,
             # except when those are specials.
-            if spelled_outside_window and not self.window.is_specials:
+            if spelled_outside_unused and not self.unused.is_specials:
                 return True
         mates = set(sequence.all_versions)
         for file in state.unjudged_files():
             if file in mates:
                 continue
             parsed = file.parsed_episodes
-            if not window_set.isdisjoint(parsed.either_ids or ()):
+            if not unused_set.isdisjoint(parsed.either_ids or ()):
                 return True
             # A file next in line already lost those episodes before the sequence was asked: it blocks nothing.
             if not parsed.usable or file.next_in_line(parsed.ids):
                 continue
-            if parsed.ids and window_set.issuperset(parsed.ids):
+            if parsed.ids and unused_set.issuperset(parsed.ids):
                 return True
         return False
 
@@ -441,11 +441,13 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
     candidates = fit.candidates()
     # A whole-season sequence parsed into another season is blocked, picked or not. Parsed whole into one other
     # season, it belongs there (its files end up OUTSIDE_WINDOW). Otherwise its parsed episodes are rejected.
-    parsed_outside_window = [
-        c.sequence for c in candidates if c.fit_kind is _FitKind.WHOLE_SEASON and fit.parsed_outside_window(c.sequence)
+    parsed_into_another_season = [
+        c.sequence
+        for c in candidates
+        if c.fit_kind is _FitKind.WHOLE_SEASON and fit.parsed_into_another_season(c.sequence)
     ]
     # Rejections first: a sequence with rejected parsed episodes stays unjudged, which `unjudged_positions` then counts.
-    for sequence in parsed_outside_window:
+    for sequence in parsed_into_another_season:
         if not (fit.final_outside_window(sequence) and len(fit.seasons_parsed(sequence)) == 1):
             state.reject_each(sequence.all_versions)
     unjudged_positions = frozenset(
@@ -460,14 +462,14 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
     sequence = chosen.sequence
     if sequence.prefix in state.size_contradicted_prefixes:
         return
-    if not state.all_parses_known:
+    if not state.all_parses_read:
         state.set_aside_each(sequence.all_versions, PlacementVerdict.WAITING_ON_PARSE)
         return
     whole_season = chosen.fit_kind is _FitKind.WHOLE_SEASON
     final_unplaced = (
         fit.final_unplaced(sequence)
         or (whole_season and fit.whole_season_final_unplaced())
-        or sequence in parsed_outside_window
+        or sequence in parsed_into_another_season
         or any(file.numbers_disagree_by_position for file in sequence.members)
         or chosen.title_matches.contradicts
         or (naming is not None and naming.names_another(chosen.position, unjudged_positions))
@@ -475,15 +477,15 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
     if final_unplaced:
         state.pairing_off = True
         return
-    window = fit.window
+    unused = fit.unused
     # A whole-season sequence over part of its season places only the unused episodes' numbers. Its other members are
     # OUTSIDE_WINDOW.
-    files = window.files_of(sequence) if whole_season else sequence.members
+    files = unused.files_of(sequence) if whole_season else sequence.members
     # Sonarr already parses each member onto its own unused episode: the exact pass places them.
     exact = [file.parsed_episodes.exact_ids for file in files]
-    if all(len(ids) == 1 and ids[0] in window.id_set for ids in exact) and len(set(exact)) == len(exact):
+    if all(len(ids) == 1 and ids[0] in unused.id_set for ids in exact) and len(set(exact)) == len(exact):
         return
-    if not state.pair_in_order(files, window.ids, PlacementVerdict.SEQUENCE_OVER_PARSE):
+    if not state.pair_in_order(files, unused.ids, PlacementVerdict.SEQUENCE_OVER_PARSE):
         return
     state.set_aside_each([file for file in sequence.members if file not in files], PlacementVerdict.OUTSIDE_WINDOW)
     state.set_aside_each(sequence.superseded, PlacementVerdict.DUPLICATE)
@@ -518,19 +520,19 @@ def pass_sequence(state: PlacerState) -> None:
     nothing without an episode index, with any parse unknown, or with the pairing passes off.
     """
 
-    if not state.has_episode_index or not state.all_parses_known or state.pairing_off:
+    if not state.has_episode_index or not state.all_parses_read or state.pairing_off:
         return
-    window = state.consecutive_unused()
-    if window is None:
+    unused = state.consecutive_unused()
+    if unused is None:
         return
-    blind = [
+    without_number = [
         file
         for file in state.unjudged_files()
         if not file.parsed_episodes.ids and (info := state.single_parse(file)) is not None and not info.episode_numbers
     ]
-    fits = [sequence for sequence in state.sequences_among(blind) if sequence.from_one(len(window.ids))]
+    fits = [sequence for sequence in state.sequences_among(without_number) if sequence.from_one(len(unused.ids))]
     if len(fits) != 1:
         return
     sequence = fits[0]
-    if state.pair_in_order(sequence.members, window.ids, PlacementVerdict.SEQUENCE):
+    if state.pair_in_order(sequence.members, unused.ids, PlacementVerdict.SEQUENCE):
         state.set_aside_each(sequence.superseded, PlacementVerdict.DUPLICATE)

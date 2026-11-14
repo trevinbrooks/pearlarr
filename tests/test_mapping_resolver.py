@@ -610,8 +610,8 @@ class TestAnimeIdsParity:
             resolver.close()
 
 
-class TestGetAnilistIdsMerge:
-    """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
+class TestResolveMerge:
+    """`resolve` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
 
     def test_anibridge_wins_then_anime_fills_then_the_ignored_are_set_aside_and_sorted(self) -> None:
         # 269 resolves in both sources for tvdb 74796. AniBridge must win (it is

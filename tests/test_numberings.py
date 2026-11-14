@@ -12,7 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import pytest
 
 from pearlarr.arr_models import ParsedFileInfo
-from pearlarr.numberings import NumberingStep, _marked_title, _norm_title, _raw_title
+from pearlarr.numberings import NumberingStep, _marked_name_key, _name_key, _raw_name_key
 from pearlarr.pending_import import TitleNames, TitleWindow
 from pearlarr.placement_types import EpisodeIndex, GrabbingTitle, PlacementTarget, episode_index
 from pearlarr.placer import place_batch
@@ -475,7 +475,7 @@ class TestNameKeys:
         ],
     )
     def test_norm_title_converts_case_punctuation_and_the_ampersand(self, title: str, key: str) -> None:
-        assert _norm_title(title) == key
+        assert _name_key(title) == key
 
     @pytest.mark.parametrize(
         ("title", "key"),
@@ -486,7 +486,7 @@ class TestNameKeys:
         ],
     )
     def test_raw_title_converts_the_two_separators_and_keeps_the_marks(self, title: str, key: str) -> None:
-        assert _raw_title(title) == key
+        assert _raw_name_key(title) == key
 
     @pytest.mark.parametrize(
         ("title", "key"),
@@ -503,7 +503,7 @@ class TestNameKeys:
         ],
     )
     def test_marked_title_keeps_the_trailing_marks(self, title: str, key: str) -> None:
-        assert _marked_title(title) == key
+        assert _marked_name_key(title) == key
 
 
 def _sengoku_youko() -> EpisodeIndex:

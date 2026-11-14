@@ -19,8 +19,8 @@ from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, TrustedGroups, trusted_groups
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import (
-    EntryPlacements,
     PendingImportUpdate,
+    PlacedEntry,
     TitleFacts,
     build_pending_import_updates,
 )
@@ -86,14 +86,14 @@ def _build(
     series = strat._episodes.cached_episodes(facts.series_id) or []
     grabbing_title = grabbing_title or _grabbing_title(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_hash="")
-    placed = EntryPlacements.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))
+    placed = PlacedEntry.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))
     return build_pending_import_updates(seadex_dict, placed, facts)
 
 
 def _record(update: PendingImportUpdate) -> PendingImport:
     """The update stored at the grab stamp, for the views only the pending import has (label, file map episodes)."""
 
-    return update.pending_import_at(_ADDED_AT, fresh=True)
+    return update.pending_import_at(_ADDED_AT, restart=True)
 
 
 def _grabbing_title(
@@ -146,7 +146,7 @@ class TestBuildPendingImportUpdates:
         assert claim.title == "Show"
         assert claim.names == TitleNames("Show", ("Show", "Shou"))
         assert update.pending_import is None
-        pending = update.pending_import_at(_ADDED_AT, fresh=True)
+        pending = update.pending_import_at(_ADDED_AT, restart=True)
         assert pending.added_at == _ADDED_AT
         assert pending.claims == (claim,)
         assert dict(update.file_map) == {normalize_file_name("Show - 01.mkv"): (101,)}

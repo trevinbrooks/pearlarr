@@ -141,10 +141,10 @@ def _arr_title_redundant(arr_title: str, title_name: str) -> bool:
     merely shared beginning ("Showtime") still counts as informative.
     """
 
-    def norm(title: str) -> str:
+    def normalized(title: str) -> str:
         return title.replace("’", "'").replace("‘", "'").casefold().strip()
 
-    arr, title = norm(arr_title), norm(title_name)
+    arr, title = normalized(arr_title), normalized(title_name)
     return title.startswith(arr) and (len(title) == len(arr) or not title[len(arr)].isalnum())
 
 
