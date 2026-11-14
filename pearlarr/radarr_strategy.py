@@ -181,7 +181,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
                 services.report_invalid_selection()
                 return
 
-        seadex_dict = services.filter_seadex_downloads(
+        seadex_dict = services.plan_grabs(
             seadex_dict=seadex_dict,
             arr_files=radarr_files,
         ).seadex_dict

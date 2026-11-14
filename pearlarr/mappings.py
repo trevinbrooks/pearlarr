@@ -232,7 +232,7 @@ class ExternalIds(NamedTuple):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ResolvedMappings:
-    """One `get_anilist_ids` result: the kept mappings plus the ignored ones.
+    """One `MappingResolver.resolve` result: the kept mappings plus the ignored ones.
 
     Built by keyword, so the two same-typed halves can't silently transpose.
     """
@@ -436,7 +436,7 @@ class MappingResolver(KnownExternalIds):
 
     Downloads-if-stale, then - only when a source's content hash changed -
     parses and indexes it into `mappings.db` (owned here). Lookups are answered
-    from SQL. `get_anilist_ids` returns the AniList mappings plus the ones it
+    from SQL. `resolve` returns the AniList mappings plus the ones it
     set aside because they're configured to be ignored, so the caller (not the
     resolver) owns the per-id logging.
     """
@@ -837,7 +837,7 @@ class MappingResolver(KnownExternalIds):
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone.
-        Cross-source precedence is `get_anilist_ids`' merge to apply.
+        Cross-source precedence is `resolve`'s merge to apply.
 
         Args:
             ids: The external Arr ids to resolve (at least one).
@@ -873,7 +873,7 @@ class MappingResolver(KnownExternalIds):
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone.
-        Cross-source precedence is `get_anilist_ids`' merge to apply.
+        Cross-source precedence is `resolve`'s merge to apply.
 
         Args:
             ids: The external Arr ids to resolve (at least one).

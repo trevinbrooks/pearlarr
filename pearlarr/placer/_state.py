@@ -254,8 +254,8 @@ class PlacerState:
     """The files to place, batch order."""
     non_extras: tuple[TorrentFile, ...]
     """Every file but the extras: the files the evidence checks read."""
-    all_parses_known: bool
-    """Whether every parse of the torrent is known (`PlacementBatch.all_parses_known`)."""
+    all_parses_read: bool
+    """Whether every parse of the torrent came from Sonarr (`PlacementBatch.all_parses_read`)."""
     non_extra_sequences: tuple[NumberedSequence, ...] = field(init=False)
     """The numbered sequences among the `non_extras` files."""
     facts: Mapping[str, NameFacts] = field(init=False)
@@ -331,7 +331,7 @@ class PlacerState:
             files=tuple(by_name.values()),
             placing=tuple(by_name[name] for name in batch.new_names),
             non_extras=tuple(file for file in by_name.values() if not file.extra),
-            all_parses_known=batch.all_parses_known,
+            all_parses_read=batch.all_parses_read,
             used=set(target.used),
         )
 
@@ -428,12 +428,12 @@ class PlacerState:
         if len(unused_ids) < 2:
             return None
         key_by_id = self.index.key_by_id
-        keyed = sorted((key_by_id[ep_id], ep_id) for ep_id in unused_ids if ep_id in key_by_id)
-        if len(keyed) != len(unused_ids):
+        by_season_episode = sorted((key_by_id[ep_id], ep_id) for ep_id in unused_ids if ep_id in key_by_id)
+        if len(by_season_episode) != len(unused_ids):
             return None
-        seasons = {key.season for key, _ in keyed}
-        episodes = tuple(key.episode for key, _ in keyed)
-        ids = tuple(ep_id for _, ep_id in keyed)
+        seasons = {key.season for key, _ in by_season_episode}
+        episodes = tuple(key.episode for key, _ in by_season_episode)
+        ids = tuple(ep_id for _, ep_id in by_season_episode)
         if len(seasons) == 1 and is_consecutive(episodes):
             return ConsecutiveEpisodes(seasons.pop(), ids, episodes)
         absolute_of = self.index.absolute_of

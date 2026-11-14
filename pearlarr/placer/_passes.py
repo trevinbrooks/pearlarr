@@ -203,7 +203,7 @@ def _next_in_line(state: PlacerState, disagreeing: set[TorrentFile]) -> dict[Tor
     """
 
     winner = {ep_id: file for file, ids in state.exact_pass_placements().items() for ep_id in ids}
-    runner_ups: dict[TorrentFile, frozenset[int]] = {}
+    lost_by_file: dict[TorrentFile, frozenset[int]] = {}
     for file in state.unjudged_files():
         lost = frozenset(
             ep_id
@@ -211,8 +211,8 @@ def _next_in_line(state: PlacerState, disagreeing: set[TorrentFile]) -> dict[Tor
             if (won := winner.get(ep_id)) in disagreeing and won is not file
         )
         if lost:
-            runner_ups[file] = lost
-    return runner_ups
+            lost_by_file[file] = lost
+    return lost_by_file
 
 
 def _positions_disagree(state: PlacerState, sequence: NumberedSequence) -> dict[TorrentFile, frozenset[int]]:
@@ -444,7 +444,7 @@ def _absolute_order(
     applies = (
         bool(abs_by_file)
         and not state.pairing_off
-        and state.all_parses_known
+        and state.all_parses_read
         and len(abs_by_file) == len(candidate_files)  # every candidate file has one absolute
         and len(abs_by_file) == len(unused_ids)  # as many files as unused ids
         and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restarted numbering)
@@ -464,7 +464,7 @@ def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep
     no_parsed_number = [file for file in candidate_files if _has_no_parsed_number(state, file)]
     if len(candidate_files) == 1 and no_parsed_number:
         chosen, verdict = 0, PlacementVerdict.SINGLE
-    elif state.all_parses_known:
+    elif state.all_parses_read:
         stems = [file.name_parts.stem.text for file in no_parsed_number]
         chosen, verdict = sole_title_match(stems, state.target.title_names), PlacementVerdict.TITLE_NAME
     else:

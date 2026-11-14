@@ -303,9 +303,9 @@ class GrabPipeline:
         if update is None:
             return
         if result.outcome is AddStatus.ADDED:
-            self._pending_imports.insert_fresh(update.pending_import_at(now_stamp(), fresh=True), update.claim)
+            self._pending_imports.insert_grabbed(update.pending_import_at(now_stamp(), restart=True), update.claim)
             return
-        pending = update.pending_import_at(_reacquire_stamp(result.added_on), fresh=False)
+        pending = update.pending_import_at(_reacquire_stamp(result.added_on), restart=False)
         self._pending_imports.save_with_claim(pending, update.claim)
         if pending.infohash not in self._state.grabbed_this_run:
             self._state.reacquired_keys.add(pending.infohash)
@@ -322,7 +322,7 @@ class GrabPipeline:
             cause=cause,
         )
 
-    def _should_cache_as_done(self, *, added_this_title: int) -> bool:
+    def _may_cache_title(self, *, added_this_title: int) -> bool:
         """Whether this title's outcome may be cached.
 
         Only if something was grabbed or nothing was skipped. A release held by the run cap, a private-only skip in
@@ -447,7 +447,7 @@ class GrabPipeline:
         else:
             added_this_title = self._grab(req)
 
-        if self._should_cache_as_done(added_this_title=added_this_title):
+        if self._may_cache_title(added_this_title=added_this_title):
             # Always written: the partial-merge upsert would otherwise preserve an old True.
             req.update["fallback_satisfied"] = any(
                 u.is_fallback and u.to_grab

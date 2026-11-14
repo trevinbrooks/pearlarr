@@ -4,8 +4,8 @@
 The wait pass pushes one immutable `WaitSnapshot` per poll. The view
 side is a single narrator (`HubWaitView`) that turns those pushes into
 hub events - rendering lives behind the hub (WaitRegion for the console, the
-textline renderers for file/plain/json, pinned in test_output_wait_region /
-test_output_textline). These pin the narrator's event grammar (lazy open,
+line renderers for file/plain/json, pinned in test_output_wait_region /
+test_output_line_renderers). These pin the narrator's event grammar (lazy open,
 finished-row dedup + exact field mapping, the close tally), the `make_wait_view`
 setup (`wants_download_progress` + the progress line interval), the pure `newly_finished` helper,
 the WaitResult counting, and the no-throw contract.

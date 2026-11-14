@@ -55,10 +55,10 @@ class SeadexReleaseFilter:
     """Turns a SeaDex `EntryRecord` into the run's filtered/ranked release dict.
 
     Owns no per-run caches. It binds the arr run's `ArrRunState` (`bind_arr_run`)
-    only so `filter_downloads` can set the private-only skip flags the grab tail
+    only so `plan_grabs` can set the private-only skip flags the grab tail
     later reads. `ArrRunServices` keeps same-named thin
     delegators (`get_seadex_dict` / `filter_seadex_interactive` /
-    `filter_seadex_downloads`) forwarding here, so the strategy<->services
+    `plan_grabs`) forwarding here, so the strategy<->services
     contract is unchanged.
     """
 
@@ -78,7 +78,7 @@ class SeadexReleaseFilter:
         self._state = state
 
     def bind_arr_run(self, state: ArrRunState) -> None:
-        """Bind the arr run state `filter_downloads` sets private-only flags on."""
+        """Bind the arr run state `plan_grabs` sets private-only flags on."""
 
         self._state = state
 
@@ -289,13 +289,13 @@ class SeadexReleaseFilter:
 
         return seadex_dict
 
-    def filter_downloads(
+    def plan_grabs(
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
-        """Flip the switch on whether we grab each release or not.
+        """Plan which releases to grab.
 
         Thin orchestrator over the `GrabPlanner`: run it, then apply the
         plan's private-only skip outcome back onto the arr run state the

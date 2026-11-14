@@ -408,7 +408,7 @@ class _PlanContext:
     debug_on: bool
 
 
-def _window_in_place(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: Collection[int]) -> bool:
+def _window_owned(ctx: _PlanContext, seadex_norm: str | None, listed_sizes: Collection[int]) -> bool:
     """Whether every episode of the window has the group's file at a listed size, or a covering group's file."""
 
     for key in ctx.sonarr_by_key:
@@ -858,7 +858,7 @@ class GrabPlanner:
         """Decide a torrent the placement left for a hand import (`SkipReason.left_for_hand_import`), by what its window has.
 
         Flips `release.to_grab` in place. Nothing is grabbed once every window episode has its file at a listed
-        size or a covering release's (`_window_in_place`), the shape a hand import leaves. Otherwise it is marked
+        size or a covering release's (`_window_owned`), the shape a hand import leaves. Otherwise it is marked
         to grab (an upgrade where the arr has the group's files), and the grab skips it and lists it for a hand
         import.
         """
@@ -869,7 +869,7 @@ class GrabPlanner:
 
         url = release.url
         seadex_norm = normalize_group(seadex_rg)
-        if _window_in_place(ctx, seadex_norm, release.file_sizes):
+        if _window_owned(ctx, seadex_norm, release.file_sizes):
             if ctx.debug_on:
                 self.logger.debug(
                     f"Every episode of the window holds {seadex_rg}'s file or a covering release's: not flagging {url}"

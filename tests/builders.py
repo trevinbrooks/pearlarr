@@ -535,7 +535,7 @@ def make_config(**overrides: Any) -> AppConfig:
     return AppConfig.model_validate(nested)
 
 
-def cached_as_done(row: CachedTitle | None, sd_entry: EntryRecord) -> bool:
+def title_is_cached(row: CachedTitle | None, sd_entry: EntryRecord) -> bool:
     """Whether a cache row has its title cached under SeaDex's current update time."""
 
     return row is not None and row.cached_under(sd_entry.updated_at)
@@ -1334,10 +1334,10 @@ def under_window(result: WindowedPlacements, at: int) -> BatchPlacements:
     return BatchPlacements(tuple(file.per_window[at] for file in result.files))
 
 
-def decided_by(result: WindowedPlacements) -> dict[str, int]:
-    """Each decided file's name -> the position of the window that decided it (`WindowedFile.decided_at`)."""
+def final_windows(result: WindowedPlacements) -> dict[str, int]:
+    """Each file's name -> the position of its final window (`WindowedFile.final_window_at`), for the files with one."""
 
-    return {file.name: file.decided_at for file in result.files if file.decided_at is not None}
+    return {file.name: file.final_window_at for file in result.files if file.final_window_at is not None}
 
 
 def blind(names: Iterable[str]) -> dict[str, ParsedFileInfo | None]:

@@ -14,7 +14,7 @@ from .builders import (
     batch,
     blind,
     by_name,
-    decided_by,
+    final_windows,
     merged_of,
     parsed_info,
     parsed_specials,
@@ -101,7 +101,7 @@ class TestInterleavedSpecialByOrder:
             self._RUN[2]: ((501,), PlacementVerdict.OTHER_ORDER),
             self._RUN[3]: ((603,), PlacementVerdict.OTHER_ORDER),
         }
-        assert decided_by(result)[self._RUN[2]] == 1
+        assert final_windows(result)[self._RUN[2]] == 1
         assert not own.misnumbered
         assert own.hand_import_verdict is None
 

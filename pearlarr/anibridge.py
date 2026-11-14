@@ -398,7 +398,7 @@ class AniBridge:
         build BOTH sources' candidate-set tuples from one comprehension over the same
         `fields` - instead of a hand-ordered literal that can silently drift out of
         positional alignment with `fields` (the `zip(strict=True)` only checks
-        length, not correspondence). The keys are exactly the `mapping_key`s the
+        length, not correspondence). The keys are exactly the `id_kind`s the
         library filter passes (tvdb / tmdb-movie / imdb id kinds).
         """
 

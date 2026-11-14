@@ -49,7 +49,7 @@ from pearlarr.config import Arr
 from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, ImportSnapshot, trusted_groups
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
-from pearlarr.grab_placement import EntryPlacements, ListedFile, place_release
+from pearlarr.grab_placement import ListedFile, PlacedEntry, place_release
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
@@ -153,7 +153,7 @@ class _Item:
         self.__dict__.update(kw)
 
 
-class GetAniListIdsCall(NamedTuple):
+class TitleMappingsCall(NamedTuple):
     """One recorded `title_mappings` call (the args the strategy forwarded).
 
     Defaults mirror the method's own defaults, so a recorded call equals an expected
@@ -186,7 +186,7 @@ class _FakeRunServices(ArrRunServices):
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
-        filter_downloads_result: GrabPlan | None = None,
+        plan_grabs_result: GrabPlan | None = None,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
         arr: Arr = Arr.SONARR,
         cache_store: FakeCacheStore | None = None,
@@ -204,9 +204,9 @@ class _FakeRunServices(ArrRunServices):
         self._needs_scan = needs_scan
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
         self._interactive_result = interactive_result
-        self._filter_downloads_result = filter_downloads_result
+        self._plan_grabs_result = plan_grabs_result
         self._import_wait_mode = import_wait_mode
-        self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
+        self.title_mappings_calls: list[TitleMappingsCall] = []
         self.al_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
         self.unmonitored_titles: list[str] = []
@@ -215,7 +215,7 @@ class _FakeRunServices(ArrRunServices):
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
-        self.filter_downloads_calls: list[tuple[SeadexDict, ArrFiles]] = []
+        self.plan_grabs_calls: list[tuple[SeadexDict, ArrFiles]] = []
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CachedTitleUpdate]] = []
         self.no_releases_unread: list[int] = []
@@ -234,7 +234,7 @@ class _FakeRunServices(ArrRunServices):
 
     @override
     def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        self.get_anilist_ids_calls.append(GetAniListIdsCall(ids, log_ignored))
+        self.title_mappings_calls.append(TitleMappingsCall(ids, log_ignored))
         return self._anilist_ids
 
     @override
@@ -283,16 +283,16 @@ class _FakeRunServices(ArrRunServices):
         return seadex_dict if self._interactive_result is None else self._interactive_result
 
     @override
-    def filter_seadex_downloads(
+    def plan_grabs(
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         del ep_list
-        self.filter_downloads_calls.append((seadex_dict, arr_files))
-        if self._filter_downloads_result is not None:
-            return self._filter_downloads_result
+        self.plan_grabs_calls.append((seadex_dict, arr_files))
+        if self._plan_grabs_result is not None:
+            return self._plan_grabs_result
         return grab_plan(seadex_dict)
 
     @property
@@ -405,8 +405,8 @@ class TestItemMappingsDelegates:
         result = strat.item_mappings(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: TitleMapping(anilist_id=7)}
-        assert run.get_anilist_ids_calls == [
-            GetAniListIdsCall(ExternalIds(tmdb_movie=42, imdb="tt7"), log_ignored=False)
+        assert run.title_mappings_calls == [
+            TitleMappingsCall(ExternalIds(tmdb_movie=42, imdb="tt7"), log_ignored=False)
         ]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
@@ -415,7 +415,7 @@ class TestItemMappingsDelegates:
 
         strat.item_mappings(_Item(tvdbId=99, imdbId="tt9"))
 
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
+        assert run.title_mappings_calls == [TitleMappingsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
 
 
 class TestFilterToSingle:
@@ -2481,7 +2481,7 @@ def _sonarr_grab_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: S
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
-        filter_downloads_result=grab_plan(seadex),
+        plan_grabs_result=grab_plan(seadex),
         import_wait_mode=mode,
         cache_store=store,
     )
@@ -2520,7 +2520,7 @@ def _run_title_check(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show",
         seadex_dict=seadex,
-        filter_downloads_result=grab_plan(seadex),
+        plan_grabs_result=grab_plan(seadex),
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=FakeCacheStore(),
     )
@@ -2572,7 +2572,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
         assert update.claim.al_id == 5
         assert update.claim.ordered_episode_ids == (102,)
-        pending = update.pending_import_at(_STAMP, fresh=False)
+        pending = update.pending_import_at(_STAMP, restart=False)
         assert claim_al_ids(pending) == (22, 5)
         assert dict(pending.file_episode_map) == {
             normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
@@ -2596,7 +2596,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             anilist_title="Show Specials",
             seadex_dict=seadex,
-            filter_downloads_result=grab_plan(seadex),
+            plan_grabs_result=grab_plan(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
@@ -2690,7 +2690,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             ignored=ignored,
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             seadex_dict=seadex,
-            filter_downloads_result=grab_plan(seadex),
+            plan_grabs_result=grab_plan(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
         listings = _ScriptedListings()
@@ -2727,7 +2727,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             ignored={5: TitleMapping(anilist_id=5)},
             prologue_entry=make_entry_record(url="https://releases.moe/6"),
             seadex_dict=seadex,
-            filter_downloads_result=grab_plan(seadex),
+            plan_grabs_result=grab_plan(seadex),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
@@ -2776,7 +2776,7 @@ class TestPlacementDebugLine:
         )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(EntryPlacements(grabbing_title, {_GRAB_URL: placement}))
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
 
         assert placement.skip_reason is SkipReason.INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
@@ -2797,7 +2797,7 @@ class TestPlacementDebugLine:
         )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(EntryPlacements(grabbing_title, {_GRAB_URL: placement}))
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
 
         halves = ", ".join(
             f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
@@ -2895,7 +2895,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
             prologue_entry=make_entry_record(url="https://releases.moe/9"),
             anilist_title="A Movie",
             seadex_dict=seadex,
-            filter_downloads_result=grab_plan(seadex),
+            plan_grabs_result=grab_plan(seadex),
             import_wait_mode=mode,
             arr=Arr.RADARR,
             cache_store=store,
@@ -2929,7 +2929,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
         assert update.facts.seadex_files == ()
         assert update.claim.ordered_episode_ids == ()
         assert update.claim.window_coverage is None
-        pending = update.pending_import_at(_STAMP, fresh=True)
+        pending = update.pending_import_at(_STAMP, restart=True)
         # display_label renders sensibly from these (name · group).
         assert pending.display_label == f"A Movie{SEP}NAN0"
         assert pending.file_map_episode_ids() == []
@@ -2947,7 +2947,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
         (req,) = run.grab_requests
         (update,) = req.pending_import_updates.values()
         assert update.pending_import == resident
-        assert claim_al_ids(update.pending_import_at(_STAMP, fresh=False)) == (9, 42)
+        assert claim_al_ids(update.pending_import_at(_STAMP, restart=False)) == (9, 42)
 
     def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
         store = FakeCacheStore()
@@ -4232,13 +4232,13 @@ class TestRadarrCheckTitle:
             prologue_entry=entry,
             anilist_title="Movie Title",
             seadex_dict=seadex_dict,
-            filter_downloads_result=grab_plan(filtered),
+            plan_grabs_result=grab_plan(filtered),
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
 
         strat.check_title(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
         # The grab filter received the movie's accumulated files.
-        assert run.filter_downloads_calls == [(seadex_dict, ArrFiles(by_group={"OldGroup": (100,)}))]
+        assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"OldGroup": (100,)}))]
         [req] = run.grab_requests
         assert req.al_id == 5
         assert req.arr_title == "Item Title"
@@ -4259,7 +4259,7 @@ class TestRadarrCheckTitle:
             prologue_entry=make_entry_record(),
             anilist_title="Movie Title",
             seadex_dict=_one_group_dict("SubGroup"),
-            filter_downloads_result=grab_plan(_one_group_dict("SubGroup")),
+            plan_grabs_result=grab_plan(_one_group_dict("SubGroup")),
         )
         strat, _ = self._make_strat(
             run,

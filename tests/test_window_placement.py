@@ -31,7 +31,7 @@ from .builders import (
     batch,
     blind,
     by_name,
-    decided_by,
+    final_windows,
     merged_of,
     numbered_names,
     parsed_info,
@@ -563,7 +563,7 @@ class TestDecidedBy:
             {**blind(run), "loose.mkv": parsed_info()}, (_window(_FIRST_COUR), _window(_SECOND_COUR))
         )
 
-        assert decided_by(result) == {**dict.fromkeys(run[:3], 0), **dict.fromkeys(run[3:], 1)}
+        assert final_windows(result) == {**dict.fromkeys(run[:3], 0), **dict.fromkeys(run[3:], 1)}
 
     def test_the_pending_import_sets_aside_a_file_a_window_it_doesnt_import_placed(self) -> None:
         run = numbered_names("show", 6)
@@ -658,7 +658,7 @@ class TestNumberingStep:
             _GAP: ((605,), PlacementVerdict.NUMBERINGS_AGREE),
             _PLACED: ((601,), PlacementVerdict.EXACT),
         }
-        assert decided_by(after) == {_PLACED: 0, _GAP: 1}
+        assert final_windows(after) == {_PLACED: 0, _GAP: 1}
         assert [under_window(after, at) for at in (0, 1)] == [under_window(before, at) for at in (0, 1)]
 
     def test_a_file_a_window_placed_keeps_its_placement(self) -> None:

@@ -204,7 +204,7 @@ class PlacedRelease:
 
     inputs_read: bool
     """True when the placement had everything it needed this run: every window was built, the episodes by size were
-    read, and, while a file is left to place, every parse came from Sonarr (`PlacementBatch.all_parses_known`). When
+    read, and, while a file is left to place, every parse came from Sonarr (`PlacementBatch.all_parses_read`). When
     False, a file may have waited on a parse or been placed without its size, so the title gets re-checked next run."""
 
     skip_reason: SkipReason | None
@@ -293,7 +293,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         # Every video file's parse feeds the checks on the files being placed, those in the file map included, and
         # nothing places a file after the grab, so an unknown parse skips the release while it has a file left to
         # place. A release the pending import's file map covers whole needs no parse.
-        or (bool(batch.new_names) and not batch.all_parses_known)
+        or (bool(batch.new_names) and not batch.all_parses_read)
     )
     # With nothing of the whole file map on the title, a file another title's window placed or left for a hand import
     # is that title's, and so is a file the file map puts on an episode another title's window holds.
@@ -458,7 +458,7 @@ def _parsed_as(info: ParsedFileInfo | None) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryPlacements:
+class PlacedEntry:
     """Every release of one entry placed, keyed as `GroupReleases.releases` keys them."""
 
     grabbing_title: GrabbingTitle
@@ -655,10 +655,10 @@ class PendingImportUpdate:
             .with_sizes_by_name(self.facts.sizes_by_name)
         )
 
-    def pending_import_at(self, stamp: str, *, fresh: bool) -> PendingImport:
+    def pending_import_at(self, stamp: str, *, restart: bool) -> PendingImport:
         """The pending import to store: a new one starting at `stamp`, or the stored one with this grab joined.
 
-        `fresh` restarts the stored one at `stamp`: a torrent added afresh downloads anew.
+        `restart` starts the stored one over at `stamp`: a torrent added again downloads from the start.
         """
 
         joined = self.joined()
@@ -678,7 +678,7 @@ class PendingImportUpdate:
                 order_only=self.order_only,
                 is_cross_seed=self.facts.is_cross_seed,
             )
-        return replace(joined, added_at=stamp) if fresh else joined
+        return replace(joined, added_at=stamp) if restart else joined
 
 
 def build_title_claim(release: PlacedGrab, grabbing_title: GrabbingTitle, facts: TitleFacts) -> TitleClaim:
@@ -758,7 +758,7 @@ def build_update_without_window(
 
 def build_pending_import_updates(
     seadex_dict: SeadexDict,
-    placed: EntryPlacements,
+    placed: PlacedEntry,
     facts: TitleFacts,
 ) -> dict[str, PendingImportUpdate]:
     """Turn every release to grab with an infohash and a video file into its update, keyed by its hash in qBittorrent.

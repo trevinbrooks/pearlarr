@@ -1106,7 +1106,7 @@ class TestExternalDetailParity:
                 "blue",
             ),
         ),
-        # seadex_filter.filter_downloads: a planner PrivateOnlyNotice (WARNING form).
+        # seadex_filter.plan_grabs: a planner PrivateOnlyNotice (WARNING form).
         _DetailSite(
             "skipped",
             StyledValue("GroupA, GroupB private-only (private releases not supported)", Accent.CAUTION),

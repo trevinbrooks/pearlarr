@@ -138,24 +138,24 @@ class TestEpisodeIndexViews:
         assert index.titles(self._WORDS) == EpisodeTitles.of(index.by_id, index.id_by_key, self._WORDS)
 
 
-class TestPlacementBatchParsesKnown:
-    """`all_parses_known`: one file's missing parse makes the batch's parses unknown."""
+class TestPlacementBatchAllParsesRead:
+    """`all_parses_read`: one file's missing parse makes it False."""
 
-    def test_an_unreachable_parse_is_unknown(self) -> None:
+    def test_an_unreachable_parse_is_not_read(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {"a.mkv": parsed_info(), "b.mkv": None}
-        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is False
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_read is False
 
-    def test_served_parses_are_known(self) -> None:
-        # An answer from Sonarr with no number is a real answer: known, even though it places nothing.
+    def test_parses_sonarr_answered_are_read(self) -> None:
+        # An answer from Sonarr with no number is a real answer: read, even though it places nothing.
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": parsed_info(),
             "b.mkv": parsed_info(season=1, episodes=(1,)),
         }
-        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_known is True
+        assert PlacementBatch(["a.mkv", "b.mkv"], parsed).all_parses_read is True
 
-    def test_an_empty_batch_is_known(self) -> None:
+    def test_an_empty_batch_is_all_read(self) -> None:
         # A pending import with every file in its file map parses nothing, and nothing is missing.
-        assert PlacementBatch([], {}).all_parses_known is True
+        assert PlacementBatch([], {}).all_parses_read is True
 
 
 class TestPlacementBatchCopies:

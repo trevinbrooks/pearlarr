@@ -28,7 +28,7 @@ class PendingImportStore:
 
         self._state = state
 
-    def fresh_keys(self) -> set[str]:
+    def grabbed_keys(self) -> set[str]:
         """Keys of the pending imports written THIS run, tallied as `added` and never carried-over."""
 
         return set(self._state.grabbed_this_run)
@@ -56,8 +56,8 @@ class PendingImportStore:
     def active_rows(self) -> dict[str, dict[str, Any]]:
         """Raw rows minus this-run grabs and rows awaiting cleanup."""
 
-        fresh = self.fresh_keys()
-        return {key: raw for key, raw in self.rows().items() if key not in fresh and not is_awaiting_cleanup(raw)}
+        grabbed = self.grabbed_keys()
+        return {key: raw for key, raw in self.rows().items() if key not in grabbed and not is_awaiting_cleanup(raw)}
 
     def load(self, rows: Mapping[str, dict[str, Any]]) -> dict[str, PendingImport]:
         """Load `rows`, each claim fed its title's guard row (an empty `rows` skips the guard read)."""
@@ -86,7 +86,7 @@ class PendingImportStore:
         }
         return self.load(rows)
 
-    def insert_fresh(self, pending: PendingImport, claim: TitleClaim) -> None:
+    def insert_grabbed(self, pending: PendingImport, claim: TitleClaim) -> None:
         """Persist a this-run grab with `claim`'s guard row and enter it in the run list (it tallies as `added`)."""
 
         self._put(pending)

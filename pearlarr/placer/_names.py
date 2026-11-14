@@ -39,13 +39,13 @@ def _title_lead(episodes: EpisodeTitles, read: NameParts, resolved: Collection[i
     """
 
     words = read.title_words
-    keyed = episodes.episodes_numbered_by(read, resolved)
+    numbered = episodes.episodes_numbered_by(read, resolved)
     if read.member is None and read.episode_title_number is None:
-        return TitleLead(episodes.exact_match(words, keyed), frozenset(), words)
+        return TitleLead(episodes.exact_match(words, numbered), frozenset(), words)
     lead = episodes.leading_title(words)
     if lead.title is None or read.episode_title_number is not None:
         whole = whole_words(read.stem.text)
-        if (equal := episodes.exact_match(whole, keyed)) is not None:
+        if (equal := episodes.exact_match(whole, numbered)) is not None:
             if lead.title is None:
                 return TitleLead(equal, lead.leading_title_ids, whole)
             if lead.title.ep_id != equal.ep_id:

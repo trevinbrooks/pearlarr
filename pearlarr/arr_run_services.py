@@ -508,7 +508,7 @@ class ArrRunServices:
 
         return self._filter.interactive_pick(seadex_dict, sd_entry)
 
-    def filter_seadex_downloads(
+    def plan_grabs(
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
@@ -516,7 +516,7 @@ class ArrRunServices:
     ) -> GrabPlan:
         """Apply the grab plan, setting private-only skips on the state (delegates)."""
 
-        return self._filter.filter_downloads(seadex_dict, arr_files, ep_list)
+        return self._filter.plan_grabs(seadex_dict, arr_files, ep_list)
 
     def is_dry_run(self) -> bool:
         """A run is a dry run (nothing can be grabbed): explicitly requested, or qBittorrent not configured."""

@@ -67,7 +67,7 @@ ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
 CLI_PATH = REPO_ROOT / "docs" / "cli.md"
 OUTPUT_PATH = REPO_ROOT / "docs" / "output.md"
 CLI_SOURCE = "pearlarr/cli.py"
-EVENTS_SOURCE = "pearlarr/output/events.py + textline.py"
+EVENTS_SOURCE = "pearlarr/output/events.py + line_renderers.py"
 
 # Comments in the sample wrap so the whole line stays inside this width.
 SAMPLE_WIDTH = 100
