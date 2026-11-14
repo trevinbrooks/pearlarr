@@ -12,8 +12,8 @@ from .builders import make_entry_record
 from .fakes import diagnostic_messages, install_recording_hub
 
 
-def _rec(al_id: int) -> EntryRecord:
-    return make_entry_record(anilist_id=al_id)
+def _rec(anilist_id: int) -> EntryRecord:
+    return make_entry_record(anilist_id=anilist_id)
 
 
 class FakeSeaDex:
@@ -51,15 +51,15 @@ class FakeSeaDex:
         ids = [int(part.split("=")[1]) for part in filter_str.split("||")]
         return [self.entries[i] for i in ids if i in self.entries]
 
-    def from_id(self, al_id: int) -> EntryRecord:
-        self.from_id_calls.append(al_id)
+    def from_id(self, anilist_id: int) -> EntryRecord:
+        self.from_id_calls.append(anilist_id)
         if self.from_id_error is not None:
             raise self.from_id_error
         if self.from_id_blips > 0:
             self.from_id_blips -= 1
             raise httpx.ConnectError("blip")
-        if al_id in self.entries:
-            return self.entries[al_id]
+        if anilist_id in self.entries:
+            return self.entries[anilist_id]
         raise EntryNotFoundError("nope")
 
 

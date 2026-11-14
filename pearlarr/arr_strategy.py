@@ -92,7 +92,7 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
     def check_title(
         self,
         item: ItemT,
-        al_id: int,
+        anilist_id: int,
         mapping: TitleMapping,
     ) -> None:
         """Check one title for one Arr item: decide, grab or skip, cache the result."""

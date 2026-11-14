@@ -184,43 +184,43 @@ class RunReporter:
         state.stats.no_mappings += 1
         self._emit_title_row(TitleState.NO_MAPPING, title)
 
-    def log_ignored_anilist_id(self, state: ArrRunState, al_id: int) -> None:
+    def log_ignored_anilist_id(self, state: ArrRunState, anilist_id: int) -> None:
         """Report an AniList ID the ignore list leaves out.
 
         No AniList lookup: an ignored id is dropped before the prefetch, so the arr item's own name
         is the only one in hand and asking would cost a request per ignored id.
         """
 
-        self._titled_row(TitleState.IGNORED, title_from_names(al_id, (), state.arr_title))
+        self._titled_row(TitleState.IGNORED, title_from_names(anilist_id, (), state.arr_title))
 
-    def log_no_sd_entry(self, state: ArrRunState, al_id: int) -> None:
+    def log_no_sd_entry(self, state: ArrRunState, anilist_id: int) -> None:
         """Report a title with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         state.stats.no_seadex_entry += 1
-        self._titled_row(TitleState.NO_ENTRY, self._display_title(state, al_id, None))
+        self._titled_row(TitleState.NO_ENTRY, self._display_title(state, anilist_id, None))
 
-    def log_seadex_unreachable(self, state: ArrRunState, al_id: int) -> None:
+    def log_seadex_unreachable(self, state: ArrRunState, anilist_id: int) -> None:
         """Report a title whose SeaDex lookup didn't happen (SeaDex unreachable)."""
 
         state.stats.seadex_unreachable += 1
         # The stored name wins: a prior run resolved it, so no lookup is needed.
-        cached = self.cache_store.get_cached_title(state.arr, al_id)
-        title = self._display_title(state, al_id, cached.name if cached is not None else None)
+        cached = self.cache_store.get_cached_title(state.arr, anilist_id)
+        title = self._display_title(state, anilist_id, cached.name if cached is not None else None)
         self._titled_row(TitleState.NOT_CHECKED, title)
         # Scope-free (the titled row closed the title scope): the reason goes in col-0.
         self.detail("status", StyledValue("SeaDex unreachable", Accent.DIM))
 
-    def _display_title(self, state: ArrRunState, al_id: int, stored: str | None) -> Title:
+    def _display_title(self, state: ArrRunState, anilist_id: int, stored: str | None) -> Title:
         """The title's label: the stored name, else AniList, else the arr item's own name, else the id form."""
 
-        return title_from_names(al_id, (stored,) if stored else self.anilist.titles(al_id), state.arr_title)
+        return title_from_names(anilist_id, (stored,) if stored else self.anilist.titles(anilist_id), state.arr_title)
 
     def _titled_row(self, state: TitleState, title: Title) -> None:
         """A title row for a title with no title block, the id repeated only when the row shows a name."""
 
         self._emit_title_row(state, title.name)
         if title.resolved:
-            self.detail("anilist", StyledValue(str(title.al_id)))
+            self.detail("anilist", StyledValue(str(title.anilist_id)))
 
     # --- title-block headers -------------------------------------------------
 
@@ -246,27 +246,27 @@ class RunReporter:
             TitleHeader(
                 TitleState.CHECKING,
                 title,
-                al_id=sd_entry.anilist_id,
+                anilist_id=sd_entry.anilist_id,
                 coverage=coverage,
                 url=sd_entry.url,
                 incomplete=sd_entry.is_incomplete,
             ),
         )
 
-    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
+    def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
         """Emit an unchanged title's self-contained block, read from its cached row."""
 
         state.stats.unchanged += 1
 
-        cached = self.cache_store.get_cached_title(state.arr, al_id)
-        title = self._display_title(state, al_id, cached.name if cached is not None else None)
+        cached = self.cache_store.get_cached_title(state.arr, anilist_id)
+        title = self._display_title(state, anilist_id, cached.name if cached is not None else None)
 
         # A complete block: self-close so a later diagnostic attributes to the open item, not to this row.
         self._block(
             TitleHeader(
                 TitleState.UNCHANGED,
                 title.name,
-                al_id=al_id,
+                anilist_id=anilist_id,
                 coverage=cached.coverage if cached is not None else None,
                 url=cached.url if cached is not None else None,
             ),

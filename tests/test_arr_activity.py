@@ -8,7 +8,7 @@ Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + item-id filters (no exemption for pearlarr's grabs), and the fail-open contract. Run-loop
 half (reusing `test_run_finalize`'s `_engine` harness): touched items flow into
-`ArrRunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
+`ArrRunServices._dirty_anilist_ids` (all items on a gap), the checkpoint is staged
 only on full-library runs with SeaDex reachable (kept drift signals replay on the next
 healthy run), and either config toggle disables the fetch entirely.
 """
@@ -340,7 +340,7 @@ class TestRunLoopActivityWiring:
         strategy = self._strategy(history=[_rec(1, item_id=3)])
         engine = self._run(strategy, logger)
 
-        assert engine._services._dirty_al_ids == {11}
+        assert engine._services._dirty_anilist_ids == {11}
         assert len(strategy.history_calls) == 1
 
     def test_pearlarrs_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
@@ -350,13 +350,13 @@ class TestRunLoopActivityWiring:
         strategy = self._strategy(history=[_rec(1, item_id=3, download_id="BEEF01")])
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
-        assert engine._services._dirty_al_ids == {11}
+        assert engine._services._dirty_anilist_ids == {11}
 
     def test_untouched_items_stay_clean(self, logger: logging.Logger) -> None:
         strategy = self._strategy(history=[_rec(1, item_id=99)])  # not in the library
         engine = self._run(strategy, logger)
 
-        assert engine._services._dirty_al_ids == set()
+        assert engine._services._dirty_anilist_ids == set()
 
     def test_history_gap_marks_everything_dirty(self, logger: logging.Logger) -> None:
         # Same untouched history as above, but a checkpoint beyond the lookback:
@@ -367,7 +367,7 @@ class TestRunLoopActivityWiring:
         engine.cache_store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(stale), 1))
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
-        assert engine._services._dirty_al_ids == {11}
+        assert engine._services._dirty_anilist_ids == {11}
 
     def test_full_run_stages_the_checkpoint(self, logger: logging.Logger) -> None:
         strategy = self._strategy(history=[_rec(1, item_id=3, date="2026-07-06T10:00:00Z")])
@@ -394,7 +394,7 @@ class TestRunLoopActivityWiring:
         engine = self._engine_with_seadex_unreachable(logger, cache)
         engine.run_arr(self._strategy(history=[_rec(1, item_id=3)]), item_id=None, dry_run=True, boot=BootFlow())
 
-        assert engine._services._dirty_al_ids == {11}  # detection itself still ran
+        assert engine._services._dirty_anilist_ids == {11}  # detection itself still ran
         assert cache.get_history_checkpoint(Arr.SONARR) is None
 
     def test_consecutive_unreachable_runs_keep_holding(self, logger: logging.Logger) -> None:
@@ -421,7 +421,7 @@ class TestRunLoopActivityWiring:
             boot=BootFlow(),
         )
 
-        assert healthy._services._dirty_al_ids == {11}
+        assert healthy._services._dirty_anilist_ids == {11}
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-06T10:00:00Z", 1)
 
     def test_detect_toggle_off_skips_the_fetch(self, logger: logging.Logger) -> None:

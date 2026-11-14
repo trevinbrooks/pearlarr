@@ -44,8 +44,8 @@ def _ids(index: EpisodeIndex, season: int) -> tuple[int, ...]:
     return tuple(ep_id for key, ep_id in sorted(index.id_by_key.items()) if key.season == season)
 
 
-def _window(al_id: int, ids: Iterable[int], count: int | None, series: str, *anilist: str) -> TitleWindow:
-    return title_window(al_id, ids, names=TitleNames(series, anilist), episode_count=count)
+def _window(anilist_id: int, ids: Iterable[int], count: int | None, series: str, *anilist: str) -> TitleWindow:
+    return title_window(anilist_id, ids, names=TitleNames(series, anilist), episode_count=count)
 
 
 def _grabbing_title(
@@ -56,7 +56,7 @@ def _grabbing_title(
     return make_grabbing_title(
         episode_index([index.by_id[ep_id] for ep_id in own.ordered_episode_ids]),
         index,
-        al_id=own.al_id,
+        anilist_id=own.anilist_id,
         names=own.names,
         episode_count=own.episode_count,
         alternate_titles=alternate_titles,
@@ -79,7 +79,7 @@ def _read(
     """
 
     torrent = batch(parsed)
-    own = next(window for window in windows if window.al_id == grabbing_title.al_id)
+    own = next(window for window in windows if window.anilist_id == grabbing_title.anilist_id)
     facts = place_batch(
         torrent, PlacementTarget(own.ordered_episode_ids, grabbing_title.series_index, title_names=own.names)
     ).facts

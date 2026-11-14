@@ -30,24 +30,28 @@ _H1 = "a" * 40
 _H2 = "b" * 40
 
 
-def _entry(al_id: int, *hashes: str | None) -> EntryRecord:
-    """Entry `al_id` listing one single-file torrent per hash, sized `al_id`."""
+def _entry(anilist_id: int, *hashes: str | None) -> EntryRecord:
+    """Entry `anilist_id` listing one single-file torrent per hash, sized `anilist_id`."""
 
     torrents = tuple(
-        make_torrent_record(url=f"https://nyaa.si/{al_id}{i}", infohash=h, file_names=("Show.mkv",), file_size=al_id)
+        make_torrent_record(
+            url=f"https://nyaa.si/{anilist_id}{i}", infohash=h, file_names=("Show.mkv",), file_size=anilist_id
+        )
         for i, h in enumerate(hashes)
     )
-    return make_entry_record(anilist_id=al_id, url=f"https://releases.moe/{al_id}", torrents=torrents)
+    return make_entry_record(anilist_id=anilist_id, url=f"https://releases.moe/{anilist_id}", torrents=torrents)
 
 
-def _mappings(*al_ids: int, ignored: Iterable[int] = ()) -> ResolvedMappings:
-    """The series' resolved mappings: `al_ids` kept, `ignored` on the ignore list, each a bare mapping."""
+def _mappings(*anilist_ids: int, ignored: Iterable[int] = ()) -> ResolvedMappings:
+    """The series' resolved mappings: `anilist_ids` kept, `ignored` on the ignore list, each a bare mapping."""
 
-    return _resolved({al_id: TitleMapping(anilist_id=al_id) for al_id in al_ids}, ignored=ignored)
+    return _resolved({anilist_id: TitleMapping(anilist_id=anilist_id) for anilist_id in anilist_ids}, ignored=ignored)
 
 
 def _resolved(kept: dict[int, TitleMapping], *, ignored: Iterable[int] = ()) -> ResolvedMappings:
-    return ResolvedMappings(kept=kept, ignored={al_id: TitleMapping(anilist_id=al_id) for al_id in ignored})
+    return ResolvedMappings(
+        kept=kept, ignored={anilist_id: TitleMapping(anilist_id=anilist_id) for anilist_id in ignored}
+    )
 
 
 def _episodes(*numbers: int) -> list[SonarrEpisode]:
@@ -62,16 +66,16 @@ def _windows(
     return ScriptedEpisodes(windows=windows, ambiguous=ambiguous)
 
 
-def _names(al_id: int) -> TitleNames:
-    """The title's names the resolver of `SeriesListings` gives title `al_id`."""
+def _names(anilist_id: int) -> TitleNames:
+    """The title's names the resolver of `SeriesListings` gives title `anilist_id`."""
 
-    return TitleNames("Show", (f"Title {al_id}",))
+    return TitleNames("Show", (f"Title {anilist_id}",))
 
 
-def _window(al_id: int, *ids: int) -> TitleWindow:
-    """Title `al_id`'s window over `ids` on series 7, named by the resolver."""
+def _window(anilist_id: int, *ids: int) -> TitleWindow:
+    """Title `anilist_id`'s window over `ids` on series 7, named by the resolver."""
 
-    return title_window(al_id, ids, series_id=7, names=_names(al_id))
+    return title_window(anilist_id, ids, series_id=7, names=_names(anilist_id))
 
 
 def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListings:

@@ -316,7 +316,7 @@ class ImportSnapshot:
         """
 
         route = self.route(ep_id)
-        if route.claim is not None and (own := self.by_claim.get(route.claim.al_id)) is not None:
+        if route.claim is not None and (own := self.by_claim.get(route.claim.anilist_id)) is not None:
             return own
         return None if route.series_id is None else self.by_series.get(route.series_id)
 

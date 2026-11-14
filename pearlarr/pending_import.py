@@ -129,7 +129,7 @@ class TitleNames:
 class TitleWindow:
     """One title's episode window on a series: its episode ids and the names it goes by."""
 
-    al_id: int
+    anilist_id: int
     """The AniList id."""
 
     series_id: int
@@ -154,7 +154,7 @@ class TitleWindow:
     def of(
         cls,
         *,
-        al_id: int,
+        anilist_id: int,
         series_id: int,
         ep_list: Iterable[SonarrEpisode],
         names: TitleNames,
@@ -165,7 +165,7 @@ class TitleWindow:
 
         ids = tuple(dict.fromkeys(ep.id for ep in ep_list if ep.id))
         return cls(
-            al_id=al_id,
+            anilist_id=anilist_id,
             series_id=series_id,
             ordered_episode_ids=ids,
             names=names,
@@ -208,7 +208,7 @@ class OwnedAtGrab:
 class TitleClaim:
     """One title's claim on a torrent: the window its files are checked under and the episodes it intends."""
 
-    al_id: int
+    anilist_id: int
     """The AniList id, also the key of the title's `guard_facts` row."""
 
     series_id: int
@@ -236,7 +236,7 @@ class TitleClaim:
     """This claim's ids as a coverage string (e.g. `"S02 E06"`)."""
 
     guards: OwnedAtGrab = field(default_factory=OwnedAtGrab)
-    """The plan's overwrite-guard evidence. Not serialized: loaded from `guard_facts` by `al_id`."""
+    """The plan's overwrite-guard evidence. Not serialized: loaded from `guard_facts` by `anilist_id`."""
 
     def admits(self, ep_id: int) -> bool:
         """Whether the claim's window has `ep_id`.
@@ -257,14 +257,17 @@ class TitleClaim:
         """
 
         return TitleWindow(
-            al_id=self.al_id, series_id=self.series_id, ordered_episode_ids=self.ordered_episode_ids, names=self.names
+            anilist_id=self.anilist_id,
+            series_id=self.series_id,
+            ordered_episode_ids=self.ordered_episode_ids,
+            names=self.names,
         )
 
     def to_json(self) -> dict[str, Any]:
         """The plain dict stored in the pending import (its guards go in a separate row): the schema, spelled out."""
 
         return {
-            "al_id": self.al_id,
+            "al_id": self.anilist_id,
             "series_id": self.series_id,
             "title": self.title,
             "coverage": self.window_coverage,
@@ -279,9 +282,9 @@ class TitleClaim:
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, OwnedAtGrab]) -> "TitleClaim":
         """Rebuild a claim from its persisted dict, fed the arr's guard rows by title."""
 
-        al_id = raw.get("al_id", 0)
+        anilist_id = raw.get("al_id", 0)
         return cls(
-            al_id=al_id,
+            anilist_id=anilist_id,
             series_id=raw.get("series_id", 0),
             title=raw.get("title"),
             window_coverage=raw.get("coverage"),
@@ -290,7 +293,7 @@ class TitleClaim:
             names=TitleNames.from_json(raw.get("names", {})),
             preowned_episode_ids=tuple(raw.get("preowned_episode_ids", [])),
             claimed_coverage=raw.get("slice_coverage"),
-            guards=guards.get(al_id, OwnedAtGrab()),
+            guards=guards.get(anilist_id, OwnedAtGrab()),
         )
 
 
@@ -508,7 +511,7 @@ class PendingImport:
 
         claims = (*self.claims, claim)
         for index, stored in enumerate(self.claims):
-            if stored.al_id == claim.al_id:
+            if stored.anilist_id == claim.anilist_id:
                 kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break

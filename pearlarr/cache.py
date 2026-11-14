@@ -168,7 +168,7 @@ def _migrate_3_to_4(conn: sqlite3.Connection) -> None:
 class _PendingImportV4:
     """One v4 `pending_imports` row narrowed once: the per-title row shape before the torrent-level merge."""
 
-    al_id: int
+    anilist_id: int
     series_id: int
     title: str | None
     coverage: str | None
@@ -192,7 +192,7 @@ class _PendingImportV4:
         """Narrow a stored v4 dict with the defaults its reader applied."""
 
         return cls(
-            al_id=raw.get("al_id", 0),
+            anilist_id=raw.get("al_id", 0),
             series_id=raw.get("series_id", 0),
             title=raw.get("title"),
             coverage=raw.get("coverage"),
@@ -224,7 +224,7 @@ class _PendingImportV4:
                 {i for ids in self.file_episode_map.values() for i in ids if i} | {i for i in self.episode_ids if i}
             )
         return {
-            "al_id": self.al_id,
+            "al_id": self.anilist_id,
             "series_id": self.series_id,
             "title": self.title,
             "coverage": self.coverage,
@@ -241,7 +241,7 @@ def _merge_v4_rows(infohash: str, rows: Sequence[_PendingImportV4]) -> dict[str,
 
     first = rows[0]
     if any(row.release_group != first.release_group or row.is_dual_audio != first.is_dual_audio for row in rows):
-        _LOG.debug(f"pending import rows of {infohash} disagree on their release; keeping title {first.al_id}'s")
+        _LOG.debug(f"pending import rows of {infohash} disagree on their release; keeping title {first.anilist_id}'s")
     stamps = [moment for row in rows if (moment := parse_stamp_or_none(row.added_at)) is not None]
     file_episode_map: dict[str, list[int]] = {}
     for row in rows:
@@ -450,17 +450,17 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def store_selection_hash(self, arr: Arr, selection_hash: str) -> None: ...
     @abstractmethod
-    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None: ...
+    def get_cached_title(self, arr: Arr, anilist_id: int) -> CachedTitle | None: ...
     @abstractmethod
-    def update_cached_title(self, arr: Arr, al_id: int, update: CachedTitleUpdate) -> None: ...
+    def update_cached_title(self, arr: Arr, anilist_id: int, update: CachedTitleUpdate) -> None: ...
     @abstractmethod
-    def uncache_title(self, arr: Arr, al_id: int) -> None: ...
+    def uncache_title(self, arr: Arr, anilist_id: int) -> None: ...
     @abstractmethod
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]: ...
     @abstractmethod
-    def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None: ...
+    def get_anilist_meta(self, anilist_id: int) -> dict[str, Any] | None: ...
     @abstractmethod
-    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None: ...
+    def put_anilist_meta(self, anilist_id: int, row: dict[str, Any]) -> None: ...
     @abstractmethod
     def evict_anilist_meta(self, cutoff: datetime) -> int: ...
     @abstractmethod
@@ -482,7 +482,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def other_arr_holds(self, arr: Arr, infohash: str) -> bool: ...
     @abstractmethod
-    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None: ...
+    def put_guards(self, arr: Arr, anilist_id: int, guards: OwnedAtGrab) -> None: ...
     @abstractmethod
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]: ...
     @abstractmethod
@@ -629,13 +629,13 @@ class CacheStore(AbstractCacheStore):
     # -- cached titles (entries) ----------------------------------------------
 
     @override
-    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
+    def get_cached_title(self, arr: Arr, anilist_id: int) -> CachedTitle | None:
         """A title's row in one query, or None."""
 
         row = self._conn.execute(
             "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
             "WHERE arr = ? AND al_id = ?",
-            (_arr_key(arr), al_id),
+            (_arr_key(arr), anilist_id),
         ).fetchone()
         return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
 
@@ -643,7 +643,7 @@ class CacheStore(AbstractCacheStore):
     def update_cached_title(
         self,
         arr: Arr,
-        al_id: int,
+        anilist_id: int,
         update: CachedTitleUpdate,
     ) -> None:
         """Merge fields into a title's row: only supplied ones, staged until a save point.
@@ -668,11 +668,11 @@ class CacheStore(AbstractCacheStore):
         self._conn.execute(
             f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "
             f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
-            (_arr_key(arr), al_id, *(details[c] for c in supplied)),
+            (_arr_key(arr), anilist_id, *(details[c] for c in supplied)),
         )
 
     @override
-    def uncache_title(self, arr: Arr, al_id: int) -> None:
+    def uncache_title(self, arr: Arr, anilist_id: int) -> None:
         """Clear a title's stamp: the arr's runs check the title again until a check caches it again.
 
         The rest of the row stays. Without a row this does nothing. Staged like any write.
@@ -680,7 +680,7 @@ class CacheStore(AbstractCacheStore):
 
         self._conn.execute(
             "UPDATE entries SET updated_at = NULL WHERE arr = ? AND al_id = ?",
-            (_arr_key(arr), al_id),
+            (_arr_key(arr), anilist_id),
         )
 
     # -- JSONB blocks (shared plumbing) ---------------------------------------
@@ -726,24 +726,24 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        """Yield `(al_id, answer)` for every cached answer, age unfiltered (see `stamp_is_fresh`)."""
+        """Yield `(anilist_id, answer)` for every cached answer, age unfiltered (see `stamp_is_fresh`)."""
 
-        for al_id, rec_json in self._conn.execute(
+        for anilist_id, rec_json in self._conn.execute(
             "SELECT al_id, json(record) FROM anilist_meta",
         ):
-            yield al_id, json.loads(rec_json)
+            yield anilist_id, json.loads(rec_json)
 
     @override
-    def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
+    def get_anilist_meta(self, anilist_id: int) -> dict[str, Any] | None:
         """The cached `{"fetched_at", "data"}` answer for an id, or None."""
 
-        return self._json_get(_ANILIST_META, (al_id,))
+        return self._json_get(_ANILIST_META, (anilist_id,))
 
     @override
-    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None:
+    def put_anilist_meta(self, anilist_id: int, row: dict[str, Any]) -> None:
         """Upsert a cached AniList answer (staged, persisted at a save point)."""
 
-        self._json_put(_ANILIST_META, (al_id,), row)
+        self._json_put(_ANILIST_META, (anilist_id,), row)
 
     # -- Sonarr parse cache (JSONB + TTL) ------------------------------------
 
@@ -812,18 +812,18 @@ class CacheStore(AbstractCacheStore):
         return row is not None
 
     @override
-    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None:
+    def put_guards(self, arr: Arr, anilist_id: int, guards: OwnedAtGrab) -> None:
         """Upsert the title's guard-evidence row (staged, persisted at a save point)."""
 
-        self._json_put(_GUARD_FACTS, (_arr_key(arr), al_id), asdict(guards))
+        self._json_put(_GUARD_FACTS, (_arr_key(arr), anilist_id), asdict(guards))
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
         """The arr's guard rows for titles with LIVE pending imports. Rows are immortal, nothing deletes one."""
 
         return {
-            al_id: OwnedAtGrab.from_json(json.loads(rec_json))
-            for al_id, rec_json in self._conn.execute(
+            anilist_id: OwnedAtGrab.from_json(json.loads(rec_json))
+            for anilist_id, rec_json in self._conn.execute(
                 "SELECT al_id, json(record) FROM guard_facts WHERE arr = ? AND al_id IN ("
                 "SELECT e.value ->> 'al_id' FROM pending_imports p, json_each(p.record, '$.claims') e WHERE p.arr = ?)",
                 (_arr_key(arr), _arr_key(arr)),

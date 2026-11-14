@@ -347,10 +347,10 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         return self.history
 
     @override
-    def check_title(self, item: FakeArrItem, al_id: int, mapping: TitleMapping) -> None:
-        self.process_calls.append(al_id)
-        if self._process_raises_on is not None and al_id == self._process_raises_on:
-            raise ValueError(f"boom on al_id {al_id}")
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        self.process_calls.append(anilist_id)
+        if self._process_raises_on is not None and anilist_id == self._process_raises_on:
+            raise ValueError(f"boom on anilist_id {anilist_id}")
         if self._cap_services is not None:
             self._cap_services.state.per_title.held_by_cap = True
             self._cap_services.state.stats.held_by_cap += 1
@@ -662,9 +662,9 @@ class FakeSkyHookClient(AbstractSkyHookClient):
 class ScriptedEpisodes:
     """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
 
-    `mapping_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[al_id]` when windows are
+    `mapping_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is None, a failed fetch. The `unread_series` have
-    no stored order answer, and the `unread_al_ids` no AniList answer. `counts` are AniList's episode counts by
+    no stored order answer, and the `unread_anilist_ids` no AniList answer. `counts` are AniList's episode counts by
     AniList id, None for an id left out.
     """
 
@@ -677,14 +677,14 @@ class ScriptedEpisodes:
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
         unread_series: frozenset[int] = frozenset(),
-        unread_al_ids: frozenset[int] = frozenset(),
+        unread_anilist_ids: frozenset[int] = frozenset(),
         counts: Mapping[int, int] | None = None,
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
         self._unread_series = unread_series
-        self._unread_al_ids = unread_al_ids
+        self._unread_anilist_ids = unread_anilist_ids
         self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
         """Each `mapping_episodes` call's (series id, AniList id), in call order."""
@@ -694,14 +694,16 @@ class ScriptedEpisodes:
 
         return None if self._sonarr is None else self._sonarr.episodes(series_id)
 
-    def mapping_episodes(self, sonarr_series_id: int, al_id: int, mapping: TitleMapping) -> list[SonarrEpisode] | None:
+    def mapping_episodes(
+        self, sonarr_series_id: int, anilist_id: int, mapping: TitleMapping
+    ) -> list[SonarrEpisode] | None:
         """The title's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
 
         del mapping
-        self.calls.append((sonarr_series_id, al_id))
-        if al_id in self._ambiguous:
+        self.calls.append((sonarr_series_id, anilist_id))
+        if anilist_id in self._ambiguous:
             raise ValueError("ambiguous")
-        return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(al_id)
+        return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(anilist_id)
 
     def sonarr_files(self, ep_list: list[SonarrEpisode]) -> ArrFiles:
         """The arr has no files."""
@@ -721,15 +723,15 @@ class ScriptedEpisodes:
         del series_id
         return True
 
-    def episode_count(self, al_id: int) -> int | None:
+    def episode_count(self, anilist_id: int) -> int | None:
         """The scripted count, None for an unscripted id."""
 
-        return self._counts.get(al_id)
+        return self._counts.get(anilist_id)
 
-    def any_air_dates_unread(self, al_ids: Iterable[int]) -> bool:
-        """Whether any of the titles is one of the `unread_al_ids`."""
+    def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool:
+        """Whether any of the titles is one of the `unread_anilist_ids`."""
 
-        return not self._unread_al_ids.isdisjoint(al_ids)
+        return not self._unread_anilist_ids.isdisjoint(anilist_ids)
 
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series is one of the `unread_series`."""

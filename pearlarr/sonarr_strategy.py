@@ -128,7 +128,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             )
 
         # Episode-domain collaborator: owns the per-run episode cache + series
-        # hash and the (series, al_id, mapping) -> episodes resolution. Built
+        # hash and the (series, anilist_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes / prefetch_orders to it, reads its series_hash for the parse
         # cache, and builds every episode index with its orders_for.
@@ -140,7 +140,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             deps.seadex,
             self._episodes,
             ignore_tag_set(self._config.seadex.ignore_tags),
-            lambda al_id: self._services.resolve_title(al_id).names,
+            lambda anilist_id: self._services.resolve_title(anilist_id).names,
         )
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
@@ -237,7 +237,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def check_title(
         self,
         item: SonarrItem,
-        al_id: int,
+        anilist_id: int,
         mapping: TitleMapping,
     ) -> None:
         """Check one title for a Sonarr series.
@@ -249,7 +249,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         services = self._services
 
-        sd_entry = services.begin_check(al_id)
+        sd_entry = services.begin_check(anilist_id)
         if sd_entry is None:
             return
         sd_url = sd_entry.url
@@ -259,13 +259,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # the URL and the season/episode coverage. The coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
         if services.is_unchanged(
-            al_id,
+            anilist_id,
             sd_entry,
             lambda: _coverage.coverage_string(
                 _coverage.episodes_from_ep_list(
                     self._episodes.mapping_episodes(
                         sonarr_series_id=sonarr_series_id,
-                        al_id=al_id,
+                        anilist_id=anilist_id,
                         mapping=mapping,
                     ),
                 ),
@@ -274,7 +274,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             return
 
         # Resolved now, logged once the episode coverage is known.
-        title = services.resolve_title(al_id)
+        title = services.resolve_title(anilist_id)
 
         # Setup info for cache
         update = services.new_cached_title_update(title, sd_entry)
@@ -282,7 +282,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Get the episode list for all relevant episodes
         ep_list = self._episodes.mapping_episodes(
             sonarr_series_id=sonarr_series_id,
-            al_id=al_id,
+            anilist_id=anilist_id,
             mapping=mapping,
         )
 
@@ -336,7 +336,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the title whose window gave the coverage counts.
-            services.report_no_releases(al_id, update, metadata_unread=self._episodes.any_air_dates_unread([al_id]))
+            services.report_no_releases(
+                anilist_id, update, metadata_unread=self._episodes.any_air_dates_unread([anilist_id])
+            )
             return
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
@@ -354,12 +356,12 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         resolved = self._services.mappings_with_ignored(ExternalIds.of_series(item))
         listings = self._listings.read(sonarr_series_id, resolved)
         grabbing_title = GrabbingTitle(
-            al_id=al_id,
+            anilist_id=anilist_id,
             series_id=sonarr_series_id,
             title_index=episode_index(ep_list, self._episodes.orders_for(sonarr_series_id)),
             series_index=indexes.get(sonarr_series_id, episode_index([])),
             title_names=title.names,
-            episode_count=self._episodes.episode_count(al_id),
+            episode_count=self._episodes.episode_count(anilist_id),
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
             aired_order=self._episodes.aired_order(sonarr_series_id),
         )
@@ -404,7 +406,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 seadex_dict,
                 placed,
                 TitleFacts(
-                    al_id=al_id,
+                    anilist_id=anilist_id,
                     series_id=sonarr_series_id,
                     title=title.name,
                     coverage=coverage,
@@ -415,7 +417,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         services.grab_and_cache(
             GrabRequest(
-                al_id=al_id,
+                anilist_id=anilist_id,
                 arr_title=item.title,
                 title_name=title.name,
                 entry=sd_entry,

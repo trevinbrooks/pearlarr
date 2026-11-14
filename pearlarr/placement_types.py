@@ -503,8 +503,8 @@ class TorrentListing:
         # SeaDex can list one hash twice under an entry, so the first window per AniList id wins.
         kept: dict[int, TitleWindow] = {}
         for window in self.windows:
-            kept.setdefault(window.al_id, window)
-        entries = tuple(sorted(kept.values(), key=lambda window: window.al_id))
+            kept.setdefault(window.anilist_id, window)
+        entries = tuple(sorted(kept.values(), key=lambda window: window.anilist_id))
         object.__setattr__(self, "windows", entries)
         # Copied before it's wrapped, so a caller's later edits can't reach the listing.
         object.__setattr__(self, "special_aliases", MappingProxyType(dict(self.special_aliases)))
@@ -648,7 +648,7 @@ class PlacementTarget:
 class GrabbingTitle:
     """What one title's files are placed against: its indexes, its names, and what AniList and Sonarr say of it."""
 
-    al_id: int
+    anilist_id: int
     """The title claiming the placement: a stored claim of its own is replaced by the fresh window."""
 
     series_id: int
@@ -677,7 +677,7 @@ class GrabbingTitle:
 
     def __post_init__(self) -> None:
         window = TitleWindow.of(
-            al_id=self.al_id,
+            anilist_id=self.anilist_id,
             series_id=self.series_id,
             ep_list=self.title_index.by_id.values(),
             names=self.title_names,

@@ -89,7 +89,7 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeClock,
-    claim_al_ids,
+    claim_anilist_ids,
     episode_snapshot,
     grab_plan,
     make_bare_instance,
@@ -207,7 +207,7 @@ class _FakeRunServices(ArrRunServices):
         self._plan_grabs_result = plan_grabs_result
         self._import_wait_mode = import_wait_mode
         self.title_mappings_calls: list[TitleMappingsCall] = []
-        self.al_id_prologue_calls: list[int] = []
+        self.anilist_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
         self.unmonitored_titles: list[str] = []
         self.missing_episodes: list[str] = []
@@ -228,8 +228,8 @@ class _FakeRunServices(ArrRunServices):
         return self._pending_imports
 
     @override
-    def title_needs_check(self, al_id: int) -> bool:
-        del al_id
+    def title_needs_check(self, anilist_id: int) -> bool:
+        del anilist_id
         return self._needs_scan
 
     @override
@@ -243,24 +243,24 @@ class _FakeRunServices(ArrRunServices):
         return ResolvedMappings(kept=self._anilist_ids, ignored=self._ignored)
 
     @override
-    def begin_check(self, al_id: int) -> EntryRecord | None:
-        self.al_id_prologue_calls.append(al_id)
+    def begin_check(self, anilist_id: int) -> EntryRecord | None:
+        self.anilist_id_prologue_calls.append(anilist_id)
         return self._prologue_entry
 
     @override
     def is_unchanged(
         self,
-        al_id: int,
+        anilist_id: int,
         sd_entry: EntryRecord,
         coverage: Callable[[], str],
     ) -> bool:
-        del al_id, sd_entry
+        del anilist_id, sd_entry
         self.cached_skip_coverages.append(coverage)
         return self._cached_skip
 
     @override
-    def resolve_title(self, al_id: int) -> Title:
-        return Title(al_id=al_id, name=self._anilist_title, names=TitleNames(anilist=(self._anilist_title,)))
+    def resolve_title(self, anilist_id: int) -> Title:
+        return Title(anilist_id=anilist_id, name=self._anilist_title, names=TitleNames(anilist=(self._anilist_title,)))
 
     @override
     def new_cached_title_update(self, title: Title, sd_entry: EntryRecord) -> CachedTitleUpdate:
@@ -301,10 +301,10 @@ class _FakeRunServices(ArrRunServices):
         return self._import_wait_mode
 
     @override
-    def report_no_releases(self, al_id: int, update: CachedTitleUpdate, *, metadata_unread: bool = False) -> None:
-        self.no_releases_calls.append((al_id, update))
+    def report_no_releases(self, anilist_id: int, update: CachedTitleUpdate, *, metadata_unread: bool = False) -> None:
+        self.no_releases_calls.append((anilist_id, update))
         if metadata_unread:
-            self.no_releases_unread.append(al_id)
+            self.no_releases_unread.append(anilist_id)
 
     @override
     def report_invalid_selection(self) -> None:
@@ -508,14 +508,14 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(RadarrStrategy, _services=run)
 
         strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.al_id_prologue_calls == [5]
+        assert run.anilist_id_prologue_calls == [5]
 
     def test_sonarr_no_seadex_entry_stops_at_begin_check(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrStrategy, _services=run)
 
         strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.al_id_prologue_calls == [5]
+        assert run.anilist_id_prologue_calls == [5]
 
     def test_sonarr_no_episodes_resolved_stops_explicitly(self) -> None:
         # An anime-id mapping that resolves to [] (season not in Sonarr / offset past
@@ -924,7 +924,7 @@ class TestImportCompletedQueueState:
         # every claim's part.
         pending = pending_import(
             infohash="abc123",
-            claims=(title_claim(), title_claim(al_id=777, series_id=8, title="Other")),
+            claims=(title_claim(), title_claim(anilist_id=777, series_id=8, title="Other")),
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
@@ -1341,7 +1341,7 @@ class TestImportCompletedQueueState:
         )
         (claim,) = pending.claims
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        store.put_guards(Arr.SONARR, claim.al_id, claim.guards)
+        store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
         mgr = make_import_wait_manager(
             qbit=_CompletedQbit("/d"),
             cache_store=store,
@@ -2208,8 +2208,8 @@ class TestMultiSeriesImport:
             file_episode_map={},
             seadex_files=[_SHOW_FILE, _OTHER_FILE, second, misfiled, stray],
             claims=(
-                title_claim(al_id=1, series_id=7, title="Show", ordered_episode_ids=(101,)),
-                title_claim(al_id=2, series_id=8, title="Other"),
+                title_claim(anilist_id=1, series_id=7, title="Show", ordered_episode_ids=(101,)),
+                title_claim(anilist_id=2, series_id=8, title="Other"),
             ),
         )
         rows = [
@@ -2246,8 +2246,8 @@ class TestMultiSeriesImport:
         pending = pending_import(
             file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
             claims=(
-                title_claim(al_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
-                title_claim(al_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
+                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
+                title_claim(anilist_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
             ),
         )
         sonarr = _PerSeriesSonarr(
@@ -2288,8 +2288,8 @@ class TestMultiSeriesImport:
         pending = pending_import(
             file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
             claims=(
-                title_claim(al_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(entry_groups=("G",))),
-                title_claim(al_id=2, guards=OwnedAtGrab(stale_groups=("G",))),
+                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(entry_groups=("G",))),
+                title_claim(anilist_id=2, guards=OwnedAtGrab(stale_groups=("G",))),
             ),
         )
         sonarr = _PerSeriesSonarr(
@@ -2312,9 +2312,11 @@ class TestMultiSeriesImport:
             file_episode_map=files,
             seadex_files=list(files),
             claims=(
-                title_claim(al_id=1, ordered_episode_ids=(101, 102, 103, 104), guards=OwnedAtGrab(stale_groups=("G",))),
                 title_claim(
-                    al_id=2,
+                    anilist_id=1, ordered_episode_ids=(101, 102, 103, 104), guards=OwnedAtGrab(stale_groups=("G",))
+                ),
+                title_claim(
+                    anilist_id=2,
                     ordered_episode_ids=(103, 104),
                     preowned_episode_ids=(103,),
                     guards=OwnedAtGrab(entry_groups=("G",)),
@@ -2454,14 +2456,16 @@ def _grab_episodes(
     sonarr: FakeSonarrClient,
     *,
     unread_series: frozenset[int] = frozenset(),
-    unread_al_ids: frozenset[int] = frozenset(),
+    unread_anilist_ids: frozenset[int] = frozenset(),
 ) -> ScriptedEpisodes:
     """Title 5's window is episode 102 of `sonarr`'s series.
 
-    The `unread_series` have no stored orders, and the `unread_al_ids` no AniList answer.
+    The `unread_series` have no stored orders, and the `unread_anilist_ids` no AniList answer.
     """
 
-    return ScriptedEpisodes(sonarr, windows={5: [_EP2]}, unread_series=unread_series, unread_al_ids=unread_al_ids)
+    return ScriptedEpisodes(
+        sonarr, windows={5: [_EP2]}, unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
+    )
 
 
 def _sonarr_grab_run(mode: ImportWaitMode, *, store: FakeCacheStore, episodes: ScriptedEpisodes) -> _FakeRunServices:
@@ -2554,7 +2558,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         store = FakeCacheStore()
         resident = pending_import(
             infohash="h1",
-            al_id=22,
+            anilist_id=22,
             series_id=7,
             title="Show Cour 1",
             ordered_episode_ids=(101,),
@@ -2570,10 +2574,10 @@ class TestSonarrCheckTitlePendingImportUpdates:
         (update,) = req.pending_import_updates.values()
         assert update.pending_import == resident
         assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
-        assert update.claim.al_id == 5
+        assert update.claim.anilist_id == 5
         assert update.claim.ordered_episode_ids == (102,)
         pending = update.pending_import_at(_STAMP, restart=False)
-        assert claim_al_ids(pending) == (22, 5)
+        assert claim_anilist_ids(pending) == (22, 5)
         assert dict(pending.file_episode_map) == {
             normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
         }
@@ -2815,7 +2819,7 @@ class TestSonarrCheckTitleMetadataUnread:
     """
 
     @pytest.mark.parametrize(
-        ("unread_series", "unread_al_ids", "expected"),
+        ("unread_series", "unread_anilist_ids", "expected"),
         [
             pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
             pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
@@ -2826,15 +2830,15 @@ class TestSonarrCheckTitleMetadataUnread:
         ],
     )
     def test_the_grab_request_carries_whether_its_metadata_is_unread(
-        self, unread_series: frozenset[int], unread_al_ids: frozenset[int], expected: bool
+        self, unread_series: frozenset[int], unread_anilist_ids: frozenset[int], expected: bool
     ) -> None:
         # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
         # import too.
         store = FakeCacheStore()
-        resident = pending_import(infohash="h1", al_id=22, series_id=8, seadex_files=list(_GRAB_FILES))
+        resident = pending_import(infohash="h1", anilist_id=22, series_id=8, seadex_files=list(_GRAB_FILES))
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = _grab_episodes(
-            FakeSonarrClient(episodes=[_EP1, _EP2]), unread_series=unread_series, unread_al_ids=unread_al_ids
+            FakeSonarrClient(episodes=[_EP1, _EP2]), unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
         )
 
         run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
@@ -2843,14 +2847,14 @@ class TestSonarrCheckTitleMetadataUnread:
         assert req.metadata_unread is expected
 
     @pytest.mark.parametrize(
-        ("unread_al_ids", "unread"),
+        ("unread_anilist_ids", "unread"),
         [
             pytest.param(frozenset({5}), [5], id="its-own-entry"),
             pytest.param(frozenset({4}), [], id="another-entry-of-its-series"),
         ],
     )
     def test_a_title_with_no_suitable_release_asks_about_itself_alone(
-        self, unread_al_ids: frozenset[int], unread: list[int]
+        self, unread_anilist_ids: frozenset[int], unread: list[int]
     ) -> None:
         run = _FakeRunServices(
             anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
@@ -2862,14 +2866,14 @@ class TestSonarrCheckTitleMetadataUnread:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=_grab_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_al_ids=unread_al_ids),
+            _episodes=_grab_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_anilist_ids=unread_anilist_ids),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
 
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
-        assert [al_id for al_id, _ in run.no_releases_calls] == [5]
+        assert [anilist_id for anilist_id, _ in run.no_releases_calls] == [5]
         assert run.no_releases_unread == unread
 
 
@@ -2918,7 +2922,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
         # Carried fields: the real torrent identity + the one claim's anilist display context.
         assert update.facts.infohash == "h1"
         assert update.facts.release_group == "NAN0"
-        assert update.claim.al_id == 42
+        assert update.claim.anilist_id == 42
         assert update.claim.title == "A Movie"
         assert update.claim.url == "https://releases.moe/9"
         # A torrent the store does not hold starts a new pending import.
@@ -2939,7 +2943,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
         # A torrent already stored for another Radarr title: the pending import update merges this title's claim onto
         # it.
         store = FakeCacheStore()
-        resident = pending_import(infohash="h1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        resident = pending_import(infohash="h1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
         store.put_pending_import_row(Arr.RADARR, "h1", resident.to_json())
 
         run = self._run_process(ImportWaitMode.BLOCKING, store=store)
@@ -2947,11 +2951,11 @@ class TestRadarrCheckTitlePendingImportUpdates:
         (req,) = run.grab_requests
         (update,) = req.pending_import_updates.values()
         assert update.pending_import == resident
-        assert claim_al_ids(update.pending_import_at(_STAMP, restart=False)) == (9, 42)
+        assert claim_anilist_ids(update.pending_import_at(_STAMP, restart=False)) == (9, 42)
 
     def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
         store = FakeCacheStore()
-        resident = pending_import(infohash="c1", al_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        resident = pending_import(infohash="c1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
         store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
 
         run = self._run_process(ImportWaitMode.BLOCKING, store=store, cross_seed="c1")
@@ -3281,7 +3285,7 @@ class TestLeftForHandImportFiles:
         pending = self._record()
         raw = pending.to_json()
         del raw["hand_import_files"]
-        stored = PendingImport.from_json(raw, guards={claim.al_id: claim.guards for claim in pending.claims})
+        stored = PendingImport.from_json(raw, guards={claim.anilist_id: claim.guards for claim in pending.claims})
 
         result = strat.import_completed(stored, "/d", AttemptKind.ORDINARY)
 
@@ -4243,7 +4247,7 @@ class TestRadarrCheckTitle:
         # The grab filter received the movie's accumulated files.
         assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"OldGroup": (100,)}))]
         [req] = run.grab_requests
-        assert req.al_id == 5
+        assert req.anilist_id == 5
         assert req.arr_title == "Item Title"
         assert req.title_name == "Movie Title"
         # The SeaDex entry goes on the request whole (the notifier reads its

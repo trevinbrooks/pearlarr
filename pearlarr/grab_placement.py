@@ -526,7 +526,7 @@ NO_WINDOW_TERMS = ClaimTerms()
 class TitleFacts:
     """What a title is, independent of any torrent: the fields every claim it makes carries."""
 
-    al_id: int
+    anilist_id: int
     """The title's AniList id, the claim's key."""
     series_id: int
     """The Sonarr series id the title's files belong to (0 for a Radarr movie)."""
@@ -543,7 +543,7 @@ class TitleFacts:
         """The title's claim on `terms`."""
 
         return TitleClaim(
-            al_id=self.al_id,
+            anilist_id=self.anilist_id,
             series_id=self.series_id,
             title=self.title,
             window_coverage=self.coverage,

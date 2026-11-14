@@ -99,8 +99,8 @@ def test_sonarr_run_drives_real_composition_root(
             filter_calls.append(query)
             return [entry]
 
-        def from_id(self, al_id: int) -> EntryRecord:
-            del al_id
+        def from_id(self, anilist_id: int) -> EntryRecord:
+            del anilist_id
             return entry
 
     def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:
@@ -240,8 +240,8 @@ def test_radarr_run_drives_real_composition_root(
             filter_calls.append(query)
             return [entry]
 
-        def from_id(self, al_id: int) -> EntryRecord:
-            del al_id
+        def from_id(self, anilist_id: int) -> EntryRecord:
+            del anilist_id
             return entry
 
     def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:

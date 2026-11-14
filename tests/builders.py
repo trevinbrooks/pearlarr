@@ -196,13 +196,13 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     return len(stale)
 
 
-def anilist_body(al_id: int, title: str = "Resolved") -> AniListBody:
+def anilist_body(anilist_id: int, title: str = "Resolved") -> AniListBody:
     """A populated single-id AniList body: the run-cache value, and a stored answer's `data`."""
 
     return {
         "data": {
             "Media": {
-                "id": al_id,
+                "id": anilist_id,
                 "title": {"english": title},
                 "coverImage": {"large": "https://img/large"},
                 "bannerImage": "https://img/banner",
@@ -241,28 +241,32 @@ class ScriptedAniListClient(AniListClient):
         self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
 
     @override
-    def query(self, al_id: int) -> dict[str, Any]:
+    def query(self, anilist_id: int) -> dict[str, Any]:
         if self.unreachable:
             return {}
-        self.query_calls.append(al_id)
-        if al_id in self._failing:
+        self.query_calls.append(anilist_id)
+        if anilist_id in self._failing:
             self._trip()
             return {}
-        if self._title is None or al_id in self._absent:
+        if self._title is None or anilist_id in self._absent:
             return {"data": {"Media": None}}
-        return anilist_body(al_id, self._title)
+        return anilist_body(anilist_id, self._title)
 
     @override
-    def query_batch(self, al_ids: list[int]) -> AniListAnswers:
+    def query_batch(self, anilist_ids: list[int]) -> AniListAnswers:
         if self.unreachable:
             return {}
-        self.batch_calls.append(list(al_ids))
-        if self._failing & set(al_ids):
+        self.batch_calls.append(list(anilist_ids))
+        if self._failing & set(anilist_ids):
             self._trip()
             return {}
         if self._title is None:
             return {}
-        return {al_id: anilist_body(al_id, self._title) for al_id in al_ids if al_id not in self._absent}
+        return {
+            anilist_id: anilist_body(anilist_id, self._title)
+            for anilist_id in anilist_ids
+            if anilist_id not in self._absent
+        }
 
 
 class FakeCacheStore(AbstractCacheStore):
@@ -276,7 +280,7 @@ class FakeCacheStore(AbstractCacheStore):
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
         self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
-        # The cached titles, keyed by (arr, al_id). The existence checks key on membership, never the dict's truthiness.
+        # The cached titles, keyed by (arr, anilist_id). The existence checks key on membership, never the dict's truthiness.
         self._cached_titles: dict[tuple[str, int], dict[str, Any]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
@@ -308,7 +312,7 @@ class FakeCacheStore(AbstractCacheStore):
     def update_cached_title(
         self,
         arr: Arr,
-        al_id: int,
+        anilist_id: int,
         update: CachedTitleUpdate,
     ) -> None:
         """Partial-merge the supplied columns. An empty update adds no row."""
@@ -320,21 +324,21 @@ class FakeCacheStore(AbstractCacheStore):
 
         supplied = {column: details[column] for column in _FAKE_CACHED_TITLE_FIELDS if column in details}
         if supplied:
-            self._cached_titles.setdefault((str(arr), al_id), {}).update(supplied)
+            self._cached_titles.setdefault((str(arr), anilist_id), {}).update(supplied)
 
     @override
-    def uncache_title(self, arr: Arr, al_id: int) -> None:
+    def uncache_title(self, arr: Arr, anilist_id: int) -> None:
         """Drop the title's stored timestamp. No row, no effect."""
 
-        cached = self._cached_titles.get((str(arr), al_id))
+        cached = self._cached_titles.get((str(arr), anilist_id))
         if cached is not None:
             cached.pop("updated_at", None)
 
     @override
-    def get_cached_title(self, arr: Arr, al_id: int) -> CachedTitle | None:
+    def get_cached_title(self, arr: Arr, anilist_id: int) -> CachedTitle | None:
         """The title's row as a `CachedTitle`, or None."""
 
-        cached = self._cached_titles.get((str(arr), al_id))
+        cached = self._cached_titles.get((str(arr), anilist_id))
         if cached is None:
             return None
         return CachedTitle(
@@ -349,15 +353,15 @@ class FakeCacheStore(AbstractCacheStore):
     # -- AniList meta (TTL-swept) --
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        yield from ((al_id, deepcopy(rec)) for al_id, rec in list(self._anilist_meta.items()))
+        yield from ((anilist_id, deepcopy(rec)) for anilist_id, rec in list(self._anilist_meta.items()))
 
     @override
-    def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
-        return deepcopy(self._anilist_meta.get(al_id))
+    def get_anilist_meta(self, anilist_id: int) -> dict[str, Any] | None:
+        return deepcopy(self._anilist_meta.get(anilist_id))
 
     @override
-    def put_anilist_meta(self, al_id: int, row: dict[str, Any]) -> None:
-        self._anilist_meta[al_id] = deepcopy(row)
+    def put_anilist_meta(self, anilist_id: int, row: dict[str, Any]) -> None:
+        self._anilist_meta[anilist_id] = deepcopy(row)
 
     @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
@@ -411,8 +415,8 @@ class FakeCacheStore(AbstractCacheStore):
         return any(infohash in recs for arr_key, recs in self._pending.items() if arr_key != str(arr))
 
     @override
-    def put_guards(self, arr: Arr, al_id: int, guards: OwnedAtGrab) -> None:
-        self._guards.setdefault(str(arr), {})[al_id] = guards
+    def put_guards(self, arr: Arr, anilist_id: int, guards: OwnedAtGrab) -> None:
+        self._guards.setdefault(str(arr), {})[anilist_id] = guards
 
     @override
     def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
@@ -421,7 +425,7 @@ class FakeCacheStore(AbstractCacheStore):
         live = {
             claim.get("al_id") for rec in self._pending.get(str(arr), {}).values() for claim in rec.get("claims", [])
         }
-        return {al_id: g for al_id, g in self._guards.get(str(arr), {}).items() if al_id in live}
+        return {anilist_id: g for anilist_id, g in self._guards.get(str(arr), {}).items() if anilist_id in live}
 
     # -- TVDB orders --
     @override
@@ -472,16 +476,16 @@ class FakeSeaDexSource(SeaDexSource):
         self.entry_calls: list[int] = []
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
+    def prefetch(self, anilist_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         del progress
-        ids = list(al_ids)
+        ids = list(anilist_ids)
         self.prefetch_calls.append(ids)
         return len(ids)
 
     @override
-    def entry(self, al_id: int) -> EntryRecord | SeaDexNoEntry:
-        self.entry_calls.append(al_id)
-        found = self._entries.get(al_id)
+    def entry(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry:
+        self.entry_calls.append(anilist_id)
+        found = self._entries.get(anilist_id)
         if found is not None:
             return found
         return SeaDexNoEntry.UNREACHABLE if self._unreachable else SeaDexNoEntry.NOT_FOUND
@@ -714,7 +718,7 @@ def make_services(**overrides: Any) -> ArrRunServices:
         "arr": Arr.SONARR,
         "_state": ArrRunState(arr=Arr.SONARR),
         # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
-        "_dirty_al_ids": set[int](),
+        "_dirty_anilist_ids": set[int](),
         "_selection_changed": False,
         "_clock": FakeClock(),
         # `bind_arr_run` tells the torrent service who imports.
@@ -889,7 +893,7 @@ def title_facts(**overrides: Any) -> TitleFacts:
     """Title 1 on series 7 named Show, with no coverage, url, or guard facts unless given."""
 
     defaults: dict[str, Any] = {
-        "al_id": 1,
+        "anilist_id": 1,
         "series_id": 7,
         "title": "Show",
         "coverage": None,
@@ -904,7 +908,7 @@ def grab_request(**overrides: Any) -> GrabRequest:
     """A minimal `GrabRequest` for driving the add path directly (an empty `seadex_dict`, no pending import updates)."""
 
     defaults: dict[str, Any] = {
-        "al_id": 1,
+        "anilist_id": 1,
         "arr_title": "Show",
         "title_name": "Show",
         "entry": make_entry_record(url="https://releases.moe/1"),
@@ -1164,7 +1168,7 @@ _NO_NAMES = TitleNames()
 
 
 def title_window(
-    al_id: int,
+    anilist_id: int,
     ids: Iterable[int],
     *,
     series_id: int = 7,
@@ -1172,10 +1176,10 @@ def title_window(
     ignored: bool = False,
     episode_count: int | None = None,
 ) -> TitleWindow:
-    """Title `al_id`'s window over `ids` on `series_id` (series 7, as `title_claim`'s), in the order given."""
+    """Title `anilist_id`'s window over `ids` on `series_id` (series 7, as `title_claim`'s), in the order given."""
 
     return TitleWindow(
-        al_id=al_id,
+        anilist_id=anilist_id,
         series_id=series_id,
         ordered_episode_ids=tuple(ids),
         names=names,
@@ -1217,20 +1221,20 @@ def make_grabbing_title(
     title_index: EpisodeIndex,
     series: EpisodeIndex,
     *,
-    al_id: int = 1,
+    anilist_id: int = 1,
     series_id: int = 7,
     names: TitleNames = _NO_NAMES,
     episode_count: int | None = None,
     alternate_titles: tuple[str, ...] = (),
     aired_order: bool = True,
 ) -> GrabbingTitle:
-    """The grabbing title `al_id` over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
+    """The grabbing title `anilist_id` over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
 
     Unless given, the series has no alternate titles and Sonarr numbers it as aired.
     """
 
     return GrabbingTitle(
-        al_id=al_id,
+        anilist_id=anilist_id,
         series_id=series_id,
         title_index=title_index,
         series_index=series,
@@ -1379,9 +1383,9 @@ def numbered_names(prefix: str, count: int, tails: Sequence[str] = ()) -> list[s
     ]
 
 
-# The `al_id` every `pending_import` builder's claim carries unless overridden, exported so tests can
+# The `anilist_id` every `pending_import` builder's claim carries unless overridden, exported so tests can
 # spell a built pending import's guard-row key without magic ints.
-PENDING_IMPORT_AL_ID = 1
+PENDING_IMPORT_ANILIST_ID = 1
 
 _CLAIM_KEYS = frozenset(TitleClaim.__dataclass_fields__)
 PENDING_IMPORT_STAMP = "2026-06-24 00:00:00"
@@ -1389,10 +1393,10 @@ PENDING_IMPORT_ADDED = parse_stamp(PENDING_IMPORT_STAMP).astimezone()
 
 
 def title_claim(**overrides: Any) -> TitleClaim:
-    """A `TitleClaim` on series 7 by title `PENDING_IMPORT_AL_ID`, with no window unless `ordered_episode_ids` is given."""
+    """A `TitleClaim` on series 7 by title `PENDING_IMPORT_ANILIST_ID`, with no window unless one is given."""
 
     defaults: dict[str, Any] = {
-        "al_id": PENDING_IMPORT_AL_ID,
+        "anilist_id": PENDING_IMPORT_ANILIST_ID,
         "series_id": 7,
         "title": "Show",
         "window_coverage": None,
@@ -1410,7 +1414,7 @@ def title_claim(**overrides: Any) -> TitleClaim:
 
 def two_claim_pending_import(
     *,
-    al_ids: tuple[int, int] = (1, 2),
+    anilist_ids: tuple[int, int] = (1, 2),
     series_ids: tuple[int, int] = (7, 7),
     windows: tuple[tuple[int, ...], tuple[int, ...]] = ((101, 102), (103, 104)),
     titles: tuple[str, str] = ("Show", "Show"),
@@ -1419,8 +1423,8 @@ def two_claim_pending_import(
     """A `pending_import(**overrides)` claimed by two titles, each on its series over its window."""
 
     claims = tuple(
-        title_claim(al_id=al_id, series_id=series_id, ordered_episode_ids=window, title=title)
-        for al_id, series_id, window, title in zip(al_ids, series_ids, windows, titles, strict=True)
+        title_claim(anilist_id=anilist_id, series_id=series_id, ordered_episode_ids=window, title=title)
+        for anilist_id, series_id, window, title in zip(anilist_ids, series_ids, windows, titles, strict=True)
     )
     return pending_import(claims=claims, **overrides)
 
@@ -1428,7 +1432,7 @@ def two_claim_pending_import(
 def pending_import(**overrides: Any) -> PendingImport:
     """A `PendingImport` wiring one mapped file to one episode id under one claim.
 
-    Claim keys (`series_id`, `al_id`, `title`, `ordered_episode_ids`, ...) build that claim unless
+    Claim keys (`series_id`, `anilist_id`, `title`, `ordered_episode_ids`, ...) build that claim unless
     `claims` is given.
     """
 
@@ -1598,7 +1602,7 @@ def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
     return make_bare_instance(SonarrParseCache, **attrs)
 
 
-def claim_al_ids(pending: PendingImport) -> tuple[int, ...]:
+def claim_anilist_ids(pending: PendingImport) -> tuple[int, ...]:
     """The pending import's claiming titles, claim order."""
 
-    return tuple(claim.al_id for claim in pending.claims)
+    return tuple(claim.anilist_id for claim in pending.claims)

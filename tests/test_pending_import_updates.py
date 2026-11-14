@@ -142,7 +142,7 @@ class TestBuildPendingImportUpdates:
         update = updates["h1"]
         claim = update.claim
         assert claim.series_id == 7
-        assert claim.al_id == 1  # the title's guard-row key
+        assert claim.anilist_id == 1  # the title's guard-row key
         assert claim.title == "Show"
         assert claim.names == TitleNames("Show", ("Show", "Shou"))
         assert update.pending_import is None
@@ -873,7 +873,7 @@ class TestTrustedGroups:
         # season's episodes.
         sibling = pending_import(
             infohash="s1",
-            al_id=999,
+            anilist_id=999,
             release_group="SibGrab",
             guards=OwnedAtGrab(entry_groups=("SibGrab", "SibPick")),
         )
@@ -886,7 +886,7 @@ class TestTrustedGroups:
         # B copy in the arr outdated and excluded it from entry_groups. The sibling's
         # group must not re-admit B, or the outdated files it shields read done and
         # the replacement import never happens.
-        sibling = pending_import(infohash="s1", al_id=999, release_group="B")
+        sibling = pending_import(infohash="s1", anilist_id=999, release_group="B")
         own = pending_import(
             release_group="Ours",
             guards=OwnedAtGrab(entry_groups=("Ours",), stale_groups=("B",)),
@@ -913,7 +913,7 @@ class TestTrustedGroups:
         # Two pending imports grabbing the same group (a per-cour torrent each) each
         # list their sizes; a file either pending import's listing carries is an
         # owned copy, so the size gate reads their union.
-        sibling = pending_import(infohash="s1", al_id=999, release_group="Ours", release_sizes=[2000])
+        sibling = pending_import(infohash="s1", anilist_id=999, release_group="Ours", release_sizes=[2000])
         own = pending_import(release_group="Ours", release_sizes=[1000])
 
         assert _trust(own, [sibling])["ours"] == frozenset({1000, 2000})
@@ -921,7 +921,7 @@ class TestTrustedGroups:
     def test_file_map_statuses_read_sibling_grabbed_groups_from_the_store(self) -> None:
         # The store round trip behind the pure merge: a sibling pending import persisted
         # by an earlier grab loads and its group protects the arr's file.
-        sibling = pending_import(infohash="s1", al_id=999, release_group="SibGrab")
+        sibling = pending_import(infohash="s1", anilist_id=999, release_group="SibGrab")
         store = FakeCacheStore(pending={str(Arr.SONARR): {sibling.infohash: sibling.to_json()}})
         sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1, ep_id=101, size=500, release_group="SibGrab")])
         strat = make_sonarr_sync(sonarr=sonarr, cache_store=store)

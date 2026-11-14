@@ -506,8 +506,8 @@ class TestPlacementsFromHistory:
         pending = _unplaced(
             seadex_files=["Show - 01.mkv", "Show - 02.mkv"],
             claims=(
-                title_claim(al_id=1, series_id=7, ordered_episode_ids=[101]),
-                title_claim(al_id=2, series_id=8, ordered_episode_ids=[201]),
+                title_claim(anilist_id=1, series_id=7, ordered_episode_ids=[101]),
+                title_claim(anilist_id=2, series_id=8, ordered_episode_ids=[201]),
             ),
         )
         rows = [HistoryImport("/d/Show - 01.mkv", 201, 8), HistoryImport("/d/Show - 02.mkv", 201, 7)]

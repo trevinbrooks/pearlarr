@@ -1,6 +1,6 @@
 """AniList client gateway: the in-memory meta cache, its refresh age, and prefetch.
 
-`AniListGateway` owns the per-run `al_cache` (AniList responses keyed by id)
+`AniListGateway` owns the per-run `answers` (AniList responses keyed by id)
 and the persisted `anilist_meta` block in the cache file: it loads the cache
 from disk, batch-fetches whatever is missing, past the refresh age, or stored
 without air dates, persists what it fetched, and resolves
@@ -54,7 +54,7 @@ class AniListGateway:
         self._cache = cache_store
         self.logger = logger
         self._client = client
-        self.al_cache: AniListAnswers = {}
+        self.answers: AniListAnswers = {}
         # Loaded past the refresh age or stored without air dates: served as-is while the prefetch tries to
         # refresh them.
         self._stale: set[int] = set()
@@ -69,7 +69,7 @@ class AniListGateway:
 
         return self._client.unreachable
 
-    def air_dates_unread(self, al_id: int) -> bool:
+    def air_dates_unread(self, anilist_id: int) -> bool:
         """Whether a lookup of an id this run went without its air dates because AniList couldn't be asked.
 
         The id was looked up, AniList is unreachable, and no cached answer with its air dates answers. One stored by
@@ -77,17 +77,17 @@ class AniListGateway:
         and neither is one whose lookup AniList answered, with its Media or with no such id.
         """
 
-        if not self.unreachable or al_id not in self._looked_up:
+        if not self.unreachable or anilist_id not in self._looked_up:
             return False
-        body = self.al_cache.get(al_id)
+        body = self.answers.get(anilist_id)
         return body is None or lacks_air_dates(body)
 
-    def _store(self, al_id: int, body: AniListBody) -> None:
+    def _store(self, anilist_id: int, body: AniListBody) -> None:
         """Put a freshly fetched body in the run cache and queue it for the save."""
 
-        self.al_cache[al_id] = body
-        self._stale.discard(al_id)
-        self._fetched.add(al_id)
+        self.answers[anilist_id] = body
+        self._stale.discard(anilist_id)
+        self._fetched.add(anilist_id)
 
     def load_cache(self) -> None:
         """Load the run cache from every cached answer.
@@ -98,14 +98,14 @@ class AniListGateway:
 
         cutoff = datetime.now() - timedelta(days=ANILIST_REFRESH_AGE_DAYS)
         loaded = 0
-        for al_id, answer in self._cache.iter_anilist_meta():
+        for anilist_id, answer in self._cache.iter_anilist_meta():
             payload = row_payload(answer, "data")
             if payload is None:
                 continue
-            self.al_cache[al_id] = payload
+            self.answers[anilist_id] = payload
             # A stale answer still serves: refetch, never drop. An unreadable stamp counts as aged.
             if not stamp_is_fresh(answer, cutoff) or lacks_air_dates(payload):
-                self._stale.add(al_id)
+                self._stale.add(anilist_id)
             loaded += 1
 
         if loaded:
@@ -125,8 +125,8 @@ class AniListGateway:
         now = datetime.now()
         now_str = stamp_of(now)
         written = len(self._fetched)
-        for al_id in self._fetched:
-            self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": self.al_cache[al_id]})
+        for anilist_id in self._fetched:
+            self._cache.put_anilist_meta(anilist_id, {"fetched_at": now_str, "data": self.answers[anilist_id]})
         self._fetched.clear()
 
         # Evicting while AniList is unreachable would drain the very answers serving the run.
@@ -140,20 +140,20 @@ class AniListGateway:
 
     def prefetch(
         self,
-        al_ids: Iterable[int],
+        anilist_ids: Iterable[int],
         *,
         dry_run: bool,
         progress: ProgressCallback | None = None,
     ) -> int:
         """Batch-fetch the missing and stale ids, then persist. Returns how many needed fetching.
 
-        A cached answer that lacks air dates is fetched whether or not `al_ids` names it. `progress` is the boot
+        A cached answer that lacks air dates is fetched whether or not `anilist_ids` names it. `progress` is the boot
         step fed per-batch fraction + "done/total".
         """
 
         # A title the run doesn't check is still read when one it checks shares its series.
-        dateless = {i for i in self._stale if lacks_air_dates(self.al_cache[i])}
-        wanted = sorted({i for i in al_ids if i not in self.al_cache or i in self._stale} | dateless)
+        dateless = {i for i in self._stale if lacks_air_dates(self.answers[i])}
+        wanted = sorted({i for i in anilist_ids if i not in self.answers or i in self._stale} | dateless)
         total = len(wanted)
         if not total:
             return 0
@@ -164,8 +164,8 @@ class AniListGateway:
             # Once AniList is unreachable, the client answered this batch empty and answers every later one the same.
             if self.unreachable:
                 break
-            for al_id, body in fetched.items():
-                self._store(al_id, body)
+            for anilist_id, body in fetched.items():
+                self._store(anilist_id, body)
             done += len(chunk)
             if progress is not None:
                 progress.progress(done / total, f"{done}/{total}")
@@ -174,55 +174,55 @@ class AniListGateway:
         self.save_cache(dry_run=dry_run)
         return total
 
-    def _media(self, al_id: int) -> AniListMediaNode:
+    def _media(self, anilist_id: int) -> AniListMediaNode:
         """Resolve the typed Media node for an id: the run cache, then one wire query. All-None with no Media."""
 
-        self._looked_up.add(al_id)
-        body = self.al_cache.get(al_id)
+        self._looked_up.add(anilist_id)
+        body = self.answers.get(anilist_id)
         if body is not None:
             return media_from_body(body)
 
         # Once AniList is unreachable, the client answers {} without a request.
-        fetched = self._client.query(al_id)
+        fetched = self._client.query(anilist_id)
         raw_media = extract_path(fetched, "data", "Media")
         if raw_media:
-            self._store(al_id, fetched)
+            self._store(anilist_id, fetched)
         elif not self.unreachable:
             # AniList answered and knows no such id: an empty body remembers that for the run.
-            self.al_cache[al_id] = {}
+            self.answers[anilist_id] = {}
         return media_from_node(raw_media)
 
-    def titles(self, al_id: int) -> tuple[str, ...]:
+    def titles(self, anilist_id: int) -> tuple[str, ...]:
         """Every distinct AniList name for an id (English first, then romaji, cached or queried live), empty when none.
 
         Side-effect-free: the caller owns any fallback and the `title_name` attribution.
         """
 
-        media = self._media(al_id)
+        media = self._media(anilist_id)
         return tuple(dict.fromkeys(title for title in (media.title_english, media.title_romaji) if title))
 
-    def thumb(self, al_id: int) -> str | None:
+    def thumb(self, anilist_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None."""
 
-        return self._media(al_id).cover_image
+        return self._media(anilist_id).cover_image
 
-    def banner(self, al_id: int) -> str | None:
+    def banner(self, anilist_id: int) -> str | None:
         """Resolve the AniList wide banner URL for an id, or None."""
 
-        return self._media(al_id).banner_image
+        return self._media(anilist_id).banner_image
 
-    def media_format(self, al_id: int) -> str | None:
+    def media_format(self, anilist_id: int) -> str | None:
         """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None."""
 
-        return self._media(al_id).format
+        return self._media(anilist_id).format
 
-    def episode_count(self, al_id: int) -> int | None:
+    def episode_count(self, anilist_id: int) -> int | None:
         """Resolve the AniList episode count for an id, or None."""
 
         # A stale count still answers: None downstream means "use every episode", which over-grabs.
-        return self._media(al_id).episodes
+        return self._media(anilist_id).episodes
 
-    def airing(self, al_id: int) -> AniListAiring:
+    def airing(self, anilist_id: int) -> AniListAiring:
         """Resolve when AniList says an id aired, with its episode count and episode length (`AniListAiring`)."""
 
-        return self._media(al_id).airing
+        return self._media(anilist_id).airing

@@ -64,7 +64,7 @@ def _record(
 
     The reporter EMITS events through the recorder. Tests that pin output re-derive
     lines from the events. A real gateway with a faked cache store: the reporter
-    only reads/updates its `al_cache` dict, so the real wiring runs without a
+    only reads/updates its `answers` dict, so the real wiring runs without a
     network.
     """
 
@@ -93,7 +93,7 @@ def _event_messages(events: list[Event]) -> list[str]:
 
 
 def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
-    """A FakeCacheStore with one cached title (arr=Sonarr, al_id=1) preseeded."""
+    """A FakeCacheStore with one cached title (arr=Sonarr, anilist_id=1) preseeded."""
 
     store = FakeCacheStore()
     store.update_cached_title(Arr.SONARR, 1, CachedTitleUpdate(name=name, coverage=coverage, url=url))
@@ -135,10 +135,10 @@ class TestStatsCounters:
         state = ArrRunState(arr=Arr.SONARR)
         reporter.log_no_sd_entry(state, 42)
         assert state.stats.no_seadex_entry == 1
-        # Routed through the gateway: its al_cache is warmed in place and the
+        # Routed through the gateway: its answers are warmed in place and the
         # lookup went through its bound wire client (which carries the transport and the
         # per-arr-run retry narration by construction).
-        assert 42 in reporter.anilist.al_cache
+        assert 42 in reporter.anilist.answers
         assert client.query_calls == [42]
 
     def test_cached_without_stored_name_falls_back_to_gateway_name(self) -> None:
@@ -211,7 +211,7 @@ class TestActiveTitle:
 
 
 class TestTitleHeaderAlId:
-    """`al_id` on the emitted `TitleHeader` is reporter-unverified.
+    """`anilist_id` on the emitted `TitleHeader` is reporter-unverified.
 
     Garbage in either header-opening path passed the whole suite, so pin it on both.
     """
@@ -223,14 +223,14 @@ class TestTitleHeaderAlId:
         reporter, events = _record()
         entry = make_entry_record(anilist_id=12345)
         reporter.open_title_block(ArrRunState(arr=Arr.SONARR), "Steins;Gate", entry)
-        assert self._header(events).al_id == 12345
+        assert self._header(events).anilist_id == 12345
 
-    def test_log_cached_title_carries_the_al_id_param(self) -> None:
+    def test_log_cached_title_carries_the_anilist_id_param(self) -> None:
         store = FakeCacheStore()
         store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate(name="Cached", coverage="S01", url="u"))
         reporter, events = _record(store)
         reporter.log_cached_title(ArrRunState(arr=Arr.SONARR), 4242)
-        assert self._header(events).al_id == 4242
+        assert self._header(events).anilist_id == 4242
 
 
 class TestCloseBoundaries:
@@ -419,10 +419,10 @@ class TestPendingImportSnapshot:
         pending = pending_import(
             claims=(
                 title_claim(
-                    al_id=1, series_id=7, title="Show", window_coverage="S01 E01-E13", url="https://releases.moe/1"
+                    anilist_id=1, series_id=7, title="Show", window_coverage="S01 E01-E13", url="https://releases.moe/1"
                 ),
                 title_claim(
-                    al_id=2, series_id=8, title="Other", window_coverage="S02 E01", url="https://releases.moe/2"
+                    anilist_id=2, series_id=8, title="Other", window_coverage="S02 E01", url="https://releases.moe/2"
                 ),
             ),
         )

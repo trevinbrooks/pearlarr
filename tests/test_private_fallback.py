@@ -119,11 +119,11 @@ def _private_skips(recording: RecordingHub) -> list[ReleaseSkipped]:
     return [s for s in recording.of_type(ReleaseSkipped) if s.reason is SkipReason.PRIVATE_ONLY]
 
 
-def _grab_request(al_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> GrabRequest:
+def _grab_request(anilist_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> GrabRequest:
     """The per-title grab payload as the strategies assemble it."""
 
     return GrabRequest(
-        al_id=al_id,
+        anilist_id=anilist_id,
         arr_title="Show",
         title_name="Show",
         entry=entry,
@@ -492,7 +492,7 @@ class TestMixedGroupKeeperPreference:
             private_releases="warn",
             sleep_time=0,
         )
-        pipe._anilist.al_cache.update({55: {}})
+        pipe._anilist.answers.update({55: {}})
         pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, entry))
         assert torrents.calls == [self.H_HASH]
         assert state.stats.needs_action == []
@@ -537,7 +537,7 @@ class TestMixedGroupKeeperPreference:
             private_releases="warn",
             sleep_time=0,
         )
-        pipe._anilist.al_cache.update({56: {}})
+        pipe._anilist.answers.update({56: {}})
         with _record() as recording:
             pipe.grab_and_cache(_grab_request(56, plan.seadex_dict, entry))
 
@@ -612,7 +612,7 @@ class TestSurvivingPrivateCoverage:
             private_releases="fallback",
             sleep_time=0,
         )
-        pipe._anilist.al_cache.update({33: {}})
+        pipe._anilist.answers.update({33: {}})
         with _record() as recording:
             pipe.grab_and_cache(_grab_request(33, plan.seadex_dict, entry))
 
@@ -633,7 +633,7 @@ class TestSurvivingPrivateCoverage:
 class TestPromotionGeneralization:
     """The size-mismatch promotion reaches preferred publics (never fallbacks)."""
 
-    def _preferred_pair_entry(self, al_id: int) -> EntryRecord:
+    def _preferred_pair_entry(self, anilist_id: int) -> EntryRecord:
         # Both releases are PREFERRED (is_best) with identical coverage - the
         # public one is not a fallback, which the old promotion branch required.
         priv = make_torrent_record(
@@ -654,7 +654,7 @@ class TestPromotionGeneralization:
             file_size=555,
             is_best=True,
         )
-        return make_entry_record(anilist_id=al_id, torrents=(priv, pub))
+        return make_entry_record(anilist_id=anilist_id, torrents=(priv, pub))
 
     def test_preferred_public_alternative_is_promoted(self) -> None:
         # Upgrade-pending private release + preferred public twin: pre-graft this
@@ -698,7 +698,7 @@ class TestPromotionGeneralization:
             private_releases="fallback",
             sleep_time=0,
         )
-        pipe._anilist.al_cache.update({66: {}})
+        pipe._anilist.answers.update({66: {}})
         pipe.grab_and_cache(_grab_request(66, plan.seadex_dict, entry))
         assert torrents.calls == [PUB_HASH]
         assert state.stats.needs_action == []
@@ -864,7 +864,7 @@ class TestEqualUnionMixedGroups:
         # its episode silently lost (order-dependent: warn mode then cached the
         # loss). Both public releases must now grab in either order.
         a_pub, a_priv, b_pub, b_priv = self._torrents()
-        for al_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
+        for anilist_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
             state = ArrRunState(arr=Arr.SONARR)
             cache = FakeCacheStore()
             filt = make_release_filter(
@@ -874,7 +874,7 @@ class TestEqualUnionMixedGroups:
                 planner=make_planner(),
                 state=state,
             )
-            entry = make_entry_record(anilist_id=al_id, torrents=order)
+            entry = make_entry_record(anilist_id=anilist_id, torrents=order)
             sd = filt.build(entry)
             _attach_episodes(
                 sd,
@@ -894,8 +894,8 @@ class TestEqualUnionMixedGroups:
 
             # Sonarr is missing both episodes: every release is marked to grab before the reducer.
             plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-            assert plan.seadex_dict["A"].releases[self.A_PUB_URL].to_grab is True, f"order={al_id}"
-            assert plan.seadex_dict["B"].releases[self.B_PUB_URL].to_grab is True, f"order={al_id}"
+            assert plan.seadex_dict["A"].releases[self.A_PUB_URL].to_grab is True, f"order={anilist_id}"
+            assert plan.seadex_dict["B"].releases[self.B_PUB_URL].to_grab is True, f"order={anilist_id}"
 
             torrents = FakeTorrents(
                 {
@@ -910,23 +910,23 @@ class TestEqualUnionMixedGroups:
                 private_releases="warn",
                 sleep_time=0,
             )
-            pipe._anilist.al_cache.update({al_id: {}})
+            pipe._anilist.answers.update({anilist_id: {}})
             with _record() as recording:
-                pipe.grab_and_cache(_grab_request(al_id, plan.seadex_dict, entry))
+                pipe.grab_and_cache(_grab_request(anilist_id, plan.seadex_dict, entry))
 
             # Both episodes obtained. The keeper's surviving private torrent is
             # skipped with a WARNING, and warn mode still caches the title.
-            assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
+            assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={anilist_id}"
             assert _private_skips(recording), recording.events
             assert state.per_title.private_only_skipped is True
-            assert title_is_cached(cache.get_cached_title(Arr.SONARR, al_id), entry) is True
+            assert title_is_cached(cache.get_cached_title(Arr.SONARR, anilist_id), entry) is True
 
 
 class _CachedTitleReporter:
     """Just enough reporter surface for `is_unchanged`'s logging tail."""
 
-    def log_cached_title(self, state: ArrRunState, al_id: int) -> None:
-        del state, al_id
+    def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
+        del state, anilist_id
 
 
 class TestModeSwitchResurfacesFallbackSatisfied:
@@ -969,7 +969,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             private_releases="fallback",
             sleep_time=0,
         )
-        pipe._anilist.al_cache.update({11: {}})
+        pipe._anilist.answers.update({11: {}})
         pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
         cached = cache.get_cached_title(Arr.SONARR, 11)
         assert cached is not None
@@ -1038,7 +1038,7 @@ class TestFolderLayoutCoverage:
         self,
         priv_files: tuple[str, ...],
         pub_files: tuple[str, ...],
-        al_id: int,
+        anilist_id: int,
         *,
         priv_sizes: tuple[int, ...] | None = None,
         pub_sizes: tuple[int, ...] | None = None,
@@ -1080,7 +1080,7 @@ class TestFolderLayoutCoverage:
             prefer_dual_audio=False,
             planner=make_planner(),
         )
-        return filt.build(make_entry_record(anilist_id=al_id, torrents=(priv, pub_twin, alt)))
+        return filt.build(make_entry_record(anilist_id=anilist_id, torrents=(priv, pub_twin, alt)))
 
     def test_covered_private_pick_offers_no_fallback_and_prunes(self) -> None:
         # A file-path comparison misreads the folder-nested private torrent
@@ -1089,7 +1089,7 @@ class TestFolderLayoutCoverage:
         sd = self._built(
             priv_files=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
             pub_files=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
-            al_id=91,
+            anilist_id=91,
             priv_sizes=(70, 90),
             pub_sizes=(70, 90),
         )
@@ -1104,7 +1104,7 @@ class TestFolderLayoutCoverage:
         sd = self._built(
             priv_files=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
             pub_files=("Pick - 01.mkv",),
-            al_id=92,
+            anilist_id=92,
             priv_sizes=(100, 100),
             pub_sizes=(100,),
         )
@@ -1121,7 +1121,7 @@ class TestFolderLayoutCoverage:
         sd = self._built(
             priv_files=("Show S00E03.mkv",),
             pub_files=("Show S00E03.mkv", "Show S00E02.mkv"),
-            al_id=93,
+            anilist_id=93,
             priv_sizes=(1464436971,),
             pub_sizes=(938809391, 1464436971),
         )
@@ -1134,7 +1134,7 @@ class TestFolderLayoutCoverage:
         sd = self._built(
             priv_files=("Pick - 01.mkv",),
             pub_files=("Pick - 01.mkv",),
-            al_id=94,
+            anilist_id=94,
             priv_sizes=(100,),
             pub_sizes=(200,),
         )

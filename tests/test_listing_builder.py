@@ -23,8 +23,8 @@ def _torrent(infohash: str | None, *files: tuple[str, int], tags: frozenset[Tag]
     return make_torrent_record(infohash=infohash, file_names=names, file_sizes=sizes, tags=tags)
 
 
-def _entry(al_id: int, *torrents: TorrentRecord) -> EntryRecord:
-    return make_entry_record(anilist_id=al_id, torrents=torrents)
+def _entry(anilist_id: int, *torrents: TorrentRecord) -> EntryRecord:
+    return make_entry_record(anilist_id=anilist_id, torrents=torrents)
 
 
 def _window(entry: EntryRecord, *ids: int) -> TitleWindow:

@@ -23,7 +23,7 @@ from pearlarr.pending_import import (
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
-from .builders import SEP, claim_al_ids, pending_import, sonarr_ep, title_claim, title_window
+from .builders import SEP, claim_anilist_ids, pending_import, sonarr_ep, title_claim, title_window
 
 HALVES = tuple(normalize_file_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
 """The two halves of a split opener, which only the DVD order numbers."""
@@ -259,9 +259,9 @@ class TestPendingImportClaims:
     def test_series_ids_are_distinct_in_claim_order(self) -> None:
         pending = pending_import(
             claims=(
-                title_claim(al_id=3, series_id=8),
-                title_claim(al_id=1, series_id=7),
-                title_claim(al_id=2, series_id=8),
+                title_claim(anilist_id=3, series_id=8),
+                title_claim(anilist_id=1, series_id=7),
+                title_claim(anilist_id=2, series_id=8),
             ),
         )
 
@@ -292,12 +292,12 @@ class TestPendingImportClaims:
 
     def test_a_claims_window_is_its_title_series_ids_and_names(self) -> None:
         names = TitleNames("Show", ("Show!",))
-        claim = title_claim(al_id=3, series_id=8, ordered_episode_ids=(102, 101), names=names)
+        claim = title_claim(anilist_id=3, series_id=8, ordered_episode_ids=(102, 101), names=names)
 
         assert claim.window == title_window(3, (102, 101), series_id=8, names=names)
 
     def test_claim_for_is_the_first_claim_on_the_series(self) -> None:
-        first, second = title_claim(al_id=1, series_id=8), title_claim(al_id=2, series_id=8)
+        first, second = title_claim(anilist_id=1, series_id=8), title_claim(anilist_id=2, series_id=8)
         pending = pending_import(claims=(first, second))
 
         assert pending.claim_for(8) is first
@@ -310,20 +310,20 @@ class TestPendingImportClaims:
         pending = pending_import(
             claims=(
                 title_claim(
-                    al_id=1,
+                    anilist_id=1,
                     guards=OwnedAtGrab(
                         entry_groups=("A", "B"), stale_groups=("S",), owned_episodes=(SizeMatchedEpisode(11, 700),)
                     ),
                 ),
                 title_claim(
-                    al_id=2,
+                    anilist_id=2,
                     series_id=8,
                     guards=OwnedAtGrab(
                         entry_groups=("Z",), stale_groups=("Y",), owned_episodes=(SizeMatchedEpisode(11, 999),)
                     ),
                 ),
                 title_claim(
-                    al_id=3,
+                    anilist_id=3,
                     guards=OwnedAtGrab(
                         entry_groups=("B", "C"),
                         stale_groups=("S", "T"),
@@ -347,8 +347,8 @@ class TestPendingImportClaims:
         pending = pending_import(
             file_episode_map={"a.mkv": [9]},
             claims=(
-                title_claim(al_id=1, ordered_episode_ids=[3, 1]),
-                title_claim(al_id=2, series_id=8, ordered_episode_ids=[1, 2]),
+                title_claim(anilist_id=1, ordered_episode_ids=[3, 1]),
+                title_claim(anilist_id=2, series_id=8, ordered_episode_ids=[1, 2]),
             ),
         )
 
@@ -358,7 +358,7 @@ class TestPendingImportClaims:
         # The file map's ids alone, a zero id dropped: the specials shape with no window to check against.
         pending = pending_import(
             file_episode_map={"a.mkv": [7, 0], "b.mkv": [5]},
-            claims=(title_claim(al_id=1), title_claim(al_id=2, series_id=8)),
+            claims=(title_claim(anilist_id=1), title_claim(anilist_id=2, series_id=8)),
         )
 
         assert pending.window_episode_ids() == [5, 7]
@@ -366,17 +366,17 @@ class TestPendingImportClaims:
 
     def test_with_claim_appends_a_new_claim(self) -> None:
         pending = pending_import()
-        added = title_claim(al_id=2, series_id=8)
+        added = title_claim(anilist_id=2, series_id=8)
 
         assert pending.with_claim(added).claims == (*pending.claims, added)
         assert len(pending.claims) == 1
 
     def test_with_claim_replaces_the_titles_claim_in_place_keeping_its_preowned_ids(self) -> None:
         # A second grab plan refreshes the window, but the ids the wait bar leaves out stay the FIRST claim's.
-        stored = title_claim(al_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
-        other = title_claim(al_id=2, series_id=8)
+        stored = title_claim(anilist_id=1, ordered_episode_ids=[101], preowned_episode_ids=[101])
+        other = title_claim(anilist_id=2, series_id=8)
         pending = pending_import(claims=(stored, other))
-        fresh = title_claim(al_id=1, ordered_episode_ids=[101, 102], preowned_episode_ids=[102])
+        fresh = title_claim(anilist_id=1, ordered_episode_ids=[101, 102], preowned_episode_ids=[102])
 
         refreshed = pending.with_claim(fresh)
 
@@ -388,7 +388,7 @@ class TestPendingImportClaims:
         # its owed effects re-run at the eventual cleanup instead of the pass that finishes cleanups cleaning it up.
         flagged = pending_import(awaiting_cleanup=True)
 
-        assert flagged.with_claim(title_claim(al_id=2, series_id=8)).awaiting_cleanup is False
+        assert flagged.with_claim(title_claim(anilist_id=2, series_id=8)).awaiting_cleanup is False
         assert flagged.with_claim(title_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
 
 
@@ -406,8 +406,8 @@ class TestDisplayLabel:
         pending = pending_import(
             release_group="Era-Raws",
             claims=(
-                title_claim(al_id=1, title="A", claimed_coverage="S01 E01"),
-                title_claim(al_id=2, series_id=8, title="B", claimed_coverage="S02 E01"),
+                title_claim(anilist_id=1, title="A", claimed_coverage="S01 E01"),
+                title_claim(anilist_id=2, series_id=8, title="B", claimed_coverage="S02 E01"),
             ),
         )
 
@@ -417,8 +417,8 @@ class TestDisplayLabel:
         pending = pending_import(
             release_group="",
             claims=(
-                title_claim(al_id=1, title="A", claimed_coverage="S01 E01"),
-                title_claim(al_id=2, title="A", claimed_coverage="S01 E01"),
+                title_claim(anilist_id=1, title="A", claimed_coverage="S01 E01"),
+                title_claim(anilist_id=2, title="A", claimed_coverage="S01 E01"),
             ),
         )
 
@@ -438,7 +438,7 @@ class TestTitleWindow:
     def test_a_window_takes_each_episode_once_in_sonarrs_order(self) -> None:
         episodes = [sonarr_ep(1, 3, ep_id=103), sonarr_ep(1, 1, ep_id=101), sonarr_ep(1, 3, ep_id=103)]
 
-        window = TitleWindow.of(al_id=5, series_id=7, ep_list=episodes, names=TitleNames("Show"))
+        window = TitleWindow.of(anilist_id=5, series_id=7, ep_list=episodes, names=TitleNames("Show"))
 
         assert window == title_window(5, (103, 101), series_id=7, names=TitleNames("Show"))
 
@@ -447,7 +447,7 @@ def _guarded_claim() -> TitleClaim:
     """A claim with a window on series 55 carrying every serialized field plus a guard row."""
 
     return title_claim(
-        al_id=990,
+        anilist_id=990,
         series_id=55,
         title="Some Show",
         window_coverage="S02 E01-E12",
@@ -492,12 +492,12 @@ class TestPendingImportRoundTrip:
         bare = PendingImport.from_json(raw, guards={})
         assert bare == replace(pending, claims=(replace(claim, guards=OwnedAtGrab()),))
         # The caller-supplied rows (the store reads' join) load the claim back whole.
-        assert PendingImport.from_json(raw, guards={claim.al_id: claim.guards}) == pending
+        assert PendingImport.from_json(raw, guards={claim.anilist_id: claim.guards}) == pending
 
-    def test_from_json_loads_each_claims_guards_by_al_id(self) -> None:
+    def test_from_json_loads_each_claims_guards_by_anilist_id(self) -> None:
         first, second = OwnedAtGrab(entry_groups=("A",)), OwnedAtGrab(stale_groups=("B",))
         pending = pending_import(
-            claims=(title_claim(al_id=1, guards=first), title_claim(al_id=2, series_id=8, guards=second)),
+            claims=(title_claim(anilist_id=1, guards=first), title_claim(anilist_id=2, series_id=8, guards=second)),
         )
         rows = {2: second, 1: first, 3: OwnedAtGrab(entry_groups=("Unclaimed",))}
 
@@ -576,12 +576,12 @@ class TestPendingImportRoundTrip:
 
     def test_a_claim_tolerates_missing_keys(self) -> None:
         # A claim lacking every optional key loads with no window, unnamed, guard-empty,
-        # with coverage and url None, and an absent al_id goes under the 0 sentinel.
+        # with coverage and url None, and an absent anilist_id goes under the 0 sentinel.
         rebuilt = PendingImport.from_json({"infohash": "h", "claims": [{"series_id": 1}]}, guards={})
 
         assert rebuilt.claims == (
             TitleClaim(
-                al_id=0,
+                anilist_id=0,
                 series_id=1,
                 title=None,
                 window_coverage=None,
@@ -608,7 +608,7 @@ class TestPendingImportRoundTrip:
         rebuilt = PendingImport.from_json(raw, guards={})
 
         assert rebuilt.infohash == "h"
-        assert claim_al_ids(rebuilt) == (1,)
+        assert claim_anilist_ids(rebuilt) == (1,)
 
     def test_added_at_of_reads_the_raw_row(self) -> None:
         # The keys-only readers age a row without loading it: an absent or non-string stamp is unset.

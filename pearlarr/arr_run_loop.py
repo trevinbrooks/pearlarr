@@ -248,24 +248,24 @@ class ArrRunLoop:
             self._reporter.log_arr_item_unmonitored(self._state, item_title)
             return
 
-        al_mappings = strategy.item_mappings(item)
+        mappings = strategy.item_mappings(item)
 
-        if len(al_mappings) == 0:
+        if len(mappings) == 0:
             self._reporter.log_no_anilist_mappings(self._state, item_title)
             return
 
-        for al_id, mapping in al_mappings.items():
+        for anilist_id, mapping in mappings.items():
             # The previous title's pause is slept here, not at the end of its check, so a stop during it never rolls
             # back a title that finished.
             self._services.pay_pause()
             # Past the cap a title is still checked (a torrent already in qBittorrent keeps its mapping), its grab
             # held for the next run.
             try:
-                strategy.check_title(item=item, al_id=al_id, mapping=mapping)
+                strategy.check_title(item=item, anilist_id=anilist_id, mapping=mapping)
             except Exception as e:
                 # Contain the failure to THIS title: one bad season must not stop the item's others.
                 hub_error(
-                    f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - moving on to the next title",
+                    f"{item_title} ({unresolved_label(anilist_id)}): unexpected error ({e}) - moving on to the next title",
                     exc=e,
                 )
                 continue

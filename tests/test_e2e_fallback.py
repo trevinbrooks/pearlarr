@@ -74,7 +74,7 @@ _COMMAND_ID = re.compile(r"/api/v3/command/(\d+)")
 
 _INFOHASH = "ab12" * 10
 _SERIES_ID = 301
-_AL_ID = 30100
+_ANILIST_ID = 30100
 _GROUP = "Thighs"
 _TITLE = "Demo Batch"
 _CONTENT_PATH = "/downloads/Demo Batch S01 [Thighs]"
@@ -659,7 +659,7 @@ def _plant_pending_import(cache_path: Path, config_hash: str, scenario: _Scenari
     mapped = scenario.listing is not _Listing.NO_NUMBERS and not scenario.imported_unseen
     stamp = stamp_of(datetime.now() - timedelta(minutes=5))
     claim = TitleClaim(
-        al_id=_AL_ID,
+        anilist_id=_ANILIST_ID,
         series_id=_SERIES_ID,
         title=_TITLE,
         window_coverage="S01 E01-E02",
