@@ -155,7 +155,7 @@ class TestStatsCounters:
 
     def test_seadex_unreachable_tallies_and_renders_distinctly(self) -> None:
         # A title SeaDex was unreachable for lands in its own counter and its title row
-        # reads "skipped" with the reason - never "no entry". An UNCACHED title has
+        # reads "not checked" with the reason - never "no entry". An UNCACHED title has
         # no stored name, so the name still comes from the gateway lookup.
         client = ScriptedAniListClient()
         reporter, events = _record(client=client)
@@ -165,8 +165,8 @@ class TestStatsCounters:
         assert state.stats.seadex_unreachable == 1
         assert state.stats.no_seadex_entry == 0
         joined = "\n".join(_event_messages(events))
-        assert "skipped" in joined and "Resolved" in joined
-        assert "lookup skipped (SeaDex unreachable)" in joined
+        assert "not checked" in joined and "Resolved" in joined
+        assert "SeaDex unreachable" in joined
         assert "no entry" not in joined
         assert client.query_calls == [42]
 
@@ -181,7 +181,7 @@ class TestStatsCounters:
         assert state.stats.seadex_unreachable == 1
         joined = "\n".join(_event_messages(events))
         assert "Stored Title" in joined
-        assert "lookup skipped (SeaDex unreachable)" in joined
+        assert "SeaDex unreachable" in joined
         assert client.query_calls == []  # the stored name spared the lookup
 
     def test_cached_without_a_name_falls_back_to_the_arr_title(self) -> None:
@@ -450,7 +450,7 @@ class TestSummaryPendingImportCounters:
         )
         joined = "\n".join(messages)
 
-        assert any("queued" in m for m in messages)
+        assert any("downloading" in m for m in messages)
         assert any("downloaded" in m for m in messages)
         assert "imported" in joined
 
@@ -465,7 +465,7 @@ class TestSummaryPendingImportCounters:
             import_wait_mode=ImportWaitMode.OFF,
         )
 
-        assert not any("queued" in m for m in messages)
+        assert not any("downloading" in m for m in messages)
         assert not any("downloaded" in m for m in messages)
 
     def test_zero_counters_not_rendered_even_when_on(self) -> None:
@@ -476,7 +476,7 @@ class TestSummaryPendingImportCounters:
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
-        assert not any("queued" in m for m in messages)
+        assert not any("downloading" in m for m in messages)
         assert not any("downloaded" in m for m in messages)
 
     def test_this_run_grab_shows_added_only_no_queued(self) -> None:
@@ -495,8 +495,8 @@ class TestSummaryPendingImportCounters:
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
-        assert any("added" in m for m in messages)
-        assert not any("queued" in m for m in messages)
+        assert any("grabbed" in m for m in messages)
+        assert not any("downloading" in m for m in messages)
 
 
 class TestSummaryNoReleaseRow:
@@ -517,7 +517,7 @@ class TestSummaryNoReleaseRow:
 
 
 class TestSummarySeadexUnreachableRow:
-    """Titles SeaDex was unreachable for get their own gated "seadex down" row.
+    """Titles SeaDex was unreachable for get their own gated "not checked" row.
 
     It's never the alarming (and untrue) "no entry" count.
     """
@@ -525,7 +525,7 @@ class TestSummarySeadexUnreachableRow:
     def test_zero_count_renders_no_row(self) -> None:
         messages = _summary_messages(ArrRunState(arr=Arr.SONARR))
 
-        assert not any("seadex down" in m for m in messages)
+        assert not any("not checked" in m for m in messages)
 
     def test_non_zero_count_renders_the_row_not_no_entry(self) -> None:
         state = ArrRunState(arr=Arr.SONARR)
@@ -533,7 +533,7 @@ class TestSummarySeadexUnreachableRow:
 
         messages = _summary_messages(state)
 
-        assert any("seadex down" in m and "3" in m for m in messages)
+        assert any("not checked" in m and "3" in m for m in messages)
         assert not any("no entry" in m for m in messages)
 
 
@@ -616,8 +616,8 @@ class TestLogSeadexAction:
         )
         joined = "\n".join(messages)
 
-        assert "adding SeaDex's recommended release" in joined
-        assert "added" in joined
+        assert "grabbing" in joined
+        assert "grabbed" in joined
         assert "Show-NAN0" in joined
 
     def test_added_hashless_release_shows_group_not_none(self) -> None:
@@ -639,7 +639,7 @@ class TestLogSeadexAction:
 
         assert "already in qBittorrent" in joined
         assert "waiting to import" in joined
-        assert "downloading" in joined and "Show-NAN0" in joined
+        assert "torrent" in joined and "Show-NAN0" in joined
         # The misleading "keeping it" / "kept" wording is gone for this case.
         assert "keeping it" not in joined
         assert "kept" not in joined
@@ -656,7 +656,7 @@ class TestLogSeadexAction:
 
         assert "already in qBittorrent" in joined
         assert "waiting to import" not in joined
-        assert "would add" not in joined
+        assert "would grab" not in joined
 
     def test_mixed_added_and_already_in_qbit_reads_adding(self) -> None:
         # A fresh grab happened, so the headline is "adding". The per-release rows
@@ -670,7 +670,7 @@ class TestLogSeadexAction:
         )
         joined = "\n".join(messages)
 
-        assert "adding SeaDex's recommended release" in joined
+        assert "grabbing" in joined
         assert "already in qBittorrent" not in joined
         assert "new" in joined and "old" in joined
 
@@ -683,9 +683,9 @@ class TestLogSeadexAction:
         )
         joined = "\n".join(messages)
 
-        assert "would add SeaDex's recommended release (dry run)" in joined
-        assert any("would add" in m and "Show-NAN0" in m for m in messages)
-        assert "adding SeaDex's recommended release" not in joined
+        assert "would grab (dry run)" in joined
+        assert any("would grab" in m and "Show-NAN0" in m for m in messages)
+        assert "grabbing" not in joined
 
     @pytest.mark.parametrize("dry_run", [False, True], ids=["real run", "preview"])
     def test_no_outcomes_emit_nothing(self, dry_run: bool) -> None:

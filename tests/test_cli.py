@@ -24,12 +24,12 @@ Pins the behaviors the commands must guarantee:
   selection skips it with a dim note in the boot step lines - except a half-configured arr (url
   without api_key), whose skip warns by name (`configured_arrs`).
 * The inspection commands (`config validate` / `config show`) never write the
-  starter template, and `show` masks secret-named values (plus the free-form
+  template, and `show` masks secret-named values (plus the free-form
   `qbittorrent.options` block and URL-embedded logins) while keeping unset
   ones `null`.
 * `advanced.log_level` is applied to CLI runs as soon as the config is read,
   and `--log-level` overrides it (cli > config).
-* A missing config exits 1 with the starter template written (no silent
+* A missing config exits 1 with the template written (no silent
   skip-and-retry). An invalid config keeps the skip+retry contract in scheduled
   mode. SIGTERM stops either run command with exit code 0.
 
@@ -386,7 +386,7 @@ class TestMissingFilesAreReportedNotRaised:
 
 
 class TestConfigInit:
-    """config init writes the starter template but never clobbers without --force."""
+    """config init writes the template but never clobbers without --force."""
 
     def test_init_writes_then_refuses_then_forces(
         self,
@@ -533,7 +533,7 @@ class TestConfiguredArrs:
         # is capitalized prose, not a lowercase config key.
         (skip,) = recording.of_type(Diagnostic)
         assert skip.severity is Severity.INFO
-        assert skip.message == "Radarr not configured - skipped"
+        assert skip.message == "Radarr not configured - not run"
         assert skip.origin == LOG_NAME
         assert not skip.file_only
 
@@ -553,7 +553,7 @@ class TestConfiguredArrs:
         # Dotted keys stay lowercase. The prose subject is capitalized.
         (warning,) = recording.of_type(Diagnostic)
         assert warning.severity is Severity.WARNING
-        assert warning.message == "radarr.url is set but radarr.api_key is not - skipping Radarr"
+        assert warning.message == "radarr.url is set but radarr.api_key is not - Radarr is not run"
 
     def test_explicit_selection_of_a_half_configured_arr_names_only_the_missing_key(
         self,
@@ -704,7 +704,7 @@ class TestRunFailuresAreCleanAndNonzero:
         _write_runnable_config()
 
         assert run_single(sonarr=True) is False
-        assert "Could not fetch/parse the id-mapping sources" in capsys.readouterr().out
+        assert "Could not fetch/parse the mapping sources" in capsys.readouterr().out
 
     def test_a_mapping_download_network_failure_reports_cleanly(
         self,
@@ -725,7 +725,7 @@ class TestRunFailuresAreCleanAndNonzero:
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
-        assert "Could not download the id-mapping sources" in out
+        assert "Could not download the mapping sources" in out
         assert "check your network connection" in out
         assert "Traceback" not in out
 
@@ -804,7 +804,7 @@ class TestConfigInspection:
         assert "OK" in out
         assert "sonarr:      configured" in out
         assert "radarr:      not configured" in out
-        assert "preview mode" in out  # no qbittorrent credentials -> nothing is grabbed
+        assert "dry runs only" in out  # no qbittorrent credentials -> nothing is grabbed
 
     def test_show_masks_set_secrets_and_keeps_unset_ones_null(
         self,
@@ -1297,7 +1297,7 @@ class TestHubRenderers:
 
 
 class TestMissingConfigExitsNonzero:
-    """A virgin data dir: exit 1 with the starter template written, never a silent retry.
+    """A virgin data dir: exit 1 with the template written, never a silent retry.
 
     Driven end-to-end through CliRunner: the `typer.Exit` raised inside
     `load_shared_config`'s FileNotFoundError handler must escape `run_arrs`'
@@ -1311,7 +1311,7 @@ class TestMissingConfigExitsNonzero:
 
         config = Path(resolve_paths().config_file)
         assert config.read_text(encoding="utf-8") == _starter_text()
-        assert "starter template was written" in result.output
+        assert "a template was written" in result.output
         # This handler exits now. The skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
 

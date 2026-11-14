@@ -212,7 +212,7 @@ def _refusal(status: int, body: dict[str, Any] | None) -> str | None:
     errors = _parse_errors(body)
     message = " ".join(errors[0].message.split())[:_REFUSAL_MESSAGE_MAX] if errors else ""
     if message:
-        return f"refused the request (HTTP {status}: {message})"
+        return f"rejected the request (HTTP {status}: {message})"
     return f"gave no usable answer (HTTP {status})"
 
 

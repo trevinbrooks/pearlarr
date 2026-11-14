@@ -38,7 +38,7 @@ class TestPendingImportStateAndAttemptResult:
 
     def test_pending_import_state_is_its_string(self) -> None:
         assert PendingImportState.DOWNLOADED == "downloaded"
-        assert PendingImportState.DOWNLOADING == "queued"
+        assert PendingImportState.DOWNLOADING == "downloading"
 
     def test_imported_attempt_result_claims_the_files_without_a_command(self) -> None:
         result = AttemptResult.imported()

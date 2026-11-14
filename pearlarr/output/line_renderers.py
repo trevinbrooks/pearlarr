@@ -180,10 +180,10 @@ def _boot_outcome_word(kind: OutcomeKind) -> str:
 
 def _grab_message(status: GrabStatus) -> str:
     if status is GrabStatus.GRABBING:
-        return "adding recommended release"
+        return "grabbing release"
     if status is GrabStatus.WOULD_GRAB:
-        return "would add recommended release (dry run)"
-    return "recommended release already in qBittorrent"
+        return "would grab release (dry run)"
+    return "release already in qBittorrent"
 
 
 def _names_text(releases: tuple[ReleaseLabel, ...]) -> str:
@@ -420,7 +420,9 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
         case PearlarrStarted():
             return _Fact("pearlarr_started", severity, "Pearlarr started", _fields_pearlarr_started(event), None, "run")
         case ScheduledRunStarted(number=number):
-            return _Fact("scheduled_run_started", severity, "cycle started", (Field("number", number),), None, "run")
+            return _Fact(
+                "scheduled_run_started", severity, "scheduled run started", (Field("number", number),), None, "run"
+            )
         case NextRunScheduled(at=at):
             # Seconds precision drops microseconds and keeps the offset, matching the json "time" key's shape.
             fields = (Field("at", at.isoformat(timespec="seconds")),)
@@ -463,7 +465,9 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
         case ScanFinished(arr=arr):
             return _Fact("scan_finished", severity, "scan finished", (Field("arr", str(arr)),), None, "scan")
         case ArrRunSummaryReady(summary=summary):
-            return _Fact("arr_run_summary", severity, "run complete", _fields_summary_head(summary), None, "summary")
+            return _Fact(
+                "arr_run_summary", severity, "arr run complete", _fields_summary_head(summary), None, "summary"
+            )
         case WaitStarted(scope=scope, kind=kind):
             return _Fact("wait_started", severity, kind.live_verb, _fields_wait_started(event), scope, "wait")
         case RowFinished(scope=scope, outcome=outcome):
@@ -471,7 +475,7 @@ def _fact_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> _Fact
         case WaitFinished(scope=scope):
             return _Fact("wait_finished", severity, "complete", _fields_wait_finished(event), scope, "wait")
         case ArrRunFinished(arr=arr):
-            return _Fact("arr_run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
+            return _Fact("arr_run_finished", severity, "arr run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
             return _Fact("diagnostic", severity, message, _placement_fields(event, open_scopes), None, origin)
         case PathsShown():
@@ -530,8 +534,8 @@ def _summary_row_lines(summary: ArrRunSummary) -> tuple[_Line, ...]:
         _Line(Severity.WARNING, "summary", "needs action", _fields_needs_action(row))
         for row in summary.tally.needs_action
     )
-    added = tuple(_Line(Severity.INFO, "summary", "added", _fields_grabbed(row)) for row in summary.tally.grabbed)
-    return (*needs, *added)
+    grabbed = tuple(_Line(Severity.INFO, "summary", "grabbed", _fields_grabbed(row)) for row in summary.tally.grabbed)
+    return (*needs, *grabbed)
 
 
 def _lines_of(event: Event, open_scopes: OpenScopes, severity: Severity) -> tuple[_Line, ...]:

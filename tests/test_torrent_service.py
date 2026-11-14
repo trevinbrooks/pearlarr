@@ -640,7 +640,7 @@ def test_mark_cross_seeds_a_failed_read_warns_once_and_reads_nothing_more(
     assert marks == [None, None]
     warning = (
         "Could not read qBittorrent's torrents (APIConnectionError) - "
-        "this run may add a release that another torrent already holds"
+        "this run may grab a release that another torrent already has"
     )
     assert diagnostic_messages(recording, Severity.WARNING) == [warning]
 

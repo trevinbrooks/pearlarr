@@ -248,10 +248,10 @@ def _with_status(
 class CommandBlock(Enum):
     """Why the command list blocks an auto import this poll (values are the log phrases)."""
 
-    AUTO_IMPORT = "our ManualImport is in flight"
+    AUTO_IMPORT = "Pearlarr's auto import is in flight"
     IN_FLIGHT_IMPORT = "a ManualImport is already in flight"
     DISK_COMMAND = "Sonarr has a disk command queued or running"
-    DISK_COMMAND_CHANGED = "a Sonarr disk command ran during the step-in"
+    DISK_COMMAND_CHANGED = "a Sonarr disk command ran during the auto import"
     SONARR_RESTARTED = "Sonarr lists no completed rescan (just restarted)"
 
     @property

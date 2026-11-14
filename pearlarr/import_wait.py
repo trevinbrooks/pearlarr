@@ -122,7 +122,7 @@ class WaitPollers:
         try:
             return self.strategy.import_completed(pending, path, attempt_kind)
         except Exception as e:
-            hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
+            hub_error(f"Auto import failed for {pending.display_label} - leaving it for a later run", exc=e)
             return NO_ATTEMPT
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
@@ -210,7 +210,7 @@ class PostImportCleanup:
         hub_warn(
             f"Could not finish the post-import cleanup for {pending.display_label} "
             f"({' and '.join(effect.value for effect in failed)}) - "
-            "keeping its record to retry next run"
+            "keeping the pending import to retry next run"
         )
 
     def _retry_effect(self, attempt_kind: Callable[[], EffectStatus]) -> EffectStatus:
@@ -237,7 +237,7 @@ class PostImportCleanup:
             return EffectStatus.SKIPPED
         if moved_to and self._categories.is_unwatched(moved_to):
             self._logger.debug(
-                f"{pending.display_label}: the category move clears the queue entry on its own - "
+                f"{pending.display_label}: the category move clears the queue record on its own - "
                 "skipping the explicit removal",
             )
             return EffectStatus.SKIPPED
@@ -257,8 +257,8 @@ class PostImportCleanup:
             return EffectStatus.SKIPPED
         if self._pending_imports.other_arr_holds(pending.infohash):
             self._logger.debug(
-                f"{pending.display_label}: the other arr's record is still pending on this torrent - "
-                "deferring the category move",
+                f"{pending.display_label}: the other arr still has a pending import on this torrent - "
+                "leaving the category move for later",
             )
             return EffectStatus.SKIPPED
         return self._retry_effect(lambda: self._attempt_move(pending, category, qbit))
@@ -347,13 +347,13 @@ class PostImportCleanup:
             # The blocking wait mode tallies before the wait pass: store DOWNLOADED so the summary does
             # not default the never-snapshotted key to DOWNLOADING.
             self._state.pending_import_states[pending.infohash] = PendingImportState.DOWNLOADED
-            hub_warn(f"Imported files for {pending.display_label} are no longer present - re-importing")
+            hub_warn(f"Sonarr no longer has every file imported for {pending.display_label} - importing again")
 
     def _finish_cleanup(self, pending: PendingImport) -> None:
         """Run the owed effects of a pending import awaiting cleanup through `clean_up_and_drop`, noting the finish."""
 
         if self.clean_up_and_drop(pending):
-            hub_note(f"Completed the deferred post-import cleanup for {pending.display_label}")
+            hub_note(f"Finished the leftover post-import cleanup for {pending.display_label}")
 
 
 class ImportWaitManager:
@@ -449,7 +449,7 @@ class ImportWaitManager:
         elif state is PendingImportState.GONE:
             self._pending_imports.drop_unimported(pending)
             hub_warn(
-                f"Pending import {pending.display_label} is gone from qBittorrent - dropping its record "
+                f"Pending import {pending.display_label} is gone from qBittorrent - dropping it "
                 "(title checked again next run)"
             )
         elif state is PendingImportState.ERRORED:
@@ -573,7 +573,7 @@ class ImportWaitManager:
         """Push the rows as they stand and note how many pending imports the interrupted wait pass left."""
 
         view.update(wait_pass.snapshot())
-        hub_note(f"{wait_pass.kind.interrupt_noun} interrupted - {wait_pass.active_count} left pending")
+        hub_note(f"Wait interrupted - {wait_pass.active_count} left for the next run")
 
     def _sleep_between_polls(self, wait_pass: "WaitPass", view: WaitView) -> None:
         """Sleep one poll interval, refreshing the live rows with progress polls in between.

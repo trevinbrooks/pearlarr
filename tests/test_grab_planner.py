@@ -12,7 +12,7 @@ The `reduce_overlapping_grabs` branch matrix these tests pin:
 
     interactive ............................ early return, nothing touched
     per same-files set (none to grab: skip set), public_to_grab == 0:
-      upgrade_pending + promotion found .... INFO "private-only; grabbing public alternative X"
+      upgrade_pending + promotion found .... INFO "private-only; grabbing public release X instead"
       upgrade_pending + none + fallback .... WARNING outdated reason, outdated, skipped
       otherwise ............................ WARNING "not supported", skipped
     public_to_grab >= 1:
@@ -249,7 +249,7 @@ class TestReduceOverlappingGrabs:
         assert seadex["MixedPub"].releases["u3"].to_grab is False
         assert seadex["Priv"].releases["u1"].to_grab is False
         assert len(skips.notices) == 1
-        assert "grabbing public alternative Pub" in skips.notices[0].reason
+        assert "grabbing public release Pub instead" in skips.notices[0].reason
 
     def test_promotion_considers_preferred_public_group(self) -> None:
         # The size-mismatch promotion pool is any public group in the set not marked
@@ -269,7 +269,7 @@ class TestReduceOverlappingGrabs:
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].severity is Severity.INFO
         # A preferred group is not a fallback, so the notice must not say so.
-        assert skips.notices[0].reason == "private-only; grabbing public alternative Pub"
+        assert skips.notices[0].reason == "private-only; grabbing public release Pub instead"
 
     def test_degraded_keeper_skips_when_only_a_fallback_could_stand_in(self) -> None:
         # A mixed group's public release, owned and not marked to grab, makes it public_to_grab
@@ -317,7 +317,7 @@ class TestReduceOverlappingGrabs:
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["M"]
         assert skips.notices[0].severity is Severity.INFO
-        assert skips.notices[0].reason == "remaining files private-only; grabbing public alternative P"
+        assert skips.notices[0].reason == "remaining files private-only; grabbing public release P instead"
 
     def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
         # No size mismatch means the grabs may be plain missing-content grabs.
@@ -401,7 +401,7 @@ class TestReduceOverlappingGrabs:
         assert len(skips.notices) == 1
         assert skips.notices[0].severity is Severity.INFO
         # M is a preferred group, not a fallback, so the verb must say so.
-        assert skips.notices[0].reason == "private-only; grabbing public alternative M"
+        assert skips.notices[0].reason == "private-only; grabbing public release M instead"
 
     def test_different_files_both_kept(self) -> None:
         planner = make_planner()
@@ -494,8 +494,8 @@ class TestReduceOverlappingGrabs:
         assert seadex["MixedB"].releases["u4"].to_grab is False
         assert skips.warned is False
         assert [n.reason for n in skips.notices] == [
-            "private-only; grabbing public alternative PubA",
-            "remaining files private-only; grabbing public alternative PubB",
+            "private-only; grabbing public release PubA instead",
+            "remaining files private-only; grabbing public release PubB instead",
         ]
 
 
@@ -536,7 +536,7 @@ class TestSameGroupDuplicateDedup:
         assert seadex["Pub"].releases["u2"].to_grab is True
         assert seadex["Pub"].releases["u3"].to_grab is False
         assert seadex["Priv"].releases["u1"].to_grab is False
-        assert "grabbing public alternative Pub" in skips.notices[0].reason
+        assert "grabbing public release Pub instead" in skips.notices[0].reason
 
     def test_different_filesets_both_kept(self) -> None:
         planner = make_planner()

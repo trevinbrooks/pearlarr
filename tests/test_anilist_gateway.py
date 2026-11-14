@@ -366,7 +366,7 @@ class TestLogPluralization:
 
         gateway.load_cache()
 
-        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 1 AniList entry from cache"]
+        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 1 cached AniList answer"]
 
     def test_load_cache_plural(self) -> None:
         store = FakeCacheStore()
@@ -377,7 +377,7 @@ class TestLogPluralization:
 
         gateway.load_cache()
 
-        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 2 AniList entries from cache"]
+        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 2 cached AniList answers"]
 
     def test_evict_singular(self) -> None:
         store = FakeCacheStore()
@@ -387,4 +387,4 @@ class TestLogPluralization:
 
         gateway.save_cache(dry_run=False)
 
-        assert [r.getMessage().strip() for r in handler.records] == ["Evicted 1 stale AniList meta record"]
+        assert [r.getMessage().strip() for r in handler.records] == ["Evicted 1 stale AniList answer"]

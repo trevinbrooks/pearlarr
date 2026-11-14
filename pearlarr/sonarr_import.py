@@ -504,20 +504,20 @@ class ImportExecutor:
         queue_id = next((row.id for row in rows if row.id and row.series_id), None)
         if queue_id is None:
             if any(row.id for row in rows):
-                self.logger.debug(f"{pending.display_label}: unknown-series queue entry - left for Sonarr to drop")
+                self.logger.debug(f"{pending.display_label}: unknown-series queue record - left for Sonarr to drop")
             else:
-                self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue entry to close")
+                self.logger.debug(f"{pending.display_label}: no leftover Sonarr queue record to close")
             return EffectStatus.SKIPPED
         match self.sonarr.queue_delete(queue_id):
             case DeleteOutcome.OK:
                 hub_note(f"Removed the imported download {pending.display_label} from Sonarr's queue")
                 return EffectStatus.DONE
             case DeleteOutcome.GONE:
-                self.logger.debug(f"{pending.display_label}: queue entry {queue_id} already gone - nothing to remove")
+                self.logger.debug(f"{pending.display_label}: queue record {queue_id} already gone - nothing to remove")
                 return EffectStatus.DONE
             case DeleteOutcome.FAILED:
                 # The client's warning names no download (coalesced template). This one does.
-                self.logger.debug(f"{pending.display_label}: queue entry {queue_id} not removed - will retry")
+                self.logger.debug(f"{pending.display_label}: queue record {queue_id} not removed - will retry")
                 return EffectStatus.RETRY
 
     def list_commands(self) -> list[CommandResource] | None:
@@ -580,7 +580,7 @@ class ImportExecutor:
                 # Another title's file or a final-unplaced duplicate the grab excluded was reported then and stays
                 # quiet.
                 self.logger.debug(
-                    f"{pending.display_label}: {count_noun(unplaced.quiet, 'file')} excluded on record, not reported"
+                    f"{pending.display_label}: {count_noun(unplaced.quiet, 'excluded file')} already reported at the grab"
                 )
             if skips := unplaced.skips:
                 # The hand-import files are named by the poll's outcome instead.
@@ -610,7 +610,7 @@ class ImportExecutor:
         file_map_episode_ids = sorted({i for ids in file_map.values() for i in ids})
         statuses = context.snapshot.file_map_statuses(file_map_episode_ids, file_map)
         if statuses.all_trusted():
-            self.logger.debug(f"{content_path}: already imported (recommended files present)")
+            self.logger.debug(f"{content_path}: already imported (every episode has a trusted file)")
             return AttemptResult.imported()
 
         if not file_map:
@@ -653,7 +653,7 @@ class ImportExecutor:
             reason = ""
             if context.candidates.unserved_empty:
                 folder = self.candidate_fetcher.content_paths(content_path).sonarr_visible
-                reason = f" (it won't serve the download by id and a scan of {folder} found no files)"
+                reason = f" (it won't serve the download by id and reading {folder} found no files)"
             message = (
                 f"{content_path}: {count_noun(len(missing), 'intended file')} "
                 f"not visible to Sonarr for {pending.display_label}{reason} - will retry"
@@ -692,7 +692,7 @@ class ImportExecutor:
 
         # Sonarr's copy is async, so acceptance is not `all_done`. The auto import's fresh copy pauses the import clock.
         self._scratch.issued_command_ids.add(cmd_id)
-        self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
+        self.logger.debug(f"{content_path}: sent {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return AttemptResult.waiting(command_issued=True, pause_reason=PauseReason.ISSUED)
 
     def _all_done_result(self, context: _ImportContext, window: EpisodeStatuses) -> AttemptResult | None:
@@ -700,7 +700,7 @@ class ImportExecutor:
 
         if not window.all_done():
             return None
-        self.logger.debug(f"{context.content_path}: already imported (recommended files or untagged copies present)")
+        self.logger.debug(f"{context.content_path}: already imported (every episode is done)")
         return AttemptResult.imported()
 
     def _guard_before_post(self, context: _ImportContext) -> AttemptResult | None:
@@ -734,7 +734,7 @@ class ImportExecutor:
         # retry in silence every run.
         message = (
             f"{pending.display_label}: Sonarr won't serve this download by id and "
-            f"a scan of its folder found no files ({folder}) - will retry"
+            f"reading its folder found no files ({folder}) - will retry"
         )
         if context.at_deadline and pending.infohash not in self._scratch.warned_empty_folder:
             self._scratch.warned_empty_folder.add(pending.infohash)
@@ -752,8 +752,8 @@ class ImportExecutor:
             return
         self._scratch.warned_unplaceable.add(pending.infohash)
         hub_warn(
-            f"{pending.display_label}: {count_noun(len(skips), 'file')} could not be matched "
-            f"to an episode and {pluralize(len(skips), 'was', 'were')} not imported"
+            f"{pending.display_label}: {count_noun(len(skips), 'file')} could not be placed "
+            f"on an episode and {pluralize(len(skips), 'was', 'were')} not imported"
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
@@ -949,7 +949,7 @@ class ImportReconciler:
             and not attempt.at_deadline
             and self._executor.completed_download_handling_enabled()
         ):
-            self.logger.debug(f"{attempt.label}: Sonarr has it pending and will import it; waiting")
+            self.logger.debug(f"{attempt.label}: Sonarr lists it as importPending and will import it; waiting")
             return statuses.with_counts(AttemptResult.waiting())
 
         taken = self._executor.take_kept_candidates(attempt.pending.infohash, attempt.content_path)
@@ -1023,7 +1023,7 @@ class ImportReconciler:
 
         if not attempt.file_map_covers_all or not statuses.statuses.all_trusted():
             return None
-        self.logger.debug(f"{attempt.label}: already imported (recommended files present)")
+        self.logger.debug(f"{attempt.label}: already imported (every episode has a trusted file)")
         return statuses.with_counts(AttemptResult.imported())
 
     def _read_statuses(self, pending: PendingImport, file_map_episode_ids: list[int]) -> _FileMapStatuses | None:

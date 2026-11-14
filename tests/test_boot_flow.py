@@ -331,4 +331,4 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
     assert deps.qbit is None
     [qbit_step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Connecting to qBittorrent"]
     assert qbit_step.outcome is OutcomeKind.LEFT
-    assert qbit_step.detail == "not configured - preview mode"
+    assert qbit_step.detail == "not configured - dry run"

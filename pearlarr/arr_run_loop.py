@@ -127,9 +127,11 @@ class ArrRunLoop:
                         dirty.update(strategy.item_mappings(item, log_ignored=False))
                 self._services.mark_dirty(dirty)
                 if scan.rescan_all:
-                    step.note("history gap - rechecking all entries")
+                    step.note("history gap - checking every title again")
                 else:
-                    step.note("none" if not dirty else count_noun(len(dirty), "changed entry", "changed entries"))
+                    step.note(
+                        "none" if not dirty else count_noun(len(dirty), "title to check again", "titles to check again")
+                    )
 
         # Warm in bulk: fetching one id at a time in the loop trips AniList's rate limit.
         self._anilist.load_cache()
@@ -147,7 +149,7 @@ class ArrRunLoop:
                 # Terse: the client already warned once with the failure detail.
                 step.warn("unavailable")
             else:
-                step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+                step.note("cached" if fetched == 0 else count_noun(fetched, "title", "titles"))
 
         # Batched OR-filter queries collapse the per-id from_id round-trips. SeaDex turning unreachable mid-prefetch
         # must not claim "N entries" it never fetched.
@@ -184,14 +186,14 @@ class ArrRunLoop:
         # Only on a full run, like storing the selection hash: a single-item run re-checks just its id, so the
         # whole-library note would overstate it and recur every time.
         if item_id is None and self._services.selection_changed and not self._config.seadex.ignore_seadex_update_times:
-            hub_note("Matching settings changed - rechecking cached entries")
+            hub_note("Selection settings changed - checking cached titles again")
 
         for item_idx, item in enumerate(all_items):
             try:
                 self._scan_item(strategy, item, item_idx, n_items)
             except Exception as e:
-                title = getattr(item, "title", "unknown title")
-                hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
+                title = getattr(item, "title", "unknown item")
+                hub_error(f"{title}: unexpected error ({e}) - moving on to the next library item", exc=e)
             # Commit after each library item, not inside one, where paired writes (a pending import and its guard row)
             # may be half done. A stop or kill loses only the library item in flight. A library item that raised still
             # commits what it staged, as the end save always did.
@@ -263,7 +265,7 @@ class ArrRunLoop:
             except Exception as e:
                 # Contain the failure to THIS title: one bad season must not stop the item's others.
                 hub_error(
-                    f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - skipping this AniList id",
+                    f"{item_title} ({unresolved_label(al_id)}): unexpected error ({e}) - moving on to the next title",
                     exc=e,
                 )
                 continue

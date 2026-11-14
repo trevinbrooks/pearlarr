@@ -219,14 +219,14 @@ class _SameFilesSet:
 def _promotion_notice(groups: list[str], prefix: str, promoted: str) -> PrivateOnlyNotice:
     """The INFO notice for groups to grab that a promoted group now stands in for.
 
-    The caller drops their grabs. Promotion never picks a fallback group, so the
-    verb is always "grabbing public alternative". The keeper flow owns
+    The caller drops their grabs. Promotion never chooses a fallback group, so the
+    verb is always "grabbing public release X instead". The keeper flow owns
     "falling back to".
     """
 
     return PrivateOnlyNotice(
         groups=list(groups),
-        reason=f"{prefix}; grabbing public alternative {promoted}",
+        reason=f"{prefix}; grabbing public release {promoted} instead",
         severity=Severity.INFO,
     )
 
@@ -665,7 +665,7 @@ class GrabPlanner:
                 if ctx.debug_on:
                     self.logger.debug(
                         f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                        f"{ctx.arr_groups_label}, but file sizes do not match - will download {url}",
+                        f"{ctx.arr_groups_label}, but file sizes do not match - will grab {url}",
                     )
 
                 release.plan_grab(upgrade=True)
@@ -673,7 +673,7 @@ class GrabPlanner:
             elif ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                    f"{ctx.arr_groups_label}, and no listed size contradicts the on-disk copy",
+                    f"{ctx.arr_groups_label}, and no listed size contradicts the arr's copy",
                 )
         elif _owns_no_group_copy(ctx.untagged_counter, release.file_sizes):
             # A rename stripped the group tag: the arr's files with no group
@@ -682,14 +682,14 @@ class GrabPlanner:
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
-                    f"{ctx.arr_groups_label}, but the untagged files on disk are all "
-                    f"this release's - not flagging {url}",
+                    f"{ctx.arr_groups_label}, but the arr's files with no group are all "
+                    f"this release's - not grabbing {url}",
                 )
         elif not ctx.any_release_owned:
             if ctx.debug_on:
                 self.logger.debug(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
-                    f"{ctx.arr_groups_label} - will download {url}",
+                    f"{ctx.arr_groups_label} - will grab {url}",
                 )
 
             release.plan_grab()
@@ -698,7 +698,7 @@ class GrabPlanner:
             # group's release covering these files - nothing to grab.
             self.logger.debug(
                 f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases, but another "
-                f"SeaDex group already overlaps them - not flagging {url}",
+                f"SeaDex group already overlaps them - not grabbing {url}",
             )
 
     def _plan_by_episodes(
@@ -800,7 +800,7 @@ class GrabPlanner:
                             f"SeaDex release group {seadex_rg} differs from "
                             f"{self.arr.capitalize()} release for "
                             f"{season_ep_str} ({sonarr_rg or 'no group'}) and no other "
-                            f"recommended release covers it - will download {url}",
+                            f"preferred release covers it - will grab {url}",
                         )
 
                     release.plan_grab()
@@ -838,14 +838,14 @@ class GrabPlanner:
         # copies are the group ownership's business - see `_group_ownership`.)
         matched_sizes = list(compress(size_matches, rg_matches))
         if matched_sizes and not any(matched_sizes):
-            self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
+            self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will grab {url}")
             release.plan_grab(upgrade=True)
 
         # An episode two listed files claim at different sizes is left out: the import cannot pick between them.
         doubled = _doubled_sizes(unambiguous(listed_pairs), arr_size_by_key, release.file_sizes)
         if doubled:
             self.logger.debug(
-                f"{url} lists size(s) {doubled} on fewer episodes than {seadex_rg} holds them, will download"
+                f"{url} lists size(s) {doubled} on fewer episodes than the arr has {seadex_rg} files of that size: will grab"
             )
             release.plan_grab(upgrade=True)
 
@@ -864,7 +864,9 @@ class GrabPlanner:
         """
 
         if not ctx.has_ep_list:
-            self.logger.debug("Skipping the refused-pack check: no Sonarr episode list available")
+            self.logger.debug(
+                "No Sonarr episode list: not checking whether a release left for a hand import is still owed"
+            )
             return
 
         url = release.url
@@ -872,10 +874,13 @@ class GrabPlanner:
         if _window_owned(ctx, seadex_norm, release.file_sizes):
             if ctx.debug_on:
                 self.logger.debug(
-                    f"Every episode of the window holds {seadex_rg}'s file or a covering release's: not flagging {url}"
+                    f"Every episode of the window has {seadex_rg}'s file or a covering release's: not grabbing {url}"
                 )
             return
-        self.logger.debug(f"{seadex_rg} was refused by the placement and is not in place: will download {url}")
+        self.logger.debug(
+            f"{seadex_rg} was left for a hand import by the placement and the arr doesn't own its window: "
+            f"marked to grab, so the grab lists it: {url}"
+        )
         release.plan_grab(upgrade=seadex_norm in ctx.arr_sizes_by_norm)
 
     def reduce_overlapping_grabs(
@@ -1131,7 +1136,7 @@ class GrabPlanner:
             release_keys = get_episode_keys(u.episodes)
             if release_keys <= survivor_keys:
                 continue
-            self.logger.debug(f"Re-flagging {u.url}: no surviving release covers its episodes")
+            self.logger.debug(f"Marking {u.url} to grab again: no surviving release covers its episodes")
             u.plan_grab()
             survivor_keys |= release_keys
 

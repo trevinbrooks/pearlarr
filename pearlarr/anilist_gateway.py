@@ -109,7 +109,7 @@ class AniListGateway:
             loaded += 1
 
         if loaded:
-            self.logger.debug(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache")
+            self.logger.debug(f"Loaded {count_noun(loaded, 'cached AniList answer', 'cached AniList answers')}")
 
     def save_cache(self, *, dry_run: bool) -> None:
         """Persist this run's fetches stamped now. The prefetch-time save is the only save.
@@ -136,7 +136,7 @@ class AniListGateway:
         if written or evicted:
             self._cache.save(dry_run=False)
         if evicted:
-            self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList meta record')}")
+            self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList answer')}")
 
     def prefetch(
         self,

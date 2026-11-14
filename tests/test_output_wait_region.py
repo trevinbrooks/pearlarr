@@ -350,7 +350,7 @@ class TestWaitRegionDirect:
         region.handle(_progress(_dl("Show"), elapsed=5.0))
 
         frame = _render_group(region._current_group())
-        assert "checking 0/1" in frame
+        assert "looking 0/1" in frame
         assert "waiting" not in frame
 
     def test_frame_rolls_the_clocks_forward_between_polls(self) -> None:

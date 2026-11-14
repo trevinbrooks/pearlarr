@@ -124,7 +124,7 @@ The mapping cache is regenerable. The logs are disposable.
 
 - `pearlarr cache backup` snapshots `cache.db` to `cache.backup.db` using SQLite's online-backup API, so the copy is consistent even if taken mid-write. It writes through a temp file, so a failed backup can never destroy the previous good one.
 - `pearlarr cache restore` replaces `cache.db` with a copy of the backup. The backup is kept, so a restore is repeatable.
-- Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir> - refusing to modify the cache`
+- Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir> - not modifying the cache`
 
 Copying the whole data directory while Pearlarr is not running is also a complete backup.
 

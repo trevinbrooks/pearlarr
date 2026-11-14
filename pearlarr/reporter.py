@@ -208,7 +208,7 @@ class RunReporter:
         title = self._display_title(state, al_id, cached.name if cached is not None else None)
         self._titled_row(TitleState.NOT_CHECKED, title)
         # Scope-free (the titled row closed the title scope): the reason goes in col-0.
-        self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
+        self.detail("status", StyledValue("SeaDex unreachable", Accent.DIM))
 
     def _display_title(self, state: ArrRunState, al_id: int, stored: str | None) -> Title:
         """The title's label: the stored name, else AniList, else the arr item's own name, else the id form."""

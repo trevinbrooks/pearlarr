@@ -169,7 +169,7 @@ def load_shared_config(
     Returns None - after logging the specific cause - when the file is invalid
     (the bad keys are listed without a traceback) or unreadable, so the caller
     skips this run and retries next run instead of crashing (an edit may be
-    in progress). A MISSING file instead writes the starter template (inside
+    in progress). A MISSING file instead writes the template (inside
     `AppConfig.load`) and exits 1: no retry can succeed until it is filled
     in, so a scheduled/container run must stop and say so rather than sleep
     on it. `retry_note` is the pre-formatted scheduled-mode note (empty for a
@@ -191,14 +191,14 @@ def load_shared_config(
         unknown_trackers = sorted(loaded.seadex.trackers - KNOWN_TRACKERS)
         if unknown_trackers:
             hub_warn(
-                f"Unknown seadex.trackers value(s) ignored by matching: "
+                f"Unknown seadex.trackers value(s) ignored: "
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
         warn_outdated_env()
         return loaded
     except FileNotFoundError:
-        hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
+        hub_error(f"No config file at {config} - a template was written - fill it in and re-run")
         # typer.Exit is an Exception subclass, but it escapes cleanly: sibling
         # handlers can't catch a raise from THIS handler, and run_arrs wraps this call
         # in try/FINALLY only - so the boot region, web client and run lock all
@@ -267,19 +267,19 @@ def build_resolver(
                 progress=mapping_step,
             )
             # Overwrite the per-MB download detail with the final "which sources"
-            # note, so the finished line reads e.g. "anime-ids · anidb · anibridge".
+            # note, so the finished line reads e.g. "anime-ids · anime-lists · anibridge".
             mapping_step.note(resolver.sources_summary())
     except OSError as e:
         # A first-ever source download with no network lands here (a failed
         # refresh of an existing copy falls open inside the resolver): a clean
         # one-liner, not a traceback.
         hub_error(
-            f"Could not download the id-mapping sources ({e}) - check your network connection - "
+            f"Could not download the mapping sources ({e}) - check your network connection - "
             f"skipping this run{retry_note}"
         )
         return None
     except Exception as e:
-        hub_error(f"Could not fetch/parse the id-mapping sources - skipping this run{retry_note}", exc=e)
+        hub_error(f"Could not fetch/parse the mapping sources - skipping this run{retry_note}", exc=e)
         return None
 
     return resolver
@@ -316,11 +316,11 @@ def configured_arrs(
     for arr, keys in missing.items():
         if len(keys) == 1:
             other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
-            hub_warn(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
+            hub_warn(f"{other} is set but {keys[0]} is not - {arr.capitalize()} is not run")
         else:
             # Flat message: the live console indents it by its position (the open
             # boot scope). The file/plain renderers take a structured line.
-            hub_note(f"{arr.capitalize()} not configured - skipped")
+            hub_note(f"{arr.capitalize()} not configured - not run")
 
     kept = [target for target in arrs if target.arr not in missing]
     if not kept:
@@ -474,7 +474,7 @@ def run_arrs(
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
     qBittorrent connection failure, or an unexpected error), so a scripted
     `run single` exits non-zero on any failed arr run. A MISSING config doesn't
-    return at all: `load_shared_config` writes the starter template and
+    return at all: `load_shared_config` writes the template and
     raises `typer.Exit(1)` (see its docstring). An empty `arrs` is a
     defensive no-op returning True (both callers guard against it).
     `file_log_renderer` is the installed hub's FileLogRenderer (`cli._install_output_hub`

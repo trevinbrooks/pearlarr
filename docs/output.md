@@ -114,7 +114,7 @@ Scheduled mode only: a new run begins (`number` counts from 1).
   "time": "2026-01-01T18:00:00+00:00",
   "event": "scheduled_run_started",
   "level": "INFO",
-  "message": "cycle started",
+  "message": "scheduled run started",
   "component": "run",
   "number": 1
 }
@@ -122,7 +122,7 @@ Scheduled mode only: a new run begins (`number` counts from 1).
 
 ### `boot_step_finished`
 
-One preflight step finished. `outcome` is `ok`, `warned`, or `failed`, with an optional `detail`.
+One boot step finished. `outcome` is `ok`, `warned`, or `failed`, with an optional `detail`.
 
 ```json
 {
@@ -141,7 +141,7 @@ One preflight step finished. `outcome` is `ok`, `warned`, or `failed`, with an o
 
 ### `boot_ready`
 
-Preflight finished. The scan begins.
+The boot finished. The scan begins.
 
 ```json
 {
@@ -157,7 +157,7 @@ Preflight finished. The scan begins.
 
 ### `scan_started`
 
-The per-arr scan opened: which arr, and how many library titles it will walk.
+The per-arr scan opened: which arr, and how many library items it will walk.
 
 ```json
 {
@@ -210,7 +210,7 @@ A problem or notice at any level. `origin` names the subsystem. A diagnostic rai
 
 ### `scope_opened`
 
-A nested scope opened (`kind` + `serial` identify it). Events inside carry a human-readable `path` breadcrumb instead of the id.
+A nested scope opened (`kind` + `serial` identify it). Events inside carry the scope path as `path` instead of the id.
 
 ```json
 {
@@ -282,7 +282,7 @@ A one-line result for a title: `message` is the state word, `title` the title's 
 
 ### `release_skipped`
 
-A release was skipped at add time. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, `placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and `unplaced` the rest, which nothing placed.
+A release was skipped at the grab. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, `placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and `unplaced` the rest, which nothing placed.
 
 ```json
 {
@@ -302,7 +302,7 @@ A release was skipped at add time. `reason` is `private_only`, `unsupported_trac
 
 ### `grab_failed`
 
-Adding a release to qBittorrent failed. The title is retried next run.
+Grabbing a release failed: qBittorrent did not take the torrent. The title is retried next run.
 
 ```json
 {
@@ -321,7 +321,7 @@ Adding a release to qBittorrent failed. The title is retried next run.
 
 ### `grab_action`
 
-The grab decision for a title. `message` distinguishes a real add, a dry-run would-add, and already in qBittorrent.
+The grab decision for a title. `message` says which: grabbing, would grab (a dry run), or already in qBittorrent.
 
 ```json
 {
@@ -329,7 +329,7 @@ The grab decision for a title. `message` distinguishes a real add, a dry-run wou
   "time": "2026-01-01T18:00:00+00:00",
   "event": "grab_action",
   "level": "INFO",
-  "message": "adding recommended release",
+  "message": "grabbing release",
   "component": "title",
   "path": "sonarr › [3/42] Sousou no Frieren › title",
   "waiting_to_import": true,
@@ -357,7 +357,7 @@ The matching close of a `scope_opened` (anything nested deeper closes with it).
 
 ### `cap_reached`
 
-The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining titles without grabbing, so a torrent already downloading stays matched to every entry that lists it, and the held titles are grabbed on later runs.
+The `advanced.max_torrents_to_add` cap was reached. The run keeps checking the remaining titles without grabbing, so a torrent already in qBittorrent is still tied to every title that lists it, and the held grabs are made on later runs.
 
 ```json
 {
@@ -397,7 +397,7 @@ The arr run's summary: the tally counters (`held_by_cap` only when the run held 
   "time": "2026-01-01T18:00:00+00:00",
   "event": "arr_run_summary",
   "level": "INFO",
-  "message": "run complete",
+  "message": "arr run complete",
   "component": "summary",
   "arr": "sonarr",
   "checked": 42,
@@ -418,7 +418,7 @@ The arr run's summary: the tally counters (`held_by_cap` only when the run held 
       "title": "Made in Abyss",
       "coverage": "S02",
       "group": "Vodes",
-      "reason": "private-only release; no public alternative covers these files",
+      "reason": "private-only release; no fallback covers these files",
       "cause": "private_only_no_fallback",
       "link": "https://seadex.moe/108/"
     }
@@ -455,7 +455,7 @@ A wait pass opened on `total` pending imports. `wait_pass` is `blocking` (waits 
 
 ### `wait_row_finished`
 
-The wait pass finished one row: a pending import got its outcome for this run. `message` is the outcome word. `hand_import_files` names the files left for a hand import, on the `unmatched` and `partial` outcomes. On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and why the files are held.
+The wait pass finished one row: a pending import got its outcome for this run. `message` is the outcome word. `hand_import_files` names the files left for a hand import, on the `unplaced` and `partial` outcomes. On `partial`, a file numbered by another TVDB order as an episode Sonarr doesn't list is named behind that number, as `DVD S07E01: name`, and when every file is, `detail` says which episodes are still unfilled and why the files are left for a hand import.
 
 ```json
 {
@@ -504,7 +504,7 @@ The per-arr run closed (a boundary event).
   "time": "2026-01-01T18:00:00+00:00",
   "event": "arr_run_finished",
   "level": "INFO",
-  "message": "run finished",
+  "message": "arr run finished",
   "component": "run",
   "arr": "sonarr"
 }
@@ -512,7 +512,7 @@ The per-arr run closed (a boundary event).
 
 ### `next_run_scheduled`
 
-Scheduled mode only: when the next cycle fires.
+Scheduled mode only: when the next run fires.
 
 ```json
 {
@@ -548,7 +548,7 @@ The `paths` command: the resolved data directory and the files within it.
 
 ### `starter_config_written`
 
-`config init` wrote a starter template to `path`.
+`config init` wrote the template to `path`.
 
 ```json
 {
@@ -602,7 +602,7 @@ The `paths` command: the resolved data directory and the files within it.
 
 ### `config_migrated`
 
-`config migrate` rewrote the file at the current schema. `backup_path` is the saved previous file and `notes` lists what was folded.
+`config migrate` rewrote the file at the current schema. `backup_path` is the saved previous file and `notes` lists what changed.
 
 ```json
 {
@@ -692,7 +692,7 @@ The `paths` command: the resolved data directory and the files within it.
 
 ### `cache_stats_reported`
 
-`cache stats`: per-block row counts and the on-disk `size_bytes`.
+`cache stats`: per-block row counts and the database file's `size_bytes`.
 
 ```json
 {
@@ -714,7 +714,7 @@ The `paths` command: the resolved data directory and the files within it.
 
 ### `cache_integrity_reported`
 
-`cache check`'s success arm: the SQLite integrity-check `result`.
+`cache check` passed: the SQLite integrity-check `result`.
 
 ```json
 {
@@ -730,10 +730,10 @@ The `paths` command: the resolved data directory and the files within it.
 
 ### Events that never reach the JSON stream
 
-- `BootStepStarted` - a live-cockpit affordance. `boot_step_finished` carries the step's facts.
-- `BootStepProgressed` - ephemeral progress for the live cockpit only.
-- `BootStepSlow` - a text-surface heads-up. The JSON stream sees the step finish.
-- `WaitProgress` - the per-poll wait snapshot. On the JSON stream, wait progress is the `wait_started` / `wait_row_finished` / `wait_finished` sequence.
+- `BootStepStarted` - for the live console only. `boot_step_finished` carries the step's facts.
+- `BootStepProgressed` - progress for the live console only.
+- `BootStepSlow` - a notice for the console and the text log. The JSON stream sees the step finish.
+- `WaitProgress` - the wait pass's progress at each poll. On the JSON stream, wait progress is the `wait_started` / `wait_row_finished` / `wait_finished` sequence.
 <!-- /gen:json-events -->
 
 ## Webhooks

@@ -77,11 +77,11 @@ def _order_only_reason(left: LeftForHandImport) -> str:
     noun = "order" if len(names) == 1 else "orders"
     if len(keys) == 1:
         return (
-            f"this pack is numbered by the {orders} {noun}, and 1 of its files is one of the {orders} episodes "
+            f"this torrent is numbered by the {orders} {noun}, and 1 of its files is one of the {orders} episodes "
             "that aren't in Sonarr's list, so Pearlarr can't tell where it belongs"
         )
     return (
-        f"this pack is numbered by the {orders} {noun}, and {len(keys)} of its files are {orders} episodes "
+        f"this torrent is numbered by the {orders} {noun}, and {len(keys)} of its files are {orders} episodes "
         "that aren't in Sonarr's list, so Pearlarr can't tell where they belong"
     )
 
@@ -109,9 +109,9 @@ def hand_import_sentences(left: LeftForHandImport) -> tuple[str, str]:
         verb = "is" if len(left.missing) == 1 else "are"
         lead.append(f"{_episodes(left.missing)} {verb} still missing in Sonarr.")
     if len(left.untrusted) == 1:
-        lead.append(f"{_episodes(left.untrusted)} has a file in Sonarr, but it isn't from a recommended release.")
+        lead.append(f"{_episodes(left.untrusted)} has a file in Sonarr, but it isn't from a trusted group.")
     elif left.untrusted:
-        lead.append(f"{_episodes(left.untrusted)} have files in Sonarr, but they aren't from a recommended release.")
+        lead.append(f"{_episodes(left.untrusted)} have files in Sonarr, but they aren't from a trusted group.")
     reason = _order_only_reason(left)
     return " ".join(lead), reason[0].upper() + reason[1:]
 
@@ -123,9 +123,9 @@ def _still_needed_note(left: LeftForHandImport) -> str:
     if left.missing:
         parts.append(f"{_episodes(left.missing)} still missing in Sonarr")
     if len(left.untrusted) == 1:
-        parts.append(f"{_episodes(left.untrusted)} has a file that isn't from a recommended release")
+        parts.append(f"{_episodes(left.untrusted)} has a file that isn't from a trusted group")
     elif left.untrusted:
-        parts.append(f"{_episodes(left.untrusted)} have files that aren't from a recommended release")
+        parts.append(f"{_episodes(left.untrusted)} have files that aren't from a trusted group")
     return " · ".join(parts)
 
 
@@ -135,11 +135,11 @@ def row_finished_note(event: RowFinished) -> str:
     outcome = event.outcome
     left = event.left_for_hand_import
     if outcome is Outcome.NOTHING_PLACED:
-        return f"{count_noun(len(left.files), 'file')} matched no episode · import by hand in Sonarr"
+        return f"{count_noun(len(left.files), 'unplaced file')} · import by hand in Sonarr"
     if outcome is Outcome.PARTIAL:
         if left.explained_by_order:
             return _still_needed_note(left)
-        return f"{count_noun(len(left.files), 'file')} held back · import by hand in Sonarr"
+        return f"{count_noun(len(left.files), 'file')} left for hand import in Sonarr"
     if outcome is Outcome.IMPORTED:
         parts: list[str] = []
         if event.files:
@@ -148,9 +148,9 @@ def row_finished_note(event: RowFinished) -> str:
             parts.append(long_duration(event.waited_s))
         return " · ".join(parts)
     if outcome.kind is OutcomeKind.IN_PROGRESS:
-        return "checked again next run"
+        return "picked up again next run"
     if not outcome.dropped:
-        return "retries next run"
+        return "left for the next run"
     # The only other dropped outcome is GONE: the torrent is gone from qBittorrent.
     return "no longer tracked · title checked again next run"
 
@@ -171,7 +171,7 @@ def wait_progress_line(snapshot: WaitSnapshot) -> ConsoleLine:
     counts = snapshot.counts()
     message = indent_string(
         f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
-        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.NOT_POLLED]} queued · "
+        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.NOT_POLLED]} not polled · "
         f"{long_duration(snapshot.elapsed_s)}",
     )
     return ConsoleLine(logging.INFO, message)
@@ -223,16 +223,15 @@ def wait_tally_lines(event: WaitFinished) -> list[ConsoleLine]:
         return []
     parts = [f"{event.imported} imported"]
     if event.in_progress:
-        parts.append(f"{event.in_progress} pending")
+        parts.append(f"{event.in_progress} in progress")
     if event.left:
         parts.append(f"{event.left} left")
     if event.failed:
         parts.append(f"{event.failed} failed")
     parts.append(long_duration(event.elapsed_s))
-    head = event.kind.tally_head
     return [
         ConsoleLine(logging.INFO, rule_string("-"), SeparatorRule(char="-")),
-        ConsoleLine(logging.INFO, indent_string(f"{head} · " + " · ".join(parts))),
+        ConsoleLine(logging.INFO, indent_string("wait complete · " + " · ".join(parts))),
     ]
 
 
@@ -390,11 +389,11 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             status="copying" if torrent.command_issued else "importing",
             time=elapsed,
         )
-    return RowModel(label=torrent.label, phase=Phase.NOT_POLLED, fraction=0.0, status="queued")
+    return RowModel(label=torrent.label, phase=Phase.NOT_POLLED, fraction=0.0, status="not polled")
 
 
 def _overflow_text(hidden: list[TorrentView]) -> str:
-    """A "+ N more downloading · M queued" tally for the rows past the budget."""
+    """A "+ N more downloading · M not polled" tally for the rows past the budget."""
 
     if not hidden:
         return ""
@@ -405,7 +404,7 @@ def _overflow_text(hidden: list[TorrentView]) -> str:
     if counts[Phase.DOWNLOADING]:
         parts.append(f"{counts[Phase.DOWNLOADING]} more downloading")
     if counts[Phase.NOT_POLLED]:
-        parts.append(f"{counts[Phase.NOT_POLLED]} queued")
+        parts.append(f"{counts[Phase.NOT_POLLED]} not polled")
     return "+ " + " · ".join(parts)
 
 

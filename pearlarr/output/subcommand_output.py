@@ -87,7 +87,7 @@ class CliTextRenderer(Renderer):
             case PathsShown():
                 self._paths(event)
             case StarterConfigWritten(path=path):
-                typer.echo(f"Wrote a starter config to {path}")
+                typer.echo(f"Wrote the config template to {path}")
             case ConfigValidated():
                 self._config_validated(event)
             case ConfigUpToDate(path=path):
@@ -173,11 +173,11 @@ class CliTextRenderer(Renderer):
             if not keys:
                 status = "configured"
             elif len(keys) == 1:
-                status = f"not configured ({keys[0]} is not set - runs will skip it)"
+                status = f"not configured ({keys[0]} is not set - it is not run)"
             else:
-                status = "not configured (runs will skip it)"
+                status = "not configured (it is not run)"
             typer.echo(f"  {f'{arr}:':<13}{status}")
-        qbit_status = "configured" if event.qbit_configured else "not configured (preview mode - nothing is grabbed)"
+        qbit_status = "configured" if event.qbit_configured else "not configured (dry runs only - nothing is grabbed)"
         typer.echo(f"  {'qbittorrent:':<13}{qbit_status}")
 
     @staticmethod

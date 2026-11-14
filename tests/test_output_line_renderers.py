@@ -231,7 +231,7 @@ def test_grab_action_line_joins_groups_and_names_the_qbittorrent_side() -> None:
     )
     line = _format(action, *_open_title_scope_events())
     assert line == (
-        f"{_TS} INFO [sonarr › [3/182] Frieren › title] adding recommended release "
+        f"{_TS} INFO [sonarr › [3/182] Frieren › title] grabbing release "
         f'groups="SubsPlease [dual audio]; Kowo" grabbed="[SubsPlease] Sousou no Frieren" in_qbittorrent=Kowo'
     )
 
@@ -273,7 +273,7 @@ def test_multi_line_messages_and_field_values_stay_one_line() -> None:
 
 @pytest.mark.parametrize(
     ("kind", "words"),
-    [(WaitKind.BLOCKING, "waiting wait_pass=blocking"), (WaitKind.DEFERRED, "checking wait_pass=deferred")],
+    [(WaitKind.BLOCKING, "waiting wait_pass=blocking"), (WaitKind.DEFERRED, "looking wait_pass=deferred")],
 )
 def test_wait_start_lines_word_and_mark_the_pass_kind(kind: WaitKind, words: str) -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
@@ -308,7 +308,7 @@ def test_unmatched_outcome_line_names_the_files() -> None:
         scope=_WAIT,
     )
     assert _format(row_finished, *context) == (
-        f'{_TS} WARNING [sonarr › wait] unmatched torrent="Demo Batch" hand_import_files="a.mkv; b.mkv" waited_s=15.00'
+        f'{_TS} WARNING [sonarr › wait] unplaced torrent="Demo Batch" hand_import_files="a.mkv; b.mkv" waited_s=15.00'
     )
 
 
@@ -339,7 +339,7 @@ def test_order_only_outcome_line_says_why_and_keys_each_file() -> None:
     )
     assert _format(row_finished, *context) == (
         f'{_TS} WARNING [sonarr › wait] partial torrent="Demo Batch" '
-        'detail="S04 E01 is still missing in Sonarr. This pack is numbered by the DVD order, and 2 of its files are '
+        'detail="S04 E01 is still missing in Sonarr. This torrent is numbered by the DVD order, and 2 of its files are '
         "DVD episodes that aren't in Sonarr's list, so Pearlarr can't tell where they belong.\" "
         'hand_import_files="DVD S07E01: [grp] Show Ending S1 - 01 [ABCD1234].mkv; '
         'DVD S07E02: [grp] Show Ending S1 - 02 [ABCD1234].mkv" waited_s=15.00'
@@ -468,7 +468,7 @@ def test_summary_renders_one_head_line_plus_one_line_per_row() -> None:
     assert text == "\n".join(
         [
             (
-                f"{_TS} INFO [summary] run complete arr=sonarr checked=182 needs_action=1 grabbed=1 "
+                f"{_TS} INFO [summary] arr run complete arr=sonarr checked=182 needs_action=1 grabbed=1 "
                 f"downloading=1 up_to_date=161 unchanged=14 warnings=2 errors=0 elapsed_s=401.00 tip=private_only"
             ),
             (
@@ -476,7 +476,7 @@ def test_summary_renders_one_head_line_plus_one_line_per_row() -> None:
                 f'reason="private tracker" cause=private_only link=https://releases.moe/98765'
             ),
             (
-                f'{_TS} INFO [summary] added title="Frieren: Beyond Journey\'s End" coverage="S01 E01-E28" '
+                f'{_TS} INFO [summary] grabbed title="Frieren: Beyond Journey\'s End" coverage="S01 E01-E28" '
                 f'group=SubsPlease torrent="[SubsPlease] Sousou no Frieren" link=https://releases.moe/154587'
             ),
         ],

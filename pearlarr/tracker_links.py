@@ -79,10 +79,10 @@ def fetch_animetosho_link(
     titles = soup.find_all("h2", attrs={"id": "title"})
 
     if len(titles) == 0:
-        raise TrackerPageError(f"Could not find the torrent title on {url}")
+        raise TrackerPageError(f"Could not find the torrent name on {url}")
 
     if len(titles) > 1:
-        raise TrackerPageError(f"Found more than one torrent title on {url}")
+        raise TrackerPageError(f"Found more than one torrent name on {url}")
 
     title = titles[0].text
 
@@ -150,7 +150,7 @@ def fetch_rutracker_link(
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
     if main_title is None:
-        raise TrackerPageError(f"Could not find the torrent title on {url}")
+        raise TrackerPageError(f"Could not find the torrent name on {url}")
     torrent_title = main_title.text
 
     params = {

@@ -58,7 +58,7 @@ class SkipReason(StrEnum):
     it's left for a hand import. Also a torrent with a file another TVDB order reads outside the title's window, where
     no listed title placed it (`PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW`), and nothing of it placed on the
     title."""
-    EPISODE_TITLES_CONTRADICT = "titles refute its numbers"
+    EPISODE_TITLES_CONTRADICT = "episode titles contradict its numbers"
     """A torrent whose files' episode titles contradict their numbers, with nothing of it placed on the title
     (`PlacementVerdict.EPISODE_TITLES_CONTRADICT`): left for a hand import."""
     PLACED_ELSEWHERE = "files place under another title"

@@ -223,7 +223,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
     """One block per group with anything to grab.
 
     The label reflects what actually happened at the torrent client: "Grabbed"
-    when anything was added, "Already downloading" when every acted release was
+    when anything was added, "Already in qBittorrent" when every acted release was
     already there, "Failed" when an add errored (contained, retried next run),
     "Skipped" when none of its releases were attempted. Tags trail the release
     lines as muted subtext.
@@ -242,7 +242,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
         if add_outcome is AddStatus.ADDED:
             label = "Grabbed"
         elif add_outcome is AddStatus.ALREADY_IN_QBIT:
-            label = "Already downloading"
+            label = "Already in qBittorrent"
         elif srg in notice.failed_groups:
             label = "Failed"
         else:
@@ -375,7 +375,7 @@ class Notifier:
 
         sections = (
             (OutcomeKind.IMPORTED, "Imported"),
-            (OutcomeKind.LEFT, "Left pending"),
+            (OutcomeKind.LEFT, "Left for the next run"),
             (OutcomeKind.FAILED, "Failed"),
         )
         fields: list[EmbedField] = []

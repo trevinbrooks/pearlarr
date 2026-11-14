@@ -44,7 +44,7 @@ from .builders import make_config
 
 
 class TestFileLifecycle:
-    """A missing config copies the starter template (0600, banner-stripped) and raises.
+    """A missing config copies the template (0600, banner-stripped) and raises.
 
     An existing one loads normally, preserving user values, with a byte-exact config hash.
     """
@@ -53,7 +53,7 @@ class TestFileLifecycle:
         cfg_path = tmp_path / "config.yml"
         # The message reflects that the copy already happened and says what to
         # do next (standalone callers see it raw, the CLI logs its own version).
-        with pytest.raises(FileNotFoundError, match="starter template was written"):
+        with pytest.raises(FileNotFoundError, match="a template was written"):
             AppConfig.load(str(cfg_path))
         # The bundled (nested) template was copied into place for editing.
         assert cfg_path.exists()

@@ -861,7 +861,7 @@ class TestAnidbMappingDict:
     def test_ambiguous_id_raises(self) -> None:
         resolver = _anidb_resolver()
         try:
-            with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
+            with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
                 resolver.anidb_episode_by_tvdb(2, 1)
         finally:
             resolver.close()
@@ -1097,8 +1097,8 @@ class TestUnwritableDbFallback:
         try:
             assert diagnostic_messages(recording, Severity.WARNING) == [
                 (
-                    f"Mapping cache at {db} could not be written - rebuilding it "
-                    "in memory for this run (slower startup, no data lost)"
+                    f"Mappings database at {db} could not be written - rebuilding it "
+                    "in memory for this run (slower boot, no data lost)"
                 ),
             ]
             assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=10))[1].anilist_id == 1
@@ -1169,7 +1169,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 
     items = [a for a in root.findall("anime") if a.get("anidbid") == str(anidb_id)]
     if len(items) > 1:
-        raise ValueError(f"AniDB id {anidb_id} appears in multiple anime-list entries")
+        raise ValueError(f"AniDB id {anidb_id} appears in more than one anime-lists mapping")
     if len(items) != 1:
         return {}
     result: dict[int, dict[int, int]] = {}
@@ -1269,7 +1269,7 @@ class TestRealDataParity:
                     try:
                         expected = _anidb_oracle(root, anidb_id, season)
                     except ValueError:
-                        with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
+                        with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
                             resolver.anidb_episode_by_tvdb(anidb_id, season)
                         continue
                     assert resolver.anidb_episode_by_tvdb(anidb_id, season) == expected

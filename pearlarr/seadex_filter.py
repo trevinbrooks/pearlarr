@@ -283,7 +283,7 @@ class SeadexReleaseFilter:
             # Every token was invalid (blank input means "all" and never gets
             # here), so the title proceeds with zero releases - say so.
             if not seadex_dict_filtered:
-                hub_warn("No valid selection - skipping this title")
+                hub_warn("No valid selection - grabbing nothing for this title")
 
             seadex_dict = seadex_dict_filtered
 

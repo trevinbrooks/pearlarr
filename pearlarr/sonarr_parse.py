@@ -110,7 +110,7 @@ class SonarrParseCache:
         # rows, later calls evict nothing.
         evicted = self.cache_store.evict_sonarr_parse(window.matched_cutoff)
         if evicted:
-            self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
+            self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse')}")
 
         # Each release's video files (creditless OP/ED, subs, fonts, audio dropped) with their listed sizes.
         listed = {

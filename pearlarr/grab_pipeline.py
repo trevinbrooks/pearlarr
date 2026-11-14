@@ -50,7 +50,7 @@ _SKIP_REPORTS: Mapping[SkipReason, SkipReport] = MappingProxyType(
         ),
         SkipReason.EPISODE_TITLES_CONTRADICT: SkipReport(
             NeedsActionCause.EPISODE_TITLES_CONTRADICT,
-            "file titles contradict its numbering; import it by hand",
+            "episode titles contradict its numbers; import it by hand",
         ),
         # No retry clears it: the row stays until the arr has the group's files, so it outranks a failed read.
         SkipReason.PLACED_ELSEWHERE: SkipReport(
@@ -421,7 +421,7 @@ class GrabPipeline:
                 NeedsActionCause.PRIVATE_ONLY_OUTDATED,
             )
         return (
-            "private-only release; no public alternative covers these files",
+            "private-only release; no fallback covers these files",
             NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
         )
 
@@ -442,7 +442,7 @@ class GrabPipeline:
                 self._state.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",
-                    StyledValue("already have the recommended release", Accent.NOTE),
+                    StyledValue("up to date", Accent.NOTE),
                 )
         else:
             added_this_title = self._grab(req)

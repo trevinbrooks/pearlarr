@@ -300,7 +300,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 # EPISODE_RANGES) and an imdb/tmdb-resolved mapping without TVDB mappings
                 # (kind SEASON_OFFSET), while a legit Kometa whole-series mapping (source
                 # ANIME_IDS) stays quiet.
-                hub_warn(f"AniBridge has no usable season ranges for {title.name} - skipping")
+                hub_warn(f"AniBridge has no usable season ranges for {title.name} - not checked")
             services.owe_pause()
             return
 
