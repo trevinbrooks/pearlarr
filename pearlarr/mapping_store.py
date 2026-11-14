@@ -42,7 +42,7 @@ from .sqlite_util import open_or_quarantine, rollback_and_close
 
 # Bump when the table layout below changes. A stored `user_version` that differs
 # triggers a DROP+rebuild (the data is purely derived, re-derived from the sources).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Source names used as `meta` keys and to select which tables a `replace_*`
 # clears. Kept as constants so the resolver and the store agree on the spelling.
@@ -61,14 +61,10 @@ INLINE_HASH = "<inline>"
 type IdKind = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
 _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
-# anibridge xref id kinds - a DIFFERENT vocabulary from the anime_ids columns above
-# ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints, imdb ids are strs.
-type AniBridgeIdKind = Literal["tvdb", "tmdb_movie", "imdb"]
-
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     name   TEXT PRIMARY KEY,
-    digest TEXT NOT NULL
+    hash   TEXT NOT NULL
 );
 
 -- anilist_id is nullable on purpose: a Kometa record with an external id but no
@@ -94,16 +90,16 @@ CREATE TABLE IF NOT EXISTS anibridge_entry (
     tmdb_movie_id INTEGER
 );
 
--- ext_id mixes int (tvdb/tmdb) and str (imdb). The column is declared BLOB so it
+-- external_id mixes int (tvdb/tmdb) and str (imdb). The column is declared BLOB so it
 -- has BLOB (no) affinity: SQLite stores each value with its native type and does
 -- no NUMERIC coercion, so an imdb string is never mangled and a bound int/str
 -- matches the stored value of the same type through the index.
-CREATE TABLE IF NOT EXISTS anibridge_xref (
-    axis       TEXT NOT NULL,
-    ext_id     BLOB NOT NULL,
-    anilist_id INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS anibridge_external_id (
+    id_kind     TEXT NOT NULL,
+    external_id BLOB NOT NULL,
+    anilist_id  INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS ix_anibridge_xref ON anibridge_xref (axis, ext_id);
+CREATE INDEX IF NOT EXISTS ix_anibridge_external_id ON anibridge_external_id (id_kind, external_id);
 
 -- One row per (anilist, tvdb, season) episode range. A season that is *present*
 -- but carries no ranges (an "s<N>" scope with an empty episode map) is stored as a
@@ -146,17 +142,18 @@ CREATE TABLE IF NOT EXISTS anidb_ambiguous (
 # Which tables a source owns, so `replace_<source>` clears exactly its own rows.
 _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
     SOURCE_ANIME_IDS: ("anime_ids",),
-    SOURCE_ANIBRIDGE: ("anibridge_entry", "anibridge_xref", "anibridge_tvdb_range", "anibridge_special_alias"),
+    SOURCE_ANIBRIDGE: ("anibridge_entry", "anibridge_external_id", "anibridge_tvdb_range", "anibridge_special_alias"),
     SOURCE_ANIDB: ("anidb_mapping", "anidb_ambiguous"),
 }
 
-# Drop in FK-free order. All tables are independent so any order works. Derived
-# from _SOURCE_TABLES (plus the shared `meta` table) so a new source's tables are
-# dropped on a SCHEMA_VERSION rebuild automatically - no parallel hand-maintained
-# list to forget (which would leave an old table that CREATE IF NOT EXISTS skips).
-_DROP_ALL = "".join(
-    f"DROP TABLE IF EXISTS {t};\n" for t in ("meta", *(t for tables in _SOURCE_TABLES.values() for t in tables))
-)
+
+def _drop_all_tables(conn: sqlite3.Connection) -> None:
+    """Drop every table the file holds, whatever its name. Indexes go with their tables."""
+
+    own_tables = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite!_%' ESCAPE '!'"
+    for (name,) in conn.execute(own_tables).fetchall():
+        quoted = '"' + name.replace('"', '""') + '"'
+        conn.execute(f"DROP TABLE {quoted}")
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -169,7 +166,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version != SCHEMA_VERSION:
-        conn.executescript(_DROP_ALL)
+        _drop_all_tables(conn)
         conn.executescript(_SCHEMA)
         # PRAGMA can't be parameterised. SCHEMA_VERSION is a trusted int constant.
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -213,10 +210,10 @@ class AniBridgeMappingRow(NamedTuple):
     tmdb_movie_id: int | None
 
 
-class AniBridgeXrefRow(NamedTuple):
-    """One `anibridge_xref` reverse-index row (`id_kind` -> ext id -> AniList id)."""
+class AniBridgeExternalIdRow(NamedTuple):
+    """One `anibridge_external_id` row (`id_kind` -> external id -> AniList id)."""
 
-    id_kind: str
+    id_kind: IdKind
     external_id: int | str
     anilist_id: int
 
@@ -246,7 +243,7 @@ class AniBridgeRows(NamedTuple):
     """The anibridge row tables one graph flattens to (`AniBridge.to_rows`)."""
 
     entries: list[AniBridgeMappingRow]
-    xrefs: list[AniBridgeXrefRow]
+    external_ids: list[AniBridgeExternalIdRow]
     ranges: list[AniBridgeRangeRow]
     aliases: list[AniBridgeAliasRow]
 
@@ -279,7 +276,7 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
-def _external_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -> T:
+def _external_id_as[T: (int, str)](value: object, kind: type[T], id_kind: IdKind) -> T:
     """Pin a stored anibridge external id to the type its id kind owns.
 
     The write path coerced these, so a mismatch means the db is corrupt - raise
@@ -287,7 +284,7 @@ def _external_id_as[T: (int, str)](value: object, kind: type[T], id_kind: str) -
     """
 
     if not isinstance(value, kind):
-        raise TypeError(f"anibridge xref {id_kind!r} ext_id holds {type(value).__name__}, expected {kind.__name__}")
+        raise TypeError(f"anibridge external id {id_kind!r} holds {type(value).__name__}, expected {kind.__name__}")
     return value
 
 
@@ -332,7 +329,7 @@ class MappingStore:
     def is_fresh(self, name: str, source_hash: str) -> bool:
         """True iff `name`'s stored source hash equals `source_hash` (so no re-parse)."""
 
-        row = self._conn.execute("SELECT digest FROM meta WHERE name = ?", (name,)).fetchone()
+        row = self._conn.execute("SELECT hash FROM meta WHERE name = ?", (name,)).fetchone()
         return row is not None and row[0] == source_hash
 
     # -- atomic populate -----------------------------------------------------
@@ -351,8 +348,7 @@ class MappingStore:
                 self._conn.execute(f"DELETE FROM {table}")
             write(self._conn)
             self._conn.execute(
-                "INSERT INTO meta (name, digest) VALUES (?, ?) "
-                "ON CONFLICT (name) DO UPDATE SET digest = excluded.digest",
+                "INSERT INTO meta (name, hash) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET hash = excluded.hash",
                 (name, source_hash),
             )
             self._conn.commit()
@@ -397,8 +393,8 @@ class MappingStore:
                 rows.entries,
             )
             conn.executemany(
-                "INSERT INTO anibridge_xref (axis, ext_id, anilist_id) VALUES (?, ?, ?)",
-                rows.xrefs,
+                "INSERT INTO anibridge_external_id (id_kind, external_id, anilist_id) VALUES (?, ?, ?)",
+                rows.external_ids,
             )
             conn.executemany(
                 "INSERT INTO anibridge_tvdb_range (anilist_id, tvdb_id, season, start_ep, end_ep) "
@@ -484,32 +480,32 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_mappings_for(self, id_kind: str, external_id: int | str) -> list[AniBridgeMappingRow]:
+    def anibridge_mappings_for(self, id_kind: IdKind, external_id: int | str) -> list[AniBridgeMappingRow]:
         """Every `AniBridgeMappingRow` mapped to `external_id` on `id_kind`.
 
-        One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
-        query instead of k per-id point lookups. The INNER JOIN drops any xref row
+        One external id->entry JOIN so a lookup that resolves k AniList ids costs a single
+        query instead of k per-id point lookups. The INNER JOIN drops any external id row
         lacking an entry row, but `to_rows` writes both from the same `by_anilist`
         dict, so that pairing is structurally guaranteed.
         """
 
         rows = self._conn.execute(
             "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id "
-            "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
-            "WHERE x.axis = ? AND x.ext_id = ?",
+            "FROM anibridge_external_id x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
+            "WHERE x.id_kind = ? AND x.external_id = ?",
             (id_kind, external_id),
         ).fetchall()
         return [AniBridgeMappingRow(*row) for row in rows]
 
     def anibridge_ranges_for(
         self,
-        id_kind: str,
+        id_kind: IdKind,
         external_id: int | str,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
         """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an `(id_kind, external_id)` lookup.
 
-        Ordered by `(anilist_id, rowid)`. Batched: one xref->range JOIN
+        Ordered by `(anilist_id, rowid)`. Batched: one external id->range JOIN
         fetches the ranges for every AniList id a tvdb lookup resolves, so the
         caller groups them by `anilist_id` and rebuilds each season's list in
         insertion order (`ORDER BY x.anilist_id, r.rowid` -> parity with the
@@ -519,33 +515,33 @@ class MappingStore:
 
         rows = self._conn.execute(
             "SELECT x.anilist_id, r.season, r.start_ep, r.end_ep "
-            "FROM anibridge_xref x JOIN anibridge_tvdb_range r ON r.anilist_id = x.anilist_id "
-            "WHERE x.axis = ? AND x.ext_id = ? AND r.tvdb_id = ? "
+            "FROM anibridge_external_id x JOIN anibridge_tvdb_range r ON r.anilist_id = x.anilist_id "
+            "WHERE x.id_kind = ? AND x.external_id = ? AND r.tvdb_id = ? "
             "ORDER BY x.anilist_id, r.rowid",
             (id_kind, external_id, tvdb_id),
         ).fetchall()
         return [AniBridgeRangeHit(*row) for row in rows]
 
-    def anibridge_aliases_for(self, id_kind: str, external_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
-        """The special aliases onto TVDB show `tvdb_id` of every AniList id the xref maps `(id_kind, external_id)` to.
+    def anibridge_aliases_for(self, id_kind: IdKind, external_id: int | str, tvdb_id: int) -> list[AniBridgeAliasHit]:
+        """The special aliases onto TVDB show `tvdb_id` of every AniList id `(id_kind, external_id)` leads to.
 
-        One batched xref->alias JOIN like `anibridge_ranges_for`, ordered by `anilist_id` then write order.
+        One batched external id->alias JOIN like `anibridge_ranges_for`, ordered by `anilist_id` then write order.
         """
 
         rows = self._conn.execute(
             "SELECT x.anilist_id, a.tmdb_id, a.tmdb_number, a.tvdb_number "
-            "FROM anibridge_xref x JOIN anibridge_special_alias a ON a.anilist_id = x.anilist_id "
-            "WHERE x.axis = ? AND x.ext_id = ? AND a.tvdb_id = ? "
+            "FROM anibridge_external_id x JOIN anibridge_special_alias a ON a.anilist_id = x.anilist_id "
+            "WHERE x.id_kind = ? AND x.external_id = ? AND a.tvdb_id = ? "
             "ORDER BY x.anilist_id, a.rowid",
             (id_kind, external_id, tvdb_id),
         ).fetchall()
         return [AniBridgeAliasHit(*row) for row in rows]
 
     @overload
-    def anibridge_distinct(self, id_kind: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...
+    def anibridge_distinct(self, id_kind: Literal["tvdb_id", "tmdb_movie_id"]) -> set[int]: ...
     @overload
-    def anibridge_distinct(self, id_kind: Literal["imdb"]) -> set[str]: ...
-    def anibridge_distinct(self, id_kind: AniBridgeIdKind) -> set[int] | set[str]:
+    def anibridge_distinct(self, id_kind: Literal["imdb_id"]) -> set[str]: ...
+    def anibridge_distinct(self, id_kind: IdKind) -> set[int] | set[str]:
         """The set of all external ids on `id_kind` (for the library-filter id sets).
 
         Unlike the anime_ids columns, the AniBridge write path coerces every external
@@ -554,10 +550,10 @@ class MappingStore:
         """
 
         rows = self._conn.execute(
-            "SELECT DISTINCT ext_id FROM anibridge_xref WHERE axis = ?",
+            "SELECT DISTINCT external_id FROM anibridge_external_id WHERE id_kind = ?",
             (id_kind,),
         ).fetchall()
-        if id_kind == "imdb":
+        if id_kind == "imdb_id":
             return {_external_id_as(r[0], str, id_kind) for r in rows}
         return {_external_id_as(r[0], int, id_kind) for r in rows}
 

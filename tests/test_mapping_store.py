@@ -18,8 +18,8 @@ from pearlarr.mapping_store import (
     SOURCE_ANIME_IDS,
     AniBridgeAliasHit,
     AniBridgeAliasRow,
+    AniBridgeExternalIdRow,
     AniBridgeRows,
-    AniBridgeXrefRow,
     AnimeIdRow,
     MappingStore,
 )
@@ -107,6 +107,27 @@ class TestSchemaVersion:
         assert store.anime_ids_lookup("tvdb_id", 200) == []
         store.close()
 
+    def test_version_mismatch_drops_tables_the_schema_no_longer_has(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "mappings.db")
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE anibridge_xref (axis TEXT, ext_id BLOB, anilist_id INTEGER)")
+        conn.execute("INSERT INTO anibridge_xref VALUES ('tvdb', 74796, 100)")
+        # AUTOINCREMENT makes SQLite keep a sqlite_sequence table of its own, which can't be dropped.
+        conn.execute("CREATE TABLE counted (id INTEGER PRIMARY KEY AUTOINCREMENT)")
+        conn.execute("INSERT INTO counted DEFAULT VALUES")
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+        conn.close()
+
+        store = MappingStore.open(path)
+        store.close()
+
+        conn = sqlite3.connect(path)
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        conn.close()
+        assert not {"anibridge_xref", "counted"} & tables
+        assert {"meta", "anime_ids", "anibridge_external_id"} <= tables
+
 
 class TestCorruptionFailOpen:
     """A corrupt db file is quarantined (moved aside), and the store fails open onto a working in-memory db."""
@@ -154,37 +175,39 @@ class TestDistinctTyping:
     def test_anibridge_distinct_raises_on_mismatched_stored_type(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
         store = MappingStore.open(path)
-        xref = AniBridgeXrefRow("tvdb", 74796, 100)
-        store.replace_anibridge("d", AniBridgeRows(entries=[], xrefs=[xref], ranges=[], aliases=[]))
+        external_id = AniBridgeExternalIdRow("tvdb_id", 74796, 100)
+        store.replace_anibridge("d", AniBridgeRows(entries=[], external_ids=[external_id], ranges=[], aliases=[]))
         store.close()
 
         conn = sqlite3.connect(path)
-        conn.execute("INSERT INTO anibridge_xref (axis, ext_id, anilist_id) VALUES ('tvdb', 'junk', 101)")
+        conn.execute(
+            "INSERT INTO anibridge_external_id (id_kind, external_id, anilist_id) VALUES ('tvdb_id', 'junk', 101)"
+        )
         conn.commit()
         conn.close()
 
         store = MappingStore.open(path)
-        with pytest.raises(TypeError, match="tvdb"):
-            store.anibridge_distinct("tvdb")
-        assert store.anibridge_distinct("imdb") == set()
+        with pytest.raises(TypeError, match="tvdb_id"):
+            store.anibridge_distinct("tvdb_id")
+        assert store.anibridge_distinct("imdb_id") == set()
         store.close()
 
 
 class TestAniBridgeAliases:
-    """Alias rows come back through the lookup's xref for one TVDB show, grouped by AniList id in write order."""
+    """Alias rows come back through the lookup's external id rows for one TVDB show, grouped by AniList id in write order."""
 
     def test_only_the_shows_alias_rows_come_back_grouped_by_anilist_id(self) -> None:
         store = MappingStore.open(":memory:")
-        xrefs = [AniBridgeXrefRow("tvdb", 500, 1), AniBridgeXrefRow("tvdb", 500, 2)]
+        external_ids = [AniBridgeExternalIdRow("tvdb_id", 500, 1), AniBridgeExternalIdRow("tvdb_id", 500, 2)]
         aliases = [
             AniBridgeAliasRow(2, 500, 901, 3, 4),
             AniBridgeAliasRow(1, 500, 900, 13, 12),
             AniBridgeAliasRow(1, 600, 900, 5, 6),
             AniBridgeAliasRow(1, 500, 900, 7, 7),
         ]
-        store.replace_anibridge("d", AniBridgeRows(entries=[], xrefs=xrefs, ranges=[], aliases=aliases))
+        store.replace_anibridge("d", AniBridgeRows(entries=[], external_ids=external_ids, ranges=[], aliases=aliases))
 
-        hits = store.anibridge_aliases_for("tvdb", 500, 500)
+        hits = store.anibridge_aliases_for("tvdb_id", 500, 500)
         store.close()
 
         assert hits == [
