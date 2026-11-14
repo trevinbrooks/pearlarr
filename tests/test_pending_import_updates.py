@@ -27,7 +27,7 @@ from pearlarr.grab_placement import (
 from pearlarr.parse_cache import parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.placement_types import GrabbingTitle, episode_index
-from pearlarr.releases import ReleaseEpisode, SeadexDict
+from pearlarr.releases import PlacedEpisode, SeadexDict
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import now_stamp
 
@@ -274,7 +274,7 @@ class TestBuildPendingImportUpdates:
                         size=[2000],
                         infohash="h1",
                         download=True,
-                        episodes=[ReleaseEpisode(season=1, episode=2, size=2000)],
+                        episodes=[PlacedEpisode(season=1, episode=2, size=2000)],
                     ),
                 },
             ),

@@ -24,7 +24,7 @@ class EpisodeKey(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseEpisode:
+class PlacedEpisode:
     """One file of a release on one episode the placement put it on: the episode's numbers and the file's size.
 
     A file on two episodes is two of these, and so are two files on one episode.
@@ -145,7 +145,7 @@ class Release:
     """A fallback, grabbed because the preferred release is private-only."""
     is_upgrade: bool = False
     """A grab over files the Arr has at an outdated size or on too many episodes. Never set without `to_grab`."""
-    episodes: list[ReleaseEpisode] = field(default_factory=list[ReleaseEpisode])
+    episodes: list[PlacedEpisode] = field(default_factory=list[PlacedEpisode])
     skip_reason: SkipReason | None = None
     """Why the placement skips the release this run (`attach_placements` sets it), None when it may be grabbed."""
     another_titles_counts: AnotherTitlesCounts = NO_ANOTHER_TITLES_COUNTS
@@ -188,7 +188,7 @@ class GroupReleases:
 
     releases: dict[str, Release] = field(default_factory=dict[str, Release])
     tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
-    all_episodes: list[ReleaseEpisode] | None = None
+    episodes: list[PlacedEpisode] | None = None
     """`None` until `attach_placements` has run, distinct from an empty list (it ran and found nothing)."""
 
 

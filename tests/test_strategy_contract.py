@@ -66,7 +66,7 @@ from pearlarr.placement_types import FetchedListings, TorrentListing, episode_in
 from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, OrderOnlyKey, ReleaseEpisode, SeadexDict, SkipReason
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacedEpisode, SeadexDict, SkipReason
 from pearlarr.sonarr_episodes import sonarr_series_hash
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
@@ -2582,7 +2582,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
         }
         # The planner reads the release by the whole file map's episodes inside this title's window.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [PlacedEpisode(season=1, episode=2, size=1000)]
         assert req.input_unread_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
@@ -2765,7 +2765,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
         assert store.get_pending_import_row_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [ReleaseEpisode(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [PlacedEpisode(season=1, episode=2, size=1000)]
 
 
 class TestPlacementDebugLine:

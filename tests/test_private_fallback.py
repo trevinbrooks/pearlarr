@@ -22,7 +22,7 @@ from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail, install_hub, uninstall_hub
-from pearlarr.releases import ReleaseEpisode, SeadexDict, SkipReason
+from pearlarr.releases import PlacedEpisode, SeadexDict, SkipReason
 
 from .builders import (
     AddStatus,
@@ -77,12 +77,12 @@ def _entry_private_preferred_plus_public_alt() -> EntryRecord:
     return make_entry_record(anilist_id=11, torrents=(priv, fall))
 
 
-def _attach_episodes(sd: SeadexDict, mapping: dict[str, list[ReleaseEpisode]]) -> None:
+def _attach_episodes(sd: SeadexDict, mapping: dict[str, list[PlacedEpisode]]) -> None:
     """Mirror `attach_placements`: per-release episodes + the group union."""
 
     for group_releases in sd.values():
-        all_eps: list[ReleaseEpisode] = []
-        group_releases.all_episodes = all_eps
+        all_eps: list[PlacedEpisode] = []
+        group_releases.episodes = all_eps
         for url, item in group_releases.releases.items():
             eps = list(mapping.get(url, []))
             item.episodes = eps
@@ -154,8 +154,8 @@ class TestUpgradePendingSkipsForOwnedOutdated:
         _attach_episodes(
             sd,
             {
-                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
@@ -226,8 +226,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         _attach_episodes(
             sd,
             {
-                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
         # Sonarr has Priv's release at the MATCHING SeaDex size.
@@ -301,7 +301,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         sd = filt.build(entry)
         assert set(sd) == {"Priv"}  # warn mode adds no fallback
 
-        _attach_episodes(sd, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
+        _attach_episodes(sd, {PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
         with _record() as recording:
@@ -371,9 +371,9 @@ class TestPlanGrabsNotice:
         _attach_episodes(
             sd,
             {
-                self.PRIVA_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
-                self.PRIVB_URL: [ReleaseEpisode(season=2, episode=1, size=777)],
-                self.PUBA_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                self.PRIVA_URL: [PlacedEpisode(season=1, episode=1, size=999)],
+                self.PRIVB_URL: [PlacedEpisode(season=2, episode=1, size=777)],
+                self.PUBA_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
         # S01E01 has a file at an outdated size (upgrade pending). S02E01 is missing.
@@ -462,14 +462,14 @@ class TestMixedGroupKeeperPreference:
         _attach_episodes(
             sd,
             {
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=999),
-                    ReleaseEpisode(season=2, episode=1, size=999),
+                    PlacedEpisode(season=1, episode=1, size=999),
+                    PlacedEpisode(season=2, episode=1, size=999),
                 ],
                 self.H_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=777),
-                    ReleaseEpisode(season=2, episode=1, size=777),
+                    PlacedEpisode(season=1, episode=1, size=777),
+                    PlacedEpisode(season=2, episode=1, size=777),
                 ],
             },
         )
@@ -517,10 +517,10 @@ class TestMixedGroupKeeperPreference:
         _attach_episodes(
             sd,
             {
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=999),
-                    ReleaseEpisode(season=2, episode=1, size=999),
+                    PlacedEpisode(season=1, episode=1, size=999),
+                    PlacedEpisode(season=2, episode=1, size=999),
                 ],
             },
         )
@@ -592,10 +592,10 @@ class TestSurvivingPrivateCoverage:
             sd,
             {
                 PRIV_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=999),
-                    ReleaseEpisode(season=2, episode=1, size=999),
+                    PlacedEpisode(season=1, episode=1, size=999),
+                    PlacedEpisode(season=2, episode=1, size=999),
                 ],
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
 
@@ -674,8 +674,8 @@ class TestPromotionGeneralization:
         _attach_episodes(
             sd,
             {
-                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
@@ -782,14 +782,14 @@ class TestPromotionGeneralization:
         _attach_episodes(
             sd,
             {
-                self.M_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                self.M_PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
                 PRIV_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=999),
-                    ReleaseEpisode(season=2, episode=1, size=999),
+                    PlacedEpisode(season=1, episode=1, size=999),
+                    PlacedEpisode(season=2, episode=1, size=999),
                 ],
                 self.F_URL: [
-                    ReleaseEpisode(season=1, episode=1, size=777),
-                    ReleaseEpisode(season=2, episode=1, size=777),
+                    PlacedEpisode(season=1, episode=1, size=777),
+                    PlacedEpisode(season=2, episode=1, size=777),
                 ],
             },
         )
@@ -879,15 +879,15 @@ class TestEqualUnionMixedGroups:
             _attach_episodes(
                 sd,
                 {
-                    self.A_PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                    self.A_PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
                     self.A_PRIV_URL: [
-                        ReleaseEpisode(season=1, episode=1, size=999),
-                        ReleaseEpisode(season=2, episode=1, size=999),
+                        PlacedEpisode(season=1, episode=1, size=999),
+                        PlacedEpisode(season=2, episode=1, size=999),
                     ],
-                    self.B_PUB_URL: [ReleaseEpisode(season=2, episode=1, size=556)],
+                    self.B_PUB_URL: [PlacedEpisode(season=2, episode=1, size=556)],
                     self.B_PRIV_URL: [
-                        ReleaseEpisode(season=1, episode=1, size=998),
-                        ReleaseEpisode(season=2, episode=1, size=998),
+                        PlacedEpisode(season=1, episode=1, size=998),
+                        PlacedEpisode(season=2, episode=1, size=998),
                     ],
                 },
             )
@@ -954,8 +954,8 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         _attach_episodes(
             sd,
             {
-                PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)],
-                PUB_URL: [ReleaseEpisode(season=1, episode=1, size=555)],
+                PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)],
+                PUB_URL: [PlacedEpisode(season=1, episode=1, size=555)],
             },
         )
         plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1)])
@@ -1011,7 +1011,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         )
         sd_warn = warn_filt.build(entry)
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
-        _attach_episodes(sd_warn, {PRIV_URL: [ReleaseEpisode(season=1, episode=1, size=999)]})
+        _attach_episodes(sd_warn, {PRIV_URL: [PlacedEpisode(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
         with _record() as recording:
             warn_plan = warn_filt.plan_grabs(sd_warn, ArrFiles(by_group={"Fall": (555,)}), ep_list)

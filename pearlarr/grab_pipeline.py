@@ -264,8 +264,8 @@ class GrabPipeline:
             return None
 
         if result.outcome is AddStatus.ADDED:
-            # Prefer the release's own parsed file list, falling back to the title's coverage so the summary's
-            # files are never blank when a release's filenames couldn't be parsed.
+            # Prefer the release's own placed episodes, falling back to the title's coverage so the summary's
+            # files are never blank when none of a release's files placed.
             coverage_str = (
                 _coverage.coverage_string(ep.key for ep in release.episodes) or self._state.per_title.entry_coverage
             )
