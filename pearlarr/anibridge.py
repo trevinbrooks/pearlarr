@@ -33,10 +33,10 @@ from .boundary import coerce_int
 from .mapping_store import (
     AniBridgeAliasHit,
     AniBridgeAliasRow,
+    AniBridgeExternalIdRow,
     AniBridgeMappingRow,
     AniBridgeRangeRow,
     AniBridgeRows,
-    AniBridgeXrefRow,
     IdKind,
     MappingStore,
 )
@@ -245,6 +245,18 @@ def _special_aliasing(targets: Mapping[str, Mapping[str, str]]) -> dict[int, Spe
     return {tvdb_id: SpecialAliasing(tmdb_id, aliases)} if aliases else {}
 
 
+def _external_id_rows(
+    id_kind: IdKind, index: Mapping[int, set[int]] | Mapping[str, set[int]]
+) -> list[AniBridgeExternalIdRow]:
+    """One row per AniList id each external id of `id_kind` leads to."""
+
+    return [
+        AniBridgeExternalIdRow(id_kind, external_id, anilist_id)
+        for external_id, anilist_ids in index.items()
+        for anilist_id in anilist_ids
+    ]
+
+
 def _aliasing_by_anilist(hits: Iterable[AniBridgeAliasHit]) -> dict[int, SpecialAliasing]:
     """The stored alias rows of one TVDB show regrouped per AniList id, in row order."""
 
@@ -326,9 +338,9 @@ class AniBridge:
         self.imdb_index = defaultdict(set)
         # anibridge_distinct's per-id_kind overloads type each set (tvdb/tmdb ints,
         # imdb strs). The store raises on a mismatched stored type.
-        self.all_tvdb_ids = store.anibridge_distinct("tvdb")
-        self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
-        self.all_imdb_ids = store.anibridge_distinct("imdb")
+        self.all_tvdb_ids = store.anibridge_distinct("tvdb_id")
+        self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie_id")
+        self.all_imdb_ids = store.anibridge_distinct("imdb_id")
         # Title count, fetched once: the store is immutable for this view's lifetime
         # (populated before from_store, read-only after), so a per-call COUNT(*) - an
         # O(rows) scan that resolve would trigger twice per item - is wasteful.
@@ -373,17 +385,12 @@ class AniBridge:
                     for tmdb_number, tvdb_number in aliases.items()
                 )
 
-        xrefs: list[AniBridgeXrefRow] = []
-        for id_kind, index in (
-            ("tvdb", self.tvdb_index),
-            ("tmdb_movie", self.tmdb_movie_index),
-            ("imdb", self.imdb_index),
-        ):
-            for external_id, anilist_ids in index.items():
-                for anilist_id in anilist_ids:
-                    xrefs.append(AniBridgeXrefRow(id_kind, external_id, anilist_id))
-
-        return AniBridgeRows(entries, xrefs, ranges, alias_rows)
+        external_ids = [
+            *_external_id_rows("tvdb_id", self.tvdb_index),
+            *_external_id_rows("tmdb_movie_id", self.tmdb_movie_index),
+            *_external_id_rows("imdb_id", self.imdb_index),
+        ]
+        return AniBridgeRows(entries, external_ids, ranges, alias_rows)
 
     def __bool__(self) -> bool:
         return self._len > 0
@@ -584,21 +591,21 @@ class AniBridge:
 
     def _sql_lookup(
         self,
-        id_kind: str,
+        id_kind: IdKind,
         external_id: int | str,
         *,
         tvdb_id: int | None = None,
     ) -> AniBridgeLookup:
         """Batched SQL twin of the graph `lookup_by_*` (on a stored view).
 
-        One xref->entry JOIN fetches every title mapped to `external_id` on `id_kind`.
-        For a tvdb-scoped lookup, an xref->range JOIN and an xref->alias JOIN fetch
+        One external id->entry JOIN fetches every title mapped to `external_id` on `id_kind`.
+        For a tvdb-scoped lookup, an external id->range JOIN and an external id->alias JOIN fetch
         all their range and alias rows at once (grouped here by AniList id), so
         resolving k ids costs 3 queries rather than the 1 + 3k point queries a per-id
         approach needs. Reproduces `_raw_mapping_for` exactly: `tvdb_mappings` attaches
         whenever `tvdb_id` is supplied, and `special_aliasing` whenever the id also has
         alias rows. The only such caller (`lookup_by_tvdb`)
-        iterates the tvdb xref, so every resolved id is guaranteed to carry that
+        iterates the tvdb external id rows, so every resolved id is guaranteed to carry that
         tvdb (matching the in-memory `tvdb_id in title.tvdb_shows` guard).
         """
 
@@ -630,7 +637,7 @@ class AniBridge:
         """Return "{anilist_id: raw mapping}" for AniList ids mapped to a TVDB series id."""
 
         if self._store is not None:
-            return self._sql_lookup("tvdb", tvdb_id, tvdb_id=tvdb_id)
+            return self._sql_lookup("tvdb_id", tvdb_id, tvdb_id=tvdb_id)
 
         return {
             anilist_id: self._raw_mapping_for(anilist_id, tvdb_id=tvdb_id)
@@ -641,7 +648,7 @@ class AniBridge:
         """Return "{anilist_id: raw mapping}" for AniList ids mapped to a TMDB movie id."""
 
         if self._store is not None:
-            return self._sql_lookup("tmdb_movie", tmdb_id)
+            return self._sql_lookup("tmdb_movie_id", tmdb_id)
 
         return {anilist_id: self._raw_mapping_for(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 
@@ -649,6 +656,6 @@ class AniBridge:
         """Return "{anilist_id: raw mapping}" for AniList ids mapped to an IMDb id (e.g. "tt0094625")."""
 
         if self._store is not None:
-            return self._sql_lookup("imdb", imdb_id)
+            return self._sql_lookup("imdb_id", imdb_id)
 
         return {anilist_id: self._raw_mapping_for(anilist_id) for anilist_id in self.imdb_index.get(imdb_id, ())}
