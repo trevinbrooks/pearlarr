@@ -300,7 +300,7 @@ def configured_arrs(
     of tripping `require_connection` into an "unexpected error" traceback.
     A half-configured arr (url without api_key, or vice versa) is almost
     certainly a mistake, so its skip is a WARNING naming the missing key. An
-    explicit `--radarr`/`--movie-id` against an unconfigured radarr is a
+    explicit `--radarr`/`--tmdb-id` against an unconfigured radarr is a
     config mistake: report it and run nothing. Returns the runnable targets, or
     None - after logging why - when nothing can run.
     """

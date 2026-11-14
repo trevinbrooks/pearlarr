@@ -181,7 +181,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         filtered = [s for s in items if s.tvdbId == item_id]
         if len(filtered) == 0:
-            hub_warn(f"No anime series with TVDB ID {item_id} found in Sonarr - check the --series-id value")
+            hub_warn(f"No anime series with TVDB ID {item_id} found in Sonarr - check the --tvdb-id value")
         return filtered
 
     @override

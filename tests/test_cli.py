@@ -471,9 +471,30 @@ class TestRunSingleSelection:
         assert recorder.explicit_selection is True
 
     def test_an_id_implies_its_arr(self, recorder: _RunArrsRecorder) -> None:
-        assert run_single(movie_id=42) is True
+        assert run_single(tmdb_id=42) is True
         assert recorder.arrs == [(Arr.RADARR, 42)]
         assert recorder.explicit_selection is True
+
+    def test_the_tmdb_id_flag_selects_a_movie(self, recorder: _RunArrsRecorder) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--tmdb-id", "42"])
+        assert result.exit_code == 0
+        assert recorder.arrs == [(Arr.RADARR, 42)]
+
+    def test_the_tvdb_id_flag_selects_a_series(self, recorder: _RunArrsRecorder) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--tvdb-id", "7"])
+        assert result.exit_code == 0
+        assert recorder.arrs == [(Arr.SONARR, 7)]
+
+    @pytest.mark.parametrize("flag", ["--movie-id", "--series-id"])
+    def test_the_old_id_flags_are_usage_errors(self, recorder: _RunArrsRecorder, flag: str) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", flag, "1"])
+        assert result.exit_code == 2
+        assert recorder.arrs is None
+
+    def test_hybrid_is_not_a_wait_mode(self, recorder: _RunArrsRecorder) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--import-wait-mode", "hybrid"])
+        assert result.exit_code == 2
+        assert recorder.arrs is None
 
     def test_the_log_level_flag_is_threaded_through(self, recorder: _RunArrsRecorder) -> None:
         assert run_single(log_level=LogLevel.DEBUG) is True

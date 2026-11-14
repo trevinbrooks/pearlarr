@@ -86,7 +86,7 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
 
         filtered = [m for m in items if m.tmdbId == item_id]
         if len(filtered) == 0:
-            hub_warn(f"No anime movie with TMDB ID {item_id} found in Radarr - check the --movie-id value")
+            hub_warn(f"No anime movie with TMDB ID {item_id} found in Radarr - check the --tmdb-id value")
         return filtered
 
     @override

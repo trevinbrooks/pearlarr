@@ -47,7 +47,7 @@ Print the resolved data directory and the files within it.
 
 Re-render a captured JSON event stream as the human text log grammar.
 
-Reads FILE (or stdin with -), a capture of the machine-readable JSON stream written by advanced.log_format: json or a subcommand's --json, and prints each event back as one `ts LEVEL [breadcrumb] message key=value` line - the same grammar as the log file - for reading a docker-captured log after the fact. Non-event lines (docker interleaves stderr text) are skipped with a count, and unknown newer events render best-effort. Unlike the other subcommands, replay has no --json flag: its output is the rendered text.
+Reads FILE (or stdin with -), a capture of the machine-readable JSON stream written by advanced.log_format: json or a subcommand's --json, and prints each event back as one `ts LEVEL [scope path] message key=value` line - the same grammar as the log file - for reading a docker-captured log after the fact. Non-event lines (docker interleaves stderr text) are skipped with a count, and unknown newer events render best-effort. Unlike the other subcommands, replay has no --json flag: its output is the rendered text.
 
 ## `pearlarr run`
 
@@ -55,14 +55,14 @@ Run Pearlarr: a scheduled loop or a one-off single run.
 
 | Command | Description |
 | --- | --- |
-| `pearlarr run scheduled` | Run every configured arr module on a loop (each schedule.interval_hours). |
+| `pearlarr run scheduled` | Run every configured arr on a loop (each schedule.interval_hours). |
 | `pearlarr run single` | Do a single Pearlarr run (every configured arr, unless narrowed by the flags below). |
 
 ### `pearlarr run scheduled`
 
-Run every configured arr module on a loop (each schedule.interval_hours).
+Run every configured arr on a loop (each schedule.interval_hours).
 
-This is the bare-metal fallback scheduler. The container image runs supercronic instead.
+This is the scheduler for a bare-metal install. The container image runs supercronic instead.
 
 | Option | Value | Description |
 | --- | --- | --- |
@@ -74,10 +74,10 @@ Do a single Pearlarr run (every configured arr, unless narrowed by the flags bel
 
 | Option | Value | Description |
 | --- | --- | --- |
-| `--radarr` |  | Run the Radarr module |
-| `--sonarr` |  | Run the Sonarr module |
-| `--movie-id` | `TMDB_ID` | Only process the movie with this TMDB ID (implies --radarr) |
-| `--series-id` | `TVDB_ID` | Only process the series with this TVDB ID (implies --sonarr) |
+| `--radarr` |  | Run Radarr only |
+| `--sonarr` |  | Run Sonarr only |
+| `--tmdb-id` | `TMDB_ID` | Only process the movie with this TMDB ID (implies --radarr) |
+| `--tvdb-id` | `TVDB_ID` | Only process the series with this TVDB ID (implies --sonarr) |
 | `--dry-run` |  | Simulate the run: no grabs, no cache writes, no notifications |
 | `--import-wait-mode` | `off` / `deferred` / `blocking` | Override the configured imports.wait_mode for this run |
 | `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` | Override the configured advanced.log_level for this run |
@@ -101,14 +101,14 @@ The file lands in the resolved data directory (see the paths command). Override 
 
 | Option | Value | Description |
 | --- | --- | --- |
-| `--force` / `--no-force` |  | Overwrite an existing config.yml with the starter template |
+| `--force` / `--no-force` |  | Overwrite an existing config.yml with the template |
 | `--json` |  | Emit machine-readable JSON events, one object per line |
 
 ### `pearlarr config validate`
 
 Check config.yml parses and validates, and report what a run would use.
 
-The status lines call out the settings that silently change a run's shape: an unconfigured arr is skipped, and unconfigured qBittorrent credentials mean preview mode (nothing is grabbed).
+The status lines call out the settings that silently change a run's shape: an unconfigured arr is not run, and unconfigured qBittorrent credentials mean dry runs only (nothing is grabbed).
 
 | Option | Value | Description |
 | --- | --- | --- |
@@ -160,7 +160,7 @@ Uses the SQLite online-backup API so a consistent snapshot is taken even if a WA
 
 Restore the cache database from cache.backup.db, keeping the backup.
 
-Copy-restore via temp file + atomic swap: the backup survives (so a restore is repeatable), cache.db never vanishes mid-restore, and stale WAL/SHM sidecars are cleared so the restored snapshot isn't shadowed by them.
+Copy-restore via temp file + atomic swap: the backup survives (so a restore is repeatable), cache.db never vanishes mid-restore, and leftover WAL/SHM sidecars are cleared so the restored snapshot isn't shadowed by them.
 
 | Option | Value | Description |
 | --- | --- | --- |

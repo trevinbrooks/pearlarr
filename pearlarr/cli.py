@@ -293,7 +293,7 @@ def replay(
 
     Reads FILE (or stdin with -), a capture of the machine-readable JSON stream
     written by advanced.log_format: json or a subcommand's --json, and prints
-    each event back as one `ts LEVEL [breadcrumb] message key=value` line - the
+    each event back as one `ts LEVEL [scope path] message key=value` line - the
     same grammar as the log file - for reading a docker-captured log after the
     fact. Non-event lines (docker interleaves stderr text) are skipped with a
     count, and unknown newer events render best-effort. Unlike the other
@@ -314,7 +314,7 @@ _DEFAULT_SCHEDULE_HOURS = 6.0
 def _peek_config(config_path: str) -> AppConfig | None:
     """Silently read + validate the config for a pre-logger peek, or None.
 
-    Never writes the starter template and never logs: `bootstrap.load_shared_config`
+    Never writes the template and never logs: `bootstrap.load_shared_config`
     owns the first-run copy and the operator-facing config errors. Only the load's
     real failure set (unreadable file, bad YAML, failed validation) is
     suppressed. Anything else is a programming bug and must surface.
@@ -473,9 +473,9 @@ def run_scheduled(
         typer.Option(case_sensitive=False, help="Override the configured advanced.log_level"),
     ] = None,
 ) -> None:
-    """Run every configured arr module on a loop (each schedule.interval_hours).
+    """Run every configured arr on a loop (each schedule.interval_hours).
 
-    This is the bare-metal fallback scheduler. The container image runs
+    This is the scheduler for a bare-metal install. The container image runs
     supercronic instead.
     """
 
@@ -536,15 +536,19 @@ def run_scheduled(
     help="Do a single Pearlarr run (every configured arr, unless narrowed by the flags below).",
 )
 def run_single(
-    radarr: Annotated[bool, typer.Option("--radarr", help="Run the Radarr module")] = False,
-    sonarr: Annotated[bool, typer.Option("--sonarr", help="Run the Sonarr module")] = False,
-    movie_id: Annotated[
+    radarr: Annotated[bool, typer.Option("--radarr", help="Run Radarr only")] = False,
+    sonarr: Annotated[bool, typer.Option("--sonarr", help="Run Sonarr only")] = False,
+    tmdb_id: Annotated[
         int | None,
-        typer.Option(metavar="TMDB_ID", help="Only process the movie with this TMDB ID (implies --radarr)"),
+        typer.Option(
+            "--tmdb-id", metavar="TMDB_ID", help="Only process the movie with this TMDB ID (implies --radarr)"
+        ),
     ] = None,
-    series_id: Annotated[
+    tvdb_id: Annotated[
         int | None,
-        typer.Option(metavar="TVDB_ID", help="Only process the series with this TVDB ID (implies --sonarr)"),
+        typer.Option(
+            "--tvdb-id", metavar="TVDB_ID", help="Only process the series with this TVDB ID (implies --sonarr)"
+        ),
     ] = None,
     dry_run: Annotated[
         bool,
@@ -562,33 +566,32 @@ def run_single(
     """Do a single Pearlarr run.
 
     With no selection flag, every configured arr is run (like scheduled mode).
-    The flags narrow the run to one arr or one title.
+    The flags narrow the run to one arr, one series or one movie.
 
     Args:
-        radarr: Only run the Radarr module.
-        sonarr: Only run the Sonarr module.
-        movie_id: If set, only run Radarr for the movie with this TMDB ID.
+        radarr: Run Radarr only.
+        sonarr: Run Sonarr only.
+        tmdb_id: If set, only run Radarr for the movie with this TMDB ID.
             Implies a Radarr run.
-        series_id: If set, only run Sonarr for the series with this TVDB ID.
+        tvdb_id: If set, only run Sonarr for the series with this TVDB ID.
             Implies a Sonarr run.
         dry_run: If set, simulate the run without grabbing torrents, writing
             the cache, or sending notifications.
-        import_wait_mode: Override the configured wait-for-completion + auto
-            import wait mode (off/deferred/blocking/hybrid) for this run. When
-            unset the config's `imports.wait_mode` wins.
+        import_wait_mode: Override the configured wait mode (off/deferred/blocking)
+            for this run. When unset the config's `imports.wait_mode` wins.
         log_level: Override the configured `advanced.log_level` for this run
             (cli > config > INFO).
     """
 
-    # Passing a flag or a movie/series ID narrows the run to that arr. With no
+    # Passing a flag or a TMDB/TVDB ID narrows the run to that arr. With no
     # selection at all, run everything configured (mirrors scheduled mode). The
     # distinction is remembered so bootstrap.configured_arrs can refuse an explicit
     # request for an unconfigured arr instead of silently skipping it.
     arrs: list[ArrTarget] = []
-    if radarr or movie_id is not None:
-        arrs.append(ArrTarget(Arr.RADARR, movie_id))
-    if sonarr or series_id is not None:
-        arrs.append(ArrTarget(Arr.SONARR, series_id))
+    if radarr or tmdb_id is not None:
+        arrs.append(ArrTarget(Arr.RADARR, tmdb_id))
+    if sonarr or tvdb_id is not None:
+        arrs.append(ArrTarget(Arr.SONARR, tvdb_id))
 
     explicit_selection = bool(arrs)
     if not arrs:
@@ -627,7 +630,7 @@ def run_single(
 # Config commands
 @pearlarr_config.command("init")
 def config_init(
-    force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the starter template")] = False,
+    force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the template")] = False,
     json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False,
 ) -> bool:
     """Write a starter config.yml to the data directory.
@@ -646,7 +649,7 @@ def config_init(
         _prepare_data_dir(paths)
 
         if os.path.exists(paths.config_file) and not force:
-            hub_error(f"{paths.config_file} already exists - pass --force to overwrite it with the starter template")
+            hub_error(f"{paths.config_file} already exists - pass --force to overwrite it with the template")
             return False
 
         try:
@@ -663,14 +666,14 @@ def config_init(
 def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
     """Run a config-file action for a config command, echoing why on failure.
 
-    Unlike the run path (where `AppConfig.load` copies the starter template on
+    Unlike the run path (where `AppConfig.load` copies the template on
     a missing file), these commands must not create a config, so existence is
     checked first. Every failure mode is a clean echo to stderr, never a
     traceback. The action must fail like `AppConfig.load` does.
     """
 
     if not os.path.exists(path):
-        hub_error(f"No config file at {path} - run pearlarr config init to write a starter template")
+        hub_error(f"No config file at {path} - run pearlarr config init to write the template")
         return None
     try:
         return action(path)
@@ -695,8 +698,8 @@ def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JS
     """Check config.yml parses and validates, and report what a run would use.
 
     The status lines call out the settings that silently change a run's shape:
-    an unconfigured arr is skipped, and unconfigured qBittorrent credentials
-    mean preview mode (nothing is grabbed).
+    an unconfigured arr is not run, and unconfigured qBittorrent credentials
+    mean dry runs only (nothing is grabbed).
     """
 
     with subcommand_hub(json_output):
@@ -869,7 +872,7 @@ def cache_restore(json_output: Annotated[bool, typer.Option("--json", help=_JSON
     """Restore the cache database from cache.backup.db, keeping the backup.
 
     Copy-restore via temp file + atomic swap: the backup survives (so a restore
-    is repeatable), cache.db never vanishes mid-restore, and stale WAL/SHM
+    is repeatable), cache.db never vanishes mid-restore, and leftover WAL/SHM
     sidecars are cleared so the restored snapshot isn't shadowed by them.
     """
 
