@@ -444,7 +444,7 @@ class MappingResolver(KnownExternalIds):
     def __init__(
         self,
         *,
-        cache_time: int,
+        refresh_days: int,
         ignore_anilist_ids: set[int],
         sources: MappingSources,
         web: httpx.Client,
@@ -455,7 +455,7 @@ class MappingResolver(KnownExternalIds):
         """Open the store and load (parse-if-changed) the mapping sources.
 
         Args:
-            cache_time: Days a downloaded source stays usable before it's
+            refresh_days: Days a downloaded source stays usable before it's
                 re-fetched.
             ignore_anilist_ids: AniList ids to set aside from every result.
             sources: The three source configs, each tri-state
@@ -470,7 +470,7 @@ class MappingResolver(KnownExternalIds):
                 progress falls back to throttled DEBUG lines.
         """
 
-        self.cache_time = cache_time
+        self.refresh_days = refresh_days
         self.ignore_anilist_ids = ignore_anilist_ids
         self.logger = logger
         self._web = web
@@ -621,7 +621,7 @@ class MappingResolver(KnownExternalIds):
                 os.remove(tmp)
 
     def _maybe_download(self, file: str, url: str, label: str) -> None:
-        """Download `file` if missing, or refresh it once it's past cache_time."""
+        """Download `file` if missing, or refresh it once it's past refresh_days."""
 
         # The data dir exists in the normal CLI flow (ensure_data_dir). Create it
         # here too so the in-memory/standalone fallback never fails on a first write.
@@ -633,8 +633,8 @@ class MappingResolver(KnownExternalIds):
             return
 
         age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file))
-        if age.days >= self.cache_time:
-            self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
+        if age.days >= self.refresh_days:
+            self._log(f"Refreshing {label} (cached {age.days}d >= {self.refresh_days}d)")
             try:
                 self._download_file(url, file, label=label)
             except OSError as e:

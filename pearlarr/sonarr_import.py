@@ -668,7 +668,7 @@ class ImportExecutor:
                 return AttemptResult.waiting()
             return AttemptResult.imported()
 
-        import_mode = self._config.imports.mode
+        import_mode = self._config.imports.import_mode
         if pending.is_cross_seed and import_mode == "move":
             # Pearlarr never added this torrent, so a forced move must not empty it: Sonarr decides, as for its
             # own grabs.

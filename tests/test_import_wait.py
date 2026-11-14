@@ -1006,13 +1006,13 @@ class TestRunDeferred:
     def test_check_never_applies_the_download_timeout(self) -> None:
         # The download clock starts at wait pass construction, so its elapsed says
         # nothing about the torrent: even with time passing between reads and a
-        # tiny imports.wait_timeout, a still-downloading pending import finishes
+        # tiny imports.download_timeout, a still-downloading pending import finishes
         # STILL_DOWNLOADING, never DOWNLOAD_TIMED_OUT.
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(progress=0.5)]}),
             strategy=_RecordingStrategy(),
             stored_pending_imports=[pending_import(infohash="h")],
-            import_wait_timeout=1,
+            download_timeout=1,
             clock=_AutoTickClock(step=30),
         )
         result = mgr.run_deferred(view=RecordingWaitView())
@@ -1112,7 +1112,7 @@ class TestUnmatchedRowFinish:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=600,
+            import_timeout=600,
         )
 
         final = view.final("h")
@@ -1137,8 +1137,8 @@ class TestUnmatchedRowFinish:
             strategy=strategy,
             stored_pending_imports=pending_imports,
             pending=pending_imports,
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -1228,7 +1228,7 @@ class TestBlockingWaitRowDiscriminator:
             strategy=_RecordingStrategy(),
             stored_pending_imports=[fresh],
             pending=[fresh],
-            import_wait_timeout=1,
+            download_timeout=1,
             clock=FakeClock(step=30),
         )
 
@@ -1360,8 +1360,8 @@ def _run_blocking_wait(
     qbit: FakeQbit,
     *,
     step: float = 30,
-    wait_timeout: int = 3600,
-    ready_timeout: int = 600,
+    download_timeout: int = 3600,
+    import_timeout: int = 600,
     progress_poll_interval: int = 5,
     post_import_category: str | None = None,
 ) -> tuple[ImportWaitManager, RecordingWaitView]:
@@ -1378,8 +1378,8 @@ def _run_blocking_wait(
         strategy=strategy,
         stored_pending_imports=[pending],
         pending=[pending],
-        import_wait_timeout=wait_timeout,
-        import_ready_timeout=ready_timeout,
+        download_timeout=download_timeout,
+        import_timeout=import_timeout,
         import_poll_interval=30,
         progress_poll_interval=progress_poll_interval,
         post_import_category=post_import_category,
@@ -1430,8 +1430,8 @@ class TestRunBlocking:
             strategy=strategy,
             stored_pending_imports=[fast, slow],
             pending=[fast, slow],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -1511,7 +1511,7 @@ class TestRunBlocking:
         assert mgr._pending_imports.rows() == {}
 
     def test_importing_at_deadline_left_without_warning(self) -> None:
-        # The copy never lands within imports.ready_timeout: the final attempt
+        # The copy never lands within imports.import_timeout: the final attempt
         # (at_deadline) leaves it pending with "still importing; left" - no drop.
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=False, command_issued=True),
@@ -1519,7 +1519,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1532,7 +1532,7 @@ class TestRunBlocking:
     def test_each_rise_re_anchors_the_import_timeout(self) -> None:
         # A season pack Sonarr copies file-by-file: a baseline (t=0) then a rise
         # each poll. Every rise re-anchors the import timeout, so the wait pass
-        # outlives ready_timeout (60s here) and finishes imported instead of
+        # outlives import_timeout (60s here) and finishes imported instead of
         # cutting the import off mid-copy.
         strategy = _RecordingStrategy(
             completed_sequence=[
@@ -1549,7 +1549,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.IMPORTED
@@ -1576,7 +1576,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1591,7 +1591,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.NOT_READY
@@ -1609,7 +1609,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.IMPORTED
@@ -1633,7 +1633,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.IMPORTED
@@ -1650,7 +1650,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1670,7 +1670,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.IMPORTED
@@ -1695,7 +1695,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1715,7 +1715,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1729,7 +1729,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1744,7 +1744,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.SONARR_BUSY
@@ -1765,7 +1765,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
@@ -1789,7 +1789,7 @@ class TestRunBlocking:
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             step=5,
-            ready_timeout=60,
+            import_timeout=60,
             progress_poll_interval=5,
         )
 
@@ -1804,7 +1804,7 @@ class TestRunBlocking:
         [
             pytest.param({}, Outcome.MISSING, False, id="missing-drops"),
             pytest.param({"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, True, id="errored-leaves"),
-            # Never finishes: past imports.wait_timeout the row finishes
+            # Never finishes: past imports.download_timeout the row finishes
             # DOWNLOAD_TIMED_OUT (left), the pending import stays for a later run.
             pytest.param({"h": [FakeTorrent(progress=0.5)]}, Outcome.DOWNLOAD_TIMED_OUT, True, id="timeout-leaves"),
             # COMPLETE but no content_path to import from: its own outcome (not
@@ -1826,7 +1826,7 @@ class TestRunBlocking:
             strategy,
             qbit,
             post_import_category="pearlarr-done",
-            wait_timeout=60,
+            download_timeout=60,
         )
 
         assert strategy.import_calls == []
@@ -1851,8 +1851,8 @@ class TestRunBlocking:
             strategy=strategy,
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
             clock=FakeClock(step=5),
@@ -1885,8 +1885,8 @@ class TestRunBlocking:
             strategy=strategy,
             stored_pending_imports=[pending_import(infohash="carried")],
             pending=[],  # nothing grabbed this run
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -1909,8 +1909,8 @@ class TestRunBlocking:
             strategy=strategy,
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=_InterruptSleepClock(),
         )
@@ -1936,8 +1936,8 @@ class TestRunBlocking:
             strategy=_RecordingStrategy(),
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=_StopSleepClock(),
         )
@@ -1965,8 +1965,8 @@ class TestRunBlocking:
             strategy=_RecordingStrategy(),
             stored_pending_imports=[first, second],
             pending=[first, second],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
         )
         view = RecordingWaitView()
@@ -1985,7 +1985,7 @@ class TestRunBlocking:
         mgr, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            ready_timeout=60,
+            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
@@ -2091,8 +2091,8 @@ class TestBlockingWaitDownloadProgressRefresh:
             strategy=strategy,
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
             clock=FakeClock(step=5),
@@ -2131,8 +2131,8 @@ class TestBlockingWaitDownloadProgressRefresh:
             strategy=strategy,
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             progress_poll_interval=5,
             clock=FakeClock(step=5),
@@ -2246,10 +2246,10 @@ class TestImportWaitModeProperty:
 
     def test_reflects_resolved_mode(self) -> None:
         services = make_services(
-            _state=ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.HYBRID),
+            _state=ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
         )
 
-        assert services.import_wait_mode is ImportWaitMode.HYBRID
+        assert services.import_wait_mode is ImportWaitMode.BLOCKING
 
 
 def _attach_wait_manager(engine: ArrRunLoop) -> None:
@@ -2379,8 +2379,8 @@ def _finalize_engine(
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
         ),
         _reporter=_FinalizeReporter(calls),
@@ -2454,21 +2454,6 @@ class TestFinishArrRunOrdering:
             calls,
             qbit=CLIENT_SENTINEL,
             mode=ImportWaitMode.BLOCKING,
-            supports_blocking_wait=False,
-        )
-
-        engine._finish_arr_run()
-
-        assert "monitor" not in calls
-        assert calls == ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"]
-
-    def test_strategy_without_blocking_wait_reconciles_in_hybrid_without_a_wait_pass(self) -> None:
-        # HYBRID gets the same treatment for a strategy with no blocking wait: reconcile, no blocking wait pass.
-        calls: list[str] = []
-        engine = _finalize_engine(
-            calls,
-            qbit=CLIENT_SENTINEL,
-            mode=ImportWaitMode.HYBRID,
             supports_blocking_wait=False,
         )
 
@@ -2907,8 +2892,8 @@ class TestPostImportCategory:
             stored_pending_imports=[pending],
             pending=[pending],
             post_import_category="pearlarr-done",
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -2929,8 +2914,8 @@ class TestPostImportCategory:
             stored_pending_imports=[pending],
             pending=[pending],
             post_import_category="pearlarr-done",
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -3062,8 +3047,8 @@ class TestPostImportCategoryOtherArrGate:
             stored_pending_imports=[pending],
             pending=[pending],
             post_import_category="pearlarr-done",
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )
@@ -3173,8 +3158,8 @@ class TestRemoveFromQueue:
             strategy=strategy,
             stored_pending_imports=[pending],
             pending=[pending],
-            import_wait_timeout=3600,
-            import_ready_timeout=600,
+            download_timeout=3600,
+            import_timeout=600,
             import_poll_interval=30,
             clock=FakeClock(step=30),
         )

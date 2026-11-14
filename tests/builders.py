@@ -125,17 +125,12 @@ for _group, _group_field in AppConfig.model_fields.items():
 
 _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "import_wait_mode": ("imports", "wait_mode"),
-    "import_wait_timeout": ("imports", "wait_timeout"),
-    "import_ready_timeout": ("imports", "ready_timeout"),
     "import_poll_interval": ("imports", "poll_interval"),
-    "import_mode": ("imports", "mode"),
     "import_default_quality": ("imports", "default_quality"),
     "import_languages_dual": ("imports", "languages_dual"),
     "import_languages_single": ("imports", "languages_single"),
-    "wait_digest_interval": ("imports", "digest_interval"),
     "max_torrents_to_add": ("advanced", "max_torrents_to_add"),
     "sleep_time": ("advanced", "sleep_time"),
-    "cache_time": ("advanced", "cache_time"),
     "log_level": ("advanced", "log_level"),
     "discord_url": ("notifications", "discord_url"),
     "wait_webhook_url": ("notifications", "wait_webhook_url"),
@@ -767,7 +762,7 @@ def make_run_deps(
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
         # `anibridge` the strategy reads at construction.
         resolver=MappingResolver(
-            cache_time=1,
+            refresh_days=1,
             ignore_anilist_ids=set(),
             web=http,
             sources=MappingSources(anime={}, anidb=False, anibridge=False),

@@ -139,7 +139,7 @@ Could not fetch/parse the id-mapping sources - skipping this run
 Pearlarr downloads the ID-mapping sources at the start of a run and cannot resolve any title without them, so a fetch or parse failure skips the whole run rather than one title.
 It is almost always a first run with no network, or a proxy or firewall between Pearlarr and GitHub.
 The sources live on `github.com`/`objects.githubusercontent.com` and `raw.githubusercontent.com` (see [architecture.md](architecture.md#external-hosts)).
-Fix the connection or allowlist those hosts and the run succeeds. A scheduled cycle retries on its own, and once a source is cached (`advanced.cache_time` days) a later network blip falls back to the cached copy instead of skipping.
+Fix the connection or allowlist those hosts and the run succeeds. A scheduled cycle retries on its own, and once a source is cached (`mappings.refresh_days` days) a later network blip falls back to the cached copy instead of skipping.
 
 ## Private-only releases
 

@@ -154,8 +154,8 @@ class _Scenario:
     failing_download_fetch: Literal["error", "empty"] = "error"
     """What a failing downloadId fetch serves: a 500 (v4) or a 200 `[]` (v5)."""
 
-    ready_timeout: int = 30
-    """The run's `imports.ready_timeout`. Small for the deadline scenario."""
+    import_timeout: int = 30
+    """The run's `imports.import_timeout`. Small for the deadline scenario."""
 
     listing: _Listing = _Listing.EPISODES
     """The download's file names. ABSOLUTE replays the real Thighs incident
@@ -189,7 +189,7 @@ _UNSCANNABLE = _Scenario(
     download_fetch_recovers=False,
     folder_fetch="error",
     history_event="downloadFolderImported",
-    ready_timeout=1,
+    import_timeout=1,
 )
 _ABSOLUTE_BATCH = _Scenario(
     download_fetch_recovers=False,
@@ -726,13 +726,13 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
             host=qbit_url,
             username="demo",
             password="demo-password",
-            anime_mappings=False,
-            anidb_mappings=False,
-            anibridge_mappings=False,
-            wait_mode="hybrid",
+            anime_ids=False,
+            anime_lists=False,
+            anibridge=False,
+            wait_mode="blocking",
             import_poll_interval=1,
             progress_poll_interval=0,
-            import_ready_timeout=scenario.ready_timeout,
+            import_timeout=scenario.import_timeout,
         )
         config_path = tmp_path / "config.yml"
         config_path.write_bytes(yaml.safe_dump(config.model_dump(mode="json")).encode())
