@@ -1,7 +1,7 @@
 # Builder: resolve the locked dependency set into /app/.venv with uv, then
 # install the project itself (non-editable, so the venv is self-contained).
 FROM python:3.15-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.8 /uv /usr/local/bin/uv
 # Never fetch a uv-managed CPython: the venv must bind this stage's
 # /usr/local/bin/python3.15, which the final stage shares.
 ENV UV_PYTHON_DOWNLOADS=never \
@@ -21,15 +21,15 @@ ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-# v0.2.47 sha256 sums, computed from the release binaries after verifying the
+# v0.2.51 sha256 sums, computed from the release binaries after verifying the
 # published per-arch SHA1s (the project publishes no sha256 manifest).
 RUN case "${TARGETARCH}" in \
-        amd64) sha256="dcb1403c188a9438c47d4bba82a9c357fc9351ce91627fb2bae627f0f5becfc4" ;; \
-        arm64) sha256="e1124aa34294e2bb8ab7002f347f4363ba35097f3daf4d3c44e9d813c1fb2bb8" ;; \
+        amd64) sha256="cc232108374e8e2b537045f2d5eaa1229f619db314c3ba6a14d38b35dc0aa123" ;; \
+        arm64) sha256="4ae22576a78223d8ccdf5f3b3660a5cbb5288416bf0ca96afc4a36d195932b94" ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL -o /usr/local/bin/supercronic \
-        "https://github.com/aptible/supercronic/releases/download/v0.2.47/supercronic-linux-${TARGETARCH}" \
+        "https://github.com/aptible/supercronic/releases/download/v0.2.51/supercronic-linux-${TARGETARCH}" \
     && echo "${sha256}  /usr/local/bin/supercronic" | sha256sum -c - \
     && chmod +x /usr/local/bin/supercronic
 
