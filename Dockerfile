@@ -1,9 +1,9 @@
 # Builder: resolve the locked dependency set into /app/.venv with uv, then
 # install the project itself (non-editable, so the venv is self-contained).
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
 # Never fetch a uv-managed CPython: the venv must bind this stage's
-# /usr/local/bin/python3.14, which the final stage shares.
+# /usr/local/bin/python3.15, which the final stage shares.
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_NO_CACHE=1
 WORKDIR /app
@@ -16,7 +16,7 @@ COPY pearlarr/ pearlarr/
 RUN uv sync --frozen --no-dev --no-editable
 
 # Supercronic (the runtime scheduler): pinned release, per-arch sha256-verified.
-FROM python:3.14-slim AS supercronic
+FROM python:3.15-slim AS supercronic
 ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -34,7 +34,7 @@ RUN case "${TARGETARCH}" in \
     && chmod +x /usr/local/bin/supercronic
 
 # Final: the venv, supercronic and the entrypoint on the same slim base.
-FROM python:3.14-slim
+FROM python:3.15-slim
 LABEL org.opencontainers.image.source="https://github.com/trevinbrooks/pearlarr"
 # tzdata so TZ drives supercronic's local-time schedule. /config pre-created
 # writable so a volume-less or named-volume run works out of the box.

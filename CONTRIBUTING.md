@@ -3,8 +3,8 @@
 ## Setup
 
 Pearlarr is developed with [uv](https://docs.astral.sh/uv/). Python 3.13 is the
-floor. Development and the Docker image run 3.14, and CI
-(`.github/workflows/build.yaml`) tests both.
+floor. Development and the Docker image run 3.15, and CI
+(`.github/workflows/build.yaml`) tests 3.13, 3.14 and 3.15.
 
 ```console
 uv sync --group dev
@@ -31,7 +31,7 @@ uv run pyrefly check
 uv run pytest -q
 ```
 
-CI (`.github/workflows/build.yaml`) runs the same gates on Python 3.13 and 3.14,
+CI (`.github/workflows/build.yaml`) runs the same gates on Python 3.13, 3.14 and 3.15,
 plus a total-coverage floor and a changed-line coverage gate (diff-cover, 90%).
 Docs get their own CI job: codespell (`[tool.codespell]` in `pyproject.toml`),
 markdownlint (`.markdownlint-cli2.yaml` - generated files included on purpose),

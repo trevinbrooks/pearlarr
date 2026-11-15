@@ -132,7 +132,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 | Sonarr | 4.x (the v3 API) |
 | Radarr | 5.x (the v3 API) |
 | qBittorrent | 4.1 or newer, WebUI enabled |
-| Python | 3.13+ (the Docker image ships its own 3.14) |
+| Python | 3.13+ (the Docker image ships its own 3.15) |
 | OS | Linux, macOS, Windows (CI covers Linux and Windows). Docker images for amd64 and arm64 |
 
 ## Documentation
