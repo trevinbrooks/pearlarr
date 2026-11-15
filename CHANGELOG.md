@@ -35,6 +35,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A release whose files another torrent in the download category already has, such as Sonarr's own grab of it from another tracker, is tracked and imported from that torrent instead of being grabbed again into the same folder. The title's line names that torrent. With `imports.import_mode: move`, that torrent is imported as `auto` instead, so Sonarr chooses as it does for its own grabs. See [docs/troubleshooting.md](docs/troubleshooting.md#a-torrent-pearlarr-never-added) for which torrents count.
 - A file numbered as an episode only another TVDB order has, such as half of an episode that order splits in two, is left for a hand import. While an episode of the title is empty or has a file that isn't from a trusted group, the download stays tracked and each run names each such file with its number in that order, and that episode too when those are the only files left for a hand import. See [docs/troubleshooting.md](docs/troubleshooting.md#files-from-a-dvd-order-torrent-that-sonarr-doesnt-list).
 - The console lists the files a download leaves for a hand import under its row, up to five. The log and the notification name them all, as before.
+- The Docker image runs Python 3.15. A pip or uv install still needs 3.13 or newer, and 3.15 is now tested.
 
 ### Removed
 
