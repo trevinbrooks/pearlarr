@@ -88,17 +88,17 @@ build = [
 ]
 static-analysis = [
     "basedpyright>=1.40.2",
-    "pyrefly>=1.4.0",
-    "ruff~=0.17.3",
+    "pyrefly>=1.4.1",
+    "ruff~=0.17.5",
     # PyYAML ships no inline types, so the checkers read `yaml` as untyped without these.
-    "types-PyYAML>=6.0.12.20260906",
+    "types-PyYAML>=6.0.12.20261113",
 ]
 test = [
-    "diff-cover>=11.0.0",
-    "hypothesis>=6.170.13",
+    "diff-cover>=11.0.2",
+    "hypothesis>=6.170.15",
     "pytest~=9.2",
     "pytest-cov>=7.1.0",
-    "pytest-randomly>=5.0.0",
+    "pytest-randomly>=5.1.0",
     "respx>=0.23.1",
 ]
 # Maintainer asset tooling (scripts/sample_grab_post.py renders the README
@@ -106,7 +106,7 @@ test = [
 # `uv run playwright install chromium`. In dev so the type gates over scripts/
 # resolve the import.
 assets = [
-    "playwright>=1.64.1",
+    "playwright>=1.65.2",
 ]
 dev = [
     "pre-commit",
