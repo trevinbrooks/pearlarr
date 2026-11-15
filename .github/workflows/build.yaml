@@ -123,7 +123,7 @@ jobs:
       - name: Codespell
         run: uvx codespell@2.4.3 .
       - name: Markdownlint
-        run: npx --yes markdownlint-cli2@0.24.0
+        run: npx --yes markdownlint-cli2@0.24.1
       - name: Lychee (offline - local file links and anchors)
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
