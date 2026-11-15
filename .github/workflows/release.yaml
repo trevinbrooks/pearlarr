@@ -209,6 +209,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           repositories: ${{ github.event.repository.name }}-assets
+          permission-contents: write # the media commit and the version tag
       - name: Commit the media and pin the version tag
         # A re-run that finds the tag skips everything - the pinned pixels
         # stay frozen (a ruleset there blocks tag rewrites and deletions).
