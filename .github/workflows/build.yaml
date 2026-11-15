@@ -130,9 +130,9 @@ jobs:
           args: --offline --include-fragments --no-progress './**/*.md'
           fail: true
 
-  # Static analysis of the workflow files themselves: SHA-pinned actions, least
-  # privilege, no template injection, no credential persistence. Config and any
-  # documented exceptions live in .github/zizmor.yml.
+  # Static analysis of the workflows and the Dependabot config: SHA-pinned
+  # actions, least privilege, no template injection, no credential persistence.
+  # Config and any documented exceptions live in .github/zizmor.yml.
   zizmor:
     name: Zizmor (workflow static analysis)
     runs-on: ubuntu-latest
@@ -145,7 +145,7 @@ jobs:
       - name: Zizmor
         env:
           GH_TOKEN: ${{ github.token }} # authenticates zizmor's online audits
-        run: uvx zizmor@1.0.0 .github/workflows/
+        run: uvx zizmor@1.32.0 .github/
 
   # The compose example is documentation that can rot. Docker compose config
   # parses + interpolates it (services, PUID/PGID defaults) without running anything.

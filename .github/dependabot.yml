@@ -5,11 +5,15 @@
 
 version: 2
 updates:
+  # The cooldown holds a new release back for a week before a PR offers it.
+  # Security updates skip the wait.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "main"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   # The uv ecosystem (not pip) so bump PRs update uv.lock alongside pyproject.
   - package-ecosystem: "uv"
@@ -17,3 +21,5 @@ updates:
     target-branch: "main"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
