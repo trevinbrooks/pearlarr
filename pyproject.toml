@@ -53,16 +53,17 @@ classifiers = [
 
 dependencies = [
     "beautifulsoup4 == 4.15.0",
-    "filelock==4.2.4",
+    "filelock==4.2.10",
     "httpx == 0.28.1",
-    "platformdirs==4.14.0",
-    "pydantic == 2.14.2",
+    "platformdirs==4.14.5",
+    "pydantic == 2.14.3",
     "PyYAML == 6.0.3",
     "qbittorrent-api==2026.10.1",
     "rich == 15.0.0",
     "seadex == 0.7.3",
     "truststore == 0.10.5",
-    "typer==0.27.3",
+    # 0.29 prints <bool> beside every flag in --help. Held here until a release drops that.
+    "typer==0.28.0",
     # Transitive (qbittorrent-api -> requests -> urllib3). Floored for CVE currency.
     "urllib3>=2.8.0",
 ]
