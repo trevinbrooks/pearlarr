@@ -31,6 +31,11 @@ jobs:
           "3.13",
           "3.14",
         ]
+    env:
+      # `uv run` re-syncs the venv against .python-version (the dev version), so
+      # a --python flag on sync alone is undone at the next step. The job-level
+      # env holds every uv step on this leg's version.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -44,7 +49,9 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies
-        run: uv sync --group dev --python ${{ matrix.python-version }}
+        run: uv sync --group dev
+      - name: Python version (must be this leg's)
+        run: uv run python -c "import os, sys; assert '%d.%d' % sys.version_info[:2] == os.environ['UV_PYTHON'], sys.version"
       - name: Ruff (lint)
         run: uv run ruff check pearlarr/ tests/ scripts/
       - name: Ruff (format)
@@ -81,9 +88,7 @@ jobs:
     name: Checks (windows, py 3.13)
     runs-on: windows-latest
     env:
-      # .python-version pins 3.14 (the dev version), and `uv run` RE-SYNCS the
-      # venv against it - a --python flag on sync alone gets silently undone on
-      # the next step. The job-level env holds every uv step on the floor.
+      # Holds every uv step on the floor, as in the ubuntu matrix above.
       UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
