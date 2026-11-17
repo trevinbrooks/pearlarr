@@ -3615,6 +3615,42 @@ class TestPlaceNumberedSequence:
         assert result.placed == {self._MAIN: (10384,)}
         assert sorted(result.unplaced) == sorted(run)
 
+    @pytest.mark.parametrize(
+        ("title", "stems", "placed"),
+        [
+            pytest.param("Show Second Season", ["arc - 0"], None, id="a word only another listed title has"),
+            pytest.param(
+                "Show Second Season",
+                ["second season arc - 0"],
+                "second season arc - 0",
+                id="a word only this title has too",
+            ),
+            pytest.param("Show Second Season", ["other - 0"], "other - 0", id="a word no listed title has"),
+            pytest.param("Bangumi Second Season", ["- 0"], "- 0", id="the series' name, which this title's name lacks"),
+            pytest.param(
+                "Show Second Season", ["arc - 0", "other - 0"], None, id="still a tie beside a second sequence"
+            ),
+        ],
+    )
+    def test_a_sequence_named_for_another_listed_title_is_left_for_it(
+        self, title: str, stems: list[str], placed: str | None
+    ) -> None:
+        main = "[grp] show second season - 01 [bd].mkv"
+        runs = {stem: self._run(stem, range(1, 4)) for stem in stems}
+        files = [name for run in runs.values() for name in run]
+        parsed: dict[str, ParsedFileInfo | None] = {main: parsed_info(season=1, episodes=(1,)), **blind(files)}
+        own = TitleNames("Show", (title,))
+        listing = torrent_listing(
+            title_window(1, [10384, *self._WINDOW], names=own),
+            title_window(2, [10374], names=TitleNames("Show", ("Show Arc Part 1: Subtitle",))),
+        )
+        target = replace(self._target(), title_names=own, seadex=SeadexEvidence(listing))
+
+        result = place(parsed, target)
+
+        expected = {name: (10370 + i,) for i, name in enumerate(runs[placed])} if placed else {}
+        assert result.placed == {main: (10384,), **expected}
+
     def test_an_unknown_parse_blocks_the_pass(self) -> None:
         # An unreadable name anywhere blocks every name number pass, the blind one too.
         run = self._run("extra ", range(1, 4))

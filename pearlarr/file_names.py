@@ -937,3 +937,26 @@ def sole_title_match(candidates: Sequence[str], names: TitleNames) -> int | None
 
     naming = Naming.of(candidates, names)
     return None if naming is None else naming.sole_among(range(len(candidates)))
+
+
+def names_another_title(candidate: str, names: TitleNames, listed: Iterable[TitleNames]) -> bool:
+    """Whether the candidate has a word only another title's AniList names have, and none only this title's have.
+
+    `listed` is the names of the titles a torrent is listed under, and the words of the series' name count for no
+    title. "Show Arc" is another title's under "Show Second Season" beside "Show Arc Part 1", and so is "Show S2"
+    under "Show" beside "Show 2nd Season".
+    """
+
+    series_words = _word_set(names.series)
+    words = _word_set(candidate)
+    own = _words_beyond_series(names, series_words)
+    return any(
+        not words.isdisjoint(theirs - own) and words.isdisjoint(own - theirs)
+        for theirs in (_words_beyond_series(other, series_words) for other in listed)
+    )
+
+
+def _words_beyond_series(names: TitleNames, series_words: frozenset[str]) -> frozenset[str]:
+    """Every word of the title's AniList names that the series' name lacks."""
+
+    return frozenset(word for title in names.anilist for word in folded_words(title) if word not in series_words)
