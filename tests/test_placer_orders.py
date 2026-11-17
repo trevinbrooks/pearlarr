@@ -1,6 +1,7 @@
 # pyright: strict
 """The other-orders pass: files the aired order left unplaced, placed where another TVDB order reads them."""
 
+from dataclasses import replace
 from typing import ClassVar
 
 from pearlarr.arr_models import ParsedFileInfo
@@ -957,6 +958,20 @@ class TestNameNumberSequenceByOrder:
         result = place(blind([*self._RUN, *self._SECOND]), self._target({"dvd": self._DVD}))
 
         assert by_name(result) == dict.fromkeys((*self._RUN, *self._SECOND), ((), PlacementVerdict.NO_EPISODE_FOUND))
+
+    def test_a_second_sequence_named_for_another_listed_title_is_no_tie(self) -> None:
+        second = TitleNames("Show", ("Show Ending 2nd Season",))
+        listing = torrent_listing(
+            title_window(1, self._SEASON, names=self._NAMES), title_window(2, [501], names=second)
+        )
+        target = replace(self._target({"dvd": self._DVD}), seadex=SeadexEvidence(listing))
+
+        result = place(blind([*self._RUN, *self._SECOND]), target)
+
+        assert by_name(result) == {
+            **self._by_order(),
+            **dict.fromkeys(self._SECOND, ((), PlacementVerdict.NO_EPISODE_FOUND)),
+        }
 
     def test_a_second_named_sequence_the_batch_does_not_place_is_no_tie(self) -> None:
         result = place(blind([*self._RUN, *self._SECOND]), self._target({"dvd": self._DVD}), self._RUN)

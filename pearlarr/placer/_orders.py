@@ -343,9 +343,10 @@ def _place_name_number_sequences(state: PlacerState) -> None:
     """Place the one name-number sequence with no episode found that an AniList name of the title points at.
 
     A name-number sequence is the files sharing a prefix before a name number, none spelling out a season and episode
-    ("Show S1 - 03"). Only a sequence with more members than the window has episodes is read, since no aired count
-    explains one. The one season of an order that holds every window episode reads member n as its nth episode. The
-    order explains the sequence when:
+    ("Show S1 - 03"). A sequence named for another title of the torrent's listing is that title's, so it is left out
+    of the choice (`PlacerState.named_for_another_title`). Only a sequence with more members than the window has
+    episodes is read, since no aired count explains one. The one season of an order that holds every window episode
+    reads member n as its nth episode. The order explains the sequence when:
 
     - it reads every member, none outside the window or past the season's end: an already placed one onto the
       episodes it is on, and each one still to place, which must have no episode found, onto a distinct unused
@@ -359,7 +360,9 @@ def _place_name_number_sequences(state: PlacerState) -> None:
 
     sequences = state.sequences_among(file for file in state.non_extras if not file.name_parts.spells_season_episode)
     unjudged_sequences = [
-        sequence for sequence in sequences if any(_no_episode_found(member) for member in sequence.members)
+        sequence
+        for sequence in sequences
+        if any(_no_episode_found(member) for member in sequence.members) and not state.named_for_another_title(sequence)
     ]
     if not unjudged_sequences:
         return

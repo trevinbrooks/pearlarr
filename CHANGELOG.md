@@ -56,6 +56,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 - A numbered sequence of files named for another title of the torrent is left for that title, such as a film trilogy's three files in a torrent that also holds a season with three unused specials. Before, the count alone could put the films on those specials, and that kept them off their own titles.
 - On a title of one episode, such as a film, a file is placed by the title's name even when Sonarr read a number from it that the series has no episode for, such as `Show Arc - 02` for a film AniList calls "Show Arc Part 2: Subtitle". A file named with the title's name cut short at its number, such as `Show - Tales - Case 2` for "Show: Tales Case.2 - Subtitle", is placed too. Before, both were left unplaced when the torrent held other files.
 - On a title of one episode, a file Sonarr matched to no episode is placed by the title's name even when that name is also another episode's title, such as the film "Show: The Flame" in a series whose season has an episode titled "The Flame". Before, the episode's title kept the film unplaced.
+- A release numbered by another TVDB order is placed when its torrent also holds a sequence of files named for another title, such as `Show S1 - 01` to `- 13` beside `Show S2 - 01` to `- 07` in a torrent listed under both seasons. Before, the first season's name fit both sequences alike, so neither was placed. The one named for the second season is now left to it.
 
 ## [1.5.9] - 2026-11-08
 
