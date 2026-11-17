@@ -549,6 +549,12 @@ class SeadexEvidence:
 
         return self.listing.special_aliases
 
+    @property
+    def listed_names(self) -> tuple[TitleNames, ...]:
+        """The names of every title SeaDex lists this torrent under, this title included."""
+
+        return tuple(window.names for window in self.listing.windows)
+
 
 NO_EVIDENCE = SeadexEvidence()
 """Nothing from the listings: no ids and no size matches, so the size placement and the misnumbered specials check

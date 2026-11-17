@@ -223,7 +223,7 @@ def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
 # Included in the config's selection hash: bump when the release-selection
 # rules change in code, or a fix leaves earlier decisions in doubt, so every
 # cached title re-checks once after an upgrade.
-SELECTION_RULES_VERSION: int = 17
+SELECTION_RULES_VERSION: int = 18
 
 SONARR_MISSING_KEY: int = 999
 """Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""

@@ -15,7 +15,7 @@ from typing import Self
 from ._names import TorrentNames
 from ..arr_models import ParsedFileInfo
 from ..episode_titles import EpisodeTitles, spells_title
-from ..file_names import FileIdentity, NameParts, is_consecutive
+from ..file_names import FileIdentity, NameParts, is_consecutive, names_another_title
 from ..parsed_episodes import ParsedEpisodes, glued_numbers, resolve_parse, spans_multiple, widen_range_key
 from ..placement_types import EpisodeIndex, Placement, PlacementBatch, PlacementTarget, PlacementVerdict
 from ..releases import OrderOnlyKey
@@ -523,6 +523,14 @@ class PlacerState:
             if (member := file.name_parts.member) is not None and not file.absolute_disagrees:
                 by_prefix.setdefault(member.prefix, {}).setdefault(member.number, []).append(file)
         return [NumberedSequence.of(prefix, by_number) for prefix, by_number in by_prefix.items()]
+
+    def named_for_another_title(self, sequence: NumberedSequence) -> bool:
+        """Whether the sequence's prefix names another title of the torrent's listing (`names_another_title`).
+
+        Such a sequence is that title's to place, whatever its count fits here.
+        """
+
+        return names_another_title(sequence.prefix, self.target.title_names, self.target.seadex.listed_names)
 
     def placements(self) -> tuple[Placement, ...]:
         """The placements of the files to place, batch order. Each has one once the passes are done."""

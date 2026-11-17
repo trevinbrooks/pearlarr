@@ -517,7 +517,10 @@ def pass_sequence(state: PlacerState) -> None:
 
     Unlike pairing in name order, this works beside files that other passes placed. A file qualifies when its parsed
     episodes resolved nothing, its name carries no `SxxExx` season and episode, and it is not multi-episode. It does
-    nothing without an episode index, with any parse unknown, or with the pairing passes off.
+    nothing without an episode index, with any parse unknown, or with the pairing passes off. The one sequence that
+    fits is left when it is named for another title of the torrent's listing
+    (`PlacerState.named_for_another_title`), since it is that title's. Such a sequence still counts as one that
+    fits, so beside a second one the two tie.
     """
 
     if not state.has_episode_index or not state.all_parses_read or state.pairing_off:
@@ -531,7 +534,7 @@ def pass_sequence(state: PlacerState) -> None:
         if not file.parsed_episodes.ids and (info := state.single_parse(file)) is not None and not info.episode_numbers
     ]
     fits = [sequence for sequence in state.sequences_among(without_number) if sequence.from_one(len(unused.ids))]
-    if len(fits) != 1:
+    if len(fits) != 1 or state.named_for_another_title(fits[0]):
         return
     sequence = fits[0]
     if state.pair_in_order(sequence.members, unused.ids, PlacementVerdict.SEQUENCE):
