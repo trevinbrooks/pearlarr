@@ -939,6 +939,28 @@ def sole_title_match(candidates: Sequence[str], names: TitleNames) -> int | None
     return None if naming is None else naming.sole_among(range(len(candidates)))
 
 
+def sole_name_through_number(candidates: Sequence[str], names: TitleNames) -> int | None:
+    """The index of the one candidate that is an AniList name cut short behind its first number, else None.
+
+    "Show - Tales - Case 2" is "Show: Tales Case.2 - Subtitle" cut short. The number sets the title apart from the
+    others of its set, so this names a candidate that shares only a name's opening words, which `sole_title_match`
+    never does.
+    """
+
+    cut_short = {_through_number(folded_words(title)) for title in names.anilist} - {()}
+    named = [index for index, candidate in enumerate(candidates) if folded_words(candidate) in cut_short]
+    return named[0] if len(named) == 1 else None
+
+
+def _through_number(words: Sequence[str]) -> tuple[str, ...]:
+    """The words up to and including the first number, or none when no word is a number."""
+
+    for index, word in enumerate(words):
+        if word.isdigit():
+            return tuple(words[: index + 1])
+    return ()
+
+
 def names_another_title(candidate: str, names: TitleNames, listed: Iterable[TitleNames]) -> bool:
     """Whether the candidate has a word only another title's AniList names have, and none only this title's have.
 

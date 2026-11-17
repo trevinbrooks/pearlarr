@@ -1741,6 +1741,108 @@ class TestPlaceTitledSingle:
 
         assert result.placed == {movie: (901,)}
 
+    @pytest.mark.parametrize(
+        ("window", "count", "placed"),
+        [
+            pytest.param([901], 1, True, id="a title of one episode"),
+            pytest.param([901, 601], None, False, id="a longer title with one episode left"),
+            pytest.param([901], 3, False, id="a title of three episodes with one in Sonarr"),
+        ],
+    )
+    def test_a_title_of_one_episode_names_a_file_parsed_to_no_episode(
+        self, window: list[int], count: int | None, placed: bool
+    ) -> None:
+        # Sonarr reads each film's number as an absolute the series lacks.
+        first, second, third = (f"[grp] show arc - {number:02d} [bd].mkv" for number in (1, 2, 3))
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "[grp] show s2 - 01 [bd].mkv": parsed_info(season=2, episodes=(1,)),
+            first: parsed_info(season=0, absolutes=(1,)),
+            second: parsed_info(season=0, absolutes=(2,)),
+            third: parsed_info(season=0, absolutes=(3,)),
+        }
+        names = TitleNames("Show", ("Show Arc Part 2: Subtitle",))
+        target = PlacementTarget(window, series_index(self._ID_BY_KEY), title_names=names, episode_count=count)
+
+        result = place(parsed, target)
+
+        assert by_name(result)[second] == (
+            ((901,), PlacementVerdict.TITLE_NAME) if placed else ((), PlacementVerdict.NO_EPISODE_FOUND)
+        )
+        assert first not in result.placed
+        assert third not in result.placed
+
+    def test_a_title_of_one_episode_names_a_file_that_carries_another_episodes_title(self) -> None:
+        # The film shares its name with an episode of the season, and Sonarr read its resolution as its number.
+        film = "[grp] show - the flame [bd 1920x816].mkv"
+        index = series_index(self._ID_BY_KEY, titles={901: "Show Movie: The Flame", 602: "The Flame"})
+        names = TitleNames("Show", ("Show: The Flame",))
+
+        result = place(
+            {film: parsed_info(season=1920, episodes=(816,))},
+            PlacementTarget([901], index, title_names=names, episode_count=1),
+        )
+
+        assert by_name(result) == {film: ((901,), PlacementVerdict.TITLE_NAME)}
+
+    @pytest.mark.parametrize(
+        ("window", "placed"),
+        [
+            pytest.param([901], True, id="a title of one episode"),
+            pytest.param([901, 601], False, id="a longer title with one episode left"),
+        ],
+    )
+    def test_a_name_cut_short_behind_its_number_names_the_file(self, window: list[int], placed: bool) -> None:
+        # Each film shares only the opening words of the title's name, so its words alone name neither.
+        season = "[grp] show s2 - 01 [bd].mkv"
+        first, second = (f"[grp] show - tales - case {number} [bd].mkv" for number in (1, 2))
+        parsed: dict[str, ParsedFileInfo | None] = {
+            season: parsed_info(season=2, episodes=(1,)),
+            first: parsed_info(),
+            second: parsed_info(),
+        }
+        names = TitleNames("Show", ("Show: Tales Case.2 - Subtitle",))
+
+        result = place(parsed, PlacementTarget(window, series_index(self._ID_BY_KEY), title_names=names))
+
+        assert {name: ids for name, ids in result.placed.items() if name != season} == (
+            {second: (901,)} if placed else {}
+        )
+
+    def test_a_title_with_no_number_has_no_name_cut_short(self) -> None:
+        # A name with every word in brackets reads as no words, and so does a numberless title cut short.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "[grp][show_gaiden][bd].mkv": parsed_info(),
+            "show - the special [grp].mkv": parsed_info(),
+        }
+
+        result = self._place(parsed, "Show: The Movie")
+
+        assert result.placed == {}
+
+    def test_a_longer_title_with_one_episode_left_names_a_file_with_no_parsed_number(self) -> None:
+        season = "[grp] show s2 - 01 [bd].mkv"
+        movie, special = "show - the movie [grp].mkv", "show - the special [grp].mkv"
+        parsed: dict[str, ParsedFileInfo | None] = {
+            season: parsed_info(season=2, episodes=(1,)),
+            movie: parsed_info(),
+            special: parsed_info(),
+        }
+        names = TitleNames("Show", ("Show: The Movie",))
+
+        result = place(parsed, PlacementTarget([901, 601], series_index(self._ID_BY_KEY), title_names=names))
+
+        assert result.placed == {season: (601,), movie: (901,)}
+
+    def test_two_files_cut_short_alike_place_nothing(self) -> None:
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "[grp] show - tales - case 2 [bd 1080p].mkv": parsed_info(),
+            "[grp] show - tales - case 2 [bd 720p].mkv": parsed_info(),
+        }
+
+        result = self._place(parsed, "Show: Tales Case.2 - Subtitle")
+
+        assert result.placed == {}
+
     def test_two_unplaced_files_a_title_names_alike_place_nothing(self) -> None:
         parsed: dict[str, ParsedFileInfo | None] = {
             "show - the movie [grp].mkv": parsed_info(),
@@ -2835,6 +2937,17 @@ class TestRereadSeasonSequence:
         run = numbered_names("show", 2)
         parsed = self._reads(run, self._TIED)
         target = PlacementTarget([501], series_index(series), title_names=TitleNames("Show", ("Show 2",)))
+
+        result = place(parsed, target)
+
+        assert by_name(result) == dict.fromkeys(run, ((), PlacementVerdict.NO_EPISODE_FOUND))
+
+    def test_a_title_never_places_a_file_fitting_both_that_sonarr_matched_to_nothing(self) -> None:
+        # The second and fourth files matched nothing, yet their sequence fits both, so the second is no more the
+        # first special than when Sonarr matched it.
+        run = numbered_names("show", 4)
+        parsed = {**self._reads(run[::2], self._TIED), **blind(run[1::2])}
+        target = PlacementTarget([501], series_index(self._TWO_OF_FOUR), title_names=TitleNames("Show", ("Show 2",)))
 
         result = place(parsed, target)
 
