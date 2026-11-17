@@ -149,7 +149,8 @@ class PlacementVerdict(StrEnum):
     SEQUENCE = "numbered sequence"
     """A `1..N` sequence among the files Sonarr found no episode for, paired with the consecutive unused episodes."""
     TITLE_NAME = "titled"
-    """The file with no parsed number that an AniList name of the title points at, onto the only unused id."""
+    """The one file an AniList name of the title points at, onto the only unused id. The file has no parsed number,
+    or on a title of one episode its parse resolved to no episode of the series."""
     EPISODE_TITLE = "episode title"
     """Onto the one episode whose title its name carries, whatever its number said."""
     SIZE_MATCH = "listed size"
@@ -586,8 +587,9 @@ class PlacementTarget:
     """Ids already used, by an earlier window or the file map. Never placed again."""
 
     title_names: TitleNames = field(default_factory=TitleNames)
-    """The series and AniList titles. Episode titles and extras words are read against them, and they break
-    ties when several sequences or files with no parsed number could be placed on the unused ids."""
+    """The series and AniList titles. Episode titles and extras words are read against them, they pick among the
+    sequences and single files that could be placed on the unused ids, and they tell a sequence named for this title
+    from one named for another title of the torrent's listing."""
 
     seadex: SeadexEvidence = NO_EVIDENCE
     """What SeaDex's listings tell us about this torrent this run."""

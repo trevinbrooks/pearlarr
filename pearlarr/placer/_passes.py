@@ -45,7 +45,8 @@ from ._sequence_passes import (
     pass_sequence_over_parse,
 )
 from ._state import NameFacts, NumberedSequence, PlacerState, TorrentFile
-from ..file_names import FileIdentity, natural_key, sole_title_match
+from ..arr_models import ParsedFileInfo
+from ..file_names import FileIdentity, natural_key, sole_name_through_number, sole_title_match
 from ..parsed_episodes import glued_numbers, numbers_miss_the_series, parse_has_no_number
 from ..placement_types import BatchPlacements, PlacementBatch, PlacementTarget, PlacementVerdict
 from ..releases import EpisodeKey
@@ -457,21 +458,44 @@ def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep
     """Give the one unused id to the only candidate file if it has no parsed number, else to the one a name points at.
 
     No parsed number here means the file's parse has no usable episode number (`_has_no_parsed_number`). The only
-    candidate file takes the id as `SINGLE`, and the file with no parsed number a name points at takes it as
-    `TITLE_NAME`. The name is one of the title's AniList names, and that check runs only when no parse is unread. A
-    file next in line for the id takes it neither way, and no other file takes it in its place.
+    candidate file takes the id as `SINGLE`, and the file an AniList name of the title points at takes it as
+    `TITLE_NAME` (`_named_by_title`), a check that runs only when no parse is unread. A file next in line for the id
+    takes it neither way, and no other file takes it in its place.
     """
 
-    no_parsed_number = [file for file in candidate_files if _has_no_parsed_number(state, file)]
-    if len(candidate_files) == 1 and no_parsed_number:
-        chosen, verdict = 0, PlacementVerdict.SINGLE
+    if len(candidate_files) == 1 and _has_no_parsed_number(state, candidate_files[0]):
+        chosen, verdict = candidate_files[0], PlacementVerdict.SINGLE
     elif state.all_parses_read:
-        stems = [file.name_parts.stem.text for file in no_parsed_number]
-        chosen, verdict = sole_title_match(stems, state.target.title_names), PlacementVerdict.TITLE_NAME
+        chosen, verdict = _named_by_title(state, candidate_files), PlacementVerdict.TITLE_NAME
     else:
         return
-    if chosen is not None and not no_parsed_number[chosen].next_in_line((ep_id,)):
-        state.place(no_parsed_number[chosen], (ep_id,), verdict)
+    if chosen is not None and not chosen.next_in_line((ep_id,)):
+        state.place(chosen, (ep_id,), verdict)
+
+
+def _named_by_title(state: PlacerState, candidate_files: Sequence[TorrentFile]) -> TorrentFile | None:
+    """The one candidate file an AniList name of the title points at, else None.
+
+    The names are read against the files with no parsed number. On a title of one episode they are also read
+    against the files whose parse resolved to no episode of the series (`_numbers_no_episode`), since a number in
+    such a name numbers the title, not an episode of it ("Show Arc - 02" for the film "Show Arc Part 2"). The file
+    is the one the names' words name (`sole_title_match`), else on a title of one episode the one that is a name
+    cut short behind its number (`sole_name_through_number`). A title is of one episode when its window holds one
+    and AniList's episode count, when the window carries it, is one.
+    """
+
+    target = state.target
+    one_episode = len(target.real_ids) == 1 and target.episode_count in (None, 1)
+    nameable = [
+        file
+        for file in candidate_files
+        if _has_no_parsed_number(state, file) or (one_episode and _numbers_no_episode(state, file))
+    ]
+    stems = [file.name_parts.stem.text for file in nameable]
+    index = sole_title_match(stems, target.title_names)
+    if index is None and one_episode:
+        index = sole_name_through_number(stems, target.title_names)
+    return None if index is None else nameable[index]
 
 
 def _has_no_parsed_number(state: PlacerState, file: TorrentFile) -> bool:
@@ -481,14 +505,29 @@ def _has_no_parsed_number(state: PlacerState, file: TorrentFile) -> bool:
     and the specials equally, and for a file carrying an episode title (that episode is used or outside the window).
     """
 
-    if file.numbers_disagree or file.numbers_disagree_outside_window:
+    info = _undisputed_single_parse(state, file)
+    if info is None or file.episode_by_title is not None:
         return False
-    info = state.single_parse(file)
-    if info is None:
-        return False
-    if not (parse_has_no_number(info) or numbers_miss_the_series(info, state.target.id_by_key)):
-        return False
-    return file.parsed_episodes.either_ids is None and file.episode_by_title is None
+    return parse_has_no_number(info) or numbers_miss_the_series(info, state.target.id_by_key)
+
+
+def _numbers_no_episode(state: PlacerState, file: TorrentFile) -> bool:
+    """Whether the file's single-episode parse resolved to no episode of the series, whatever numbers it carries.
+
+    False for a file whose numbers disagree and for one that fits a season and the specials equally, as in
+    `_has_no_parsed_number`. An episode title in the name is no bar here, since a film can share its name with an
+    episode of the series.
+    """
+
+    return _undisputed_single_parse(state, file) is not None and not file.parsed_episodes.ids
+
+
+def _undisputed_single_parse(state: PlacerState, file: TorrentFile) -> ParsedFileInfo | None:
+    """The file's single-episode parse, or None when its numbers disagree or fit a season and the specials equally."""
+
+    if file.numbers_disagree or file.numbers_disagree_outside_window or file.parsed_episodes.either_ids is not None:
+        return None
+    return state.single_parse(file)
 
 
 def _natural_order(
