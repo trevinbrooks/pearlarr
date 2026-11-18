@@ -18,6 +18,12 @@ In the section headings, `...` stands for the parts of a message that change bet
 | qBittorrent is unreachable | [The qBittorrent connection fails](#the-qbittorrent-connection-fails) |
 | The whole run aborts before scanning any title | [The ID-mapping sources cannot be downloaded](#the-id-mapping-sources-cannot-be-downloaded) |
 | Titles keep showing up as needing action | [Private-only releases](#private-only-releases) |
+| A title of a series Sonarr numbers by another episode order is not checked | [A series in another order that was not checked](#a-series-in-another-order-that-was-not-checked) |
+| A warning says Pearlarr is holding off on a series | [A series held until Sonarr renumbers it](#a-series-held-until-sonarr-renumbers-it) |
+| A title has no episodes in Sonarr's order of its series | [A title Sonarr's order has no episode of](#a-title-sonarrs-order-has-no-episode-of) |
+| A pending import was dropped | [A pending import that was dropped](#a-pending-import-that-was-dropped) |
+| An import left one file out | [A file left out of an import](#a-file-left-out-of-an-import) |
+| TheXEM failed or its answer can't be used | [TheXEM is unreachable or its answer can't be used](#thexem-is-unreachable-or-its-answer-cant-be-used) |
 | A title names a torrent Pearlarr never added | [A torrent Pearlarr never added](#a-torrent-pearlarr-never-added) |
 | Releases are skipped over their tracker | [Tracker skips](#tracker-skips) |
 | A tracker filter seems ignored | [Unknown tracker names](#unknown-tracker-names) |
@@ -175,7 +181,7 @@ The run summary lists a title under "needs action" with "its files place under a
 
 ## A file named by number alone that was not imported
 
-The import warns "N files could not be placed on an episode and were not imported" beside the files it did import, or reports the download as "unplaced" ("no file was placed on an episode; import by hand in Sonarr") when none were, and the log names files such as "Show - 07.mkv": a bare number, no season or episode key, which Sonarr's parse put on no episode of the title, or on one outside it. Pearlarr places such a file by working out what the release group counted: the series' episodes from the first, the title's episodes from one, Sonarr's own episode numbers for the title's season, every title the release is listed under counted straight through, and TVDB's absolute numbers. When every way of counting that fits the release names the same episode, the file is imported there, so a second season's release numbered from one, or from the series' first episode, imports either way, and a release listed under a title of nothing but specials counts them from one. Only Sonarr's aired episode order is read this way. A release numbered from one that fits a season of another TVDB order instead, such as a DVD order that splits a double-length opener in two, is placed by that order (see [Files from a DVD-order torrent that Sonarr doesn't list](#files-from-a-dvd-order-torrent-that-sonarr-doesnt-list)). A file is left for a hand import when a title the release is listed under has an episode count on AniList that does not match the episodes Sonarr has for it, when the release repeats a number under one title (two titles each numbered from one, K-ON! and K-ON!! in one release, are read apart when each names one listed title), when two ways of counting that both fit name different episodes (a second season's release numbered 14 to 22, say, where 14 can be the season's fourteenth episode or the series'), when the series title in the file name is not the series', one of its alternate titles in Sonarr, or an AniList title of a listed entry, or when an episode's absolute number in Sonarr is not its position in the series. Download the release and import those files by hand, matching each to its episode by content.
+The import warns "N files could not be placed on an episode and were not imported" beside the files it did import, or reports the download as "unplaced" ("no file was placed on an episode; import by hand in Sonarr") when none were, and the log names files such as "Show - 07.mkv": a bare number, no season or episode key, which Sonarr's parse put on no episode of the title, or on one outside it. Pearlarr places such a file by working out what the release group counted: the series' episodes from the first, the title's episodes from one, Sonarr's own episode numbers for the title's season, every title the release is listed under counted straight through, and TVDB's absolute numbers. When every way of counting that fits the release names the same episode, the file is imported there, so a second season's release numbered from one, or from the series' first episode, imports either way, and a release listed under a title of nothing but specials counts them from one. Only the aired episode order is read this way. For a series Sonarr numbers by another TVDB order, the numbers counted are the aired ones, not the ones Sonarr shows. A release numbered from one that fits a season of another TVDB order instead, such as a DVD order that splits a double-length opener in two, is placed by that order (see [Files from a DVD-order torrent that Sonarr doesn't list](#files-from-a-dvd-order-torrent-that-sonarr-doesnt-list)). A file is left for a hand import when a title the release is listed under has an episode count on AniList that does not match the episodes Sonarr has for it, when the release repeats a number under one title (two titles each numbered from one, K-ON! and K-ON!! in one release, are read apart when each names one listed title), when two ways of counting that both fit name different episodes (a second season's release numbered 14 to 22, say, where 14 can be the season's fourteenth episode or the series'), when the series title in the file name is not the series', one of its alternate titles in Sonarr, or an AniList title of a listed entry, or when an episode's absolute number in Sonarr is not its position in the series. Download the release and import those files by hand, matching each to its episode by content.
 
 ## Files from a DVD-order torrent that Sonarr doesn't list
 
@@ -188,7 +194,9 @@ that aren't in Sonarr's list, so Pearlarr can't tell where they belong
 
 An import's row ends with an episode that is "still missing in Sonarr", or one that "has a file that isn't from a trusted group". Under it are a `reason` row and the files it is about, each behind an episode number such as `DVD S07E01`. The wait notification and the log say the same in sentences.
 
-TVDB keeps several episode orders for a series: the aired order Sonarr lists, and often a DVD order or others. Another order can number an episode Sonarr doesn't list, such as each half of an opener that aired as one double-length episode. When a torrent is numbered by such an order, Pearlarr imports the files whose numbers stand for an episode Sonarr lists and leaves the rest in the download folder. Nothing in TVDB's data says which aired episode a half belongs to, so Pearlarr never places one.
+TVDB keeps several episode orders for a series: the aired order, and often a DVD order or others. Sonarr lists a series by one of them, the aired order unless the series is set to another. An order can number an episode Sonarr doesn't list, such as each half of an opener that aired as one double-length episode. When a torrent is numbered by such an order, Pearlarr imports the files whose numbers stand for an episode Sonarr lists and leaves the rest in the download folder.
+
+A file is imported when Sonarr has an episode for it, even one the aired order lacks. When Sonarr numbers the series by an order that lists both halves of that opener, each half goes onto Sonarr's episode for it. For that, the TVDB orders that account for the torrent have to agree on the episode, no other file of the torrent can be on it or numbered as it, and the file's name can carry no episode's title and no bracketed number naming an episode. When Sonarr has no episode for a file, nothing in TVDB's data says which of Sonarr's episodes it belongs to, so Pearlarr doesn't place it.
 
 When every episode of the title has a file from a trusted group once the rest are imported, the import ends there and says nothing about the files it left. The warning shows while an episode is empty or has some other file, since that is where a left file may belong. The download stays tracked and the warning repeats on every run, with no age limit. To end it:
 
@@ -196,6 +204,102 @@ When every episode of the title has a file from a trusted group once the rest ar
 - You remove the download from qBittorrent. The files already imported stay in your library. Pearlarr then checks the title again, and grabs the release again only if those files are no longer there.
 
 When more than one TVDB order accounts for a torrent, Pearlarr can't always tell which one such a file follows. That file doesn't keep the pending import open. The import counts it in its "could not be placed on an episode" warning, unless its number is an episode of another title in Sonarr's list, which the import doesn't mention.
+
+## A series in another order that was not checked
+
+```text
+... not checked - Sonarr numbers its series by the ... order
+and the series' aired episodes are not stored yet - checking again next run
+and the series' scene numbers from TheXEM are not stored yet - checking again next run
+```
+
+Sonarr's v5 nightlies can number a series by a TVDB episode order other than the aired one, such as the DVD order. Sonarr v4 can't, so none of this happens on v4. Pearlarr reads such a series as aired: it matches each of Sonarr's episodes to the aired episode with the same TVDB episode ID. When a run checks a title of such a series, the title's block has a `numbers` row, such as `by Sonarr's DVD order`, and its lines print the numbers Sonarr shows.
+
+For that, Pearlarr needs two things it keeps in the cache: the series' aired episodes, from Sonarr's metadata service (SkyHook), and its scene numbers, from TheXEM. The warning says which one is missing. The title is not checked and not cached, so the next run checks it.
+
+Both are fetched in the boot steps "Fetching TVDB orders" and "Fetching TheXEM scene numbers". The usual cause is a host that was unreachable when the series was first read: the step ended `unreachable`, with a `SkyHook failed` or `TheXEM failed` warning. Make sure the machine can reach `skyhook.sonarr.tv` and `thexem.info` (see [architecture.md](architecture.md#external-hosts)), and the next run checks the title. For TheXEM, see also [TheXEM is unreachable or its answer can't be used](#thexem-is-unreachable-or-its-answer-cant-be-used).
+
+## A series held until Sonarr renumbers it
+
+```text
+...: Sonarr's episodes of the series are not numbered by the order Sonarr names for it -
+holding off on the series until they are - refresh it in Sonarr
+...: Sonarr's episodes of the series may not be numbered by the order Sonarr names for it,
+and SkyHook could not be reached to make sure - holding off on the series until it can
+... not checked - the order Sonarr numbers the series by changed during this run - checking
+its titles again next run
+... not checked - the series was not in Sonarr when this run read its library - checking its
+titles next run
+Could not fetch series ... from Sonarr (...) - skipping
+```
+
+Each of these warnings names a series Pearlarr leaves alone for now. They come only from a Sonarr that names an episode order for each series.
+
+The first means the numbers on Sonarr's episodes of the series don't match the order Sonarr names for it, as TVDB has that order now. That can be the case after a series' episode order is changed in Sonarr, until Sonarr renumbers its episodes. It can also happen when TVDB moved an episode to another number and Sonarr hasn't refreshed the series since. Read or imported onto as they are, those episodes would stand for other episodes than their numbers say. So an import onto the series waits, and its titles are not checked. The exception is a series Sonarr already numbered by another order when the run started: Pearlarr reads it by TVDB episode ID, whatever its numbers, so its titles are still checked. Refresh the series in Sonarr. Once its episodes match the order, the titles are checked again and the import goes ahead.
+
+Pearlarr tells by the TVDB orders it stores for the series, and fetches them again from SkyHook before it warns, since the stored copy can be the side that is behind. The second warning is the same doubt when SkyHook could not be reached to settle it. The series is held the same way, until SkyHook answers.
+
+The third means the series' order changed in Sonarr while the run was going, and the fourth that the series was not in Sonarr when the run read the library. The series' titles are not checked this run and not cached, so the next run checks them. There is nothing to do.
+
+The last is a failed read of one series. The check or import that asked for it is put off and tried again. See [The arr connection fails](#the-arr-connection-fails) when every read fails.
+
+## A title Sonarr's order has no episode of
+
+```text
+Sonarr's ... order of the series has none of ...'s episodes - not checked again until the series' order, its episode count
+or the title's SeaDex entry changes
+Sonarr's ... order of the series has none of ...'s episodes - checking again next run
+aired episodes not in Sonarr's order: ...
+(its episodes are not in Sonarr's order of the series)
+```
+
+A TVDB order can leave out episodes the aired order has. When Sonarr numbers a series by such an order, it has no episode for them, so there is nowhere to import their files.
+
+The warning shows under a title's `no episodes` row when Sonarr's order lists none of the title's episodes. Nothing is grabbed for the title. The title is cached, so the warning shows once. It is checked again when Sonarr numbers the series by another order, when Sonarr's episode count for the series changes, or when SeaDex updates the title's entry. When SkyHook or AniList was unreachable for the title during the run, it is not cached: the warning ends "checking again next run", and it shows on each run until they answer.
+
+When Sonarr's order lists some of the title's episodes, the title is checked on those. A release grabbed for them gets a `left out` row that names the aired episodes its other files are for, such as `aired episodes not in Sonarr's order: S01 E02 (1 of 2 files, GROUP)`. Those files are not imported. A release whose every file is for such an episode is not grabbed: its line says `skipped` and `(its episodes are not in Sonarr's order of the series)`, and the title is not listed under "needs action".
+
+To get those episodes, set the series in Sonarr to an order that lists them, such as the aired one. Once Sonarr has renumbered the series, the next run checks its titles again.
+
+## A pending import that was dropped
+
+```text
+Pending import ... dropped: ...
+its episodes were matched before pearlarr could read the order Sonarr numbers its series by -
+checking its titles again (episodes it already imported may be on the wrong episodes)
+Sonarr no longer has an episode it was matched to - checking its titles again
+```
+
+A pending import saved by an earlier version holds Sonarr's episodes for its files, without the TVDB episode behind each one. A run adds those at its start, and drops a pending import it can't add them to, with one of these two reasons. For a series in aired order, that is the first run after upgrading. For a series Sonarr numbers by another order, it is the first run that has the series' aired episodes and scene numbers stored: the first run after upgrading fetches them, so it is the second. Until then nothing is imported from the pending import.
+
+The first reason means Sonarr numbers a series of the download by a TVDB order other than the aired one. The earlier version matched the download's files as though the series were in aired order, so the match may point at the wrong episodes. Files that version already imported from the download may be on the wrong episodes too. Look at the series in Sonarr: where a file is on the wrong episode, delete it there, or import it by hand onto the right one.
+
+The second reason means Sonarr no longer has one of the episodes the files were matched to.
+
+Either way the torrent stays in qBittorrent, and the download's titles are checked again in the same run. When your library still lacks the release, Pearlarr finds the torrent in qBittorrent, tracks it again, and matches its files anew. A pending import whose files are all imported, and that only waits for its cleanup, is kept.
+
+## A file left out of an import
+
+```text
+...: Sonarr no longer has ... was matched to ... - leaving the file out of the import
+```
+
+A pending import keeps the TVDB episode behind each Sonarr episode its files go on. Before it imports, it finds those TVDB episodes among Sonarr's episodes again, so a file follows its episode when Sonarr renumbers the series. This warning names a file whose TVDB episode Sonarr no longer has an episode for, and gives the TVDB episode ID. That can happen when the series is set in Sonarr to an order that leaves the episode out. A title's check does the same when it reads the download, so the warning can show there first, while the download is still going. It shows once a run.
+
+The rest of the download imports, and the named file stays in the download folder, since Sonarr has no episode to import it onto. If you set the series to an order that lists the episode, the next run checks the series' titles again.
+
+## TheXEM is unreachable or its answer can't be used
+
+```text
+TheXEM failed (...) - keeping the scene numbers already stored until it answers
+TheXEM's answer for TVDB ... can't be used (...) - keeping what is stored for the series
+```
+
+TheXEM (`thexem.info`) keeps scene numbers: the numbers releases give a series' episodes where they number it differently from TVDB. Pearlarr asks it only for a Sonarr series numbered by a TVDB order other than the aired one, in the "Fetching TheXEM scene numbers" boot step. It sends the series' TVDB ID and nothing else, and keeps each answer for a week.
+
+The first warning means a request failed, or TheXEM answered with an error status or with something that isn't JSON. The boot step ends `unreachable`, and TheXEM is not asked again this run. A series whose scene numbers are already stored is read with those. A title of a series with none stored is left unchecked and retried next run (see [A series in another order that was not checked](#a-series-in-another-order-that-was-not-checked)). Make sure the machine can reach `thexem.info`.
+
+The second means TheXEM answered for that one series, and Pearlarr can't read scene numbers from the answer. The text in parentheses says what was wrong with it. What is stored for the series is kept, the other series are still read, and the series is asked again on the next run.
 
 ## A torrent Pearlarr never added
 
@@ -249,11 +353,11 @@ Selection settings changed - checking cached titles again
 
 Four situations make a run noticeably slower, all expected:
 
-- **The first run** downloads and parses the ID-mapping sources, fetches the TVDB episode orders of each Sonarr series it checks from Sonarr's metadata service (SkyHook), and evaluates the whole library from scratch.
+- **The first run** downloads and parses the ID-mapping sources, fetches the TVDB episode orders of each Sonarr series it checks from Sonarr's metadata service (SkyHook), reads the scene numbers of each series Sonarr numbers by another TVDB order from TheXEM, and evaluates the whole library from scratch.
   On a large library this takes minutes. Later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
 - **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection can't cover the interval and every cached title is re-checked once (the "history gap" note above).
 - **A changed selection setting** (anything in the `seadex` group, or `imports.languages_*`), or an upgrade whose release notes say it re-checks cached titles, makes the next full run re-check every cached title once (the "Selection settings changed" note above). See [configuration.md](configuration.md#configuration-changes-and-the-cache).
-- **A SeaDex, SkyHook, AniList, or mapping-source hiccup** makes affected titles count as unchecked. They are simply retried next run. A SkyHook hiccup (`SkyHook failed ... - re-checking cached titles until it answers`) leaves unchecked the titles of a Sonarr series whose TVDB episode orders were never fetched, and those of a series Sonarr numbers by another order whose stored orders were due a refetch. Like a SeaDex hiccup, it also stops the run from marking its work done: the next run re-reads the same Sonarr activity, and an unfinished "Selection settings changed" re-check runs again. An AniList hiccup (`AniList ..., skipping further lookups this run`) leaves unchecked the titles of a Sonarr series when Pearlarr has no stored AniList data, air dates included, for a title it looked up. Unlike a SkyHook hiccup, it doesn't stop the run from marking its work done.
+- **A SeaDex, SkyHook, TheXEM, AniList, or mapping-source hiccup** makes affected titles count as unchecked. They are retried next run. A SkyHook hiccup (`SkyHook failed ... - re-checking cached titles until it answers`) leaves unchecked the titles of a Sonarr series whose TVDB episode orders were never fetched, and those of a series Sonarr numbers by another order whose stored orders were due a refetch. Like a SeaDex hiccup, it also stops the run from marking its work done: the next run re-reads the same Sonarr activity, and an unfinished "Selection settings changed" re-check runs again. An AniList hiccup (`AniList ..., skipping further lookups this run`) leaves unchecked the titles of a Sonarr series when Pearlarr has no stored AniList data, air dates included, for a title it looked up. Unlike a SkyHook hiccup, it doesn't stop the run from marking its work done. Neither does a TheXEM hiccup (`TheXEM failed ... - keeping the scene numbers already stored until it answers`), which leaves unchecked the titles of a Sonarr series in another TVDB order whose scene numbers were never read.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
 
