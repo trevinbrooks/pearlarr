@@ -11,7 +11,8 @@ The module is a copy of Sonarr's logic (Sonarr and pearlarr are both GPL-3), fun
   `FindEpisodesBySceneNumbering`.
 
 Each copied function names its source in parentheses. A step of Sonarr's that can't change an answer here is left
-out and listed below with the other departures.
+out and listed below with the other departures. `parse_without_answer` is pearlarr's own: what the placement reads
+of a parse when there is no answer.
 
 Where it departs from Sonarr:
 
@@ -60,7 +61,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from itertools import combinations
 from types import MappingProxyType
-from typing import Final, NamedTuple, Self
+from typing import Final, NamedTuple, Self, assert_never
 
 from .aired_view import AiredSeries
 from .arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SonarrEpisode
@@ -94,7 +95,10 @@ Each one more doubles the readings, so 4 leaves room and stays cheap.
 
 
 class NoAnswer(Enum):
-    """Why a parse gets no answer, where an empty answer says Sonarr matches it to no episode."""
+    """Why an aired Sonarr's answer to a parse can't be known, where an empty answer says it matches no episode.
+
+    `AiredMatcher.matches` gives the first three. The other two are a series with no aired view to match over.
+    """
 
     SONARR_FAILS = auto()
     """Sonarr answers the name with an error: two episodes share a number it reads one episode by."""
@@ -104,6 +108,31 @@ class NoAnswer(Enum):
 
     SPECIAL_BY_TITLE = auto()
     """Sonarr would search the release's name for a special's title (`FindEpisodeByTitle`), which isn't copied."""
+
+    EPISODES_UNREAD = auto()
+    """Sonarr's episodes of the series couldn't be read this run."""
+
+    ORDERS_UNREAD = auto()
+    """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""
+
+
+def parse_without_answer(info: ParsedFileInfo, reason: NoAnswer) -> ParsedFileInfo | None:
+    """The parse the placement reads when an aired Sonarr's answer to it can't be known. None leaves it unread.
+
+    An error answer, and a series whose episodes couldn't be read, leave the parse unread, as a failed `/parse` does.
+    Every other reason gives it no matched episodes, so the placement reads the name's own numbers.
+    """
+
+    match reason:
+        case NoAnswer.SONARR_FAILS | NoAnswer.EPISODES_UNREAD:
+            return None
+        case NoAnswer.LIMITED_ALIAS | NoAnswer.SPECIAL_BY_TITLE:
+            return info.with_matched(())
+        case NoAnswer.ORDERS_UNREAD:
+            # Not unread: orders are fetched only for a series a run checks or waits on, so another series' may never
+            # be stored, and leaving its files unread would hold their release on every run.
+            return info.with_matched(())
+    assert_never(reason)
 
 
 def sonarr_title_key(title: str) -> str:

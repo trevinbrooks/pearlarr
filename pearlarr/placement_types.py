@@ -697,7 +697,7 @@ class GrabbingTitle:
     """AniList's episode count for the title (`EpisodeSource.episode_count`), None when AniList gives none."""
 
     alternate_titles: tuple[str, ...]
-    """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
+    """The series' other titles in Sonarr (`EpisodeSource.alternate_titles`), in Sonarr's order."""
 
     window: TitleWindow = field(init=False, repr=False, compare=False)
     """The title's own window, built as a listing builds each title's (`TitleWindow.of`)."""

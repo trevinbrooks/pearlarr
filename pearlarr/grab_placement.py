@@ -55,7 +55,7 @@ from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, plac
 
 @dataclass(frozen=True, slots=True)
 class ListedFile:
-    """One listed video file, its size and its cached grab-time `/parse`, as the placement reads it."""
+    """One listed video file, its size and its grab-time `/parse`, as the placement reads it."""
 
     file_name: str
     """The raw SeaDex file name."""
@@ -64,9 +64,10 @@ class ListedFile:
     """The listed size, carried onto the episodes the planner compares by size."""
 
     parse: ParsedFileInfo | None
-    """Sonarr's parse of the name, or None when no fresh parse cache row exists. An unknown parse keeps the name number
-    passes from placing, and skips the release while it has a file left to place
-    (`SkipReason.PLACEMENT_INPUT_UNREAD`)."""
+    """Sonarr's parse of the name, its matched episodes the ones an aired Sonarr gives it
+    (`EpisodeSource.aired_parse`). None when Sonarr didn't answer, or an aired Sonarr's answer can't be known and
+    `parse_without_answer` leaves it unread. An unknown parse keeps the name number passes from placing, and skips
+    the release while it has a file left to place (`SkipReason.PLACEMENT_INPUT_UNREAD`)."""
 
     name: str = field(init=False, repr=False, compare=False)
     """The normalized file name (`normalize_file_name` of its `file_name`): what the batch, the sizes and the stored file

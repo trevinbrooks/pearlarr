@@ -14,7 +14,7 @@ is a real `ArrRunServices` subclass. The strategies are built bare
 """
 
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, NamedTuple, cast, override
 
@@ -33,7 +33,9 @@ from pearlarr.arr_models import (
     HistoryRecord,
     Language,
     ManualImportCandidate,
+    MatchedEpisode,
     MovieFile,
+    ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
     RadarrItem,
@@ -41,6 +43,7 @@ from pearlarr.arr_models import (
     SeasonTypeCount,
     SonarrEpisode,
     SonarrItem,
+    SonarrSeries,
 )
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
@@ -67,7 +70,8 @@ from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacedEpisode, SeadexDict, SkipReason
-from pearlarr.sonarr_episodes import sonarr_series_hash
+from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
+from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
@@ -89,10 +93,12 @@ from .builders import (
     SEP,
     FakeCacheStore,
     FakeClock,
+    ScriptedAniListClient,
     claim_anilist_ids,
     episode_snapshot,
     grab_plan,
     held_series_episodes,
+    make_anilist_gateway,
     make_bare_instance,
     make_config,
     make_entry_record,
@@ -114,6 +120,7 @@ from .builders import (
     rg_group,
     sonarr_ep,
     stand_in_ep,
+    stored_orders,
     title_claim,
     title_window,
     torrent_listing,
@@ -441,8 +448,7 @@ class _ScriptedParse:
     def __init__(self, files_by_url: dict[str, tuple[ListedFile, ...]] | None = None) -> None:
         self._files = files_by_url or {}
 
-    def parsed_files(self, seadex_dict: SeadexDict, *, series_hash: str) -> dict[str, tuple[ListedFile, ...]]:
-        del series_hash
+    def parsed_files(self, seadex_dict: SeadexDict) -> dict[str, tuple[ListedFile, ...]]:
         return {
             url: self._files.get(url, ()) for group_releases in seadex_dict.values() for url in group_releases.releases
         }
@@ -2996,6 +3002,133 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
         assert diagnostic_messages(recording) == []
         assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 0)
         assert (run.grab_requests, run.no_releases_calls) == ([], [])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _SeriesInSonarr:
+    """Series 7 as Sonarr has it, and how Sonarr parses each file of the one torrent SeaDex lists for it."""
+
+    series: SonarrSeries
+    episodes: list[SonarrEpisode]
+    parses: Mapping[str, ParsedFileInfo]
+    orders: Mapping[str, tuple[OrderRow, ...]] | None = None
+    """The TVDB orders stored for the series, None when none are."""
+
+
+def _series_seven(season_type: str, alternate_title: dict[str, object]) -> SonarrSeries:
+    """Sonarr's row of series 7 as the wire sends it, numbered by `season_type`, with its one alternate title."""
+
+    return SonarrSeries.model_validate(
+        {"id": 7, "title": "Show", "tvdbId": 70, "seasonType": season_type, "alternateTitles": [alternate_title]}
+    )
+
+
+def _check_second_season(monkeypatch: pytest.MonkeyPatch, library: _SeriesInSonarr) -> _FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
+
+    The library read, the parse cache and each parse's matched episodes are the real ones. The plan grabs the
+    torrent, and AniList knows no title.
+    """
+
+    names = list(library.parses)
+    release = make_release(url=_GRAB_URL, infohash="h1", download=True, files=names, size=[1000] * len(names))
+    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
+    cache = FakeCacheStore()
+    if library.orders is not None:
+        cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
+    run = _FakeRunServices(
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show Second Season",
+        seadex_dict=seadex,
+        plan_grabs_result=grab_plan(seadex),
+        import_wait_mode=ImportWaitMode.BLOCKING,
+        cache_store=cache,
+    )
+    sonarr = FakeSonarrClient(episodes=library.episodes, parse_fn=library.parses.get)
+    deps = replace(
+        make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
+    )
+    episodes = SonarrEpisodes(deps, sonarr, run)
+
+    def _library() -> list[SonarrItem]:
+        return [library.series]
+
+    monkeypatch.setattr(episodes, "get_all_sonarr_series", _library)
+    episodes.refresh_library()
+    strat = make_bare_instance(
+        SonarrStrategy,
+        _services=run,
+        _episodes=episodes,
+        _parse=SonarrParseCache(deps, sonarr, episodes),
+        _listings=_ScriptedListings(),
+        _config=make_config(sleep_time=0),
+        logger=make_logger(),
+    )
+    strat.check_title(library.series, 5, TitleMapping(anilist_id=5, tvdb_season=2))
+    return run
+
+
+class TestSonarrCheckTitleOverSonarrsParses:
+    """A title's check places a file by what the library read says of its series: the order and the other names."""
+
+    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # TVDB's aired order has two seasons, of three and four episodes. Sonarr numbers the series by its DVD
+        # order, one season of the first six, so it reads "Show Zoku S01E0n" by the second season's name and
+        # matches nothing. An aired Sonarr matches the second season's episodes.
+        aired = (
+            *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
+            *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
+        )
+        dvd = tuple(OrderRow(1, n, 9000 + n, None) for n in range(1, 7))
+        names = [f"Show Zoku S01E{n:02d}.mkv" for n in (1, 2, 3, 4)]
+        library = _SeriesInSonarr(
+            series=_series_seven("dvd", {"title": "Show Zoku", "sceneSeasonNumber": 2}),
+            episodes=[sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, episode_file_id=0) for n in range(1, 7)],
+            parses={
+                name: ParsedFileInfo(season_number=1, episode_numbers=(n,), series_title="Show Zoku", series_id=7)
+                for n, name in enumerate(names, start=1)
+            },
+            orders={"official": aired, "dvd": dvd},
+        )
+
+        run = _check_second_season(monkeypatch, library)
+
+        (req,) = run.grab_requests
+        update = req.pending_import_updates["h1"]
+        first, second, third, fourth = (normalize_file_name(name) for name in names)
+        assert update.file_map == {first: (14,), second: (15,), third: (16,)}
+        assert update.excluded == (fourth,)
+        assert run.left_out == ["S02 E04 (1 of 4 files, NAN0)"]
+
+    def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The group numbers the second season from one under the series' other name, and Sonarr matched the file
+        # into the first season. The number is read within the season only because the run knows the name.
+        name = "[grp] Shou - 01.mkv"
+        library = _SeriesInSonarr(
+            series=_series_seven(AIRED_ORDER, {"title": "Shou"}),
+            episodes=[
+                *(sonarr_ep(1, n, ep_id=10 + n, absolute=n, episode_file_id=0) for n in (1, 2, 3, 4)),
+                *(sonarr_ep(2, n, ep_id=14 + n, absolute=4 + n, episode_file_id=0) for n in (1, 2, 3)),
+            ],
+            parses={
+                name: ParsedFileInfo(
+                    season_number=0,
+                    absolute_episode_numbers=(1,),
+                    series_title="Shou",
+                    matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=11),),
+                    series_id=7,
+                )
+            },
+        )
+
+        run = _check_second_season(monkeypatch, library)
+
+        (req,) = run.grab_requests
+        assert req.pending_import_updates["h1"].file_map == {normalize_file_name(name): (15,)}
 
 
 class TestPlacementDebugLine:

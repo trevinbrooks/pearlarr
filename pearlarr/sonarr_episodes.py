@@ -5,8 +5,9 @@ that pins the `/parse` cache rows with no series) and the logic that turns a (se
 AniList id, mapping) into the relevant episode list: season / AniBridge
 filtering, AniDB remaps, offset slicing, the specials chosen by air date, the
 existing files as `ArrFiles`, and the concurrent prefetch warm. It also keeps each
-series' TVDB order facts. A title's check reads every series as aired (`aired_view`),
-whatever order Sonarr numbers it by, and the import reads Sonarr's own rows.
+series' TVDB order facts and alternate titles. A title's check reads every series as
+aired (`aired_view`), whatever order Sonarr numbers it by, the episodes Sonarr matched a
+file name to included (`aired_parse`). The import reads Sonarr's own rows.
 """
 
 import concurrent.futures
@@ -14,12 +15,12 @@ import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import override
+from typing import assert_never, override
 
 from . import aired_view as _aired_view
 from .aired_view import AiredSeries, NoView, is_stand_in
 from .anibridge import TvdbMappings, season_holds
-from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
+from .arr_models import AlternateTitle, ArrFiles, ParsedFileInfo, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
 from .config import AppConfig
 from .library_filter import IdField, build_id_filters, collect_anime_items
@@ -29,6 +30,7 @@ from .placement_types import EpisodeIndex, episode_index
 from .progress import ProgressCallback
 from .releases import season_episode_key
 from .sonarr_client import AbstractSonarrClient
+from .sonarr_matching import AiredMatcher, NoAnswer
 from .specials_by_date import specials_by_date
 from .tvdb_orders import NO_ORDERS, OrdersByName, SonarrSeriesOrders
 
@@ -113,8 +115,19 @@ def _dated(episodes: Iterable[SonarrEpisode]) -> str:
     )
 
 
-_NO_FACTS = SonarrSeriesOrders(tvdb_id=0, season_type="", counts=None)
-"""The facts of a series this run's library read doesn't have. It names no order and is read as aired."""
+@dataclass(frozen=True, slots=True)
+class _LibrarySeries:
+    """What this run's library read says of one series."""
+
+    orders: SonarrSeriesOrders
+    """Its TVDB id and the order Sonarr numbers it by."""
+
+    alternate_titles: tuple[AlternateTitle, ...] = ()
+    """Its other names in Sonarr, in Sonarr's order."""
+
+
+_NOT_IN_LIBRARY = _LibrarySeries(SonarrSeriesOrders(tvdb_id=0, season_type="", counts=None))
+"""A series this run's library read doesn't have. It names no order, so it is read as aired, and has no other names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,9 +165,12 @@ class _SeriesRead:
     index: EpisodeIndex | None = None
     """The view's placement index. None until it is first asked for, and for a series with no view."""
 
+    matcher: AiredMatcher | None = None
+    """Matches a parsed file name to the view's episodes. None until a parse of a series in another order needs it."""
+
 
 class EpisodeSource(ABC):
-    """The episode reads a title's check and a series' listings ask for, every series numbered as aired.
+    """The episode reads a title's check, a series' listings and the parse cache ask for, every series numbered as aired.
 
     `SonarrEpisodes` is the real one. `title_episodes` raises `ValueError` for a mapping it can't resolve.
     """
@@ -168,6 +184,12 @@ class EpisodeSource(ABC):
 
     @abstractmethod
     def series_index(self, series_id: int) -> EpisodeIndex | None: ...
+
+    @abstractmethod
+    def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]: ...
+
+    @abstractmethod
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer: ...
 
     @abstractmethod
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles: ...
@@ -225,8 +247,8 @@ class SonarrEpisodes(EpisodeSource):
         # state so they are parsed again once Sonarr has the series.
         self._series_hash: str = ""
 
-        # Each series row's order facts, rebuilt whole in refresh_library.
-        self._order_facts: dict[int, SonarrSeriesOrders] = {}
+        # What the library read says of each series, rebuilt whole in refresh_library.
+        self._library: dict[int, _LibrarySeries] = {}
 
         # The AniList ids whose choice of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
@@ -252,11 +274,14 @@ class SonarrEpisodes(EpisodeSource):
         # Hash the current series-id set once per run to invalidate the parse cache
         # rows with no series (see sonarr_series_hash).
         self._series_hash = sonarr_series_hash(s.id for s in series)
-        self._order_facts = {
-            s.id: SonarrSeriesOrders(
-                tvdb_id=s.tvdbId,
-                season_type=s.seasonType,
-                counts={listed.type: listed.episode_count for listed in s.seasonTypes} if s.seasonTypes else None,
+        self._library = {
+            s.id: _LibrarySeries(
+                orders=SonarrSeriesOrders(
+                    tvdb_id=s.tvdbId,
+                    season_type=s.seasonType,
+                    counts={listed.type: listed.episode_count for listed in s.seasonTypes} if s.seasonTypes else None,
+                ),
+                alternate_titles=s.alternateTitles,
             )
             for s in series
         }
@@ -371,11 +396,8 @@ class SonarrEpisodes(EpisodeSource):
         A series absent from this run's library read is left out: there is no TVDB id to ask for.
         """
 
-        by_tvdb = {
-            facts.tvdb_id: facts
-            for sid in series_ids
-            if (facts := self._order_facts.get(sid)) is not None and facts.tvdb_id > 0
-        }
+        in_library = (self._library[sid].orders for sid in series_ids if sid in self._library)
+        by_tvdb = {orders.tvdb_id: orders for orders in in_library if orders.tvdb_id > 0}
         return self._skyhook.prefetch(list(by_tvdb.values()), dry_run=self._services.is_dry_run(), progress=progress)
 
     @override
@@ -398,9 +420,9 @@ class SonarrEpisodes(EpisodeSource):
         """
 
         return any(
-            (facts := self._order_facts.get(sid)) is not None
-            and facts.tvdb_id > 0
-            and not self._skyhook.has_cached_answer(facts.tvdb_id)
+            (series := self._library.get(sid)) is not None
+            and series.orders.tvdb_id > 0
+            and not self._skyhook.has_cached_answer(series.orders.tvdb_id)
             for sid in series_ids
         )
 
@@ -414,7 +436,7 @@ class SonarrEpisodes(EpisodeSource):
         if read is None:
             return NoView.READ_FAILED
         if read.view is None:
-            facts = self._order_facts.get(series_id, _NO_FACTS)
+            facts = self._library_series(series_id).orders
             stored = self._skyhook.cached_orders(facts.tvdb_id) if facts.in_another_order else None
             read.view = _aired_view.aired_series(read.rows, facts, stored)
         return read.view
@@ -437,8 +459,49 @@ class SonarrEpisodes(EpisodeSource):
     def _other_orders(self, series_id: int) -> OrdersByName:
         """The series' stored orders other than the aired one. None of them for a series that names no order."""
 
-        facts = self._order_facts.get(series_id, _NO_FACTS)
+        facts = self._library_series(series_id).orders
         return self._skyhook.other_orders(facts.tvdb_id) if facts.season_type else NO_ORDERS
+
+    def _library_series(self, series_id: int) -> _LibrarySeries:
+        """What the library read says of the series, `_NOT_IN_LIBRARY` for one it doesn't have."""
+
+        return self._library.get(series_id, _NOT_IN_LIBRARY)
+
+    @override
+    def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:
+        """The series' other names in Sonarr, in Sonarr's order. None for a series the library read doesn't have."""
+
+        return self._library_series(series_id).alternate_titles
+
+    @override
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer:
+        """The parse with the matched episodes an aired Sonarr gives it, or why its answer can't be known.
+
+        Only a parse Sonarr matched to a series it numbers by another order changes. Sonarr matched that name by
+        its own order's numbers, so its matched episodes are never passed on: they are matched again over the
+        series' aired view (`aired_series`, which fetches a series the run hasn't read), by the series' alternate
+        titles (`AiredMatcher`), and one may be a stand-in.
+        """
+
+        series_id = info.series_id
+        if series_id is None:
+            return info
+        series = self._library_series(series_id)
+        if not series.orders.in_another_order:
+            return info
+        view = self.aired_series(series_id)
+        match view:
+            case NoView.READ_FAILED:
+                return NoAnswer.EPISODES_UNREAD
+            case NoView.ORDERS_UNREAD:
+                return NoAnswer.ORDERS_UNREAD
+            case AiredSeries():
+                read = self._series[series_id]
+                if read.matcher is None:
+                    read.matcher = AiredMatcher.of(view, series.alternate_titles)
+                matched = read.matcher.matches(info)
+                return matched if isinstance(matched, NoAnswer) else info.with_matched(matched)
+        assert_never(view)
 
     def _read(self, series_id: int) -> _SeriesRead | None:
         """What the run holds of the series, its rows fetched when it holds none. None when the fetch failed."""

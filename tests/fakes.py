@@ -15,6 +15,7 @@ import qbittorrentapi
 from pearlarr.aired_view import NoView
 from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
+    AlternateTitle,
     ArrFiles,
     CommandResource,
     DownloadClientConfig,
@@ -63,6 +64,7 @@ from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import EpisodeSource, TitleEpisodes
+from pearlarr.sonarr_matching import NoAnswer
 from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
@@ -669,7 +671,8 @@ class ScriptedEpisodes(EpisodeSource):
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
     `orders_unread_views` reads as `NoView.ORDERS_UNREAD`. Every series is numbered by `order`. The `unread_series`
     have no stored order answer, and the `unread_anilist_ids` no AniList answer. `counts` are AniList's episode
-    counts by AniList id, None for an id left out.
+    counts by AniList id, None for an id left out. No series has an alternate title, and a parse is taken as
+    already matched the way an aired Sonarr matches it.
     """
 
     def __init__(
@@ -734,6 +737,19 @@ class ScriptedEpisodes(EpisodeSource):
 
         episodes = self._series_episodes(series_id)
         return None if isinstance(episodes, NoView) else episode_index(episodes)
+
+    @override
+    def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:
+        """No series has one."""
+
+        del series_id
+        return ()
+
+    @override
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer:
+        """The parse as it is: a scripted parse is one an aired Sonarr gives."""
+
+        return info
 
     @override
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles:

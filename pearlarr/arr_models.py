@@ -660,8 +660,9 @@ class MatchedEpisode(ApiModel):
     season_number: int = Field(validation_alias="seasonNumber")
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
-    """Sonarr's episode id, checked against the episode index so a match to the wrong series is rejected. None for
-    an episode `widen_range_key` added."""
+    """Sonarr's episode id, checked against the episode index so a match to the wrong series is rejected. A stand-in's
+    id for an aired episode Sonarr has no row for (`EpisodeSource.aired_parse`). None for an episode
+    `widen_range_key` added."""
 
 
 class ParsedFileInfo(ApiModel):
@@ -702,7 +703,9 @@ class ParsedFileInfo(ApiModel):
     """The series name Sonarr's parser took from the file name, whether or not it matched a series. "" when it
     took none."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
-    """Sonarr's series-matched episodes. The exact pass's fallback when the name carries no season and episode."""
+    """Sonarr's series-matched episodes. The exact pass's fallback when the name carries no season and episode. For a
+    series Sonarr numbers by another order, the placement is handed the ones an aired Sonarr matches
+    (`EpisodeSource.aired_parse`)."""
     series_id: LenientInt = Field(default=None, validation_alias=AliasPath("series", "id"))
     """Sonarr's id of the series it matched the name to, with or without matched episodes. None when it matched
     none."""
@@ -725,3 +728,8 @@ class ParsedFileInfo(ApiModel):
         return self.model_copy(
             update={"episode_numbers": episodes, "absolute_episode_numbers": absolutes, "matched_episodes": matched}
         )
+
+    def with_matched(self, matched: tuple[MatchedEpisode, ...]) -> Self:
+        """A copy of this parse matched to other episodes, the name's own numbers kept."""
+
+        return self.model_copy(update={"matched_episodes": matched})
