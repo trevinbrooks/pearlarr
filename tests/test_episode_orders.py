@@ -29,7 +29,7 @@ from pearlarr.arr_models import (
     SonarrSeries,
 )
 from pearlarr.arr_run_loop import ArrRunLoop
-from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
@@ -863,6 +863,28 @@ def test_a_series_in_another_order_is_unread_until_its_scene_mappings_were_read(
     assert strat._episodes.metadata_unread([], [1]) is unread
 
 
+@pytest.mark.parametrize(
+    ("season_type", "reachable", "unread"),
+    [
+        pytest.param("dvd", False, True, id="another-order"),
+        pytest.param("official", False, False, id="aired-order"),
+        pytest.param("dvd", True, False, id="another-order-and-fetched"),
+    ],
+)
+def test_a_series_in_another_order_is_unread_while_a_fetch_its_stored_orders_were_due_is_missed(
+    season_type: str, reachable: bool, unread: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS, fresh_for=timedelta(days=-1)))
+    cache.put_scene_mappings(50, stored_scene_mappings())
+    client = _skyhook(_ORDERS) if reachable else FakeSkyHookClient(failing=frozenset({(50, "official")}))
+    strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], cache, client)
+
+    strat._episodes.prefetch_orders([1])
+
+    assert (strat._episodes.metadata_unread([], [1]), strat._episodes.title_unread(500, 1)) == (unread, unread)
+
+
 def test_orders_are_fetched_once_per_tvdb_series(monkeypatch: pytest.MonkeyPatch) -> None:
     # Two Sonarr series of one TVDB series, one with no TVDB id, and one the Sonarr run's library fetch lacks.
     cache = FakeCacheStore()
@@ -1579,10 +1601,11 @@ def _entry(anilist_id: int) -> EntryRecord:
     return make_entry_record(anilist_id=anilist_id, url=f"https://releases.moe/{anilist_id}")
 
 
-def _library_row(season_type: str | None, total: int | None) -> SonarrSeries:
+def _library_row(season_type: str | None, total: int | None, counts: Mapping[str, int] | None = None) -> SonarrSeries:
     """Series 1 of TVDB series 50 as a library read sends it, with `total` episodes by its `statistics`.
 
-    With `season_type=None` the row has no `seasonType` key, and with `total=None` no `statistics`.
+    With `season_type=None` the row has no `seasonType` key, and with `total=None` no `statistics`. It lists the
+    episode count of each order in `counts`, and no order without them.
     """
 
     raw: dict[str, object] = {"id": 1, "title": "Show", "tvdbId": 50}
@@ -1590,23 +1613,35 @@ def _library_row(season_type: str | None, total: int | None) -> SonarrSeries:
         raw["seasonType"] = season_type
     if total is not None:
         raw["statistics"] = {"seasonCount": 1, "episodeCount": total, "totalEpisodeCount": total}
+    if counts is not None:
+        raw["seasonTypes"] = [{"type": name, "episodeCount": count} for name, count in counts.items()]
     return SonarrSeries.model_validate(raw)
 
 
 def _run(cache: FakeCacheStore, library: SonarrSeries, xem: FakeXemClient | None = None) -> RecordingHub:
-    """One whole Sonarr run over `cache` with activity detection off, and what it printed.
+    """One whole Sonarr run over `cache` (`_run_deps`), and what it printed.
 
-    Sonarr lists `library` alone, with the season's two rows numbered by the order it names. Each of
-    `_SEASON_TITLES` has its SeaDex entry (`_entry`), and TVDB series 50 has `_SEASON_TWO_AIRED` stored. TheXEM
-    is `xem`, one that maps no episode of any series when left out.
+    Sonarr lists `library` alone, with the season's two rows numbered by the order it names. TVDB series 50 has
+    `_SEASON_TWO_AIRED` stored. TheXEM is `xem`, one that maps no episode of any series when left out.
     """
 
     cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED))
     rows = _DVD_ROWS if library.seasonType == "dvd" else _ROWS
-    sonarr = FakeSonarrClient(all_series=[library], episodes=list(rows))
+    return _run_over(FakeSonarrClient(all_series=[library], episodes=list(rows)), _run_deps(cache, xem=xem))
+
+
+def _run_deps(
+    cache: FakeCacheStore, *, xem: FakeXemClient | None = None, skyhook: FakeSkyHookClient | None = None
+) -> ArrRunDeps:
+    """What a whole run over `cache` is built from, with activity detection off.
+
+    Each of `_SEASON_TITLES` has its SeaDex entry (`_entry`), its AniList answer and its season of TVDB series 50.
+    TheXEM is `xem` and SkyHook is `skyhook`, each one that has no series when left out.
+    """
+
     seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in _SEASON_TITLES})
     config = make_config(url="http://sonarr", api_key="key", sleep_time=0, detect_arr_activity=False)
-    deps = make_run_deps(config=config, cache_store=cache, seadex=seadex, xem_client=xem)
+    deps = make_run_deps(config=config, cache_store=cache, seadex=seadex, xem_client=xem, skyhook_client=skyhook)
     seasons = MappingSources(
         anime={
             name: {"anilist_id": anilist_id, "tvdb_id": 50, "tvdb_season": season}
@@ -1615,11 +1650,16 @@ def _run(cache: FakeCacheStore, library: SonarrSeries, xem: FakeXemClient | None
         anidb=False,
         anibridge=False,
     )
-    deps = replace(
-        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=seasons)
-    )
     for anilist_id, name in _SEASON_TITLES.items():
         deps.anilist.answers[anilist_id] = anilist_body(anilist_id, name)
+    return replace(
+        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=seasons)
+    )
+
+
+def _run_over(sonarr: FakeSonarrClient, deps: ArrRunDeps) -> RecordingHub:
+    """One whole Sonarr run on `sonarr` with `deps`, and what it printed."""
+
     services = ArrRunServices(deps, Arr.SONARR)
     recording = install_recording_hub()
     ArrRunLoop(deps, services).run_arr(
@@ -1698,6 +1738,38 @@ def test_a_cached_title_is_left_unchanged_while_its_series_is_numbered_the_same_
     assert _checked(recording) == []
 
 
+_WITH_A_THIRD = {
+    "official": (*_ORDERS["official"], OrderRow(1, 3, 9003, 3)),
+    "dvd": (*_DVD, OrderRow(1, 3, 9003, None)),
+}
+"""TVDB series 50's orders once it has a third episode, which both number alike."""
+
+
+def _dvd_sonarr(total: int) -> FakeSonarrClient:
+    """A Sonarr with series 1 in the DVD order at `total` episodes, listing that many under each of its orders."""
+
+    third = sonarr_ep(1, 3, ep_id=13, tvdb_id=9003)
+    library = _library_row("dvd", total, {"official": total, "dvd": total})
+    return FakeSonarrClient(all_series=[library], episodes=[*_DVD_ROWS, third][:total])
+
+
+def test_a_title_checked_on_orders_skyhook_could_not_refresh_is_checked_again_once_it_answers() -> None:
+    # The title is cached while its series has two episodes. Sonarr then has a third, and the counts it lists
+    # make the stored orders, which lack that episode, due a fetch.
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2, "dvd": 2}))
+    _run_over(_dvd_sonarr(2), _run_deps(cache))
+    unreachable = FakeSkyHookClient(failing=frozenset({(50, "official")}))
+    _run_over(_dvd_sonarr(3), _run_deps(cache, skyhook=unreachable))
+
+    recording = _run_over(_dvd_sonarr(3), _run_deps(cache, skyhook=_skyhook(_WITH_A_THIRD)))
+
+    first = cache.get_cached_title(Arr.SONARR, 500)
+    assert _checked(recording) == [500]
+    assert first is not None
+    assert first.coverage == "S01 E01-E03"
+
+
 @pytest.mark.parametrize(
     ("library", "checked"),
     [
@@ -1748,6 +1820,22 @@ def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_when_the_serie
     recording = _run(cache, _library_row("dvd", 3))
 
     assert diagnostic_messages(recording, Severity.WARNING) == [_NO_EPISODE_IN_THE_ORDER]
+
+
+def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_while_its_series_due_orders_are_unread() -> None:
+    # The stored orders are past their fresh-until, and SkyHook is unreachable for the run.
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED, fresh_for=timedelta(days=-1)))
+    cache.put_scene_mappings(50, stored_scene_mappings())
+    sonarr = FakeSonarrClient(all_series=[_library_row("dvd", 2)], episodes=list(_DVD_ROWS))
+    unreachable = FakeSkyHookClient(failing=frozenset({(50, "official")}))
+
+    recording = _run_over(sonarr, _run_deps(cache, skyhook=unreachable))
+
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Sonarr's DVD order of the series has none of Second's episodes - checking again next run"
+    ]
+    assert cache.get_cached_title(Arr.SONARR, 600) is None
 
 
 def test_a_title_with_no_aired_episode_prints_its_row_on_every_run_and_is_not_cached() -> None:

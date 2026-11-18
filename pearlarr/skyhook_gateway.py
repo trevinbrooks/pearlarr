@@ -39,6 +39,8 @@ class SkyHookGateway:
         self._answers: dict[int, CachedOrders | None] = {}
         # The TVDB ids of the series whose answer this run fetched and wrote.
         self._written: set[int] = set()
+        # The TVDB ids of the series a prefetch of this run found due and couldn't fetch.
+        self._missed: set[int] = set()
 
     @property
     def unreachable(self) -> bool:
@@ -57,7 +59,7 @@ class SkyHookGateway:
 
         Each answer is saved as it is written, unless `dry_run`, so an interrupted first fetch keeps what it fetched.
         When SkyHook is unreachable the series being fetched keeps its old answer, and the rest are left for the next
-        run.
+        run. The fetch of each of them is missed for this one (`fetch_missed`).
         """
 
         now = datetime.now()
@@ -70,6 +72,7 @@ class SkyHookGateway:
             written += 1
             if progress is not None:
                 progress.progress(done / len(due), f"{done}/{len(due)}")
+        self._missed.update(facts.tvdb_id for facts in due[written:])
         return written
 
     def refetch(self, facts: SonarrSeriesOrders) -> CachedOrders | None:
@@ -118,6 +121,14 @@ class SkyHookGateway:
         """Whether the series has a cached answer, even one with no orders."""
 
         return self.cached_orders(tvdb_id) is not None
+
+    def fetch_missed(self, tvdb_id: int) -> bool:
+        """Whether the series was due a fetch at a prefetch of this run and SkyHook was unreachable for it.
+
+        Its old answer, when it has one, still serves the run.
+        """
+
+        return tvdb_id in self._missed
 
     def _due(self, facts: SonarrSeriesOrders, now: datetime) -> bool:
         """Whether the series needs a fetch.
