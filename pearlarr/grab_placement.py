@@ -110,11 +110,6 @@ class KnownTorrent:
     """Whether the torrent has a stored pending import that couldn't be followed under this run's rows
     (`pending_follow.follow`). Its ids may name other episodes, so nothing is read from it, placed or joined."""
 
-    def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
-        """The TVDB episode id of the row each of `episode_ids` was placed on, read off the series indexes."""
-
-        return tvdb_ids_across(self.indexes.values(), episode_ids)
-
     def seadex_evidence(self, sizes: Mapping[str, int]) -> SeadexEvidence:
         """The `SeadexEvidence` every window of this torrent is placed with: this run's listing and size matches.
 
@@ -242,8 +237,8 @@ class PlacedRelease:
     An id two files size differently is left out."""
 
     tvdb_ids: TvdbIds
-    """The TVDB episode id of each Sonarr row this placement put a file on (`KnownTorrent.tvdb_ids`), which the
-    pending import stores with the file map."""
+    """The TVDB episode id of each Sonarr row this placement put a file on, read off the torrent's series indexes
+    (`tvdb_ids_across`). The pending import stores it with the file map."""
 
     sizes_by_name: Mapping[str, int] = field(init=False, repr=False, compare=False)
     """Normalized listing name -> its listed size, read off `files` (see `_sizes_by_name`)."""
@@ -368,7 +363,9 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         ),
         pending_import=stored,
         intended_sizes=sizes_by_episode(whole_file_map, sizes),
-        tvdb_ids=torrent.tvdb_ids(ep_id for ids in view.placements.placed.values() for ep_id in ids),
+        tvdb_ids=tvdb_ids_across(
+            torrent.indexes.values(), (ep_id for ids in view.placements.placed.values() for ep_id in ids)
+        ),
     )
 
 
