@@ -687,7 +687,11 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "scope_opened": "A nested scope opened (`kind` + `serial` identify it). Events inside carry the "
     "scope path as `path` instead of the id.",
     "title_header": "A title's block opened. `message` is the title's state word.",
-    "title_detail": "A labeled line inside a title's block. `message` is `label: value`.",
+    "title_detail": "A labeled line inside a title's block. `message` is `label: value`. "
+    "Two labels are only for a Sonarr series set to a TVDB order other than the aired one. "
+    "`numbers`, as `numbers: by Sonarr's DVD order`, says the title's lines print the numbers Sonarr shows. "
+    "`left out`, as `left out: aired episodes not in Sonarr's order: S01 E02 (1 of 2 files, GROUP)`, names the "
+    "files of the releases the run grabs that are for aired episodes that order doesn't list.",
     "title_row": "A one-line result for a title: `message` is the state word, `title` the title's name.",
     "release_skipped": "A release was skipped at the grab. "
     f"`reason` is {', '.join(_SKIP_REASONS[:-1])}, or {_SKIP_REASONS[-1]}. "
