@@ -94,6 +94,10 @@ class SkipReason(StrEnum):
     nothing is placed, since another title it names may have some of the files. Grabbing now could place a file on the
     wrong episode for good, or leave one unplaced that the import never places, so the release waits for the next
     run."""
+    AIRED_ONLY = "aired episodes not in Sonarr's order"
+    """A release none of whose files land on the title and none are another title's, while some are on an aired
+    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`). It is not grabbed and is no hand import, and its
+    title is cached like one with nothing to grab."""
 
     @property
     def left_for_hand_import(self) -> bool:

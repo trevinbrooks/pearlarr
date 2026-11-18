@@ -10,7 +10,7 @@ its log formatter.
 
 import logging
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
@@ -485,7 +485,7 @@ class GrabPlanner:
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        title_episodes: list[SonarrEpisode] | None = None,
+        title_episodes: Sequence[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Filter torrents by release group.
 

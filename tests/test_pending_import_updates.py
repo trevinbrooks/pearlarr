@@ -83,7 +83,7 @@ def _build(
 ) -> dict[str, PendingImportUpdate]:
     """Place the entry's files under `grabbing_title` (by default the strat's whole series), then build the updates."""
 
-    series = strat._episodes.cached_episodes(facts.series_id) or []
+    series = strat._episodes.last_known_episodes(facts.series_id)
     grabbing_title = grabbing_title or _grabbing_title(series, series)
     files = strat._parse.parsed_files(seadex_dict, series_hash="")
     placed = PlacedEntry.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))

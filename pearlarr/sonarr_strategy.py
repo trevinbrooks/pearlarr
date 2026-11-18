@@ -1,10 +1,11 @@
 """The Sonarr strategy: series/episode coverage and per-title checks over the arr run services."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import override
 
 from . import coverage as _coverage
+from .aired_view import NoView
 from .arr_models import HistoryRecord, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
@@ -16,6 +17,7 @@ from .grab_placement import (
     SizeOverName,
     TitleFacts,
     TorrentFetches,
+    aired_only_files,
     build_pending_import_updates,
     entry_hashes,
     size_over_name_files,
@@ -29,9 +31,10 @@ from .progress import ProgressCallback
 from .releases import EpisodeKey, SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
 from .sonarr_client import AbstractSonarrClient, SonarrClient
-from .sonarr_episodes import SonarrEpisodes
+from .sonarr_episodes import SonarrEpisodes, TitleEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_parse import SonarrParseCache
+from .tvdb_orders import is_another_order, order_display_name
 from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress, ImportWaitMode
 
 
@@ -62,11 +65,26 @@ def releases_overlap(seadex_dict: SeadexDict) -> bool:
     return False
 
 
-def _file_and_why(placement: Placement) -> str:
-    """One unplaced file for the debug line: its name, its verdict's words, and the order's episode when it has one."""
+def _in_sonarr(title_episodes: TitleEpisodes | NoView) -> tuple[SonarrEpisode, ...]:
+    """The title's episodes Sonarr has a row for. None of them when the series has no aired view."""
 
-    key = "" if placement.order_only is None else f": {placement.order_only.label}"
-    return f"{placement.name} ({placement.verdict}{key})"
+    return () if isinstance(title_episodes, NoView) else title_episodes.in_sonarr
+
+
+def _file_and_why(placement: Placement) -> str:
+    """One unplaced file for the debug line: its name, its verdict's words, and the episode the verdict names.
+
+    That is the order's episode for a file only another order lists, and the aired episodes for a file Sonarr has no
+    row for.
+    """
+
+    if placement.order_only is not None:
+        episode = f": {placement.order_only.label}"
+    elif placement.aired_only:
+        episode = f": {_coverage.coverage_string(placement.aired_only)}"
+    else:
+        episode = ""
+    return f"{placement.name} ({placement.verdict}{episode})"
 
 
 def _override_line(url: str, override: SizeOverName) -> str:
@@ -129,7 +147,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # hash and the (series, anilist_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes / prefetch_orders to it, reads its series_hash for the parse
-        # cache, and builds every episode index with its orders_for.
+        # cache, and takes every title's episodes and every series index from it, numbered as aired.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Reads every SeaDex entry of the series once per run, for each title's window and the size
@@ -260,12 +278,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             anilist_id,
             sd_entry,
             lambda: _coverage.coverage_of_episodes(
-                self._episodes.mapping_episodes(
-                    sonarr_series_id=sonarr_series_id,
-                    anilist_id=anilist_id,
-                    mapping=mapping,
-                )
-                or (),
+                _in_sonarr(self._episodes.title_episodes(sonarr_series_id, anilist_id, mapping))
             ),
         ):
             return
@@ -276,20 +289,28 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Setup info for cache
         update = services.new_cached_title_update(title, sd_entry)
 
-        # Get the episode list for all relevant episodes
-        title_episodes = self._episodes.mapping_episodes(
-            sonarr_series_id=sonarr_series_id,
-            anilist_id=anilist_id,
-            mapping=mapping,
-        )
+        # Get the title's episodes, numbered as aired whatever order Sonarr numbers the series by
+        title_episodes = self._episodes.title_episodes(sonarr_series_id, anilist_id, mapping)
 
-        if title_episodes is None:
+        if isinstance(title_episodes, NoView):
+            if title_episodes is NoView.ORDERS_UNREAD:
+                # Nothing is placed or cached, so the next run checks the title again.
+                hub_warn(
+                    f"{title.name} not checked - Sonarr numbers its series by the "
+                    f"{order_display_name(item.seasonType)} order and the series' aired episodes are not stored yet"
+                    " - checking again next run"
+                )
+                services.owe_pause()
             return
+        in_sonarr = title_episodes.in_sonarr
 
-        if not title_episodes:
-            # Resolved zero episodes (season not in Sonarr, offset past the end, or
-            # AniBridge with no ranges): stop, don't mislabel "unmonitored" or grab orphans.
+        if not in_sonarr:
+            # Resolved zero episodes (season not in Sonarr, offset past the end,
+            # AniBridge with no ranges, or aired episodes Sonarr's order of the series has none of):
+            # stop, don't mislabel "unmonitored" or grab orphans.
             services.log_no_episodes(title.name)
+            if title_episodes.aired:
+                services.log_order_has_no_episodes(title_episodes.order)
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the no-episodes row naming the cause.
@@ -302,7 +323,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             return
 
         # If all episodes are unmonitored, then stop if ignore_unmonitored is switched on
-        if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in title_episodes):
+        if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in in_sonarr):
             services.log_arr_item_unmonitored(title.name)
             services.owe_pause()
             return
@@ -310,7 +331,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Now that we have the episodes, log the active title with its
         # season/episode coverage + URL, and remember them for the cache so
         # a later run that finds it unchanged can show the same detail
-        coverage = _coverage.coverage_of_episodes(title_episodes)
+        coverage = _coverage.coverage_of_episodes(in_sonarr)
         services.open_title_block(
             title=title.name,
             sd_entry=sd_entry,
@@ -318,9 +339,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         )
         update["coverage"] = coverage
         update["url"] = sd_url
+        if is_another_order(title_episodes.order):
+            services.log_numbered_as_aired(title_episodes.order)
 
-        self._report_missing_episodes(title_episodes)
-        sonarr_files = self._episodes.sonarr_files(title_episodes)
+        self._report_missing_episodes(in_sonarr)
+        sonarr_files = self._episodes.sonarr_files(in_sonarr)
 
         self.logger.debug(
             f"Sonarr release {pluralize(sonarr_files.group_count(), 'group')}: {sonarr_files.groups_label()}"
@@ -340,7 +363,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Place every listed file now: the import imports this file map and places nothing, so the grab goes by
         # it. Placed under every listed title's window and every stored claim's, a stored torrent as its pending
-        # import's leftover. The series indexes are the whole-series lists (a per-run cache hit each).
+        # import's leftover. The series indexes are the whole-series lists as aired (a per-run cache hit each).
         waits_on_imports = services.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = (
@@ -353,12 +376,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         grabbing_title = GrabbingTitle(
             anilist_id=anilist_id,
             series_id=sonarr_series_id,
-            title_index=episode_index(title_episodes, self._episodes.orders_for(sonarr_series_id)),
+            title_index=title_episodes.index(),
             series_index=indexes.get(sonarr_series_id, episode_index([])),
             title_names=title.names,
             episode_count=self._episodes.episode_count(anilist_id),
             alternate_titles=tuple(alt.title for alt in item.alternateTitles),
-            aired_order=self._episodes.aired_order(sonarr_series_id),
         )
         placed = PlacedEntry.place(
             grabbing_title,
@@ -386,10 +408,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         plan = services.plan_grabs(
             seadex_dict=seadex_dict,
             arr_files=sonarr_files,
-            title_episodes=title_episodes,
+            title_episodes=in_sonarr,
         )
         seadex_dict = plan.seadex_dict
         self._warn_overrides(placed, seadex_dict)
+        self._report_aired_only(placed, seadex_dict)
 
         # Build the per-torrent pending import updates the grab pipeline persists at the add site: one per release
         # marked to grab (to_grab + hash), carrying pearlarr's file map (file name -> Sonarr episode ids) so the later
@@ -430,8 +453,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             ),
         )
 
-    def _report_missing_episodes(self, title_episodes: list[SonarrEpisode]) -> None:
-        """Report the title's episodes that have no file."""
+    def _report_missing_episodes(self, title_episodes: Sequence[SonarrEpisode]) -> None:
+        """Report the title's episodes in Sonarr that have no file."""
 
         missing = [ep for ep in title_episodes if ep.episode_file_id == 0]
         if missing:
@@ -442,13 +465,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             self._services.log_missing_episodes(missing_coverage or f"{len(missing)}/{len(title_episodes)}")
 
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
-        """One index per series whose whole list served this run (a cold read fetches once); an unread one is absent."""
+        """One index per series, numbered as aired (a cold read fetches once). One with no aired view is absent."""
 
-        return {
-            sid: episode_index(episodes, self._episodes.orders_for(sid))
-            for sid in series_ids
-            if (episodes := self._episodes.cached_episodes(sid)) is not None
-        }
+        return {sid: index for sid in series_ids if (index := self._episodes.series_index(sid)) is not None}
 
     def _warn_overrides(self, placed: PlacedEntry, seadex_dict: SeadexDict) -> None:
         """Warn once per release this run grabs if any of its files were placed by size over their names.
@@ -464,6 +483,22 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 hub_warn(f"{_override_line(planned.url, first)}{more}")
                 for override in rest:
                     self.logger.debug(_override_line(planned.url, override))
+
+    def _report_aired_only(self, placed: PlacedEntry, seadex_dict: SeadexDict) -> None:
+        """Report, in one row, the files this run's grabs have on aired episodes Sonarr has no row for.
+
+        Each release gives the episodes by their aired numbers and how many of its files they are. `seadex_dict`
+        must be the grab plan's, so a release the run doesn't grab reports nothing.
+        """
+
+        left_out = [
+            f"{_coverage.coverage_string(files.episodes)} ({files.count} of {count_noun(files.listed, 'file')}, "
+            f"{planned.group})"
+            for planned in releases_to_grab(seadex_dict)
+            if (files := aired_only_files(placed.by_url[planned.url])) is not None
+        ]
+        if left_out:
+            self._services.log_aired_only("; ".join(left_out))
 
     def _log_placements(self, placed: PlacedEntry) -> None:
         """One debug line per release with video files: coverage, then each file excluded or left for a hand import."""

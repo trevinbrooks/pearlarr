@@ -100,7 +100,7 @@ def test_diagnostic_and_title_detail_carry_their_own_severity() -> None:
     assert severity_of(detail) is Severity.WARNING
 
 
-def test_skip_reason_severity_marks_the_users_own_choice_info() -> None:
+def test_skip_reason_severity_marks_the_users_own_choice_and_episodes_sonarr_lacks_info() -> None:
     def severity(reason: SkipReason) -> Severity:
         return ReleaseSkipped(group="G", tracker="Nyaa", reason=reason).severity
 
@@ -109,6 +109,7 @@ def test_skip_reason_severity_marks_the_users_own_choice_info() -> None:
     assert severity(SkipReason.MISNUMBERED) is Severity.WARNING
     assert severity(SkipReason.PLACEMENT_INPUT_UNREAD) is Severity.WARNING
     assert severity(SkipReason.TRACKER_NOT_SELECTED) is Severity.INFO
+    assert severity(SkipReason.AIRED_ONLY) is Severity.INFO
     skipped = ReleaseSkipped(group="G", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED)
     assert severity_of(skipped) is Severity.INFO
 

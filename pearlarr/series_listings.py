@@ -2,12 +2,13 @@
 
 from collections.abc import Callable
 
+from .aired_view import NoView
 from .listing_builder import ListedTitle, build_listings
 from .mappings import ResolvedMappings
 from .pending_import import TitleNames, TitleWindow
 from .placement_types import FetchedListings
 from .seadex_gateway import SeaDexNoEntry, SeaDexSource
-from .sonarr_episodes import SonarrEpisodes
+from .sonarr_episodes import EpisodeSource
 
 
 class SeriesListings:
@@ -27,7 +28,7 @@ class SeriesListings:
     def __init__(
         self,
         seadex: SeaDexSource,
-        episodes: SonarrEpisodes,
+        episodes: EpisodeSource,
         ignore_tags: frozenset[str],
         names: Callable[[int], TitleNames],
     ) -> None:
@@ -57,7 +58,8 @@ class SeriesListings:
     def _read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
         """Read each title's entry, window, and special aliases, then build the listings from them.
 
-        A title whose episode list comes back empty keeps a window with no ids.
+        A title whose episode list comes back empty keeps a window with no ids, and one whose series has no aired
+        view has no window. A window holds the title's episodes as aired, stand-ins included.
         """
 
         listed: list[ListedTitle] = []
@@ -68,16 +70,16 @@ class SeriesListings:
                     return None
                 continue
             try:
-                title_episodes = self._episodes.mapping_episodes(series_id, anilist_id, mapping)
+                title_episodes = self._episodes.title_episodes(series_id, anilist_id, mapping)
             except ValueError:
                 continue
             window = (
                 None
-                if title_episodes is None
+                if isinstance(title_episodes, NoView)
                 else TitleWindow.of(
                     anilist_id=anilist_id,
                     series_id=series_id,
-                    episodes=title_episodes,
+                    episodes=title_episodes.aired,
                     names=self._names(anilist_id),
                     ignored=anilist_id in resolved.ignored,
                     episode_count=self._episodes.episode_count(anilist_id),

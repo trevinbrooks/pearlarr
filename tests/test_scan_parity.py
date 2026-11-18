@@ -1052,6 +1052,17 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
+        # grab_pipeline._may_grab: a release whose files are of aired episodes Sonarr's order has no row for.
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.AIRED_ONLY, url="https://x/1"),
+            _xdetail(
+                _I,
+                "    skipped   https://x/1 (its episodes are not in Sonarr's order of the series)",
+                "skipped",
+                "https://x/1 (its episodes are not in Sonarr's order of the series)",
+                "yellow",
+            ),
+        ),
         # grab_pipeline._may_grab: the listing the placement judges a pack by could not be read.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.PLACEMENT_INPUT_UNREAD, url="https://x/1"),

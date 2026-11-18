@@ -282,7 +282,7 @@ A one-line result for a title: `message` is the state word, `title` the title's 
 
 ### `release_skipped`
 
-A release was skipped at the grab. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, `placed_elsewhere`, or `placement_input_unread`. On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and `unplaced` the rest, which nothing placed.
+A release was skipped at the grab. `reason` is `private_only`, `unsupported_tracker`, `tracker_not_selected`, `misnumbered`, `episode_titles_contradict`, `placed_elsewhere`, `placement_input_unread`, or `aired_only`. On `placed_elsewhere`, `another_titles` counts the release's files placed on another title's episodes and `unplaced` the rest, which nothing placed.
 
 ```json
 {

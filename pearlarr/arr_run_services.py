@@ -9,7 +9,7 @@ this module only and never see the loop type.
 """
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 
 import httpx
@@ -40,6 +40,7 @@ from .seadex_gateway import SeaDexGateway, SeaDexNoEntry, SeaDexSource
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
 from .torrent_service import TorrentService
+from .tvdb_orders import order_display_name
 from .wait_types import ImportWaitMode
 
 
@@ -516,7 +517,7 @@ class ArrRunServices:
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        title_episodes: list[SonarrEpisode] | None = None,
+        title_episodes: Sequence[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Apply the grab plan, setting private-only skips on the state (delegates)."""
 
@@ -678,9 +679,28 @@ class ArrRunServices:
         """Log an unmonitored item (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._state, item_title)
 
+    def log_order_has_no_episodes(self, order: str) -> None:
+        """Under a no-episodes row, log that Sonarr's `order` of the series has none of the title's aired episodes."""
+        self._reporter.detail(
+            "status",
+            StyledValue(
+                f"Sonarr's {order_display_name(order)} order of the series has none of its episodes", Accent.DIM
+            ),
+        )
+
+    def log_numbered_as_aired(self, order: str) -> None:
+        """Log that the open title's episodes are numbered as aired, for a series Sonarr numbers by another `order`."""
+        self._reporter.detail(
+            "numbers", StyledValue(f"as aired, not by Sonarr's {order_display_name(order)} order", Accent.DIM)
+        )
+
     def log_missing_episodes(self, missing: str) -> None:
         """Log the open title's episodes that have no file (delegates to RunReporter)."""
         self._reporter.detail("missing", StyledValue(missing, Accent.CAUTION))
+
+    def log_aired_only(self, left_out: str) -> None:
+        """Log the files of the open title's grabs that are on aired episodes Sonarr has no row for."""
+        self._reporter.detail("left out", StyledValue(f"aired episodes not in Sonarr's order: {left_out}", Accent.NOTE))
 
     def open_title_block(
         self,

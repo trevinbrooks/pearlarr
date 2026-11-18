@@ -265,8 +265,8 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     (`PlacementVerdict.AIRED_ONLY`). A file another title's window placed, or left for a hand import without
     involving a window the pending import imports, is set aside as that title's. The release is skipped (`SkipReason`)
     when a file of the grabbing title's window is misnumbered, when a read the placement needs failed, or when nothing
-    of it lands on the title and either the title's window left a file for a hand import or some of it is another
-    title's.
+    of it lands on the title and the title's window left a file for a hand import, some of it is another title's, or
+    some of it is on an aired episode Sonarr has no row for.
 
     Under a stored pending import, the files in its file map and the files it left for a hand import are not placed
     (`listed_batch`). An earlier check judged them, and a check with fewer files to place could count a file left
@@ -323,6 +323,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
             unread=unread,
             hand_import_verdict=None if placed_on_window else view.hand_import_verdict,
             another_titles=bool(another_titles),
+            aired_only=not placed_on_window and bool(view.placements.aired_only),
         )
     # With every window's series read, a grabbing title that can't place (`GrabbingTitle.can_place`) still places
     # nothing. A new torrent is then judged by group and size. A stored one's claim joins with nothing placed, a
@@ -390,18 +391,24 @@ class _OnWindow:
 
 
 def _skip_reason_of(
-    *, misnumbered: bool, unread: bool, hand_import_verdict: PlacementVerdict | None, another_titles: bool
+    *,
+    misnumbered: bool,
+    unread: bool,
+    hand_import_verdict: PlacementVerdict | None,
+    another_titles: bool,
+    aired_only: bool,
 ) -> SkipReason | None:
     """Why the release isn't grabbed: the first of these that holds, in this order.
 
-    Four inputs, since their order is the rule. `misnumbered`: a file of the grabbing title's window is misnumbered
+    Five inputs, since their order is the rule. `misnumbered`: a file of the grabbing title's window is misnumbered
     (`TitleView.misnumbered`). `unread`: a read the placement needs failed. `hand_import_verdict`: the hand-import
     verdict the grabbing title's window gave a file no window placed (`TitleView.hand_import_verdict`), when nothing
     of the whole file map lands on the title. A file episode titles contradict skips the release as `EPISODE_TITLES_CONTRADICT`,
     and a file another TVDB order reads outside every listed title as `MISNUMBERED`. It outranks `another_titles`,
     since a file the grabbing title's window left for a hand import is that title's hand import, and saying it's
     another title's would be wrong. `another_titles`: nothing of the whole file map lands on the title, and some file
-    is another title's.
+    is another title's. `aired_only`: nothing of the whole file map lands on the title, and some file is on an aired
+    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`).
     """
 
     if misnumbered:
@@ -412,7 +419,31 @@ def _skip_reason_of(
         return SkipReason.EPISODE_TITLES_CONTRADICT
     if hand_import_verdict is not None:
         return SkipReason.MISNUMBERED
-    return SkipReason.PLACED_ELSEWHERE if another_titles else None
+    if another_titles:
+        return SkipReason.PLACED_ELSEWHERE
+    return SkipReason.AIRED_ONLY if aired_only else None
+
+
+@dataclass(frozen=True, slots=True)
+class AiredOnlyFiles:
+    """A release's files on aired episodes Sonarr has no row for, for the line that reports them."""
+
+    episodes: tuple[EpisodeKey, ...]
+    """The episodes by their aired numbers, each once, in file order."""
+    count: int
+    """How many of the release's files are on them."""
+    listed: int
+    """How many video files the release lists."""
+
+
+def aired_only_files(placed: PlacedRelease) -> AiredOnlyFiles | None:
+    """The release's files set aside as `PlacementVerdict.AIRED_ONLY`, None when it has none."""
+
+    aired_only = placed.placements.aired_only
+    if not aired_only:
+        return None
+    episodes = tuple(dict.fromkeys(key for placement in aired_only for key in placement.aired_only))
+    return AiredOnlyFiles(episodes=episodes, count=len(aired_only), listed=len(placed.files))
 
 
 def _another_titles_counts(another_titles: frozenset[str], placements: BatchPlacements) -> AnotherTitlesCounts:
