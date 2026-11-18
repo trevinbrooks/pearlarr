@@ -280,7 +280,7 @@ def releases_to_grab(seadex_dict: SeadexDict) -> list[PlannedGrab]:
 SELECTION_RULES_VERSION: int = 19
 
 SONARR_MISSING_KEY: int = 999
-"""Out-of-range stand-in for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
+"""Out-of-range sentinel for a missing Sonarr `seasonNumber`/`episodeNumber`, never colliding with a real one."""
 
 
 @dataclass(frozen=True, slots=True)

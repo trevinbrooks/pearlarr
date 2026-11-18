@@ -90,7 +90,7 @@ class TestEpisodeIndex:
         assert index.orders["dvd"].keys == {(1, 1), (1, 2)}
         assert episode_index(eps).orders == {}
 
-    def test_a_row_the_aired_order_lacks_is_in_no_facet_but_its_own(self) -> None:
+    def test_an_own_only_row_is_in_no_facet_but_its_own(self) -> None:
         # Sonarr's own order numbers the row like the aired first episode, with the same absolute number.
         aired = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901, absolute=1, title="Beach Day")]
         half = sonarr_ep(1, 1, ep_id=91, tvdb_id=991, absolute=1, title="Festival Night")
@@ -103,9 +103,8 @@ class TestEpisodeIndex:
         assert (index.season_counts, index.id_by_absolute) == ({1: 1}, {1: 11})
         assert index.titles(words) == episode_index(aired).titles(words)
 
-    def test_another_order_reads_a_key_onto_a_row_the_aired_order_lacks_by_tvdb_id(self) -> None:
-        # The dvd order's second episode is one the aired order lacks and Sonarr has a row for. Its third has no
-        # row at all.
+    def test_another_order_reads_a_key_onto_an_own_only_row_by_tvdb_id(self) -> None:
+        # The dvd order's second episode is on an own-only row. Its third is order only.
         eps = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901)]
         half = sonarr_ep(7, 4, ep_id=91, tvdb_id=991)
         dvd = (OrderRow(1, 1, 901, None), OrderRow(1, 2, 991, None), OrderRow(1, 3, 992, None))
@@ -162,7 +161,7 @@ class TestEpisodeIndexTvdbIds:
 
         assert index.tvdb_ids([101, 201]) == TvdbIds({101: 9001})
 
-    def test_a_row_the_aired_order_lacks_is_read_like_any_other_row(self) -> None:
+    def test_an_own_only_row_is_read_like_any_other_row(self) -> None:
         index = episode_index(
             [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)], own_only=[sonarr_ep(7, 1, ep_id=901, tvdb_id=9901)]
         )

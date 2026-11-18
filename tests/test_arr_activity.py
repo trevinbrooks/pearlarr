@@ -59,7 +59,7 @@ def _rec(
 
 
 class _Fetch:
-    """A recording `history_since` stand-in: scripted records, dates recorded."""
+    """A recording fake `history_since`: scripted records, dates recorded."""
 
     def __init__(self, records: list[HistoryRecord] | None) -> None:
         self.records = records

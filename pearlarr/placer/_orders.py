@@ -1,4 +1,9 @@
-"""Pass 16 of the list in `_passes`: place by another TVDB order the files the other passes left for one."""
+"""Pass 16 of the list in `_passes`: place by another TVDB order the files the other passes left for one.
+
+A key of an order is off aired when the order gives it to no aired episode. It then reads onto an own-only row, or
+it is order only (`aired_view` names both). Every check that builds a fit reads either as a key with no episode, and
+`_settle_off_aired` is where the two part.
+"""
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -13,24 +18,23 @@ from ..releases import EpisodeKey, OrderOnlyKey
 
 @dataclass(frozen=True, slots=True)
 class _OffAired:
-    """How one order reads a file when it gives a key of the file to no aired episode."""
+    """How one order reads a file with a key off aired."""
 
     rows: tuple[int, ...]
-    """The Sonarr rows the aired order lacks that keys of the file read onto (`TvdbOrder.own_only_by_key`), in key
-    order."""
+    """The own-only rows keys of the file read onto (`TvdbOrder.own_only_by_key`), in key order."""
     every_key: bool
     """Whether every key of the file reads onto one of `rows`."""
-    without_row: OrderOnlyKey | None
-    """The order and the file's first key that Sonarr has no row for, None when every key has a row."""
+    order_only: OrderOnlyKey | None
+    """The order and the file's first order-only key, None when it has none."""
 
     @classmethod
     def of(cls, name: str, order: TvdbOrder, keys: Sequence[EpisodeKey]) -> Self:
-        """Read `keys` in the order `name`, which gives one of them to no aired episode."""
+        """Read `keys` in the order `name`, which reads one of them off aired."""
 
         own_only = order.own_only_by_key
         rows = tuple(own_only[key] for key in keys if key in own_only)
-        rowless = [key for key in keys if key not in order.id_by_key and key not in own_only]
-        return cls(rows, len(rows) == len(keys), OrderOnlyKey(name, rowless[0]) if rowless else None)
+        order_only = [key for key in keys if key not in order.id_by_key and key not in own_only]
+        return cls(rows, len(rows) == len(keys), OrderOnlyKey(name, order_only[0]) if order_only else None)
 
     @property
     def whole_rows(self) -> tuple[int, ...] | None:
@@ -46,22 +50,21 @@ class _OrderFit:
     episodes_by_file: Mapping[TorrentFile, tuple[int, ...]]
     """File -> the aired episodes its number names in the order."""
     off_aired: Mapping[TorrentFile, _OffAired]
-    """File -> how the order reads its number when it gives a key of the file to no aired episode. Every check that
-    builds a fit reads such a file as one with no episode, whether or not Sonarr has a row for the key."""
+    """File -> how the order reads it, for each file with a key off aired."""
     lands_in_window: bool
     """Whether the fit reads a file onto window episodes that the file sits on or that this call places it on. Never
-    with no window. Only under such a fit is a file placed on a row the aired order lacks (`_settle_off_aired`)."""
+    with no window. Only under such a fit is a file placed on an own-only row (`_settle_off_aired`)."""
     places_nothing: bool = False
     """Whether a fit for the season-episode files places nothing, though it still counts among the explaining orders
     (`_place_season_episode_files`)."""
 
     def judges(self, file: TorrentFile) -> bool:
-        """Whether the fit reads the file, onto aired episodes or off them."""
+        """Whether the fit reads the file, onto aired episodes or off aired."""
 
         return file in self.episodes_by_file or file in self.off_aired
 
     def reads_once(self, rows: Sequence[int]) -> bool:
-        """Whether one key of one file is all the fit reads onto each of `rows`, rows the aired order lacks."""
+        """Whether one key of one file is all the fit reads onto each of `rows`, which are own-only rows."""
 
         read = Counter(row for off_aired in self.off_aired.values() for row in off_aired.rows)
         return all(read[row] == 1 for row in rows)
@@ -169,8 +172,7 @@ def pass_other_orders(state: PlacerState) -> None:
 
     Then the name-number sequences with no episode found: `_place_name_number_sequences`.
 
-    Both read a key the order gives to no aired episode as a key with no episode, and hand a file the explaining
-    orders read that way to `_settle_off_aired`.
+    Both hand a file the explaining orders read off aired to `_settle_off_aired`.
     """
 
     if not state.index.orders:
@@ -186,13 +188,13 @@ def _place_season_episode_files(state: PlacerState) -> None:
     episodes and no file has them yet. When two explaining orders read one of these files onto different episodes,
     only the orders that read them onto episodes SeaDex lists for the torrent are kept. A file the kept orders don't
     judge alike stays as it was: they read it onto different episodes, or one reads it onto an episode and another
-    gives its key to no aired episode.
+    reads its key off aired.
 
-    Two kinds of explaining order place nothing. One reads an already placed file off the episodes or rows it sits
-    on, and no placed file moves. The other reads a misnumbered file onto the episodes the earlier passes read it as,
-    which doesn't explain why they left it misnumbered. Such an order gives no file a new verdict, but it still
-    counts as an explaining order: a file it judges unlike another order stays as it was, and while it is kept there
-    is no one explaining order to settle a file read onto no aired episode.
+    Two kinds of explaining order place nothing. One reads an already placed file onto other episodes or rows than it
+    sits on, and no placed file moves. The other reads a misnumbered file onto the episodes the earlier passes read it
+    as, which doesn't explain why they left it misnumbered. Such an order gives no file a new verdict, but it still
+    counts as an explaining order: a file it judges unlike another order stays as it was, and while it is kept there is
+    no one explaining order to settle a file read off aired.
 
     A file the order reads onto the episodes the earlier passes read it as (`ParsedEpisodes.ids`) is placed only
     when a title contradicted it. A title contradicts its sequence's numbers, not the file's own, and an order that
@@ -203,9 +205,9 @@ def _place_season_episode_files(state: PlacerState) -> None:
     A misnumbered or contradicted file read outside the window gets `OTHER_ORDER_OUTSIDE_WINDOW`, a provisional
     verdict for the window that holds the episode. A `NO_EPISODE_FOUND` or `OUTSIDE_WINDOW` one keeps its verdict,
     which already lets that window place it. A `NO_EPISODE_FOUND` or `OUTSIDE_WINDOW` file whose key the one
-    explaining order gives to no aired episode (a split half, a merged pair) is settled by `_settle_off_aired`:
-    placed on Sonarr's row for the key when the aired order lacks that row, or `ORDER_ONLY` when Sonarr doesn't list
-    the key at all, which leaves it for a hand import unless another window places it or proves it a duplicate.
+    explaining order reads off aired (a split half, a merged pair) is settled by `_settle_off_aired`: placed on the
+    key's own-only row, or `ORDER_ONLY` when the key is order only, which leaves it for a hand import unless another
+    window places it or proves it a duplicate.
     """
 
     files = _SeasonEpisodeFiles.of(state)
@@ -219,8 +221,8 @@ def _place_season_episode_files(state: PlacerState) -> None:
             if all(listed.issuperset(fit.episodes_by_file.get(file, ())) for file in files.still_to_place)
         ]
     placing_fits = [fit for fit in fits if not fit.places_nothing]
-    # Only the one explaining order settles a file it reads onto no aired episode, and only when it reads a file
-    # onto an aired one.
+    # Only the one explaining order settles a file it reads off aired, and only when it reads a file onto an aired
+    # episode.
     sole = fits[0] if len(fits) == 1 and placing_fits and fits[0].episodes_by_file else None
     for file in files.still_to_place:
         # Only a file a number or a title left for a hand import gets a provisional verdict for another window.
@@ -244,19 +246,18 @@ def _place_season_episode_files(state: PlacerState) -> None:
 
 
 def _settle_off_aired(state: PlacerState, file: TorrentFile, judging: Sequence[_OrderFit]) -> None:
-    """Settle a file every order in `judging` reads onto no aired episode: place it, name its key, or leave it.
+    """Settle a file every order in `judging` reads off aired: place it, name its key, or leave it.
 
-    The file is placed (`OTHER_ORDER`) on Sonarr's rows the aired order lacks (`EpisodeIndex.own_only`) when all of
-    this holds:
+    The file is placed (`OTHER_ORDER`) on own-only rows (`EpisodeIndex.own_only`) when all of this holds:
 
-    - every key of the file reads onto such a row, and the orders agree on the rows,
+    - every key of the file reads onto one, and the orders agree on the rows,
     - one of the orders lands in the window (`_OrderFit.lands_in_window`), which none does with no window,
     - no file of the torrent sits on any of the rows: an earlier window's, this call's, or the file map's,
     - no order reads another file, or another key of this one, onto any of the rows,
     - and the name carries no episode's title and no bracketed number that names an episode.
 
-    When Sonarr has no row at all for a key, the file is `ORDER_ONLY` under the first order that says so, naming that
-    key. Any other file keeps the verdict it had.
+    When a key is order only, the file is `ORDER_ONLY` under the first order that says so, naming that key. Any
+    other file keeps the verdict it had.
 
     No other code places a file outside the window. A title's window is cut from the aired episodes, so no window
     can hold one of these rows, and every other pass finds its episodes through the aired index, so none can name
@@ -272,8 +273,8 @@ def _settle_off_aired(state: PlacerState, file: TorrentFile, judging: Sequence[_
 
     reads = [fit.off_aired[file] for fit in judging]
     for read in reads:
-        if read.without_row is not None:
-            state.set_aside_order_only(file, read.without_row)
+        if read.order_only is not None:
+            state.set_aside_order_only(file, read.order_only)
             return
     agreed = {read.whole_rows for read in reads}
     if len(agreed) != 1:
@@ -331,7 +332,7 @@ def _final_unplaced_by_name(file: TorrentFile) -> bool:
 def _final_ids(state: PlacerState, file: TorrentFile) -> tuple[int, ...] | None:
     """The episodes the file sits on, else None: an earlier window's, else this call's, else the file map's.
 
-    They can be Sonarr's rows the aired order lacks (`_settle_off_aired`).
+    They can be own-only rows (`_settle_off_aired`).
     """
 
     if (earlier := state.target.earlier.get(file.name)) is not None:
@@ -383,8 +384,7 @@ def _season_episode_fit(state: PlacerState, files: _SeasonEpisodeFiles, name: st
             confirmed |= any(ep_id in ids for ep_id in bracketed) or file.confirms(ids)
     if not (whole or confirmed):
         return None
-    # A placed file is where the order reads it when it sits on those aired episodes, or on those rows the aired
-    # order lacks.
+    # A placed file is where the order reads it when it sits on those aired episodes, or on those own-only rows.
     moves_final = any(
         spelled.placed_ids is not None
         and episodes_by_file.get(spelled.file) != spelled.placed_ids
@@ -413,10 +413,10 @@ def _final_unplaced_special(spelled: _SeasonEpisodeFile) -> bool:
 def _answers(spelled: _SeasonEpisodeFile, ids: tuple[int, ...] | None) -> bool:
     """Whether an order answers a season-episode file the aired order can't read.
 
-    `ids` is how the order reads it, None when the order gives a key of the file to no aired episode. The aired
-    order can't read the file when the aired list lacks a key of it, its name left it for a hand import, or its
-    title names an episode its key doesn't. Reading it onto the aired order's own episodes answers nothing, and a
-    key read onto no aired episode answers only a file whose key the aired list lacks.
+    `ids` is how the order reads it, None when a key of the file is off aired. The aired order can't read the file
+    when the aired list lacks a key of it, its name left it for a hand import, or its title names an episode its key
+    doesn't. Reading it onto the aired order's own episodes answers nothing, and a key off aired answers only a file
+    whose key the aired list lacks.
     """
 
     aired = spelled.aired_ids
@@ -434,8 +434,8 @@ def _brings_outside_files_in(
 
     An outside file (`_SeasonEpisodeFiles.outside_files`) is a file nothing placed, whose key the aired order reads
     onto an episode that the window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`).
-    An order explains none of them when it reads one onto another such episode, gives its key to no aired episode,
-    or has no key for it: the torrent still holds a file its listing doesn't account for.
+    An order explains none of them when it reads one onto another such episode, reads its key off aired, or has
+    no key for it: the torrent still holds a file its listing doesn't account for.
     """
 
     outside_files = files.outside_files
@@ -477,7 +477,7 @@ def _place_name_number_sequences(state: PlacerState) -> None:
 
     - it reads every member, none onto an aired episode outside the window or past the season's end: an already
       placed one onto the episodes or rows it is on, and each one still to place, which must have no episode found,
-      onto a distinct unused window episode or a key the order gives to no aired episode,
+      onto a distinct unused window episode or off aired,
     - its numbering of the window differs from the aired one,
     - and no member's title contradicts it.
 
@@ -545,8 +545,8 @@ def _name_number_fit(state: PlacerState, name: str, sequence: NumberedSequence) 
         if ep_id is not None and ep_id not in window:
             return None
         if (final := _final_ids(state, member)) is not None:
-            # A placed member is where the order reads it when it sits on that window episode, or on that row the
-            # aired order lacks.
+            # A placed member is where the order reads it when it sits on that window episode, or on that own-only
+            # row.
             if final != ((ep_id,) if ep_id is not None else _OffAired.of(name, order, (key,)).whole_rows):
                 return None
             sits_in_window |= ep_id is not None

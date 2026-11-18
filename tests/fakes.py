@@ -290,7 +290,7 @@ class FakeClock(Clock):
 
 
 class FakeArrItem:
-    """A minimal stand-in for the `ArrItem` surface: a series or a movie."""
+    """A minimal fake of the `ArrItem` surface: a series or a movie."""
 
     def __init__(self, *, item_id: int = 1, title: str = "Show", monitored: bool = True) -> None:
         self.id = item_id
@@ -410,7 +410,7 @@ NEUTRAL_RESCAN = CommandResource(
 
 
 class FakeSonarrClient(AbstractSonarrClient):
-    """A typed, scriptable stand-in for `AbstractSonarrClient`."""
+    """A typed, scriptable fake of `AbstractSonarrClient`."""
 
     def __init__(
         self,
@@ -634,7 +634,7 @@ class HookedSonarrClient(FakeSonarrClient):
 
 
 class FakeRadarrClient(AbstractRadarrClient):
-    """A typed, scriptable stand-in for `AbstractRadarrClient`."""
+    """A typed, scriptable fake of `AbstractRadarrClient`."""
 
     def __init__(
         self,

@@ -1,4 +1,15 @@
-"""A Sonarr series' episodes as TVDB's aired order numbers them, whatever order Sonarr numbers the series by."""
+"""A Sonarr series' episodes as TVDB's aired order numbers them, whatever order Sonarr numbers the series by.
+
+Three terms name what the aired episodes and Sonarr's rows don't share, here and in every module that reads the view:
+
+- Aired only: an aired episode Sonarr has no row for. The view holds it as a stand-in (`stand_in`), a row with no
+  file whose id is its TVDB episode id negated (`episode_ids`). Sonarr can't import a file onto one
+  (`PlacementVerdict.AIRED_ONLY`).
+- Own only: a Sonarr row whose TVDB episode is none of the view's aired episodes. The view keeps it apart, as sent
+  (`AiredSeries.own_only`), and only another TVDB order reads onto it.
+- Order only: an episode another TVDB order numbers that is neither one of the view's aired episodes nor on a Sonarr
+  row (`OrderOnlyKey`). Sonarr can't import a file onto one either (`PlacementVerdict.ORDER_ONLY`).
+"""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace

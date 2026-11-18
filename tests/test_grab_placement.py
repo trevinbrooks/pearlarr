@@ -2016,7 +2016,7 @@ _SWITCHED_SEASON = [
     stand_in_ep(1, 3, tvdb_id=903),
     sonarr_ep(1, 4, ep_id=104, episode_file_id=0),
 ]
-"""The season of a series Sonarr numbers by another TVDB order, which has no row for the third episode: a stand-in."""
+"""A season of a series Sonarr numbers by another TVDB order, with no row for its third episode: a stand-in holds it."""
 _SWITCHED_INDEX = episode_index(_SWITCHED_SEASON)
 
 
@@ -2154,7 +2154,7 @@ class TestPlaceOnAnEpisodeSonarrHasNoRowFor:
         assert claim.ordered_episode_ids == (101, 102, -903, 104)
 
 
-class TestPlaceOnARowTheAiredOrderLacks:
+class TestPlaceOnAnOwnOnlyRow:
     """A pack numbered by the DVD order, on a series whose Sonarr has rows for two episodes the aired order lacks.
 
     The aired order has the fourth season's opener whole. The DVD order numbers the fourth and fifth seasons as its

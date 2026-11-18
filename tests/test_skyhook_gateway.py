@@ -168,7 +168,7 @@ def test_an_answer_stored_without_counts_refetches_once_sonarr_lists_them() -> N
     assert [_fetches(gateway, {"official": 4, "dvd": 4}) for _ in range(2)] == [1, 0]
 
 
-def test_an_order_only_sonarr_lists_is_kept_in_the_counts_and_refetches_nothing() -> None:
+def test_an_order_sonarr_alone_lists_is_kept_in_the_counts_and_refetches_nothing() -> None:
     # Sonarr's last refresh still lists an alternate order SkyHook no longer sends.
     gateway = _gateway()
     counts = {"official": 4, "dvd": 4, "alternate": 3}

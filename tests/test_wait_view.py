@@ -354,7 +354,7 @@ class TestHubWaitViewNarration:
 
 
 class _FlakyEmit:
-    """An emit stand-in that starts raising after `allow` successful events."""
+    """A fake emit that starts raising after `allow` successful events."""
 
     def __init__(self, allow: int) -> None:
         self.calls = 0

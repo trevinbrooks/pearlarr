@@ -284,7 +284,7 @@ class TestFetchWorkers:
 
 
 class _Series:
-    """A stand-in Sonarr series satisfying the `SonarrItem` protocol surface."""
+    """A fake Sonarr series satisfying the `SonarrItem` protocol surface."""
 
     id: int
     title: str
@@ -388,7 +388,7 @@ class _StopOnFirstProgress:
 
 
 class _Services:
-    """A stand-in for the arr run services the prefetch consults.
+    """A fake of the arr run services the prefetch consults.
 
     `title_mappings` resolves a series' tvdb id to its `{anilist_id -> mapping}`
     dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
@@ -557,7 +557,7 @@ def _entry(dt: datetime) -> EntryRecord:
 
 
 class _Seadex:
-    """A SeaDex gateway stand-in returning one fixed entry (or a not-found) for any anilist_id."""
+    """A fake SeaDex gateway returning one fixed entry (or a not-found) for any anilist_id."""
 
     def __init__(self, entry: EntryRecord | None) -> None:
         self._entry = entry

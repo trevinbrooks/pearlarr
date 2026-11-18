@@ -37,7 +37,7 @@ def _pool_ssl_context(client: httpx.Client) -> ssl.SSLContext:
     transport = client._transport
     assert isinstance(transport, httpx.HTTPTransport)
     # httpx types the pool as the union of its three httpcore pools, one of which is
-    # the stand-in httpcore defines when socksio is absent (no pool base, no context).
+    # the placeholder httpcore defines when socksio is absent (no pool base, no context).
     pool = transport._pool
     assert isinstance(pool, httpcore.ConnectionPool)
     context = pool._ssl_context

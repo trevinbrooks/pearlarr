@@ -295,7 +295,7 @@ class ScriptedAniListClient(AniListClient):
 
 
 class FakeCacheStore(AbstractCacheStore):
-    """In-memory stand-in mirroring the SQLite `CacheStore` public facade."""
+    """In-memory fake mirroring the SQLite `CacheStore` public facade."""
 
     def __init__(
         self,
@@ -509,7 +509,7 @@ class FakeCacheStore(AbstractCacheStore):
 
 
 class FakeSeaDexSource(SeaDexSource):
-    """In-memory `SeaDexSource` stand-in: serves preset entries, no network."""
+    """In-memory fake `SeaDexSource`: serves preset entries, no network."""
 
     def __init__(self, entries: dict[int, EntryRecord] | None = None, *, unreachable: bool = False) -> None:
         self._entries: dict[int, EntryRecord] = dict(entries or {})
@@ -834,7 +834,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     return SeadexReleaseFilter(deps=deps, state=state)
 
 
-# A truthy stand-in for a logged-in qBittorrent client, so is_dry_run() is False.
+# A truthy placeholder for a logged-in qBittorrent client, so is_dry_run() is False.
 CLIENT_SENTINEL = object()
 
 
@@ -1327,7 +1327,7 @@ def series_index(
 
     `aired` gives air dates by id, as `YYYY-MM-DD`, None for an episode without one. Each episode's TVDB id is its
     Sonarr id, so a row of `orders` names an episode by that id, and a row with any other TVDB id is an episode
-    Sonarr doesn't list. `own_only` are Sonarr's rows the aired order lacks, each at Sonarr's own `(season, episode)`
+    Sonarr doesn't list. `own_only` are the own-only rows, each at Sonarr's own `(season, episode)`
     with its id as its TVDB id too.
     """
 

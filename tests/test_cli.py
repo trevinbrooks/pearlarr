@@ -419,7 +419,7 @@ class TestConfigInit:
 
 
 class _RunArrsRecorder:
-    """A stand-in for `bootstrap.run_arrs` that records how `run_single` calls it."""
+    """A fake `bootstrap.run_arrs` that records how `run_single` calls it."""
 
     def __init__(self) -> None:
         self.arrs: list[tuple[Arr, int | None]] | None = None
@@ -1045,7 +1045,7 @@ class TestLogLevelWiring:
 
 
 class _SetupLoggerRecorder:
-    """A stand-in for `cli.setup_logger` recording each call's context.
+    """A fake `cli.setup_logger` recording each call's context.
 
     Captures the console_format it got and whether the output bridge was
     already installed on the app logger AT CALL TIME (the install-order pin:
@@ -1069,13 +1069,13 @@ class _StopScheduledLoop(Exception):
 
 
 def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
-    """A `run_arrs` stand-in that breaks `run_scheduled`'s loop."""
+    """A fake `run_arrs` that breaks `run_scheduled`'s loop."""
 
     raise _StopScheduledLoop
 
 
 class _SignalRecorder:
-    """A `signal.signal` stand-in that records each registration."""
+    """A fake `signal.signal` that records each registration."""
 
     def __init__(self) -> None:
         self.registered: list[tuple[int, object]] = []

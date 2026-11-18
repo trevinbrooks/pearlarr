@@ -146,7 +146,7 @@ class SkyHookGateway:
         # Only a series in another order reads the details, so an aired one waits for its next fetch.
         if stored.aired is None and facts.in_another_order:
             return True
-        # Against the counts Sonarr listed at fetch time, not the orders SkyHook sent: an order only Sonarr lists
+        # Against the counts Sonarr listed at fetch time, not the orders SkyHook sent: an order Sonarr alone lists
         # would otherwise read as new on every run.
         return facts.counts is not None and dict(facts.counts) != stored.sonarr_counts
 

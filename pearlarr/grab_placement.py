@@ -400,8 +400,8 @@ class _OnWindow:
         claimed: set[int] = set()
         for f in files:
             for ep_id in whole_file_map.get(f.name, ()):
-                # A stored id on another series is not this title's, and neither is a row the aired order lacks,
-                # which no title's index holds. One inside the title counts toward its coverage.
+                # A stored id on another series is not this title's, and neither is an own-only row, which no
+                # title's index holds. One inside the title counts toward its coverage.
                 episode = index.by_id.get(ep_id)
                 if episode is None:
                     continue
@@ -480,7 +480,7 @@ def aired_only_files(placed: PlacedRelease) -> AiredOnlyFiles | None:
 
 @dataclass(frozen=True, slots=True)
 class OwnOnlyFile:
-    """A file this placement put on Sonarr's rows the aired order lacks, for the line that reports it."""
+    """A file this placement put on own-only rows, for the line that reports it."""
 
     name: str
     """The normalized file name."""
@@ -489,7 +489,7 @@ class OwnOnlyFile:
 
 
 def own_only_files(placed: PlacedRelease, indexes: Iterable[EpisodeIndex]) -> tuple[OwnOnlyFile, ...]:
-    """One per file the release's placement put on a row the aired order lacks (`EpisodeIndex.own_only`).
+    """One per file the release's placement put on an own-only row (`EpisodeIndex.own_only`).
 
     `indexes` are the series indexes the release was placed with. The stored file map's files are not read.
     """

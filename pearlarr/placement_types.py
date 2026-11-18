@@ -19,8 +19,8 @@ from .tvdb_orders import NO_ORDERS, OrderRow, OrdersByName
 class TvdbOrder:
     """Another TVDB order of the series, read onto Sonarr's rows through the TVDB episode ids.
 
-    A key with no id in either map has no Sonarr row: an episode only that order has (a split or a merged one), on a
-    series Sonarr numbers by some other order.
+    A key with no id in either map is order only (`aired_view`): a split or a merged episode, on a series Sonarr
+    numbers by some other order.
     """
 
     id_by_key: Mapping[EpisodeKey, int]
@@ -30,8 +30,8 @@ class TvdbOrder:
     """Every `(season, episode)` the order numbers, whether or not Sonarr has a row for its episode."""
 
     own_only_by_key: Mapping[EpisodeKey, int]
-    """`(season, episode)` in the order -> the id of the row the aired order lacks (`EpisodeIndex.own_only`) with the
-    same TVDB episode id. Only a key `id_by_key` has no id for has one here."""
+    """`(season, episode)` in the order -> the id of the own-only row (`EpisodeIndex.own_only`) with the same TVDB
+    episode id. Only a key `id_by_key` has no id for has one here."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
@@ -50,8 +50,8 @@ class EpisodeIndex:
     falsy id (0) are dropped from EVERY facet before keying: a 0 id can never be POSTed to Sonarr, and a real-id
     twin behind one must still win its `(season, episode)` key. The planner's `index_episodes_by_key` deliberately
     KEEPS them (a 0-id file is still identity evidence). Do not unify the two. A stand-in's negative id can't be
-    POSTed either, but it stays, so a file placed on an episode Sonarr has no row for is set aside as aired-only
-    (`WindowedPlacements.aired_only_set_aside`).
+    POSTed either, but it stays, so a file placed on an aired episode Sonarr has no row for is set aside as aired
+    only (`WindowedPlacements.aired_only_set_aside`).
     """
 
     by_id: Mapping[int, SonarrEpisode]
@@ -66,7 +66,7 @@ class EpisodeIndex:
     """The series' other TVDB orders, by name, each read onto these episodes. Never the aired order."""
 
     own_only: Mapping[int, SonarrEpisode] = field(default_factory=dict[int, SonarrEpisode])
-    """Row id -> Sonarr's row, as sent, for each row the aired order lacks (`AiredSeries.own_only`). They are in no
+    """Row id -> Sonarr's row, as sent, for each own-only row (`AiredSeries.own_only`). They are in no
     other facet: no key, absolute number, title or season count reads them, and no window holds one. Only another
     order reads onto them (`TvdbOrder.own_only_by_key`). Empty on a title's own index and on the import side."""
 
@@ -113,7 +113,7 @@ class EpisodeIndex:
     def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
         """The TVDB episode id of the row each of `episode_ids` was placed on, for a pending import to store.
 
-        A row the aired order lacks counts (`own_only`). An id this index has no Sonarr row for adds no entry.
+        An own-only row counts (`own_only`). An id this index has no Sonarr row for adds no entry.
         """
 
         rows = (self.by_id.get(ep_id, self.own_only.get(ep_id)) for ep_id in episode_ids)
@@ -137,7 +137,7 @@ def episode_index(
 ) -> EpisodeIndex:
     """Convert one series' or title's episodes into the `EpisodeIndex` facets, with `other_orders` read onto them.
 
-    `own_only` are Sonarr's rows the aired order lacks (`AiredSeries.own_only`). They get a facet of their own, and
+    `own_only` are the own-only rows (`AiredSeries.own_only`). They get a facet of their own, and
     `other_orders` read onto them apart from the episodes.
     """
 
@@ -158,8 +158,8 @@ def _read_order(
 ) -> TvdbOrder:
     """The order read onto the episodes `id_by_tvdb` holds and the rows `own_only_by_tvdb` holds.
 
-    The first row of a repeated key wins in each map. A key reads onto a row the aired order lacks only when it reads
-    onto no episode: a key the order lists twice, once for an episode only it has and once for an aired one, keeps
+    The first row of a repeated key wins in each map. A key reads onto an own-only row only when it reads onto no
+    episode: a key the order lists twice, once for an episode only it has and once for an aired one, keeps
     the aired one, whichever row comes first. So adding those rows never changes what a key read onto before.
     """
 
@@ -473,8 +473,8 @@ class BatchPlacements:
     def placed(self) -> dict[str, tuple[int, ...]]:
         """Normalized file name -> episode ids for every placed file.
 
-        Each id is used once. Each is in the window, unless the other-orders pass put the file on a row the aired
-        order lacks (`placer._orders._settle_off_aired`).
+        Each id is used once. Each is in the window, unless the other-orders pass put the file on an own-only row
+        (`placer._orders._settle_off_aired`).
         """
 
         return {p.name: p.ids for p in self.placements if p.verdict.placed}
@@ -524,7 +524,7 @@ class PlacementBatch:
     """
 
     to_place: Sequence[str]
-    """Normalized file names in SeaDex order (the order only fixes deterministic output), kept as a tuple."""
+    """Normalized file names in SeaDex order, kept as a tuple. Their order just keeps the output deterministic."""
 
     parsed: Mapping[str, ParsedFileInfo | None]
     """Series-agnostic parse per file (None when Sonarr's parse was unavailable)."""

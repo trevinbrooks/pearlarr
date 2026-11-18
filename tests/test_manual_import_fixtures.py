@@ -66,12 +66,12 @@ class _QueuePage(BaseModel):
 class TestQualityResolution:
     """Quality is matched by the structured `(source, resolution)` pair.
 
-    The candidate read runs on a live capture. `qualitydefinitions.json` is a hand-authored stand-in mirroring
+    The candidate read runs on a live capture. `qualitydefinitions.json` is a hand-authored fixture mirroring
     real Sonarr, so dropping a live `/api/v3/qualitydefinition` capture in its place re-runs these unchanged.
     """
 
     def test_qualitydefinition_fixture_has_the_shape_the_matcher_needs(self) -> None:
-        # A contract on the stand-in (or a capture swapped in for it), not proof the live instance
+        # A contract on the fixture (or a capture swapped in for it), not proof the live instance
         # serializes both fields: the matcher keys on (source, resolution), so every definition carries both.
         defs = _load_models("qualitydefinitions.json", QualityDefinition)
         assert defs

@@ -1,8 +1,8 @@
 """Whether Sonarr's rows of a series can be read by the order Sonarr names for it.
 
-Rows are read as already aired only when Sonarr says twice that the series is: in the library read, and in a read
-of the series alone made after its rows. For the check and the import alike, rows count only while they are
-numbered by the order Sonarr names for the series, as far as its stored TVDB orders can tell
+Rows are read as numbered as aired only when Sonarr says twice that the series is in aired order: in the library
+read, and in a read of the series alone made after its rows. For the check and the import alike, rows count only
+while they are numbered by the order Sonarr names for the series, as far as its stored TVDB orders can tell
 (`aired_view.numbered_by`).
 
 The two go by different orders:

@@ -580,7 +580,7 @@ class CacheStore(AbstractCacheStore):
         *,
         config_hash: str,
     ) -> "CacheStore":
-        """Open the cache db (or an in-memory stand-in) and reconcile the stored version and config hash.
+        """Open the cache db (or an in-memory one) and reconcile the stored version and config hash.
 
         A missing file opens `:memory:`, promoted at the first real save. `config_hash` is informational only.
         """
