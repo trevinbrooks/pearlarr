@@ -2540,6 +2540,19 @@ class TestImportFollowsEpisodeIds:
             )
         ]
 
+    def test_a_later_attempt_on_the_pending_import_as_stored_does_not_warn_of_the_file_again(self) -> None:
+        # An attempt that ends in an error saves nothing, so the next one follows the stored pending import again.
+        recording = install_recording_hub()
+        only_the_first = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, episode_file_id=0)]
+        strat, _ = _make_sonarr_for_import(candidates=_both_files(), episodes=only_the_first)
+
+        strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
+        strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
+
+        left_out = normalize_file_name(_SECOND_FILE)
+        warnings = [message for message in diagnostic_messages(recording, Severity.WARNING) if left_out in message]
+        assert len(warnings) == 1
+
     @pytest.mark.parametrize(
         "rows",
         [

@@ -5,6 +5,7 @@ import pytest
 
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.config import Arr
+from pearlarr.output import Severity
 from pearlarr.pending_follow import Followed, follow
 from pearlarr.pending_import import NO_TVDB_IDS, PendingImport, TvdbIds
 
@@ -16,7 +17,7 @@ from .builders import (
     title_claim,
     two_claim_pending_import,
 )
-from .fakes import FakeSonarrClient, ScriptedEpisodes
+from .fakes import FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
 
 
 def _rows(*pairs: tuple[int, int | None]) -> list[SonarrEpisode]:
@@ -253,3 +254,43 @@ class TestRunStart:
 
         assert cache.get_pending_import_rows(Arr.SONARR) == {}
         assert follower.claimed_series == ()
+
+
+_TWO_FILES = pending_import(
+    file_episode_map={"show - 01.mkv": [101], "show - 02.mkv": [102]}, tvdb_ids={101: 9001, 102: 9002}
+)
+"""A pending import on series 7 stored while row 101 held TVDB episode 9001 and row 102 held 9002."""
+
+_SECOND_SET_ASIDE = (
+    "Show · SubGroup: Sonarr no longer has the episode show - 02.mkv was matched to (TVDB episode 9002) - leaving "
+    "the file out of the import"
+)
+"""The warning for `_TWO_FILES` once TVDB episode 9002 has no row."""
+
+
+def _without_the_second_episode() -> ScriptedEpisodes:
+    """Series 7 as Sonarr sends it with TVDB episode 9002 on no row."""
+
+    return ScriptedEpisodes(FakeSonarrClient(episodes=_rows((101, 9001))))
+
+
+class TestSetAsideWarning:
+    """A file the follow of a title's check sets aside is warned of as an import warns of one."""
+
+    def test_a_check_warns_of_a_file_its_follow_sets_aside(self) -> None:
+        recording = install_recording_hub()
+        follower = make_pending_follower(_stored(_TWO_FILES), _without_the_second_episode())
+
+        follower.followed({_TWO_FILES.infohash: _TWO_FILES})
+
+        assert diagnostic_messages(recording, Severity.WARNING) == [_SECOND_SET_ASIDE]
+
+    def test_a_run_that_starts_forgets_the_files_the_run_before_warned_of(self) -> None:
+        recording = install_recording_hub()
+        follower = make_pending_follower(_stored(_TWO_FILES), _without_the_second_episode())
+        follower.followed({_TWO_FILES.infohash: _TWO_FILES})
+
+        follower.begin_run(waits_on_imports=True)
+        follower.followed({_TWO_FILES.infohash: _TWO_FILES})
+
+        assert diagnostic_messages(recording, Severity.WARNING) == [_SECOND_SET_ASIDE] * 2

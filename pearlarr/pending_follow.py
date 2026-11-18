@@ -7,7 +7,7 @@ read. `follow` is the one place an id moves.
 `PendingFollower` follows the stored pending imports a title's check reads, and gives one stored before pearlarr
 kept TVDB ids its own at the start of a run. The import follows the one it is importing itself
 (`ImportReconciler`), under the rows it reads then. Both follow only under rows the run reads the series by
-(`SeriesRows`).
+(`SeriesRows`), and both warn of a file a follow set aside through the follower, so it is said once.
 """
 
 import logging
@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from .arr_models import SonarrEpisode
 from .episode_ids import is_stand_in, stand_in_id, stand_in_tvdb_id, without_stand_ins
 from .output import hub_warn
+from .output.console_text import pluralize
 from .pending_import import FileEpisodeMap, PendingImport, TitleClaim, TvdbIds, tvdb_id_of
 from .pending_import_store import PendingImportStore
 from .series_reads import SeriesRows
@@ -180,6 +181,9 @@ class PendingFollower:
         # The series of every pending import stored once the run has started (`begin_run`).
         self._claimed_series: tuple[int, ...] = ()
 
+        # Each (torrent hash, file name) this run warned of as set aside (`warn_set_aside`).
+        self._set_aside_warned: set[tuple[str, str]] = set()
+
     def begin_run(self, *, waits_on_imports: bool) -> None:
         """Start a run: give each pending import stored with no TVDB ids its own, and note every stored one's series.
 
@@ -187,6 +191,7 @@ class PendingFollower:
         every other read of the stored ones.
         """
 
+        self._set_aside_warned.clear()
         claimed: dict[int, None] = {}
         if waits_on_imports:
             for pending in self._pending_imports.load(self._pending_imports.rows()).values():
@@ -210,9 +215,10 @@ class PendingFollower:
 
         Those are the rows each series' view is built from (`SeriesRows.viewed_episodes`), and so its index: every
         id a placement joins names the episode the index has it on. One whose ids moved is saved, and its titles
-        are checked again next run. One that can't be followed under them (`follow`) is left out, since its ids
-        may name other episodes. That includes one claiming a series with no view this run: the rows kept of a
-        series the run holds may be part way through a change of order, with an episode on none of them.
+        are checked again next run, with a warning for each file the follow set aside (`warn_set_aside`). One
+        that can't be followed under them (`follow`) is left out, since its ids may name other episodes. That
+        includes one claiming a series with no view this run: the rows kept of a series the run holds may be part
+        way through a change of order, with an episode on none of them.
         """
 
         followed: dict[str, PendingImport] = {}
@@ -231,8 +237,26 @@ class PendingFollower:
                 continue
             followed[infohash] = result.pending
             if result.pending is not pending:
+                self.warn_set_aside(pending, result.set_aside)
                 self._pending_imports.save_followed(result.pending)
         return followed
+
+    def warn_set_aside(self, pending: PendingImport, set_aside: Mapping[str, tuple[int, ...]]) -> None:
+        """Warn of each file a follow of `pending` set aside (`Followed.set_aside`), once per file per run.
+
+        A check and an import both follow a stored pending import, and an import follows it again on each attempt
+        until one is saved. Whichever sets a file aside first says so.
+        """
+
+        for name, tvdb_ids in set_aside.items():
+            if (pending.infohash, name) in self._set_aside_warned:
+                continue
+            self._set_aside_warned.add((pending.infohash, name))
+            hub_warn(
+                f"{pending.display_label}: Sonarr no longer has "
+                f"{pluralize(len(tvdb_ids), 'the episode', 'the episodes')} {name} was matched to "
+                f"(TVDB episode {', '.join(map(str, tvdb_ids))}) - leaving the file out of the import"
+            )
 
     def _store_tvdb_ids(self, pending: PendingImport) -> bool:
         """Store the TVDB episode of every row id a pending import written without them holds, or drop it.
