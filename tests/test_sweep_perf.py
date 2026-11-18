@@ -20,6 +20,7 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr.aired_view import AiredSeries, NoView
+from pearlarr.arr_http import SONARR_FETCH_WORKERS, fetch_workers
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
@@ -36,12 +37,7 @@ from pearlarr.parse_cache import (
 from pearlarr.releases import SeadexDict
 from pearlarr.seadex_gateway import SeaDexNoEntry
 from pearlarr.series_reads import SeriesReads
-from pearlarr.sonarr_episodes import (
-    SONARR_FETCH_WORKERS,
-    SonarrEpisodes,
-    fetch_workers,
-    sonarr_series_hash,
-)
+from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import STAMP_FORMAT
 from pearlarr.tvdb_orders import AIRED_ORDER

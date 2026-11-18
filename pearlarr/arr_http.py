@@ -20,7 +20,7 @@ import httpx
 
 from .arr_models import DownloadClientRecord, HistoryRecord
 from .boundary import Json, validate_each
-from .config import redact_userinfo
+from .config import AppConfig, redact_userinfo
 from .log import LOG_NAME
 from .output import hub_note, hub_warn
 from .output.console_text import compact_duration
@@ -28,6 +28,12 @@ from .output.console_text import compact_duration
 # (connect, read) seconds, shared by the arr http client and the qBittorrent adapter.
 # A hung service then surfaces as a transient failure instead of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
+
+# Bounded concurrency for the episode/parse network fan-out. Only used when
+# advanced.sleep_time == 0. Must stay <= the pool size `make_arr_client` sets.
+# Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
+# proxy) saturates around ~10-12 concurrent, so larger values don't help.
+SONARR_FETCH_WORKERS = 12
 
 # Transient statuses worth another try on an idempotent GET - shared with the
 # web client's `get_with_retries` so the two stacks retry the same set.
@@ -108,6 +114,21 @@ class ArrAuthError(Exception):
     A distinct error from `ArrUnreachableError` so the CLI containment handler can
     point the operator at `<arr>.api_key` specifically.
     """
+
+
+def fetch_workers(config: AppConfig) -> int:
+    """Concurrency for the episode / parse network fan-out.
+
+    Sequential (1) whenever a rate-limit throttle is requested
+    (`advanced.sleep_time > 0`), so the bounded pool never bypasses the configured
+    throttle. Otherwise, the bounded pool size. Shared by the episode
+    prefetch and the parse warm, so it sits beside the pool it must fit,
+    owned by neither.
+    """
+
+    if config.advanced.sleep_time > 0:
+        return 1
+    return SONARR_FETCH_WORKERS
 
 
 def make_arr_client(*, verify: bool = True) -> httpx.Client:

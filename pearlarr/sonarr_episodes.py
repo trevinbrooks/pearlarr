@@ -16,9 +16,9 @@ from typing import override
 
 from .aired_view import NoView
 from .anibridge import TvdbMappings, season_holds
+from .arr_http import fetch_workers
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
-from .config import AppConfig
 from .episode_ids import is_stand_in
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .library_read import LibraryRead
@@ -31,26 +31,6 @@ from .series_reads import SeriesReads
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
 from .tvdb_orders import SonarrSeriesOrders
-
-# Bounded concurrency for the episode/parse network fan-out. Only used when
-# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (ArrRunDeps.build).
-# Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
-# proxy) saturates around ~10-12 concurrent, so larger values don't help.
-SONARR_FETCH_WORKERS = 12
-
-
-def fetch_workers(config: AppConfig) -> int:
-    """Concurrency for the episode / parse network fan-out.
-
-    Sequential (1) whenever a rate-limit throttle is requested
-    (`advanced.sleep_time > 0`), so the bounded pool never bypasses the configured
-    throttle. Otherwise, the bounded pool size. Shared by the episode
-    prefetch and the parse warm, so it lives at module scope, owned by neither.
-    """
-
-    if config.advanced.sleep_time > 0:
-        return 1
-    return SONARR_FETCH_WORKERS
 
 
 def sonarr_series_hash(series_ids: Iterable[int]) -> str:
