@@ -65,7 +65,7 @@ from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHo
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import EpisodeSource, SeriesRows, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
-from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
+from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders, is_another_order
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -727,6 +727,15 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
     @override
     def series_hash(self) -> str:
         return "fp"
+
+    @property
+    @override
+    def series_in_another_order(self) -> Mapping[int, str]:
+        """Every series the client lists, when the scripted order is other than the aired one."""
+
+        if self._sonarr is None or not is_another_order(self._order):
+            return {}
+        return {series.id: self._order for series in self._sonarr.all_series_return}
 
     def _series_episodes(self, series_id: int) -> list[SonarrEpisode] | NoView:
         """The whole-series list off the client, or why the series has no view."""

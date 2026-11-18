@@ -18,7 +18,7 @@ the series, as far as its stored TVDB orders can tell (`aired_view.numbered_by`)
 import concurrent.futures
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import assert_never, override
@@ -219,6 +219,10 @@ class EpisodeSource(ABC):
     @abstractmethod
     def series_hash(self) -> str: ...
 
+    @property
+    @abstractmethod
+    def series_in_another_order(self) -> Mapping[int, str]: ...
+
     @abstractmethod
     def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView: ...
 
@@ -304,6 +308,11 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         # refresh_library and never changed inside a run, so a view is always built under the library read's order.
         self._library: dict[int, _LibrarySeries] = {}
 
+        # Series id -> its order, for each series the library read has in an order other than the aired one.
+        # Rebuilt in refresh_library with `_library`. A cached `/parse` row is good only under the order its
+        # series was in when it was stored.
+        self._in_another_order: Mapping[int, str] = {}
+
         # Whether Sonarr sent an order with any series of the library read (`SonarrItem.order_sent`). One that
         # sends none numbers every series as aired, and no series is read a second time for it.
         self._sends_order: bool = False
@@ -324,6 +333,16 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         return self._series_hash
 
+    @property
+    @override
+    def series_in_another_order(self) -> Mapping[int, str]:
+        """Each series the library read has in an order other than the aired one, with that order.
+
+        Read by the parse cache. The same for the whole run.
+        """
+
+        return self._in_another_order
+
     def refresh_library(self) -> list[SonarrItem]:
         """Enumerate the AniList-mapped Sonarr series. The arr run's start reset point.
 
@@ -341,6 +360,8 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         self._picks_logged = set()
         in_sonarr = self.sonarr.all_series()
         self._library = {s.id: _LibrarySeries(series_orders(s), s.alternateTitles) for s in in_sonarr}
+        orders = ((series_id, series.orders.numbering.order) for series_id, series in self._library.items())
+        self._in_another_order = {series_id: order for series_id, order in orders if order}
         self._sends_order = any(s.order_sent for s in in_sonarr)
         series = self.mapped_series(in_sonarr)
         # Hash the current series-id set once per run to invalidate the parse cache
