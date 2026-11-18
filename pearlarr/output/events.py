@@ -238,6 +238,10 @@ class TitleRow:
     scope: ScopeId | None = None
 
 
+_INFO_SKIPS = frozenset({SkipReason.TRACKER_NOT_SELECTED, SkipReason.AIRED_ONLY})
+"""The skips whose line is INFO: a tracker the user did not select, and episodes Sonarr has no row for."""
+
+
 @dataclass(frozen=True, slots=True)
 class ReleaseSkipped:
     """One release skipped at add time."""
@@ -253,9 +257,9 @@ class ReleaseSkipped:
 
     @property
     def severity(self) -> Severity:
-        """The line's severity: a tracker the user did not select is INFO, not a warning."""
+        """The line's severity: INFO for one of the `_INFO_SKIPS`, else a warning."""
 
-        return Severity.INFO if self.reason is SkipReason.TRACKER_NOT_SELECTED else Severity.WARNING
+        return Severity.INFO if self.reason in _INFO_SKIPS else Severity.WARNING
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,6 +10,7 @@ import pytest
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import (
+    AiredOnlyFiles,
     FetchedSeadex,
     KnownTorrent,
     ListedFile,
@@ -19,6 +20,7 @@ from pearlarr.grab_placement import (
     PlacedRelease,
     SizeOverName,
     TorrentFetches,
+    aired_only_files,
     build_pending_import_update,
     build_pending_import_updates,
     build_title_claim,
@@ -49,7 +51,7 @@ from pearlarr.releases import (
     SeadexDict,
     SkipReason,
 )
-from pearlarr.tvdb_orders import IndexOrders, OrderRow
+from pearlarr.tvdb_orders import OrderRow
 
 from .builders import (
     ALIASED_SPECIALS_LISTING,
@@ -598,7 +600,7 @@ class TestPlaceSkipped:
         ]
         special = sonarr_ep(0, 1, ep_id=501, episode_file_id=0, absolute=3, tvdb_id=501)
         opener = sonarr_ep(2, 1, ep_id=201, episode_file_id=0, absolute=5, tvdb_id=201)
-        return season, special, episode_index([*season, special, opener], IndexOrders({"dvd": dvd}, None))
+        return season, special, episode_index([*season, special, opener], {"dvd": dvd})
 
     def test_a_torrent_numbered_by_the_dvd_order_is_grabbed_for_the_season_and_for_the_special(self) -> None:
         # The torrent's numbers go on past the season's end because it follows the DVD order. The placer rejects
@@ -1536,7 +1538,7 @@ class TestOrderOnlyUpdate:
     def test_the_update_carries_the_halves_dvd_keys_onto_the_pending_import(self) -> None:
         season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
         opener = sonarr_ep(5, 1, ep_id=501, episode_file_id=0, tvdb_id=501)
-        series = episode_index([*season, opener], IndexOrders({"dvd": self._DVD}, None))
+        series = episode_index([*season, opener], {"dvd": self._DVD})
         grabbing_title = make_grabbing_title(episode_index(season), series, names=TitleNames("Show", ("Show Ending",)))
         files = [ListedFile(name, 10 * n, parsed_info()) for n, name in enumerate(self._RUN, 1)]
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
@@ -1580,7 +1582,7 @@ class _SplitOpenerPack:
             *(OrderRow(7, n + 13, 500 + n, None) for n in range(1, second_episodes + 1)),
             OrderRow(7, 21, 401, None),
         )
-        series = episode_index([*season, *after, matched], IndexOrders({"dvd": dvd}, None))
+        series = episode_index([*season, *after, matched], {"dvd": dvd})
         titles = ("Lantern Tale", "Lantern Tale Afterglow")
         first, second = (
             make_grabbing_title(
@@ -2014,6 +2016,35 @@ class TestPlaceOnAnEpisodeSonarrHasNoRowFor:
         assert (update.excluded, update.hand_import_files) == (("show - s01e03.mkv",), ())
         assert update.claim.ordered_episode_ids == (101, 102, -903, 104)
         assert update.claim.claimed_coverage == "S01 E01-E02, E04"
+
+    def test_a_release_with_nothing_for_the_title_but_such_files_is_skipped_and_none_is_a_hand_import(self) -> None:
+        placement = place_release(_season_files()[2:3], _switched_title(_SWITCHED_SEASON), _switched_torrent())
+
+        assert by_name(placement.placements) == {"show - s01e03.mkv": ((), PlacementVerdict.AIRED_ONLY)}
+        assert placement.skip_reason is SkipReason.AIRED_ONLY
+        assert not placement.skip_reason.left_for_hand_import
+        assert placement.placements.unplaced == ()
+
+    def test_a_file_another_titles_outranks_such_a_file_in_the_releases_skip(self) -> None:
+        torrent = _switched_torrent(title_window(1, (101, 102)), title_window(2, (-903, 104)))
+
+        placement = place_release(_season_files()[2:], _switched_title(_SWITCHED_SEASON[:2]), torrent)
+
+        assert by_name(placement.placements) == {
+            "show - s01e03.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "show - s01e04.mkv": ((), PlacementVerdict.ANOTHER_TITLES),
+        }
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
+
+    def test_such_files_are_counted_against_the_releases_video_files_with_their_aired_episodes(self) -> None:
+        placement = place_release(_season_files(), _switched_title(_SWITCHED_SEASON), _switched_torrent())
+
+        assert aired_only_files(placement) == AiredOnlyFiles(episodes=(EpisodeKey(1, 3),), count=1, listed=4)
+
+    def test_a_release_with_no_such_file_has_none_to_report(self) -> None:
+        placement = place_release(_season_files(2), _switched_title(_SWITCHED_SEASON), _switched_torrent())
+
+        assert aired_only_files(placement) is None
 
     def test_a_file_a_siblings_window_placed_on_the_episode_is_set_aside_and_not_the_siblings(self) -> None:
         torrent = _switched_torrent(title_window(1, (101, 102)), title_window(2, (-903, 104)))

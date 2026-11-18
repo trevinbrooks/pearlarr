@@ -95,15 +95,7 @@ from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
-from pearlarr.tvdb_orders import (
-    AIRED_ORDER,
-    NO_ORDERS,
-    CachedOrders,
-    EpisodeDetails,
-    IndexOrders,
-    OrderRow,
-    OrdersByName,
-)
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, EpisodeDetails, OrderRow, OrdersByName
 from pearlarr.wait_types import (
     NO_HAND_IMPORT_FILES,
     AttemptResult,
@@ -1250,11 +1242,10 @@ def make_grabbing_title(
     names: TitleNames = _NO_NAMES,
     episode_count: int | None = None,
     alternate_titles: tuple[str, ...] = (),
-    aired_order: bool = True,
 ) -> GrabbingTitle:
     """The grabbing title `anilist_id` over `title_index`, within `series` on `series_id` (series 7, as `title_claim`'s).
 
-    Unless given, the series has no alternate titles and Sonarr numbers it as aired.
+    Unless given, the series has no alternate titles.
     """
 
     return GrabbingTitle(
@@ -1265,7 +1256,6 @@ def make_grabbing_title(
         title_names=names,
         episode_count=episode_count,
         alternate_titles=alternate_titles,
-        aired_order=aired_order,
     )
 
 
@@ -1306,7 +1296,7 @@ def series_index(
             )
             for key, ep_id in id_by_key.items()
         ],
-        IndexOrders(orders, None),
+        orders,
     )
 
 
@@ -1552,18 +1542,37 @@ def queue_record(
     )
 
 
-def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
-    """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty."""
+def make_sonarr_episodes(
+    *, series_episodes: Mapping[int, list[SonarrEpisode]] | None = None, **attrs: Any
+) -> SonarrEpisodes:
+    """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty.
+
+    `series_episodes` are the rows the run already read, by series id.
+    """
 
     defaults: dict[str, Any] = {
-        "_series_episodes": {},
+        "_series": {},
         "_series_hash": "",
         "_order_facts": {},
-        "_orderings": {},
         "_picks_logged": set[int](),
     }
     defaults.update(attrs)
-    return make_bare_instance(SonarrEpisodes, **defaults)
+    episodes = make_bare_instance(SonarrEpisodes, **defaults)
+    seed_series_episodes(episodes, series_episodes or {})
+    return episodes
+
+
+def seed_series_episodes(episodes: SonarrEpisodes, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:
+    """Hold each series' rows as read this run, as a prefetch leaves them."""
+
+    for series_id, rows in series_episodes.items():
+        episodes._store(series_id, rows)
+
+
+def held_series_episodes(episodes: SonarrEpisodes) -> dict[int, list[SonarrEpisode]]:
+    """The rows the run holds, by series id."""
+
+    return {series_id: read.rows for series_id, read in episodes._series.items()}
 
 
 _NO_EPISODE_DETAILS: Mapping[int, EpisodeDetails] = MappingProxyType({})
@@ -1617,7 +1626,7 @@ def make_sonarr_sync(
         sonarr_client=sonarr if sonarr is not None else FakeSonarrClient(),
     )
     if series_episodes is not None:
-        strat._episodes._series_episodes = series_episodes
+        seed_series_episodes(strat._episodes, series_episodes)
     return strat
 
 

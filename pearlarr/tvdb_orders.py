@@ -20,6 +20,12 @@ def order_display_name(order: str) -> str:
     return _DISPLAY_NAMES.get(order, order)
 
 
+def is_another_order(order: str) -> bool:
+    """Whether the type name is of an order other than the aired one. False for "", which names no order."""
+
+    return order not in ("", AIRED_ORDER)
+
+
 class OrderRow(NamedTuple):
     """One episode as one TVDB order numbers it."""
 
@@ -169,27 +175,4 @@ class SonarrSeriesOrders:
     def in_another_order(self) -> bool:
         """Whether Sonarr names an order other than the aired one for the series. False when it names none."""
 
-        return self.season_type not in ("", AIRED_ORDER)
-
-
-class OrderTranslation(NamedTuple):
-    """How to read a series Sonarr numbers by a non-official order back into the aired order."""
-
-    order_name: str
-    """The order the series is set to."""
-
-    aired: tuple[OrderRow, ...]
-    """The stored official order (empty when it isn't stored)."""
-
-
-class IndexOrders(NamedTuple):
-    """The orders one series' episode index is built with."""
-
-    others: OrdersByName
-    """Every stored order except official, empty orders left out."""
-
-    translation: OrderTranslation | None
-    """None when Sonarr's rows are already in aired order."""
-
-
-NO_INDEX_ORDERS = IndexOrders(NO_ORDERS, None)
+        return is_another_order(self.season_type)

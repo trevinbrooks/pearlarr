@@ -93,8 +93,8 @@ class GrabRequest:
     """Groups with a release whose grab-time placement waited on a read that failed this run, so a sequence may
     have been left waiting on it: the title is never cached and re-checks next run."""
     metadata_unread: bool = False
-    """A title of the series was looked up without its AniList answer (`SonarrEpisodes.any_air_dates_unread`), or a
-    series was read without its TVDB orders (`SonarrEpisodes.orders_unread`): the title is never cached and
+    """A title of the series was looked up without its AniList answer (`EpisodeSource.any_air_dates_unread`), or a
+    series was read without its TVDB orders (`EpisodeSource.orders_unread`): the title is never cached and
     re-checks next run."""
 
 
@@ -186,7 +186,8 @@ class GrabPipeline:
     def _may_grab(self, srg: str, release: Release) -> bool:
         """Whether a SeaDex release may be grabbed: marked to grab, public, on a selected tracker with a parser, and not skipped.
 
-        A skipped release posts its skip line and flags the title.
+        A skipped release posts its skip line and flags the title. One skipped as `SkipReason.AIRED_ONLY` posts
+        its line and flags nothing.
         """
 
         if not release.to_grab:
@@ -221,8 +222,10 @@ class GrabPipeline:
         skip_reason = release.skip_reason
         if skip_reason is None:
             return True
-        # Never added, and the title stays uncached for the next run.
-        self._state.per_title.add_skipped(skip_reason, (srg,))
+        # Never added, and the title stays uncached for the next run, unless Sonarr has no row for the release's
+        # episodes: no later run places them while the series keeps its order.
+        if skip_reason is not SkipReason.AIRED_ONLY:
+            self._state.per_title.add_skipped(skip_reason, (srg,))
         self._reporter.post(
             ReleaseSkipped(
                 group=srg,
@@ -328,8 +331,9 @@ class GrabPipeline:
         """Whether this title's outcome may be cached.
 
         Only if something was grabbed or nothing was skipped. A release held by the run cap, a private-only skip in
-        fallback mode, a failed grab, a failed read under a placement, a release the placement skipped, or a check
-        that read a title without its AniList answer or a series without its TVDB orders keeps it uncached.
+        fallback mode, a failed grab, a failed read under a placement, a release the placement skipped for anything
+        but `SkipReason.AIRED_ONLY`, or a check that read a title without its AniList answer or a series without its
+        TVDB orders keeps it uncached.
         """
 
         per_title = self._state.per_title

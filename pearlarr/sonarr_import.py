@@ -1052,7 +1052,7 @@ class ImportReconciler:
         grabbed_groups: dict[int, GrabbedGroups] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
         for series_id in pending.series_ids:
-            index = episode_index(lists[series_id], self._episodes.orders_for(series_id))
+            index = episode_index(lists[series_id])
             # Unfiltered: a sibling awaiting cleanup has its files in Sonarr, so dropping it would loosen the guard.
             siblings = self._pending_imports.imports_for_series(series_id, guards).values()
             grabbed_groups[series_id] = GrabbedGroups(

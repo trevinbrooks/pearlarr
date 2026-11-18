@@ -12,21 +12,21 @@ from .arr_models import ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 from .episode_titles import EpisodeTitles
 from .pending_import import FileEpisodeMap, TitleNames, TitleWindow
 from .releases import EpisodeKey, OrderOnlyKey
-from .tvdb_orders import NO_INDEX_ORDERS, IndexOrders, OrderRow
+from .tvdb_orders import NO_ORDERS, OrderRow, OrdersByName
 
 
 @dataclass(frozen=True, slots=True)
 class TvdbOrder:
-    """Another TVDB order of the series, read onto Sonarr's episodes through the TVDB episode ids.
+    """Another TVDB order of the series, read onto the index's episodes through the TVDB episode ids.
 
     An episode only that order has (a split or a merged one) has a key but no id.
     """
 
     id_by_key: Mapping[EpisodeKey, int]
-    """`(season, episode)` in the order -> Sonarr's episode id, for the episodes Sonarr has."""
+    """`(season, episode)` in the order -> the id of the index's episode with the same TVDB episode id."""
 
     keys: frozenset[EpisodeKey]
-    """Every `(season, episode)` the order numbers, Sonarr episode or not."""
+    """Every `(season, episode)` the order numbers, whether or not the index has its episode."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id_by_key", MappingProxyType(dict(self.id_by_key)))
@@ -34,19 +34,22 @@ class TvdbOrder:
 
 @dataclass(frozen=True, slots=True)
 class EpisodeIndex:
-    """The import family's one episode index, built once per episode fetch.
+    """One series' or title's episode index.
 
+    The grab side builds it from the aired view, stand-ins included, and the import side from Sonarr's own rows.
     The lookups are derived at construction, and `titles` builds each title view on first use. Nothing under the
     index changes after it is built, and every torrent and window placed under it shares them.
 
     The three facets are copied and made read-only at construction. `episode_index` is the one builder. Episodes
     with a falsy id (0) are dropped from EVERY facet before keying: a 0 id can never be POSTed to Sonarr, and a
     real-id twin behind one must still win its `(season, episode)` key. The planner's `index_episodes_by_key`
-    deliberately KEEPS them (a 0-id file is still identity evidence). Do not unify the two.
+    deliberately KEEPS them (a 0-id file is still identity evidence). Do not unify the two. A stand-in's negative
+    id can't be POSTed either, but it stays, so a file placed on an episode Sonarr has no row for is set aside as
+    aired-only (`WindowedPlacements.aired_only_set_aside`).
     """
 
     by_id: Mapping[int, SonarrEpisode]
-    """Episode id -> episode, in the fetch's (season) order. `list(by_id)` is
+    """Episode id -> episode, in season and episode order. `list(by_id)` is
     the window id list the grab stores on each title's claim."""
 
     id_by_key: Mapping[EpisodeKey, int]
@@ -96,20 +99,20 @@ class EpisodeIndex:
         return titles
 
 
-def episode_index(episodes: Iterable[SonarrEpisode], ordering: IndexOrders = NO_INDEX_ORDERS) -> EpisodeIndex:
-    """Convert one `/api/v3/episode` fetch into the `EpisodeIndex` facets, with `ordering.others` read onto it."""
+def episode_index(episodes: Iterable[SonarrEpisode], other_orders: OrdersByName = NO_ORDERS) -> EpisodeIndex:
+    """Convert one series' or title's episodes into the `EpisodeIndex` facets, with `other_orders` read onto them."""
 
     with_ids = [ep for ep in episodes if ep.id]
     id_by_tvdb = {ep.tvdb_id: ep.id for ep in with_ids if ep.tvdb_id}
     return EpisodeIndex(
         by_id={ep.id: ep for ep in with_ids},
         id_by_key={key: ep.id for key, ep in index_episodes_by_key(with_ids).items()},
-        orders={name: _read_order(rows, id_by_tvdb) for name, rows in ordering.others.items()},
+        orders={name: _read_order(rows, id_by_tvdb) for name, rows in other_orders.items()},
     )
 
 
 def _read_order(rows: Iterable[OrderRow], id_by_tvdb: Mapping[int, int]) -> TvdbOrder:
-    """The order read onto Sonarr's episodes: the first row of a repeated key wins."""
+    """The order read onto the episodes `id_by_tvdb` holds: the first row of a repeated key wins."""
 
     id_by_key: dict[EpisodeKey, int] = {}
     keys: set[EpisodeKey] = set()
@@ -435,6 +438,12 @@ class BatchPlacements:
         return tuple(p.name for p in self.placements if p.verdict.left_for_hand_import)
 
     @property
+    def aired_only(self) -> tuple[Placement, ...]:
+        """The files set aside off an aired episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`)."""
+
+        return tuple(p for p in self.placements if p.verdict is PlacementVerdict.AIRED_ONLY)
+
+    @property
     def order_only(self) -> dict[str, OrderOnlyKey]:
         """Normalized file name -> the order and key that read it, for every `ORDER_ONLY` file."""
 
@@ -685,13 +694,10 @@ class GrabbingTitle:
     """The series and AniList titles the placement breaks ties by, stored on every pending import update."""
 
     episode_count: int | None
-    """AniList's episode count for the title (`SonarrEpisodes.episode_count`), None when AniList gives none."""
+    """AniList's episode count for the title (`EpisodeSource.episode_count`), None when AniList gives none."""
 
     alternate_titles: tuple[str, ...]
     """The series' other titles in Sonarr (`SonarrSeries.alternateTitles`), in Sonarr's order."""
-
-    aired_order: bool
-    """Whether Sonarr numbers the series by TVDB's aired order (`SonarrEpisodes.aired_order`)."""
 
     window: TitleWindow = field(init=False, repr=False, compare=False)
     """The title's own window, built as a listing builds each title's (`TitleWindow.of`)."""

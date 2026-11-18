@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These read the episode collaborator's private per-run state (eps._series_episodes /
-# eps._config) and call the module-private _parse_is_fresh / SonarrParseCache._parse_for.
+# These set the episode collaborator's private config (eps._config) and call the
+# module-private _parse_is_fresh / SonarrParseCache._parse_for.
 # Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
@@ -18,6 +18,7 @@ from typing import override
 import pytest
 from seadex import EntryRecord
 
+from pearlarr.aired_view import AiredSeries, NoView
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
@@ -46,6 +47,7 @@ from pearlarr.video_files import is_video_candidate
 
 from .builders import (
     FakeCacheStore,
+    held_series_episodes,
     make_config,
     make_entry_record,
     make_logger,
@@ -387,13 +389,13 @@ class TestPrefetchEpisodes:
     def test_warms_only_mapped_series(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps.prefetch([_item(1), _item(2), _item(3)])
-        assert eps._series_episodes == {1: _eps_for(1), 2: _eps_for(2)}
+        assert held_series_episodes(eps) == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_leaves_out_unmonitored_when_ignored(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
         eps.prefetch([_item(1, monitored=False), _item(2)])
-        assert eps._series_episodes == {2: _eps_for(2)}
+        assert held_series_episodes(eps) == {2: _eps_for(2)}
 
     def test_dedups_series_ids(self) -> None:
         eps, sonarr = self._eps(mapped={1})
@@ -405,7 +407,7 @@ class TestPrefetchEpisodes:
         eps, sonarr = self._eps(mapped={9})
         sonarr.return_none = True
         eps.prefetch([_item(9)])
-        assert eps._series_episodes == {}
+        assert held_series_episodes(eps) == {}
 
     def test_raising_series_does_not_abort_sweep(self) -> None:
         # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
@@ -414,13 +416,13 @@ class TestPrefetchEpisodes:
         sonarr.raise_on = {1}
         warmed = eps.prefetch([_item(1), _item(2)])
 
-        assert eps._series_episodes == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
+        assert held_series_episodes(eps) == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
         assert warmed == 2  # both attempted
 
     def test_sequential_path_matches_concurrent(self) -> None:
         eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
         eps.prefetch([_item(1), _item(2)])
-        assert eps._series_episodes == {1: _eps_for(1), 2: _eps_for(2)}
+        assert held_series_episodes(eps) == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_returns_warmed_count(self) -> None:
         # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
@@ -459,12 +461,12 @@ class TestPrefetchEpisodes:
         sonarr.return_none = True
         rec = _Recorder()
         assert eps.prefetch([_item(9)], progress=rec) == 1
-        assert eps._series_episodes == {}  # nothing cached
+        assert held_series_episodes(eps) == {}  # nothing cached
         assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
 
 
-class TestCachedEpisodes:
-    """`cached_episodes` fetches a cold series once per run and reports a failed fetch as None."""
+class TestAiredSeriesRead:
+    """`aired_series` fetches a cold series once per run and reports a failed fetch as `NoView.READ_FAILED`."""
 
     @staticmethod
     def _eps(*, return_none: bool = False) -> tuple[SonarrEpisodes, _Sonarr]:
@@ -474,17 +476,20 @@ class TestCachedEpisodes:
     def test_second_call_serves_the_run_cache(self) -> None:
         eps, sonarr = self._eps()
 
-        assert eps.cached_episodes(1) == _eps_for(1)
-        assert eps.cached_episodes(1) == _eps_for(1)
+        first = eps.aired_series(1)
+        assert isinstance(first, AiredSeries)
+        assert first.in_sonarr == tuple(_eps_for(1))
+        assert eps.aired_series(1) is first
         assert sonarr.calls == [(1, False)]
 
-    def test_failed_fetch_is_none_and_not_cached(self) -> None:
-        # None is the unreadable list, distinct from a series with no episodes:
+    def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
+        # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
         eps, _ = self._eps(return_none=True)
 
-        assert eps.cached_episodes(1) is None
-        assert eps._series_episodes == {}
+        assert eps.aired_series(1) is NoView.READ_FAILED
+        assert eps.series_index(1) is None
+        assert held_series_episodes(eps) == {}
 
 
 def _entry(dt: datetime) -> EntryRecord:
@@ -606,13 +611,13 @@ class TestPrefetchLeavesOutUnchanged:
     def test_leaves_out_series_with_no_title_to_check(self) -> None:
         eps, sonarr = self._eps(needs_scan={1})
         assert eps.prefetch([_item(1), _item(2)]) == 1
-        assert eps._series_episodes == {1: _eps_for(1)}  # series 2 never fetched
+        assert held_series_episodes(eps) == {1: _eps_for(1)}  # series 2 never fetched
         assert sonarr.calls == [(1, True)]
 
     def test_warms_none_when_all_unchanged(self) -> None:
         eps, sonarr = self._eps(needs_scan=set())
         assert eps.prefetch([_item(1), _item(2)]) == 0
-        assert eps._series_episodes == {}
+        assert held_series_episodes(eps) == {}
         assert sonarr.calls == []
 
     def test_warms_series_with_any_title_to_check(self) -> None:
@@ -625,7 +630,7 @@ class TestPrefetchLeavesOutUnchanged:
             _config=make_config(sleep_time=0),
         )
         assert eps.prefetch([_item(5)]) == 1
-        assert eps._series_episodes == {5: _eps_for(5)}
+        assert held_series_episodes(eps) == {5: _eps_for(5)}
 
 
 class _ParseSonarr:

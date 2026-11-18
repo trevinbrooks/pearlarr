@@ -20,10 +20,11 @@ from .builders import (
     make_sonarr_episodes,
     make_torrent_record,
     sonarr_ep,
+    stand_in_ep,
     title_window,
     torrent_listing,
 )
-from .fakes import ScriptedEpisodes
+from .fakes import FakeSonarrClient, ScriptedEpisodes
 
 _SPECIALS = {n: sonarr_ep(0, n, ep_id=500 + n) for n in range(1, 7)}
 _H1 = "a" * 40
@@ -201,6 +202,24 @@ class TestRead:
             torrent_listing(_window(2, 503)),
         )
         assert read.episode_by_size == {2: 503}
+
+    def test_a_window_keeps_an_aired_episode_sonarr_has_no_row_for(self) -> None:
+        seadex = FakeSeaDexSource({1: _entry(1, _H1)})
+        window = [_SPECIALS[1], stand_in_ep(0, 2, tvdb_id=902)]
+
+        read = _reader(seadex, _windows({1: window})).read(7, _mappings(1))
+
+        assert read is not None
+        assert read.listing(_H1) == torrent_listing(_window(1, 501, -902))
+
+    def test_a_series_with_no_aired_view_marks_its_hashes_unread(self) -> None:
+        seadex = FakeSeaDexSource({1: _entry(1, _H1)})
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=_episodes(1)), orders_unread_views=frozenset({7}))
+
+        read = _reader(seadex, episodes).read(7, _mappings(1))
+
+        assert read is not None
+        assert (read.listing(_H1), read.episode_by_size) == (None, None)
 
     def test_a_zero_id_episode_is_no_window_id(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1)})

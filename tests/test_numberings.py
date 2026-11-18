@@ -48,9 +48,7 @@ def _window(anilist_id: int, ids: Iterable[int], count: int | None, series: str,
     return title_window(anilist_id, ids, names=TitleNames(series, anilist), episode_count=count)
 
 
-def _grabbing_title(
-    index: EpisodeIndex, own: TitleWindow, *, alternate_titles: tuple[str, ...] = (), aired_order: bool = True
-) -> GrabbingTitle:
+def _grabbing_title(index: EpisodeIndex, own: TitleWindow, *, alternate_titles: tuple[str, ...] = ()) -> GrabbingTitle:
     """The grabbing title for the window `own`, over `index`."""
 
     return make_grabbing_title(
@@ -60,7 +58,6 @@ def _grabbing_title(
         names=own.names,
         episode_count=own.episode_count,
         alternate_titles=alternate_titles,
-        aired_order=aired_order,
     )
 
 
@@ -427,12 +424,6 @@ class TestTheNumberingStepStandsDown:
         windows = (_STRAY_CATS_SEASON, _STRAY_CATS_SPECIALS)
 
         assert _read(_grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON), windows, parsed) == {}
-
-    def test_off_the_aired_order_the_numbering_step_proposes_nothing(self) -> None:
-        # Constructed: Stray Cats' real batch under a numbering its series doesn't have (Sonarr numbers it as aired).
-        grabbing_title = _grabbing_title(_STRAY_CATS, _STRAY_CATS_SEASON, aired_order=False)
-
-        assert _read(grabbing_title, (_STRAY_CATS_SEASON,), _STRAY_CATS_FILES) == {}
 
     def test_a_window_on_another_series_is_left_out(self) -> None:
         # Constructed: a claim's window on Sonarr series 8 lists ids the grabbing series lacks and a count no window

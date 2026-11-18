@@ -19,7 +19,6 @@ import time
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from typing import NamedTuple
 from xml.etree import ElementTree
 
@@ -56,9 +55,9 @@ from pearlarr.mappings import (
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
-from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
+from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
 
-from .builders import make_bare_instance, make_services, sonarr_ep
+from .builders import make_bare_instance, make_services, make_sonarr_episodes, sonarr_ep
 from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
@@ -766,7 +765,7 @@ class TestVu1AniBridgeWithoutTvdbMappings:
 
     def test_imdb_only_mapping_without_tvdb_mappings_makes_sonarr_skip(self) -> None:
         # End-to-end: the resolver emits an AniBridge mapping without TVDB mappings (no Kometa fallback), and
-        # feeding THAT real mapping to mapping_episodes returns [] - the series is skipped,
+        # feeding THAT real mapping to title_episodes returns no episodes - the series is skipped,
         # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
         resolver = MappingResolver(
             refresh_days=1,
@@ -787,12 +786,11 @@ class TestVu1AniBridgeWithoutTvdbMappings:
         assert without_tvdb_mappings.kind is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
         assert without_tvdb_mappings.tvdb_mappings is None
 
-        episodes = make_bare_instance(
-            SonarrEpisodes,
-            _series_episodes={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
-        )
+        episodes = make_sonarr_episodes(series_episodes={777: [sonarr_ep(s, 1) for s in (1, 2, 3)]})
         # A non-empty series, yet the mapping without TVDB mappings resolves to NO episodes (skip).
-        assert episodes.mapping_episodes(sonarr_series_id=777, anilist_id=500, mapping=without_tvdb_mappings) == []
+        resolved = episodes.title_episodes(777, 500, without_tvdb_mappings)
+        assert isinstance(resolved, TitleEpisodes)
+        assert resolved.aired == ()
 
 
 # --------------------------------------------------------------------------- #

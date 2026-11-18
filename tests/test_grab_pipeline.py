@@ -58,15 +58,18 @@ from .builders import (
     AddStatus,
     FakeCacheStore,
     FakeTorrents,
+    arr_files,
     claim_anilist_ids,
     grab_request,
     make_entry_record,
     make_grab_pipeline,
+    make_planner,
     make_release,
     one_release_dict,
     pending_import,
     pending_import_update,
     rg_group,
+    sonarr_ep,
 )
 from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
 
@@ -1180,15 +1183,18 @@ def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -
     assert pipeline._state.stats.needs_action == []
 
 
-def test_every_placement_skip_has_a_row() -> None:
-    # The add loop reports a tracker skip itself. Any other reason missing from the table would leave its title
-    # uncached with no needs-action row.
+def test_every_placement_skip_that_leaves_its_title_uncached_has_a_row() -> None:
+    # The add loop reports a tracker skip itself, and an `AIRED_ONLY` skip leaves its title cached. Any other reason
+    # missing from the table would leave its title uncached with no needs-action row.
     tracker_skips = {SkipReason.PRIVATE_ONLY, SkipReason.UNSUPPORTED_TRACKER, SkipReason.TRACKER_NOT_SELECTED}
-    assert _SKIP_REPORTS.keys() == set(SkipReason) - tracker_skips
+    assert _SKIP_REPORTS.keys() == set(SkipReason) - tracker_skips - {SkipReason.AIRED_ONLY}
 
 
 class TestPlacementSkips:
-    """A release the placement skipped is never grabbed: the title stays uncached, and the summary says why."""
+    """A release the placement skipped is never grabbed: the title stays uncached, and the summary says why.
+
+    One skipped over episodes Sonarr has no row for is never grabbed either, and its title is cached.
+    """
 
     @staticmethod
     def _skipped_release(*, url: str, infohash: str, skip_reason: SkipReason) -> Release:
@@ -1297,6 +1303,31 @@ class TestPlacementSkips:
             NeedsActionCause.PLACED_ELSEWHERE,
             "its files place under another title SeaDex lists it with; any it could not place need a hand import",
         )
+
+    def test_a_release_on_episodes_sonarr_has_no_row_for_is_planned_but_never_added_and_its_title_is_cached(
+        self,
+    ) -> None:
+        # The planner marks the release to grab by its group and sizes: none of its files placed, and the title's
+        # one episode in Sonarr has no file.
+        recording = install_recording_hub()
+        nyaa = make_release(url="https://nyaa.si/view/1", infohash="h1", size=[100, 200])
+        nyaa.tracker = Tracker.NYAA
+        nyaa.skip_reason = SkipReason.AIRED_ONLY
+        in_sonarr = [sonarr_ep(1, 3, episode_file_id=0)]
+        plan = make_planner().plan({"RG": rg_group({nyaa.url: nyaa}, episodes=[])}, arr_files(in_sonarr), in_sonarr)
+        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
+        pipeline = _on_title(_pipeline(torrents=torrents, sleep_time=0))
+
+        pipeline.grab_and_cache(_grab_request(plan.seadex_dict))
+
+        assert nyaa.to_grab is True
+        assert torrents.calls == []
+        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is not None
+        assert pipeline._state.per_title.skipped_groups == {}
+        assert [(e.reason, e.severity) for e in recording.of_type(ReleaseSkipped)] == [
+            (SkipReason.AIRED_ONLY, Severity.INFO)
+        ]
+        assert pipeline._state.stats.needs_action == []
 
     def test_the_another_titles_row_outranks_a_failed_read(self) -> None:
         # A failed read clears next run. A release whose files are another title's stays skipped until the title has

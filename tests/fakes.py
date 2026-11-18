@@ -12,6 +12,7 @@ from typing import cast, final, override
 import httpx
 import qbittorrentapi
 
+from pearlarr.aired_view import NoView
 from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
     ArrFiles,
@@ -56,11 +57,13 @@ from pearlarr.output import (
 from pearlarr.output.console_lines import ConsoleLine
 from pearlarr.output.scan_lines import scan_event_lines
 from pearlarr.pending_import import PendingImport
+from pearlarr.placement_types import EpisodeIndex, episode_index
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.tvdb_orders import NO_INDEX_ORDERS, IndexOrders
+from pearlarr.sonarr_episodes import EpisodeSource, TitleEpisodes
+from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -659,16 +662,15 @@ class FakeSkyHookClient(AbstractSkyHookClient):
         return self._replies.get((tvdb_id, order_type), SkyHookNoReply.NOT_FOUND)
 
 
-class ScriptedEpisodes:
-    """A `SonarrEpisodes` stand-in scripted by hand: the series list off `sonarr`, one window per AniList id.
+class ScriptedEpisodes(EpisodeSource):
+    """An `EpisodeSource` scripted by hand: the series list off `sonarr`, one window per AniList id.
 
-    `mapping_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
-    given, else the whole series list. Without a client every read is None, a failed fetch. The `unread_series` have
-    no stored order answer, and the `unread_anilist_ids` no AniList answer. `counts` are AniList's episode counts by
-    AniList id, None for an id left out.
+    `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
+    given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
+    `orders_unread_views` reads as `NoView.ORDERS_UNREAD`. Every series is numbered by `order`. The `unread_series`
+    have no stored order answer, and the `unread_anilist_ids` no AniList answer. `counts` are AniList's episode
+    counts by AniList id, None for an id left out.
     """
-
-    series_hash = "fp"
 
     def __init__(
         self,
@@ -676,6 +678,8 @@ class ScriptedEpisodes:
         *,
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
+        order: str = AIRED_ORDER,
+        orders_unread_views: frozenset[int] = frozenset(),
         unread_series: frozenset[int] = frozenset(),
         unread_anilist_ids: frozenset[int] = frozenset(),
         counts: Mapping[int, int] | None = None,
@@ -683,56 +687,74 @@ class ScriptedEpisodes:
         self._sonarr = sonarr
         self._windows = windows
         self._ambiguous = ambiguous
+        self._order = order
+        self._orders_unread_views = orders_unread_views
         self._unread_series = unread_series
         self._unread_anilist_ids = unread_anilist_ids
         self._counts: Mapping[int, int] = counts or {}
         self.calls: list[tuple[int, int]] = []
-        """Each `mapping_episodes` call's (series id, AniList id), in call order."""
+        """Each `title_episodes` call's (series id, AniList id), in call order."""
+        self.files_of: list[tuple[SonarrEpisode, ...]] = []
+        """The episodes each `sonarr_files` call was handed, in call order."""
 
-    def cached_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
-        """The whole-series list off the client, None without one."""
+    @property
+    @override
+    def series_hash(self) -> str:
+        return "fp"
 
-        return None if self._sonarr is None else self._sonarr.episodes(series_id)
+    def _series_episodes(self, series_id: int) -> list[SonarrEpisode] | NoView:
+        """The whole-series list off the client, or why the series has no view."""
 
-    def mapping_episodes(
-        self, sonarr_series_id: int, anilist_id: int, mapping: TitleMapping
-    ) -> list[SonarrEpisode] | None:
+        if series_id in self._orders_unread_views:
+            return NoView.ORDERS_UNREAD
+        episodes = None if self._sonarr is None else self._sonarr.episodes(series_id)
+        return NoView.READ_FAILED if episodes is None else episodes
+
+    @override
+    def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView:
         """The title's window, recorded. Raises for an `ambiguous` id as the real resolver does."""
 
         del mapping
-        self.calls.append((sonarr_series_id, anilist_id))
+        self.calls.append((series_id, anilist_id))
         if anilist_id in self._ambiguous:
             raise ValueError("ambiguous")
-        return self.cached_episodes(sonarr_series_id) if self._windows is None else self._windows.get(anilist_id)
+        if self._windows is None:
+            episodes = self._series_episodes(series_id)
+            if isinstance(episodes, NoView):
+                return episodes
+        else:
+            episodes = self._windows.get(anilist_id)
+            if episodes is None:
+                return NoView.READ_FAILED
+        return TitleEpisodes(order=self._order, aired=tuple(episodes))
 
-    def sonarr_files(self, episodes: list[SonarrEpisode]) -> ArrFiles:
-        """The arr has no files."""
+    @override
+    def series_index(self, series_id: int) -> EpisodeIndex | None:
+        """The whole series' index with no other order read onto it, None for a series with no view."""
 
-        del episodes
+        episodes = self._series_episodes(series_id)
+        return None if isinstance(episodes, NoView) else episode_index(episodes)
+
+    @override
+    def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles:
+        """The arr has no files. The episodes asked about are recorded."""
+
+        self.files_of.append(tuple(episodes))
         return ArrFiles()
 
-    def orders_for(self, series_id: int) -> IndexOrders:
-        """No series has another order."""
-
-        del series_id
-        return NO_INDEX_ORDERS
-
-    def aired_order(self, series_id: int) -> bool:
-        """Sonarr numbers every series as aired."""
-
-        del series_id
-        return True
-
+    @override
     def episode_count(self, anilist_id: int) -> int | None:
         """The scripted count, None for an unscripted id."""
 
         return self._counts.get(anilist_id)
 
+    @override
     def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool:
         """Whether any of the titles is one of the `unread_anilist_ids`."""
 
         return not self._unread_anilist_ids.isdisjoint(anilist_ids)
 
+    @override
     def orders_unread(self, series_ids: Iterable[int]) -> bool:
         """Whether any of the series is one of the `unread_series`."""
 

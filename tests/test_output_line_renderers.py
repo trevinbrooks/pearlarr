@@ -1109,6 +1109,7 @@ def test_json_release_skipped_reasons_are_the_skip_reason_names() -> None:
         "episode_titles_contradict",
         "placed_elsewhere",
         "placement_input_unread",
+        "aired_only",
     ]
 
 

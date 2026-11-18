@@ -2,7 +2,7 @@
 
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -293,7 +293,7 @@ class SeadexReleaseFilter:
         self,
         seadex_dict: SeadexDict,
         arr_files: ArrFiles,
-        title_episodes: list[SonarrEpisode] | None = None,
+        title_episodes: Sequence[SonarrEpisode] | None = None,
     ) -> GrabPlan:
         """Plan which releases to grab.
 

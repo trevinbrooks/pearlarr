@@ -226,6 +226,8 @@ def _skip_text(event: ReleaseSkipped) -> str:
             return f"{event.url or event.group} ({text})"
         case SkipReason.PLACEMENT_INPUT_UNREAD:
             return f"{event.url or event.group} (a read the placement needs failed)"
+        case SkipReason.AIRED_ONLY:
+            return f"{event.url or event.group} (its episodes are not in Sonarr's order of the series)"
     assert_never(event.reason)
 
 

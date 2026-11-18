@@ -11,8 +11,7 @@ repeated under one parsed series name, a series row that doesn't carry its numbe
 a parsed series name the run doesn't know each leave the file with its verdict. Nothing the step proposes outranks a
 pass: `WindowedPlacements.with_proposals` places a proposal only into a gap the windows left.
 
-The step runs once per torrent, after the windows merge, on the grabbing title's series only, and only while
-Sonarr numbers that series as aired, where the series' regular rows are the aired rows the groups count.
+The step runs once per torrent, after the windows merge, on the grabbing title's series only.
 """
 
 import re
@@ -340,9 +339,6 @@ class NumberingStep:
     """Whether the union's regular rows all carry absolutes that strictly increase."""
     known_titles: frozenset[str]
     """`_name_key` of the series' name, of each alternate name, and of each window's AniList names."""
-    aired_order: bool
-    """Whether Sonarr numbers the series as aired. Off it the step proposes nothing: the regular rows are then
-    not the rows a group counts."""
 
     @classmethod
     def of(cls, grabbing_title: GrabbingTitle, windows: Iterable[TitleWindow]) -> Self:
@@ -362,19 +358,18 @@ class NumberingStep:
             union_regular_ids=tuple(ep.id for ep in union_regular_ids),
             union_monotone=_absolutes_increase(union_regular_ids),
             known_titles=frozenset(known - {""}),
-            aired_order=grabbing_title.aired_order,
         )
 
     def propose(self, batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> NumberingProposals:
         """The ids proposed for each absolute-only file of `batch` where every fitting numbering agrees.
 
         `facts` are the grabbing title's window's (`PlacerResult.facts`): they say which names are extras or parsed
-        by their title's number, which keeps those out of the pool. Nothing is proposed off the aired numbering,
-        while a parse of the torrent is unknown, with no window on the series, or when a window doesn't match
-        AniList's count. Two files proposed overlapping ids are both dropped: one id, one file.
+        by their title's number, which keeps those out of the pool. Nothing is proposed while a parse of the
+        torrent is unknown, with no window on the series, or when a window doesn't match AniList's count. Two files
+        proposed overlapping ids are both dropped: one id, one file.
         """
 
-        if not self.aired_order or not self.windows or not batch.all_parses_read:
+        if not self.windows or not batch.all_parses_read:
             return NO_PROPOSALS
         # A window whose rows aren't what AniList counts for the title (Panty & Stocking: 13 double episodes on
         # AniList, 26 rows in Sonarr) isn't the thing the group counted, so no position in it means what it seems.
