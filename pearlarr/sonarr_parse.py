@@ -13,7 +13,9 @@ Sonarr's own answer, never that one.
 
 import concurrent.futures
 from collections.abc import Sequence
+from typing import assert_never
 
+from .aired_view import NoView
 from .arr_models import ParsedFileInfo
 from .arr_run_services import ArrRunDeps
 from .grab_placement import ListedFile
@@ -22,8 +24,27 @@ from .parse_cache import ParseFreshness
 from .releases import SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import EpisodeSource, fetch_workers
-from .sonarr_matching import NoAnswer, parse_without_answer
+from .sonarr_matching import NoAnswer
 from .video_files import indexed_video_files
+
+
+def parse_without_answer(info: ParsedFileInfo, reason: NoAnswer | NoView) -> ParsedFileInfo | None:
+    """The parse the placement reads when an aired Sonarr's answer to it can't be known. None leaves it unread.
+
+    An error answer, and a series whose episodes couldn't be read, leave the parse unread, as a failed `/parse` does.
+    Every other reason gives it no matched episodes, so the placement reads the name's own numbers.
+    """
+
+    match reason:
+        case NoAnswer.SONARR_FAILS | NoView.READ_FAILED:
+            return None
+        case NoAnswer.LIMITED_ALIAS | NoAnswer.SPECIAL_BY_TITLE:
+            return info.with_matched(())
+        case NoView.ORDERS_UNREAD | NoView.SCENE_UNREAD:
+            # Not unread: orders and scene mappings are fetched only for a series a run checks or waits on, so
+            # another series' may never be stored, and leaving its files unread would hold their release on every run.
+            return info.with_matched(())
+    assert_never(reason)
 
 
 class SonarrParseCache:
@@ -78,12 +99,12 @@ class SonarrParseCache:
         info = self._parse_for(f, window=window)
         if info is None:
             return None
-        aired = NoAnswer.EPISODES_UNREAD if info.series_id in unread else self._episodes.aired_parse(info)
-        if not isinstance(aired, NoAnswer):
+        aired = NoView.READ_FAILED if info.series_id in unread else self._episodes.aired_parse(info)
+        if isinstance(aired, ParsedFileInfo):
             return aired
         if aired is NoAnswer.SONARR_FAILS:
             self.logger.debug(f"No parse for {f}: two aired episodes of its series share a number it is matched by")
-        elif aired is NoAnswer.EPISODES_UNREAD and info.series_id is not None:
+        elif aired is NoView.READ_FAILED and info.series_id is not None:
             unread.add(info.series_id)
         return parse_without_answer(info, aired)
 
