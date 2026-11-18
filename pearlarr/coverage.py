@@ -2,7 +2,6 @@
 
 from collections.abc import Iterable
 
-from .aired_view import printed_key
 from .arr_models import SonarrEpisode
 from .releases import EpisodeKey, PrintedKey, aired_label
 
@@ -67,8 +66,8 @@ def printed_coverage(keys: Iterable[PrintedKey]) -> str:
 
 
 def coverage_of_episodes(episodes: Iterable[SonarrEpisode]) -> str:
-    """The `printed_coverage` of Sonarr episodes (`printed_key`), leaving out any with no season or episode number."""
+    """The `printed_coverage` of Sonarr episodes (`PrintedKey.of`), leaving out any with no season or episode number."""
 
     return printed_coverage(
-        printed_key(ep) for ep in episodes if ep.season_number is not None and ep.episode_number is not None
+        PrintedKey.of(ep) for ep in episodes if ep.season_number is not None and ep.episode_number is not None
     )

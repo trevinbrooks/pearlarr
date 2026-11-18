@@ -17,6 +17,7 @@ from pearlarr.arr_models import (
     SonarrHistoryRecord,
     SonarrSeries,
 )
+from pearlarr.releases import EpisodeKey
 
 
 def test_sonarr_episode_reads_its_air_date_and_runtime() -> None:
@@ -57,6 +58,49 @@ def test_sonarr_episode_reduces_a_missing_or_junk_air_date_and_runtime_to_none(r
     episode = SonarrEpisode.model_validate({"id": 7, **raw})
 
     assert episode == SonarrEpisode(id=7)
+
+
+def test_a_renumbered_sonarr_episode_remembers_the_number_it_was_listed_under() -> None:
+    row = SonarrEpisode.model_validate(
+        {"id": 7, "seasonNumber": 1, "episodeNumber": 4, "absoluteEpisodeNumber": 4, "title": "Fourth", "tvdbId": 9001}
+    )
+
+    renumbered = row.renumbered(season=2, episode=1, absolute=None)
+
+    assert (renumbered.season_number, renumbered.episode_number, renumbered.absolute_episode_number) == (2, 1, None)
+    assert (renumbered.id, renumbered.title, renumbered.tvdb_id) == (7, "Fourth", 9001)
+    assert (row.listed_as, renumbered.listed_as) == (None, EpisodeKey(1, 4))
+
+
+def test_a_renumbered_sonarr_episode_keeps_everything_but_its_numbers() -> None:
+    row = SonarrEpisode.model_validate(
+        {
+            "id": 7,
+            "seasonNumber": 1,
+            "episodeNumber": 4,
+            "absoluteEpisodeNumber": 4,
+            "title": "Fourth",
+            "tvdbId": 9001,
+            "airDate": "2020-08-29",
+            "runtime": 24,
+            "monitored": False,
+            "episodeFileId": 3,
+            "episodeFile": {"releaseGroup": "grp", "size": 5},
+        }
+    )
+
+    renumbered = row.renumbered(season=2, episode=1, absolute=None)
+
+    kept = row.model_copy(update={"season_number": 2, "episode_number": 1, "absolute_episode_number": None})
+    assert renumbered.model_dump() == kept.model_dump()
+
+
+def test_no_key_of_sonarrs_json_fills_the_number_an_episode_is_listed_under() -> None:
+    episode = SonarrEpisode.model_validate(
+        {"id": 7, "seasonNumber": 2, "episodeNumber": 1, "listed_as": [1, 4], "listedAs": [1, 4], "_listed_as": [1, 4]}
+    )
+
+    assert episode.listed_as is None
 
 
 def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -> None:

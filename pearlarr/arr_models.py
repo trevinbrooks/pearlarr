@@ -6,7 +6,16 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Any, Protocol, Self, cast, runtime_checkable
 
-from pydantic import AliasChoices, AliasPath, BeforeValidator, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    AliasPath,
+    BeforeValidator,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .boundary import (
     ApiModel,
@@ -207,9 +216,37 @@ class SonarrEpisode(ApiModel):
         validation_alias="episodeFile",
     )
     """An empty/null `episodeFile` reduces to `None`."""
-    listed_as: EpisodeKey | None = None
-    """The number Sonarr lists the episode under, on a row `aired_view` renumbered as aired. None on a row as Sonarr
-    sent it and on a stand-in. Only `aired_view` sets it."""
+    _listed_as: EpisodeKey | None = PrivateAttr(default=None)
+    """What `listed_as` answers. No field, so no key of Sonarr's JSON can fill it: only `renumbered` sets it."""
+
+    @property
+    def listed_as(self) -> EpisodeKey | None:
+        """The number Sonarr lists the episode under, on a row renumbered as aired (`renumbered`).
+
+        None on a row as Sonarr sent it and on a stand-in.
+        """
+
+        return self._listed_as
+
+    def renumbered(self, *, season: int, episode: int, absolute: int | None) -> Self:
+        """A copy of the row under another number, which remembers the one it has here as `listed_as`.
+
+        The copy has no scene numbers: they were given to the row under this number, so under the other they may
+        be another episode's.
+        """
+
+        renumbered = self.model_copy(
+            update={
+                "season_number": season,
+                "episode_number": episode,
+                "absolute_episode_number": absolute,
+                "scene_season_number": None,
+                "scene_episode_number": None,
+                "scene_absolute_episode_number": None,
+            }
+        )
+        renumbered._listed_as = season_episode_key(self.season_number, self.episode_number)
+        return renumbered
 
 
 def episode_sort_key(episode: SonarrEpisode) -> tuple[int, int]:

@@ -14,7 +14,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import override
 
-from .aired_view import NoView, printed_key
+from .aired_view import NoView
 from .anibridge import TvdbMappings, season_holds
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
@@ -26,6 +26,7 @@ from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
 from .output import Severity, hub_note
 from .placement_types import EpisodeIndex, episode_index
 from .progress import ProgressCallback
+from .releases import PrintedKey
 from .series_reads import SeriesReads
 from .sonarr_client import AbstractSonarrClient
 from .specials_by_date import specials_by_date
@@ -105,11 +106,11 @@ def check_ep_by_anibridge(
 
 
 def _dated(episodes: Iterable[SonarrEpisode]) -> str:
-    """The episodes for a log line, each as the number it prints by (`printed_key`) and its air date, comma-joined."""
+    """The episodes for a log line, each as the number it prints by (`PrintedKey.of`) and its air date, comma-joined."""
 
     dated: list[str] = []
     for ep in episodes:
-        printed = printed_key(ep)
+        printed = PrintedKey.of(ep)
         # A number marked as aired says the word itself.
         date = f"on {ep.air_date}" if printed.aired else f"aired {ep.air_date}"
         dated.append(f"{printed.label} ({date})")
