@@ -139,8 +139,8 @@ class _LibrarySeries:
 _NOT_IN_LIBRARY = _LibrarySeries(SonarrSeriesOrders(tvdb_id=0, season_type="", counts=None))
 """A series this run's library read doesn't have: it names no order and has no other names."""
 
-_GONE = AiredSeries(order="", in_sonarr=(), stand_ins=())
-"""The view of a series Sonarr answers it doesn't have: no episodes, under no order."""
+_GONE = AiredSeries(in_sonarr=(), stand_ins=())
+"""The view of a series Sonarr answers it doesn't have: no episodes."""
 
 
 class _Numbering(Enum):
@@ -176,9 +176,6 @@ def series_orders(series: SonarrItem) -> SonarrSeriesOrders:
 @dataclass(frozen=True, slots=True)
 class TitleEpisodes:
     """One title's episodes of its series, numbered as aired."""
-
-    order: str
-    """The order Sonarr numbers the series by (`AiredSeries.order`)."""
 
     aired: tuple[SonarrEpisode, ...]
     """Every aired episode of the title, a stand-in for each one Sonarr has no row for."""
@@ -846,14 +843,14 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
                 # AniBridge mapping without TVDB mappings (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
                 # Return none. check_title surfaces NO_EPISODES + the AniBridge warning.
-                return TitleEpisodes(order=view.order, aired=())
+                return TitleEpisodes(aired=())
             mapped = [ep for ep in series_episodes if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
             if not tvdb_mappings:
                 # AniBridge attached no usable per-season ranges, so nothing resolves.
                 # Return empty. check_title surfaces the visible NO_EPISODES row.
-                return TitleEpisodes(order=view.order, aired=())
+                return TitleEpisodes(aired=())
             mapped = [ep for ep in series_episodes if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
@@ -901,7 +898,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
                 mapping=mapping,
             )
 
-        return TitleEpisodes(order=view.order, aired=tuple(self._picked_by_date(anilist_id, mapped, series_episodes)))
+        return TitleEpisodes(aired=tuple(self._picked_by_date(anilist_id, mapped, series_episodes)))
 
     def _picked_by_date(
         self, anilist_id: int, mapping_episodes: list[SonarrEpisode], series_episodes: Sequence[SonarrEpisode]

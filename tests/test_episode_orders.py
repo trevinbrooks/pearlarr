@@ -165,7 +165,7 @@ def test_a_series_not_numbered_by_another_order_is_served_sonarrs_rows_as_sent(
     index = strat._episodes.series_index(series_id)
 
     assert isinstance(view, AiredSeries)
-    assert (view.order, view.aired) == (order, tuple(_ROWS))
+    assert (strat._episodes.library_orders(series_id).season_type, view.aired) == (order, tuple(_ROWS))
     assert index is not None
     assert (set(index.by_id), set(index.orders)) == ({11, 12}, other_orders)
 
@@ -183,7 +183,6 @@ def test_a_series_numbered_by_another_order_is_served_as_aired_with_its_stored_o
     index = strat._episodes.series_index(1)
 
     assert isinstance(view, AiredSeries)
-    assert view.order == "dvd"
     assert _numbered(view.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
     assert index is not None
     assert index.id_by_key == {(1, 1): 12, (1, 2): 11, (1, 3): -9003}
@@ -202,7 +201,6 @@ def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_o
     title = strat._episodes.title_episodes(1, 500, _SEASON_ONE)
 
     assert not isinstance(title, NoView)
-    assert title.order == "dvd"
     assert _numbered(title.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
     assert _numbered(title.in_sonarr) == [(12, (1, 1)), (11, (1, 2))]
     assert title.index().by_id[-9003] == stand_in_ep(1, 3, tvdb_id=9003).model_copy(
@@ -329,7 +327,7 @@ def test_a_sonarr_that_sends_no_order_is_never_asked_for_a_series_alone(monkeypa
 
     views = [strat._episodes.aired_series(series_id) for series_id in (1, 2)]
 
-    assert views == [AiredSeries(order="official", in_sonarr=tuple(_ROWS), stand_ins=())] * 2
+    assert views == [AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())] * 2
     assert sonarr.series_calls == []
 
 
@@ -355,7 +353,7 @@ def test_a_series_both_reads_say_is_aired_is_read_alone_once_for_a_read_of_its_r
     first = strat._episodes.title_episodes(1, 500, _SEASON_ONE)
     second = strat._episodes.title_episodes(1, 501, TitleMapping(anilist_id=501, tvdb_season=1))
 
-    assert first == TitleEpisodes(order="official", aired=tuple(_ROWS))
+    assert first == TitleEpisodes(aired=tuple(_ROWS))
     assert second == first
     assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
 
@@ -402,7 +400,6 @@ def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_s
     view = strat._episodes.aired_series(1)
 
     assert isinstance(view, AiredSeries)
-    assert view.order == "dvd"
     assert _numbered(view.aired) == [(11, (1, 1)), (12, (1, 2)), (-9003, (1, 3))]
     assert sonarr.series_calls == []
 
@@ -428,7 +425,7 @@ def test_a_failed_read_of_a_series_alone_gives_no_view_and_the_next_call_asks_ag
     view = strat._episodes.aired_series(1)
 
     assert failed is NoView.READ_FAILED
-    assert view == AiredSeries(order="official", in_sonarr=tuple(_ROWS), stand_ins=())
+    assert view == AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())
     assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1, 1])
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -447,7 +444,7 @@ def test_a_series_sonarr_answers_it_does_not_have_has_no_episodes(
 
     view = strat._episodes.aired_series(1)
 
-    assert view == AiredSeries(order="", in_sonarr=(), stand_ins=())
+    assert view == AiredSeries(in_sonarr=(), stand_ins=())
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
@@ -543,7 +540,6 @@ def test_a_series_with_no_anilist_mapping_is_read_by_the_order_the_library_read_
     assert strat._episodes.series_hash == sonarr_series_hash([1])
     assert sonarr.all_series_calls == 1
     assert isinstance(view, AiredSeries)
-    assert view.order == "dvd"
     assert _numbered(view.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
 
 
@@ -673,7 +669,7 @@ def test_rows_out_of_step_with_an_answer_from_an_earlier_run_are_tested_again_by
 
     view = strat._episodes.aired_series(1)
 
-    assert view == AiredSeries(order="official", in_sonarr=tuple(_DVD_ROWS), stand_ins=())
+    assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
     assert client.fetch_calls == [(50, "official")]
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
@@ -698,7 +694,7 @@ def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come(monkeypatc
 
     view = strat._episodes.aired_series(1)
 
-    assert view == AiredSeries(order="official", in_sonarr=tuple(_DVD_ROWS), stand_ins=())
+    assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
     assert client.fetch_calls == []
 
 
@@ -792,7 +788,7 @@ def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come(monkeypatc
     view = strat._episodes.aired_series(1)
 
     assert rows == _DVD_ROWS
-    assert view == AiredSeries(order="official", in_sonarr=tuple(_DVD_ROWS), stand_ins=())
+    assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
     assert (sonarr.series_calls, client.fetch_calls) == ([], [])
 
 

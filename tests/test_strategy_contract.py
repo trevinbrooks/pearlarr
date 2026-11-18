@@ -3242,9 +3242,7 @@ def _check_title_in_another_order(
         _config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
         logger=make_logger(),
     )
-    strat.check_title(
-        _Item(id=7, title="Show", tvdbId=70, imdbId=None, seasonType="dvd"), 5, TitleMapping(anilist_id=5)
-    )
+    strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
     return run, episodes
 
 
@@ -3350,12 +3348,12 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), no_views={7: reason}),
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason}),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
 
-        strat.check_title(_Item(id=7, title="Show", seasonType="dvd"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(_Item(id=7, title="Show"), 5, TitleMapping(anilist_id=5))
 
         (warning,) = diagnostic_messages(recording, Severity.WARNING)
         assert warning == (
@@ -3702,9 +3700,7 @@ class TestSonarrCheckTitleMetadataUnread:
             SonarrStrategy, _services=run, _episodes=episodes, _config=make_config(sleep_time=0), logger=make_logger()
         )
 
-        strat.check_title(
-            _Item(id=7, title="Show", tvdbId=70, imdbId=None, seasonType="dvd"), 5, TitleMapping(anilist_id=5)
-        )
+        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
 
         assert [anilist_id for anilist_id, _ in run.nothing_to_grab_calls] == [5]
         assert run.nothing_to_grab_unread == unread

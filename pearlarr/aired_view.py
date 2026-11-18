@@ -37,9 +37,6 @@ class AiredSeries:
     episode id, and the aired episodes are `in_sonarr` plus `stand_ins`.
     """
 
-    order: str
-    """The order Sonarr numbers the series by (`seasonType`)."""
-
     in_sonarr: tuple[SonarrEpisode, ...]
     """Sonarr's episodes, numbered as aired. For a series in aired order they are Sonarr's rows as sent."""
 
@@ -124,7 +121,7 @@ def aired_series(
     """
 
     if not facts.in_another_order:
-        return AiredSeries(order=facts.season_type, in_sonarr=tuple(rows), stand_ins=())
+        return AiredSeries(in_sonarr=tuple(rows), stand_ins=())
     if stored is None or (aired := stored.aired) is None or not aired.rows:
         return NoView.ORDERS_UNREAD
     by_tvdb = _one_per_number(aired.rows)
@@ -147,7 +144,6 @@ def aired_series(
     )
     held = {ep.tvdb_id for ep in in_sonarr}
     return AiredSeries(
-        order=facts.season_type,
         in_sonarr=tuple(in_sonarr),
         # Every aired row was stored with its details, from one reply.
         stand_ins=tuple(
