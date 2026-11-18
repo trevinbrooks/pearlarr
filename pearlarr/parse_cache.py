@@ -1,4 +1,6 @@
-"""The Sonarr parse cache's rows: one file name's whole `/parse`, its freshness, and the unmatched parse's expiry.
+"""The Sonarr parse cache's rows: one file name's whole `/parse` and its freshness.
+
+A parse with matched episodes and one with none expire by different rules (`_parse_is_fresh`).
 
 `ParseCacheRows` is bound once on `ArrRunDeps`, and `SonarrParseCache` reads one
 `ParsedFileInfo` per file through it under one freshness rule.
@@ -22,10 +24,11 @@ from .stamps import stamp_of
 # forever. Re-validate monthly so such a row is parsed again.
 SONARR_PARSE_CACHE_TTL_DAYS = 30
 
-# How long an UNMATCHED parse (Sonarr matched no series) stays usable. Pinned to
-# the series-id set (see sonarr_episodes.sonarr_series_hash) so adding the
-# series makes it stale. This TTL is only a backstop, so it is short.
-SONARR_PARSE_UNMATCHED_TTL_DAYS = 7
+# How long a parse with no matched episodes stays usable, whether Sonarr matched
+# the name to no series or to a series and none of its episodes. Pinned to the
+# series-id set (see sonarr_episodes.sonarr_series_hash) so adding a series makes
+# it stale. Nothing tells when a series gains the episode, so this TTL is short.
+SONARR_PARSE_NO_EPISODES_TTL_DAYS = 7
 
 
 class ParseFreshness(NamedTuple):
@@ -40,13 +43,14 @@ class ParseFreshness(NamedTuple):
     """Stamps new rows."""
 
     matched_cutoff: datetime
-    """Bounds a matched row's TTL."""
+    """Bounds the TTL of a row with matched episodes."""
 
-    unmatched_cutoff: datetime
-    """The short unmatched-row backstop."""
+    no_episodes_cutoff: datetime
+    """The short backstop of a row with no matched episodes."""
 
     series_hash: str
-    """Pins unmatched rows to the current series-id set (so a newly-added series' files are parsed again)."""
+    """Pins rows with no matched episodes to the current series-id set (so a newly-added series' files are parsed
+    again)."""
 
     series_orders: Mapping[int, str]
     """Series id -> the order Sonarr numbers it by, for each series in an order other than the aired one."""
@@ -59,7 +63,7 @@ class ParseFreshness(NamedTuple):
         return cls(
             now_str=stamp_of(now),
             matched_cutoff=now - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
-            unmatched_cutoff=now - timedelta(days=SONARR_PARSE_UNMATCHED_TTL_DAYS),
+            no_episodes_cutoff=now - timedelta(days=SONARR_PARSE_NO_EPISODES_TTL_DAYS),
             series_hash=series_hash,
             series_orders=series_orders,
         )
@@ -81,8 +85,8 @@ class ParseCacheRow(TypedDict):
     episodes."""
 
     series_fp: NotRequired[str]
-    """`NotRequired` because only an UNMATCHED row carries it (pinning it to the series-id set), and the
-    freshness check dispatches on exactly that presence."""
+    """`NotRequired` because only a row with no matched episodes carries it (pinning it to the series-id set), and
+    the freshness check dispatches on exactly that presence."""
 
     series_order: NotRequired[str]
     """The order the parse's series was numbered by when the row was stored. `NotRequired` because only a parse of
@@ -128,9 +132,10 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
     older build wrote before the field existed. The model would read a missing field as its default, so only this
     check re-parses the row, and the cache warm-up sees it stale too. So is a row whose series is numbered by
     another order than the row was stored under, either way round: Sonarr matched the name by the numbers of the
-    order the series was in. MATCHED (no `series_fp`): valid for the 30-day `window.matched_cutoff`. UNMATCHED:
-    valid only while the series-id set is unchanged (matching `window.series_hash`) and within the short
-    `window.unmatched_cutoff` backstop, so a newly-added series' files are parsed again.
+    order the series was in. A row with matched episodes (no `series_fp`) is valid for the 30-day
+    `window.matched_cutoff`. One with none is valid only while the series-id set is unchanged (matching
+    `window.series_hash`) and within the short `window.no_episodes_cutoff` backstop, so a newly-added series'
+    files are parsed again.
     """
 
     parse = row.get("parse")
@@ -141,7 +146,7 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
     stamped = cast("dict[str, Any]", row)
     if "series_fp" not in row:
         return stamp_is_fresh(stamped, window.matched_cutoff)
-    return row["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.unmatched_cutoff)
+    return row["series_fp"] == window.series_hash and stamp_is_fresh(stamped, window.no_episodes_cutoff)
 
 
 class ParseCacheRows:
@@ -169,7 +174,7 @@ class ParseCacheRows:
         return parse_from_json(row)
 
     def write(self, filename: str, info: ParsedFileInfo, *, window: ParseFreshness) -> None:
-        """Upsert one parse. An UNMATCHED parse (no matched episodes) is pinned to the series hash.
+        """Upsert one parse. One with no matched episodes is pinned to the series hash.
 
         A parse of a series in an order other than the aired one is stored with that order.
         """
