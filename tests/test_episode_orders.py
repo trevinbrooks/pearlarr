@@ -40,7 +40,7 @@ from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.sonarr_episodes import TitleEpisodes, _dated, sonarr_series_hash
-from pearlarr.sonarr_matching import AiredMatcher, NoAnswer
+from pearlarr.sonarr_matching import AiredMatcher
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import EpisodeDetails, OrderRow, SeriesNumbering
 from pearlarr.wait_types import ImportWaitMode
@@ -499,7 +499,7 @@ def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_rele
 
     assert set(indexes) == {2}
     assert listed.order(title_window(600, (11, 12), series_id=2)) is None
-    assert strat._episodes.aired_parse(named_as_series_one) is NoAnswer.EPISODES_UNREAD
+    assert strat._episodes.aired_parse(named_as_series_one) is NoView.READ_FAILED
 
 
 def test_a_view_built_after_the_imports_read_of_a_series_reads_it_alone_once_more(
@@ -716,7 +716,7 @@ def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer(monkeypatc
         series_id=1,
     )
 
-    assert strat._episodes.aired_parse(info) is NoAnswer.EPISODES_UNREAD
+    assert strat._episodes.aired_parse(info) is NoView.READ_FAILED
 
 
 def test_the_import_reads_rows_numbered_by_the_order_sonarr_names_once_it_has_sent_them(

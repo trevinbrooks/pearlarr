@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import assert_never, override
+from typing import override
 
 from . import aired_view as _aired_view
 from .aired_view import AiredSeries, NoView, is_stand_in, printed_key
@@ -240,7 +240,7 @@ class EpisodeSource(ABC):
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]: ...
 
     @abstractmethod
-    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer: ...
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer | NoView: ...
 
     @abstractmethod
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles: ...
@@ -724,14 +724,14 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         return self._library_series(series_id).alternate_titles
 
     @override
-    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer:
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer | NoView:
         """The parse with the matched episodes an aired Sonarr gives it, or why its answer can't be known.
 
         Only a parse Sonarr matched to a series it numbers by another order changes. Sonarr matched that name by
         its own order's numbers, so its matched episodes are never passed on: they are matched again over the
         series' aired view (`aired_series`, which fetches a series the run hasn't read), by the series' alternate
-        titles (`AiredMatcher`), and one may be a stand-in. A parse of a series held for the run (`_hold`) has no
-        answer.
+        titles (`AiredMatcher`), and one may be a stand-in. A series with no aired view answers why it has none,
+        and so does a parse of a series held for the run (`_hold`).
         """
 
         series_id = info.series_id
@@ -739,25 +739,18 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
             return info
         if series_id in self._held:
             # Asked first: Sonarr may have matched the name by an order the library read doesn't know of.
-            return NoAnswer.EPISODES_UNREAD
+            return NoView.READ_FAILED
         series = self._library_series(series_id)
         if not series.orders.in_another_order:
             return info
         view = self.aired_series(series_id)
-        match view:
-            case NoView.READ_FAILED:
-                return NoAnswer.EPISODES_UNREAD
-            case NoView.ORDERS_UNREAD:
-                return NoAnswer.ORDERS_UNREAD
-            case NoView.SCENE_UNREAD:
-                return NoAnswer.SCENE_UNREAD
-            case AiredSeries():
-                read = self._series[series_id]
-                if read.matcher is None:
-                    read.matcher = AiredMatcher.of(view, series.alternate_titles)
-                matched = read.matcher.matches(info)
-                return matched if isinstance(matched, NoAnswer) else info.with_matched(matched)
-        assert_never(view)
+        if isinstance(view, NoView):
+            return view
+        read = self._series[series_id]
+        if read.matcher is None:
+            read.matcher = AiredMatcher.of(view, series.alternate_titles)
+        matched = read.matcher.matches(info)
+        return matched if isinstance(matched, NoAnswer) else info.with_matched(matched)
 
     def _read(self, series_id: int) -> _SeriesRead | None:
         """What the run holds of the series, its rows fetched when it holds none. None when the fetch failed."""

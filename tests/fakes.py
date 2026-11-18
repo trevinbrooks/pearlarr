@@ -851,7 +851,7 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
         return ()
 
     @override
-    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer:
+    def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer | NoView:
         """The parse as it is: a scripted parse is one an aired Sonarr gives."""
 
         return info
