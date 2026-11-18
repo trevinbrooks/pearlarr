@@ -24,6 +24,7 @@ from .arr_models import (
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
+    episode_sort_key,
 )
 from .boundary import validate_each, validation_summary
 from .output import hub_warn
@@ -145,13 +146,7 @@ class SonarrClient(AbstractSonarrClient):
             return None
 
         episodes = validate_each(SonarrEpisode, raw)
-        # An episode missing either number sorts first (-1), never a None<int TypeError.
-        episodes.sort(
-            key=lambda ep: (
-                ep.season_number if ep.season_number is not None else -1,
-                ep.episode_number if ep.episode_number is not None else -1,
-            ),
-        )
+        episodes.sort(key=episode_sort_key)
         return episodes
 
     @override

@@ -147,7 +147,11 @@ class SonarrEpisodeFile(ApiModel):
 
 
 class SonarrEpisode(ApiModel):
-    """One Sonarr `/api/v3/episode` resource."""
+    """One episode of a Sonarr series, as `/api/v3/episode` sends it.
+
+    For a series Sonarr numbers by another TVDB order, `aired_view` renumbers the row as aired, and builds a row
+    in this shape for an aired episode Sonarr has none for (`aired_view.stand_in`).
+    """
 
     id: int = 0
     season_number: int | None = Field(default=None, validation_alias="seasonNumber")
@@ -168,6 +172,15 @@ class SonarrEpisode(ApiModel):
         validation_alias="episodeFile",
     )
     """An empty/null `episodeFile` reduces to `None`."""
+
+
+def episode_sort_key(episode: SonarrEpisode) -> tuple[int, int]:
+    """The order a series' episodes are kept in: by season, then episode, one missing either number first."""
+
+    return (
+        episode.season_number if episode.season_number is not None else -1,
+        episode.episode_number if episode.episode_number is not None else -1,
+    )
 
 
 def index_episodes_by_key(episodes: Iterable[SonarrEpisode]) -> dict[EpisodeKey, SonarrEpisode]:
