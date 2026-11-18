@@ -9,7 +9,7 @@ from pearlarr.aired_view import AiredSeries, stand_in
 from pearlarr.arr_models import AlternateTitle, MatchedEpisode, SonarrEpisode
 from pearlarr.sonarr_accents import UNACCENTED
 from pearlarr.sonarr_matching import AiredMatcher, NoAnswer, sonarr_title_key
-from pearlarr.tvdb_orders import AIRED_ORDER, EpisodeDetails, OrderRow
+from pearlarr.tvdb_orders import EpisodeDetails, OrderRow
 
 from .builders import parsed_info, sonarr_ep
 
@@ -28,7 +28,7 @@ def _alias(
 
 
 def _matcher(rows: Sequence[SonarrEpisode], *aliases: AlternateTitle) -> AiredMatcher:
-    return AiredMatcher.of(AiredSeries(order=AIRED_ORDER, in_sonarr=tuple(rows), stand_ins=()), aliases)
+    return AiredMatcher.of(AiredSeries(in_sonarr=tuple(rows), stand_ins=()), aliases)
 
 
 def _ids(answer: tuple[MatchedEpisode, ...] | NoAnswer) -> list[int | None]:
@@ -283,7 +283,7 @@ def test_a_row_with_no_numbers_is_never_matched() -> None:
 
 def test_a_stand_in_matches_like_one_of_sonarrs_rows() -> None:
     missing = stand_in(OrderRow(1, 2, 902, 2), EpisodeDetails(title="Second", air_date=None, runtime=24))
-    view = AiredSeries(order="dvd", in_sonarr=(sonarr_ep(1, 1, ep_id=11),), stand_ins=(missing,))
+    view = AiredSeries(in_sonarr=(sonarr_ep(1, 1, ep_id=11),), stand_ins=(missing,))
 
     assert _ids(AiredMatcher.of(view, ()).matches(parsed_info(season=1, episodes=(1, 2)))) == [11, -902]
 

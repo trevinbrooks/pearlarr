@@ -814,7 +814,7 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
             episodes = self._windows.get(anilist_id)
             if episodes is None:
                 return NoView.READ_FAILED
-        return TitleEpisodes(order=self._order, aired=tuple(episodes))
+        return TitleEpisodes(aired=tuple(episodes))
 
     @override
     def series_index(self, series_id: int) -> EpisodeIndex | None:

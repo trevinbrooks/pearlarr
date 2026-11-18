@@ -60,7 +60,7 @@ def test_a_series_in_aired_order_keeps_sonarrs_rows_untouched(season_type: str) 
     view = aired_series(rows, _facts(season_type), stored_orders({AIRED_ORDER: _AIRED}, details=_DETAILS))
 
     assert isinstance(view, AiredSeries)
-    assert (view.order, view.in_sonarr, view.stand_ins, view.aired) == (season_type, tuple(rows), (), tuple(rows))
+    assert (view.in_sonarr, view.stand_ins, view.aired) == (tuple(rows), (), tuple(rows))
     assert view.own_only == ()
 
 
@@ -108,7 +108,6 @@ def test_scene_numbers_are_set_by_aired_number_on_the_rows_and_stand_ins_they_na
     assert numbered.in_sonarr[0] == view.in_sonarr[0].model_copy(
         update={"scene_season_number": 1, "scene_episode_number": 2, "scene_absolute_episode_number": 2}
     )
-    assert numbered.order == view.order
 
 
 def test_a_row_only_the_series_own_order_lists_is_left_out() -> None:

@@ -36,7 +36,7 @@ from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes, TitleEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_parse import SonarrParseCache
-from .tvdb_orders import is_another_order, order_display_name
+from .tvdb_orders import SonarrSeriesOrders, order_display_name
 from .wait_types import AttemptKind, AttemptResult, EffectStatus, ImportProgress, ImportWaitMode
 
 
@@ -88,6 +88,17 @@ def _unstored_warning(reason: NoView, title_name: str, order: str) -> str | None
         case NoView.SCENE_UNREAD:
             return f"{numbered} and the series' scene numbers from TheXEM are not stored yet - checking again next run"
     assert_never(reason)
+
+
+def _store_numbering(update: CachedTitleUpdate, orders: SonarrSeriesOrders) -> None:
+    """Add to a title's cache update how its series was numbered for this check.
+
+    That is the library read's order and episode count, which the next run's start compares with its own
+    (`SonarrStrategy._renumbered_titles`).
+    """
+
+    update["season_type"] = orders.season_type
+    update["series_row_count"] = orders.row_count
 
 
 def _file_and_why(placement: Placement) -> str:
@@ -265,16 +276,19 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         it stores. One with a series that couldn't be read is left for the next run.
         """
 
-        views = [self._episodes.aired_series(series_id) for series_id in pending.series_ids]
-        if any(isinstance(view, AiredSeries) and is_another_order(view.order) for view in views):
+        views = {series_id: self._episodes.aired_series(series_id) for series_id in pending.series_ids}
+        if any(
+            isinstance(view, AiredSeries) and self._episodes.library_orders(series_id).in_another_order
+            for series_id, view in views.items()
+        ):
             self._drop_unless_imported(
                 pending,
                 "its episodes were matched before pearlarr could read the order Sonarr numbers its series by - "
                 "checking its titles again (episodes it already imported may be on the wrong episodes)",
             )
             return
-        rows = [self._episodes.last_known_episodes(series_id) for series_id in pending.series_ids]
-        if not all(rows) or any(isinstance(view, NoView) for view in views):
+        rows = [self._episodes.last_known_episodes(series_id) for series_id in views]
+        if not all(rows) or any(isinstance(view, NoView) for view in views.values()):
             return
         sent = [row for series_rows in rows for row in series_rows]
         if not pending.row_ids() <= {row.id for row in sent}:
@@ -398,11 +412,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Setup info for cache
         update = services.new_cached_title_update(title, sd_entry)
 
+        orders = self._episodes.library_orders(sonarr_series_id)
+
         # Get the title's episodes, numbered as aired whatever order Sonarr numbers the series by
         title_episodes = self._episodes.title_episodes(sonarr_series_id, anilist_id, mapping)
 
         if isinstance(title_episodes, NoView):
-            warning = _unstored_warning(title_episodes, title.name, item.seasonType)
+            warning = _unstored_warning(title_episodes, title.name, orders.season_type)
             if warning is not None:
                 # Nothing is placed or cached, so the next run checks the title again.
                 hub_warn(warning)
@@ -419,13 +435,13 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 # Only another numbering of the series or a changed entry can give the title an episode, and
                 # each checks it again. So it is cached, and the warning isn't repeated on every run.
                 hub_warn(
-                    f"Sonarr's {order_display_name(title_episodes.order)} order of the series has none of "
+                    f"Sonarr's {order_display_name(orders.season_type)} order of the series has none of "
                     f"{title.name}'s episodes - not checked again until the series' order, its episode count or the "
                     "title's SeaDex entry changes"
                 )
                 update["coverage"] = ""
                 update["url"] = sd_url
-                self._store_numbering(update, sonarr_series_id, title_episodes)
+                _store_numbering(update, orders)
                 services.cache_nothing_to_grab(
                     anilist_id, update, metadata_unread=self._episodes.metadata_unread([anilist_id])
                 )
@@ -458,9 +474,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         )
         update["coverage"] = coverage
         update["url"] = sd_url
-        self._store_numbering(update, sonarr_series_id, title_episodes)
-        if is_another_order(title_episodes.order):
-            services.log_numbered_as_aired(title_episodes.order)
+        _store_numbering(update, orders)
+        if orders.in_another_order:
+            services.log_numbered_as_aired(orders.season_type)
 
         self._report_missing_episodes(in_sonarr)
         sonarr_files = self._episodes.sonarr_files(in_sonarr)
@@ -572,16 +588,6 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 metadata_unread=self._episodes.metadata_unread(resolved.kept_and_ignored, series_ids),
             ),
         )
-
-    def _store_numbering(self, update: CachedTitleUpdate, series_id: int, title_episodes: TitleEpisodes) -> None:
-        """Add to a title's cache update how its series was numbered for this check.
-
-        That is the order its episodes were read under and the library read's episode count, which the next run's
-        start compares with its own (`_renumbered_titles`).
-        """
-
-        update["season_type"] = title_episodes.order
-        update["series_row_count"] = self._episodes.library_orders(series_id).row_count
 
     def _report_missing_episodes(self, title_episodes: Sequence[SonarrEpisode]) -> None:
         """Report the title's episodes in Sonarr that have no file."""
