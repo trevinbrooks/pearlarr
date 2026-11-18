@@ -42,7 +42,10 @@ def _numbers(episodes: tuple[SonarrEpisode, ...]) -> list[tuple[int, int | None,
 @pytest.mark.parametrize("season_type", [AIRED_ORDER, ""])
 def test_a_series_in_aired_order_keeps_sonarrs_rows_untouched(season_type: str) -> None:
     # The stored aired order numbers these episodes differently and lists one more. None of it is read.
-    rows = [sonarr_ep(1, 2, ep_id=7, tvdb_id=101, absolute=9), sonarr_ep(1, 1, ep_id=8, tvdb_id=102)]
+    rows = [
+        sonarr_ep(1, 2, ep_id=7, tvdb_id=101, absolute=9, scene_season=2, scene_episode=1, scene_absolute=9),
+        sonarr_ep(1, 1, ep_id=8, tvdb_id=102),
+    ]
 
     view = aired_series(rows, _facts(season_type), stored_orders({AIRED_ORDER: _AIRED}, details=_DETAILS))
 
@@ -61,6 +64,17 @@ def test_a_row_takes_the_aired_numbers_of_its_tvdb_episode_and_keeps_the_rest() 
 
     assert _numbers(view.in_sonarr) == [(8, 1, 1, 1), (7, 1, 2, 2)]
     assert view.in_sonarr[1] == rows[0].model_copy(update={"episode_number": 2, "absolute_episode_number": 2})
+
+
+def test_a_renumbered_row_loses_its_scene_numbers() -> None:
+    rows = [sonarr_ep(1, 1, ep_id=7, tvdb_id=102, scene_season=1, scene_episode=1, scene_absolute=1)]
+
+    (renumbered,) = _view(rows).in_sonarr
+
+    assert (renumbered.season_number, renumbered.episode_number) == (1, 2)
+    assert renumbered.scene_season_number is None
+    assert renumbered.scene_episode_number is None
+    assert renumbered.scene_absolute_episode_number is None
 
 
 def test_a_row_only_the_series_own_order_lists_is_left_out() -> None:

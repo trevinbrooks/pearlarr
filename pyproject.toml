@@ -218,7 +218,9 @@ exclude_also = [
 skip = "./.git,./.venv,./uv.lock,./tests/fixtures,./docs/assets,./htmlcov"
 # strat = the hypothesis-strategy naming convention. unparseable = the house
 # spelling (matches PARSEABLE_TRACKERS). disjointness = the set-theory term.
-ignore-words-list = "strat,unparseable,disjointness"
+# nd = the Unicode category of a decimal digit. ue = a plain spelling in the
+# accent table (sonarr_accents.py).
+ignore-words-list = "strat,unparseable,disjointness,nd,ue"
 
 [tool.ruff]
 line-length = 120

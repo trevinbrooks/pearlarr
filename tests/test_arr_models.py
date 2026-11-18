@@ -25,6 +25,24 @@ def test_sonarr_episode_reads_its_air_date_and_runtime() -> None:
     assert (episode.air_date, episode.runtime) == (date(2020, 8, 29), 95)
 
 
+def test_sonarr_episode_reads_its_scene_numbers_and_a_missing_or_junk_one_as_none() -> None:
+    numbered = SonarrEpisode.model_validate(
+        {"sceneSeasonNumber": 2, "sceneEpisodeNumber": 5, "sceneAbsoluteEpisodeNumber": 17}
+    )
+    junk = SonarrEpisode.model_validate({"sceneSeasonNumber": None, "sceneEpisodeNumber": "five"})
+
+    assert (numbered.scene_season_number, numbered.scene_episode_number, numbered.scene_absolute_episode_number) == (
+        2,
+        5,
+        17,
+    )
+    assert (junk.scene_season_number, junk.scene_episode_number, junk.scene_absolute_episode_number) == (
+        None,
+        None,
+        None,
+    )
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -115,6 +133,13 @@ def test_an_alternate_title_with_junk_season_fields_keeps_its_name() -> None:
     raw = {"title": "To Glimmer-Zu", "sceneSeasonNumber": "two", "seasonNumber": None, "sceneOrigin": 7}
 
     assert AlternateTitle.model_validate(raw) == AlternateTitle(title="To Glimmer-Zu")
+
+
+def test_an_alternate_title_reads_its_comment_and_a_null_one_as_blank() -> None:
+    noted = AlternateTitle.model_validate({"title": "To Glimmer-Zu", "comment": "Limited matching"})
+
+    assert noted.comment == "Limited matching"
+    assert AlternateTitle.model_validate({"title": "To Glimmer-Zu", "comment": None}).comment == ""
 
 
 def test_parsed_file_info_null_number_arrays_reduce_to_empty() -> None:

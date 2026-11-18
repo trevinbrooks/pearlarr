@@ -71,6 +71,8 @@ class AlternateTitle(ApiModel):
     """The TVDB season that season is. None or -1 when the name maps no season."""
     scene_origin: BlankStr = Field(default="", validation_alias="sceneOrigin")
     """`tvdb` when releases under the name are numbered as TVDB numbers the series."""
+    comment: BlankStr = ""
+    """Sonarr's note on the name. Never blank on a name Sonarr reads only some releases by."""
 
 
 @runtime_checkable
@@ -164,6 +166,12 @@ class SonarrEpisode(ApiModel):
     episode_number: int | None = Field(default=None, validation_alias="episodeNumber")
     absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
     """The series-wide number TVDB gives the episode (specials interleaved), when it has one."""
+    scene_season_number: LenientInt = Field(default=None, validation_alias="sceneSeasonNumber")
+    """The season releases number the episode in, when Sonarr holds scene numbers for it."""
+    scene_episode_number: LenientInt = Field(default=None, validation_alias="sceneEpisodeNumber")
+    """The episode number releases give it within that season."""
+    scene_absolute_episode_number: LenientInt = Field(default=None, validation_alias="sceneAbsoluteEpisodeNumber")
+    """The series-wide number releases give it."""
     title: str = ""
     tvdb_id: int | None = Field(default=None, validation_alias="tvdbId")
     """TVDB's episode id, the key a TVDB order's rows join on."""
