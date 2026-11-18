@@ -67,7 +67,7 @@ from pearlarr.paths import DATA_DIR_ENV
 from pearlarr.pending_import import PendingImport, TitleClaim, TitleNames
 from pearlarr.stamps import stamp_of
 
-from .builders import make_config
+from .builders import make_config, rows_without_tvdb_ids
 from .http_mock import sonarr_fixture
 
 _COMMAND_ID = re.compile(r"/api/v3/command/(\d+)")
@@ -680,6 +680,7 @@ def _plant_pending_import(cache_path: Path, config_hash: str, scenario: _Scenari
         file_episode_map={normalize_file_name(name): (ep_id,) for ep_id, name in named} if mapped else {},
         excluded_files=tuple(normalize_file_name(name) for name in siblings),
         claims=(claim,),
+        tvdb_ids=rows_without_tvdb_ids({}, (claim,)),
     )
     store = CacheStore.load(str(cache_path), config_hash=config_hash)
     try:

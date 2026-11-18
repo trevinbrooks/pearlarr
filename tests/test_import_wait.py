@@ -38,7 +38,7 @@ from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
-from pearlarr.pending_import import OwnedAtGrab, PendingImport
+from pearlarr.pending_import import NO_TVDB_IDS, ClaimedRows, OwnedAtGrab, PendingImport, TvdbIds
 from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import (
     NO_ATTEMPT,
@@ -79,6 +79,7 @@ from .builders import (
     order_only_hand_import_files,
     pending_import,
     pending_import_update,
+    sonarr_ep,
     title_claim,
     two_claim_pending_import,
 )
@@ -2582,24 +2583,31 @@ def _pending_import_with_no_file_map(**overrides: object) -> PendingImport:
     return pending_import(**fields)
 
 
+def _placed(pending: PendingImport) -> PendingImport:
+    """`pending` as an attempt ends with it once Sonarr's history placed `_PLACED`, on a row its window holds."""
+
+    return pending.with_placements(_PLACED, NO_TVDB_IDS)
+
+
 class TestWaitPassStoresPlacements:
     """The placements a poll confirmed from Sonarr's history reach the pending import before any outcome reads it."""
 
     def test_check_pass_persists_the_placements(self) -> None:
         # A carried-over pending import (stored, not a this-run grab): the
         # placing poll's placements reach the durable row before it is kept.
+        pending = _pending_import_with_no_file_map()
         strategy = _RecordingStrategy(
             completed=attempt_result(
                 all_done=False,
                 command_issued=True,
                 pause_reason=PauseReason.ISSUED,
-                placements=_PLACED,
+                pending=_placed(pending),
             ),
         )
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             strategy=strategy,
-            stored_pending_imports=[_pending_import_with_no_file_map()],
+            stored_pending_imports=[pending],
         )
 
         result = mgr.run_deferred(view=RecordingWaitView())
@@ -2615,7 +2623,7 @@ class TestWaitPassStoresPlacements:
         strategy = _RecordingStrategy(
             completed_sequence=[
                 attempt_result(
-                    all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED, placements=_PLACED
+                    all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED, pending=_placed(pending)
                 ),
                 attempt_result(all_done=True),
             ],
@@ -2640,7 +2648,7 @@ class TestWaitPassStoresPlacements:
         assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _PLACED_ROW)
 
     def test_no_placements_writes_nothing(self) -> None:
-        # Scripted attempt results carry no placements: `save_history_placements` must not stage a blob
+        # Scripted attempt results carry no pending import: `save_after_attempt` must not stage a blob
         # write per poll, so a store whose put raises never fires here.
         strategy = _RecordingStrategy(completed=attempt_result(all_done=False))
         mgr = make_orchestration_manager(
@@ -2656,8 +2664,146 @@ class TestWaitPassStoresPlacements:
         assert wait_pass.rows["h"].active
 
 
+_MOVED_DOWN_ONE = [
+    sonarr_ep(1, number, ep_id=100 + number, tvdb_id=8999 + number, episode_file_id=0) for number in (1, 2, 3)
+]
+"""A read of series 7 with TVDB episode 9001 on row 102 and 9002 on row 103."""
+
+_FOLLOWED_ROW = {"show - 01 [1080p].mkv": [102], "show - 02 [1080p].mkv": [103]}
+"""The file map `_followed` gives `_two_titles_stored`, as the stored row holds it."""
+
+_CACHED_ON = "2021-06-05 00:00:00"
+"""The cache stamp `_PutRecordingStore` gives its titles."""
+
+
+def _two_titles_stored(*, awaiting_cleanup: bool = False) -> PendingImport:
+    """Torrent "h" of series 7, claimed by title 5 on row 101 and title 6 on row 102.
+
+    Stored while row 101 held TVDB episode 9001 and row 102 held 9002.
+    """
+
+    return two_claim_pending_import(
+        anilist_ids=(5, 6),
+        windows=((101,), (102,)),
+        infohash="h",
+        file_episode_map={"show - 01 [1080p].mkv": (101,), "show - 02 [1080p].mkv": (102,)},
+        seadex_files=("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"),
+        tvdb_ids={101: 9001, 102: 9002},
+        awaiting_cleanup=awaiting_cleanup,
+    )
+
+
+def _followed(pending: PendingImport) -> PendingImport:
+    """`pending` as an attempt that read `_MOVED_DOWN_ONE` ends with it."""
+
+    rows = ClaimedRows.of(pending, {7: _MOVED_DOWN_ONE})
+    assert rows is not None
+    return pending.followed(rows)
+
+
+class _PutRecordingStore(FakeCacheStore):
+    """A store recording the hash of every pending import write, with titles 5, 6 and 9 cached."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.put_calls: list[str] = []
+        for anilist_id in (5, 6, 9):
+            self.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": _CACHED_ON})
+
+    @override
+    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
+        self.put_calls.append(infohash)
+        super().put_pending_import_row(arr, infohash, row)
+
+    def stamps(self) -> dict[int, str | None]:
+        """The cache stamp of each cached title."""
+
+        cached_titles = {anilist_id: self.get_cached_title(Arr.SONARR, anilist_id) for anilist_id in (5, 6, 9)}
+        return {anilist_id: cached.updated_at for anilist_id, cached in cached_titles.items() if cached is not None}
+
+
+class TestWaitSavesTheFollowedPendingImport:
+    """The pending import an attempt followed is what every save of the wait writes."""
+
+    @staticmethod
+    def _manager(strategy: _RecordingStrategy, store: FakeCacheStore, pending: PendingImport) -> ImportWaitManager:
+        """A manager over `store` with `pending` stored and its torrent complete in qBittorrent."""
+
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
+        return make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}), strategy=strategy, store=store
+        )
+
+    def test_an_attempt_that_followed_is_saved_once_and_its_claiming_titles_are_uncached(self) -> None:
+        pending = _two_titles_stored()
+        issued = attempt_result(
+            all_done=False,
+            command_issued=True,
+            pause_reason=PauseReason.ISSUED,
+            pending=_followed(pending),
+            followed=True,
+        )
+        store = _PutRecordingStore()
+        mgr = self._manager(_RecordingStrategy(completed=issued), store, pending)
+        store.put_calls.clear()
+
+        mgr.run_deferred(view=RecordingWaitView())
+
+        row = mgr._pending_imports.rows()["h"]
+        assert row["file_episode_map"] == _FOLLOWED_ROW
+        assert store.put_calls == ["h"]
+        assert store.stamps() == {5: None, 6: None, 9: _CACHED_ON}
+
+    def test_an_attempt_that_joined_history_placements_alone_leaves_the_titles_cached(self) -> None:
+        pending = _pending_import_with_no_file_map(anilist_id=5)
+        issued = attempt_result(
+            all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED, pending=_placed(pending)
+        )
+        store = _PutRecordingStore()
+        mgr = self._manager(_RecordingStrategy(completed=issued), store, pending)
+
+        mgr.run_deferred(view=RecordingWaitView())
+
+        assert mgr._pending_imports.rows()["h"]["file_episode_map"] == _PLACED_ROW
+        assert store.stamps() == {5: _CACHED_ON, 6: _CACHED_ON, 9: _CACHED_ON}
+
+    def test_a_failed_cleanup_after_an_attempt_that_followed_keeps_the_followed_ids(self) -> None:
+        pending = _two_titles_stored()
+        imported = attempt_result(all_done=True, pending=_followed(pending), followed=True)
+        strategy = _RecordingStrategy(completed=imported, close_return=EffectStatus.FAILED)
+        mgr = self._manager(strategy, FakeCacheStore(), pending)
+
+        mgr.run_deferred(view=RecordingWaitView())
+
+        row = mgr._pending_imports.rows()["h"]
+        assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (True, _FOLLOWED_ROW)
+
+    @pytest.mark.parametrize(
+        ("all_done", "awaiting_cleanup"),
+        [pytest.param(True, True, id="failed-retire-keeps"), pytest.param(False, False, id="reissue-demotes")],
+    )
+    def test_the_cleanup_pass_after_an_attempt_that_followed_keeps_the_followed_ids(
+        self, all_done: bool, awaiting_cleanup: bool
+    ) -> None:
+        pending = _two_titles_stored(awaiting_cleanup=True)
+        result = attempt_result(
+            all_done=all_done,
+            command_issued=not all_done,
+            pause_reason=PauseReason.NONE if all_done else PauseReason.ISSUED,
+            pending=_followed(pending),
+            followed=True,
+        )
+        strategy = _RecordingStrategy(completed=result, close_return=EffectStatus.FAILED)
+        mgr = self._manager(strategy, FakeCacheStore(), pending)
+
+        mgr._cleanup.finish_cleanups()
+
+        row = mgr._pending_imports.rows()["h"]
+        assert (row.get("awaiting_cleanup"), row["file_episode_map"]) == (awaiting_cleanup, _FOLLOWED_ROW)
+
+
 class TestPendingImportWrites:
-    """`PendingImportStore.drop` / `save` / `save_history_placements` keep the durable store and the run list in step."""
+    """`PendingImportStore.drop` / `save` / `save_after_attempt` keep the durable store and the run list in step."""
 
     def test_storing_an_attempt_result_persists_the_placements(self) -> None:
         pending = pending_import(
@@ -2674,10 +2820,10 @@ class TestPendingImportWrites:
         result = AttemptResult(
             all_done=False,
             command_issued=True,
-            placements={"show - 02 [1080p].mkv": (102,)},
+            pending=pending.with_placements({"show - 02 [1080p].mkv": (102,)}, TvdbIds({102: None})),
         )
 
-        healed = mgr._pending_imports.save_history_placements(pending, result)
+        healed = mgr._pending_imports.save_after_attempt(pending, result)
 
         expected = {"show - 01 [1080p].mkv": [101], "show - 02 [1080p].mkv": [102]}
         assert healed is not pending
@@ -2686,23 +2832,19 @@ class TestPendingImportWrites:
         assert mgr._state.grabbed_this_run[pending.infohash] is healed
 
     def test_storing_an_attempt_result_that_adds_nothing_is_a_no_op(self) -> None:
-        # Placements the pending import already has: an exploding store proves no write fires.
+        # The attempt ended with the stored pending import itself: an exploding store proves no write fires.
         pending = pending_import(
             infohash="h",
             file_episode_map={"show - 01 [1080p].mkv": [101]},
         )
         mgr = make_orchestration_manager(qbit=None, strategy=_RecordingStrategy(), store=_ExplodingPutStore())
-        result = AttemptResult(
-            all_done=False,
-            command_issued=False,
-            placements={"show - 01 [1080p].mkv": (101,)},
-        )
+        result = AttemptResult(all_done=False, command_issued=False, pending=pending)
 
         assert (
-            mgr._pending_imports.save_history_placements(pending, AttemptResult(all_done=True, command_issued=False))
+            mgr._pending_imports.save_after_attempt(pending, AttemptResult(all_done=True, command_issued=False))
             is pending
         )
-        assert mgr._pending_imports.save_history_placements(pending, result) is pending
+        assert mgr._pending_imports.save_after_attempt(pending, result) is pending
 
     def test_drop_removes_from_store_and_run_list(self) -> None:
         keep = pending_import(infohash="keep")
@@ -3849,28 +3991,24 @@ class TestCleanupRetryVerification:
         assert "h" not in mgr._state.pending_import_states
 
     @pytest.mark.parametrize(
-        ("result", "awaiting_cleanup"),
-        [
-            pytest.param(attempt_result(all_done=True, placements=_PLACED), True, id="failed-retire-keeps"),
-            pytest.param(
-                attempt_result(
-                    all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED, placements=_PLACED
-                ),
-                False,
-                id="reissue-demotes",
-            ),
-        ],
+        ("all_done", "awaiting_cleanup"),
+        [pytest.param(True, True, id="failed-retire-keeps"), pytest.param(False, False, id="reissue-demotes")],
     )
-    def test_cleanup_pass_stores_placements_before_the_effects(
-        self, result: AttemptResult, awaiting_cleanup: bool
-    ) -> None:
+    def test_cleanup_pass_stores_placements_before_the_effects(self, all_done: bool, awaiting_cleanup: bool) -> None:
         # The placements are saved first, so the row awaiting cleanup and the demoted
         # row both carry the updated file map.
+        pending = _pending_import_with_no_file_map(series_id=7, awaiting_cleanup=True)
+        result = attempt_result(
+            all_done=all_done,
+            command_issued=not all_done,
+            pause_reason=PauseReason.NONE if all_done else PauseReason.ISSUED,
+            pending=_placed(pending),
+        )
         strategy = _RecordingStrategy(completed=result, close_return=EffectStatus.FAILED)
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             strategy=strategy,
-            stored_pending_imports=[_pending_import_with_no_file_map(series_id=7, awaiting_cleanup=True)],
+            stored_pending_imports=[pending],
         )
 
         mgr._cleanup.finish_cleanups()

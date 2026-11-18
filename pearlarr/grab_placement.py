@@ -1,6 +1,6 @@
 """Grab-time placement: each release's files placed for the grabbing title, the planner's episodes, and the updates."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
@@ -15,6 +15,7 @@ from .pairs import unambiguous
 from .pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
+    NO_TVDB_IDS,
     FileEpisodeMap,
     OwnedAtGrab,
     PendingImport,
@@ -22,6 +23,7 @@ from .pending_import import (
     TitleNames,
     TitleWindow,
     TorrentGroup,
+    TvdbIds,
     joined_file_map,
     sizes_by_episode,
 )
@@ -36,6 +38,7 @@ from .placement_types import (
     PlacementVerdict,
     SeadexEvidence,
     TorrentListing,
+    tvdb_ids_across,
 )
 from .releases import (
     NO_ANOTHER_TITLES_COUNTS,
@@ -94,13 +97,23 @@ class KnownTorrent:
     """Everything the run knows about one torrent: its pending import, the series indexes, and the SeaDex evidence."""
 
     pending_import: PendingImport | None
-    """The stored pending import this grab joins, None when the torrent is new."""
+    """The stored pending import this grab joins, followed under this run's rows. None when the torrent is new, and
+    when its stored one couldn't be followed (`stored_unread`)."""
 
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A window's series left out was not read, which places nothing."""
 
     fetched: FetchedSeadex
     """The torrent's listing and the series' episodes by size."""
+
+    stored_unread: bool = False
+    """Whether the torrent has a stored pending import that couldn't be followed under this run's rows
+    (`ClaimedRows.of`). Its ids may name other episodes, so nothing is read from it, placed or joined."""
+
+    def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
+        """The TVDB episode id of the row each of `episode_ids` was placed on, read off the series indexes."""
+
+        return tvdb_ids_across(self.indexes.values(), episode_ids)
 
     def seadex_evidence(self, sizes: Mapping[str, int]) -> SeadexEvidence:
         """The `SeadexEvidence` every window of this torrent is placed with: this run's listing and size matches.
@@ -115,12 +128,12 @@ class KnownTorrent:
     def order(self, grabbing_window: TitleWindow) -> WindowOrder | None:
         """The windows the torrent is placed under, None when the listing or a window's series is unread.
 
-        Every window of this run's listing, every stored claim's, and `grabbing_window`, the grabbing title's, in
-        `ordered_windows`' order.
+        None too when its stored pending import couldn't be followed. Every window of this run's listing, every
+        stored claim's, and `grabbing_window`, the grabbing title's, in `ordered_windows`' order.
         """
 
         listing = self.fetched.listing
-        if listing is None:
+        if listing is None or self.stored_unread:
             return None
         return ordered_windows(
             listing, () if self.pending_import is None else self.pending_import.claims, grabbing_window, self.indexes
@@ -147,13 +160,17 @@ class TorrentFetches:
     """The run's reads of the entry's torrents, each made once: the store, the series indexes, the listings."""
 
     pending_imports: Mapping[str, PendingImport]
-    """The stored pending imports among the entry's hashes (`entry_hashes`)."""
+    """The stored pending imports among the entry's hashes (`entry_hashes`), each followed under this run's rows."""
 
     indexes: Mapping[int, EpisodeIndex]
     """The series indexes read this run. A claim's series left out was not read, which places nothing."""
 
     listings: FetchedListings | None
     """The series' SeaDex listings, None when SeaDex was unreachable."""
+
+    unfollowed: frozenset[str] = frozenset()
+    """The hashes among the entry's whose stored pending import couldn't be followed (`KnownTorrent.stored_unread`).
+    None of them is in `pending_imports`."""
 
     def known(self, seadex_dict: SeadexDict) -> KnownTorrents:
         """What the run knows about each release's torrent, keyed by url.
@@ -166,6 +183,7 @@ class TorrentFetches:
                 None if release.qbit_hash is None else self.pending_imports.get(release.qbit_hash),
                 self.indexes,
                 self._fetched_seadex(release.infohash),
+                stored_unread=release.qbit_hash in self.unfollowed,
             )
             for group_releases in seadex_dict.values()
             for release in group_releases.releases.values()
@@ -223,6 +241,10 @@ class PlacedRelease:
     """Each episode id of the file map to the listed size of the file placed on it.
     An id two files size differently is left out."""
 
+    tvdb_ids: TvdbIds
+    """The TVDB episode id of each Sonarr row this placement put a file on (`KnownTorrent.tvdb_ids`), which the
+    pending import stores with the file map."""
+
     sizes_by_name: Mapping[str, int] = field(init=False, repr=False, compare=False)
     """Normalized listing name -> its listed size, read off `files` (see `_sizes_by_name`)."""
 
@@ -260,14 +282,15 @@ def listed_batch(files: Sequence[ListedFile], stored: PendingImport | None = Non
 def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, torrent: KnownTorrent) -> PlacedRelease:
     """Place one release's files under the torrent's windows (`KnownTorrent.order`), with no I/O.
 
-    Nothing is placed when the listing or a window's series wasn't read. After the windows merge, an absolute-only
-    file that they left is placed where every numbering agrees (`NumberingStep`, `WindowedPlacements.with_proposals`),
-    the window holding its ids judging it. A file placed on an aired episode Sonarr has no row for is set aside
-    (`PlacementVerdict.AIRED_ONLY`). A file another title's window placed, or left for a hand import without
-    involving a window the pending import imports, is set aside as that title's. The release is skipped (`SkipReason`)
-    when a file of the grabbing title's window is misnumbered, when a read the placement needs failed, or when nothing
-    of it lands on the title and the title's window left a file for a hand import, some of it is another title's, or
-    some of it is on an aired episode Sonarr has no row for.
+    Nothing is placed when the listing or a window's series wasn't read, or when the torrent's stored pending import
+    couldn't be followed. After the windows merge, an absolute-only file that they left is placed where every
+    numbering agrees (`NumberingStep`, `WindowedPlacements.with_proposals`), the window holding its ids judging it. A
+    file placed on an aired episode Sonarr has no row for is set aside (`PlacementVerdict.AIRED_ONLY`). A file another
+    title's window placed, or left for a hand import without involving a window the pending import imports, is set
+    aside as that title's. The release is skipped (`SkipReason`) when a file of the grabbing title's window is
+    misnumbered, when a read the placement needs failed, or when nothing of it lands on the title and the title's
+    window left a file for a hand import, some of it is another title's, or some of it is on an aired episode Sonarr
+    has no row for.
 
     Under a stored pending import, the files in its file map and the files it left for a hand import are not placed
     (`listed_batch`). An earlier check judged them, and a check with fewer files to place could count a file left
@@ -345,6 +368,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         ),
         pending_import=stored,
         intended_sizes=sizes_by_episode(whole_file_map, sizes),
+        tvdb_ids=torrent.tvdb_ids(ep_id for ids in view.placements.placed.values() for ep_id in ids),
     )
 
 
@@ -680,6 +704,9 @@ class PendingImportUpdate:
     claim: TitleClaim
     """This title's fresh claim."""
 
+    tvdb_ids: TvdbIds
+    """The TVDB episode id of every Sonarr row id in `file_map` and `claim`, off the rows they were placed on."""
+
     pending_import: PendingImport | None
     """The stored pending import this update joins, None when the torrent is new."""
 
@@ -691,10 +718,10 @@ class PendingImportUpdate:
         # The hand-import files join the stored ones rather than replace them: a grab whose title can't place
         # carries none, and would otherwise clear an earlier grab's.
         return (
-            self.pending_import.with_placements(self.file_map)
+            self.pending_import.with_placements(self.file_map, self.tvdb_ids)
             .with_exclusions(self.excluded)
             .with_hand_import_files(self.hand_import_files, self.order_only)
-            .with_claim(self.claim)
+            .with_claim(self.claim, self.tvdb_ids)
             .with_sizes_by_name(self.facts.sizes_by_name)
         )
 
@@ -714,6 +741,7 @@ class PendingImportUpdate:
                 added_at=stamp,
                 file_episode_map=self.file_map,
                 claims=(self.claim,),
+                tvdb_ids=self.tvdb_ids,
                 excluded_files=self.excluded,
                 release_sizes=self.facts.release_sizes,
                 sizes_by_name=self.facts.sizes_by_name,
@@ -766,13 +794,16 @@ def build_pending_import_update(
     """
 
     placed = release.placed
+    claim = build_title_claim(release, grabbing_title, facts)
+    claim_ids = (*claim.ordered_episode_ids, *claim.preowned_episode_ids)
     return PendingImportUpdate(
         facts=release.facts,
         file_map=placed.placements.placed,
         excluded=tuple(placement.name for placement in placed.placements.excluded),
         hand_import_files=placed.placements.hand_import_files,
         order_only=placed.placements.order_only,
-        claim=build_title_claim(release, grabbing_title, facts),
+        claim=claim,
+        tvdb_ids=placed.tvdb_ids.joined(grabbing_title.title_index.tvdb_ids(claim_ids)),
         pending_import=placed.pending_import,
     )
 
@@ -797,6 +828,7 @@ def build_update_without_window(
         hand_import_files=(),
         order_only=NO_ORDER_ONLY,
         claim=facts.claim(NO_WINDOW_TERMS),
+        tvdb_ids=NO_TVDB_IDS,
         pending_import=stored,
     )
 

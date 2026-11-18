@@ -125,17 +125,21 @@ class PendingImportStore:
         if self._state.arr is Arr.SONARR:
             self._store.put_guards(self._state.arr, claim.anilist_id, claim.guards)
 
-    def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
-        """Persist the files a poll's Sonarr history placed onto the pending import and return the updated copy.
+    def save_after_attempt(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
+        """Persist the pending import an attempt ended with, when it isn't the stored `pending`, and return it.
 
-        Writes only when the poll added something: the pending import hands itself back on a no-op.
+        The one save after an attempt: it holds the files Sonarr's history placed and the ids the attempt followed.
+        Each claiming title is uncached (`save_followed`) only when an id moved.
         """
 
-        healed = pending.with_placements(result.placements)
-        if healed is pending:
+        ended = result.pending
+        if ended is None or ended is pending:
             return pending
-        self.save(healed)
-        return healed
+        if result.followed:
+            self.save_followed(ended)
+        else:
+            self.save(ended)
+        return ended
 
     def drop(self, infohash: str) -> None:
         """Remove one torrent's pending import from the store and the run list."""
@@ -144,13 +148,29 @@ class PendingImportStore:
         self._state.grabbed_this_run.pop(infohash, None)
 
     def drop_unimported(self, pending: PendingImport) -> None:
-        """Drop the pending import of a torrent that left qBittorrent unimported, so the next run checks its titles.
+        """Drop a pending import whose files are not imported, so its titles are checked again.
 
-        A title is cached once its torrent is added, so each claiming title is uncached. The check grabs the release
-        again when the arr still lacks it.
+        A title is cached once its torrent is added, so each claiming title is uncached. This run checks it when the
+        drop comes before its check, and the next run otherwise. The check grabs the release again when the arr
+        still lacks it.
         """
 
         self.drop(pending.infohash)
+        self._uncache_titles(pending)
+
+    def save_followed(self, pending: PendingImport) -> None:
+        """Save a pending import whose ids were followed onto other rows, so the next run checks its titles.
+
+        A claim's stored coverage was written for the ids it had, so each claiming title is uncached and its check
+        writes the claim again.
+        """
+
+        self.save(pending)
+        self._uncache_titles(pending)
+
+    def _uncache_titles(self, pending: PendingImport) -> None:
+        """Uncache every title that claims the pending import."""
+
         for claim in pending.claims:
             self._store.uncache_title(self._state.arr, claim.anilist_id)
 

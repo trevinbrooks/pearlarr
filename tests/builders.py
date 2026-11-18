@@ -63,6 +63,7 @@ from pearlarr.pending_import import (
     TitleNames,
     TitleWindow,
     TorrentGroup,
+    TvdbIds,
 )
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import (
@@ -872,15 +873,21 @@ def pending_import_update(
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
 ) -> PendingImportUpdate:
-    """A pending import update on `infohash` (group NAN0, no files) claimed by `title_claim(**claim)`, new unless `stored` is given."""
+    """A pending import update on `infohash` (group NAN0, no files) claimed by `title_claim(**claim)`, new unless `stored` is given.
 
+    Its rows have no TVDB id (`rows_without_tvdb_ids`).
+    """
+
+    file_map = placements or {}
+    built = title_claim(**claim)
     return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
-        file_map=placements or {},
+        file_map=file_map,
         excluded=(),
         hand_import_files=hand_import_files,
         order_only=order_only,
-        claim=title_claim(**claim),
+        claim=built,
+        tvdb_ids=rows_without_tvdb_ids(file_map, (built,)),
         pending_import=stored,
     )
 
@@ -1424,6 +1431,16 @@ def title_claim(**overrides: Any) -> TitleClaim:
     return TitleClaim(**defaults)
 
 
+def rows_without_tvdb_ids(file_map: FileEpisodeMap, claims: Iterable[TitleClaim]) -> TvdbIds:
+    """The stored TVDB ids of a pending import whose every row Sonarr sent with none, as `sonarr_ep` rows are."""
+
+    held = {ep_id for ids in file_map.values() for ep_id in ids}
+    for claim in claims:
+        held.update(claim.ordered_episode_ids)
+        held.update(claim.preowned_episode_ids)
+    return TvdbIds(dict.fromkeys((ep_id for ep_id in held if ep_id > 0), None))
+
+
 def two_claim_pending_import(
     *,
     anilist_ids: tuple[int, int] = (1, 2),
@@ -1445,7 +1462,8 @@ def pending_import(**overrides: Any) -> PendingImport:
     """A `PendingImport` wiring one mapped file to one episode id under one claim.
 
     Claim keys (`series_id`, `anilist_id`, `title`, `ordered_episode_ids`, ...) build that claim unless
-    `claims` is given.
+    `claims` is given. `tvdb_ids` is a row id -> TVDB episode id mapping, every other row id held with none
+    (`rows_without_tvdb_ids`), or None for a pending import stored without them.
     """
 
     claim_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CLAIM_KEYS}
@@ -1464,6 +1482,10 @@ def pending_import(**overrides: Any) -> PendingImport:
         if key in defaults:
             defaults[key] = tuple(defaults[key])
     defaults["file_episode_map"] = {name: tuple(ids) for name, ids in defaults["file_episode_map"].items()}
+    tvdb_ids: Mapping[int, int | None] | None = defaults.get("tvdb_ids", {})
+    if tvdb_ids is not None:
+        without = rows_without_tvdb_ids(defaults["file_episode_map"], defaults["claims"])
+        defaults["tvdb_ids"] = TvdbIds({**without.by_row_id, **tvdb_ids})
     return PendingImport(**defaults)
 
 
@@ -1491,7 +1513,8 @@ def attempt_result(
     imported_count: int = 0,
     file_map_episode_count: int = 0,
     pause_reason: PauseReason = PauseReason.NONE,
-    placements: FileEpisodeMap | None = None,
+    pending: PendingImport | None = None,
+    followed: bool = False,
     unmatched_files: tuple[str, ...] = (),
     left_for_hand_import: LeftForHandImport = NO_HAND_IMPORT_FILES,
 ) -> AttemptResult:
@@ -1503,7 +1526,8 @@ def attempt_result(
         imported_count=imported_count,
         file_map_episode_count=file_map_episode_count,
         pause_reason=pause_reason,
-        placements=placements or {},
+        pending=pending,
+        followed=followed,
         unplaced_files=unmatched_files,
         left_for_hand_import=left_for_hand_import,
     )

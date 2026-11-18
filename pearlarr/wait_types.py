@@ -1,12 +1,11 @@
 """The wait pass's enums and result types: the wait mode, outcomes and states, the attempt result, download progress."""
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
-from types import MappingProxyType
 
 from .boundary import coerce_int
-from .pending_import import FileEpisodeMap
+from .pending_import import PendingImport
 from .releases import EpisodeKey, OrderOnlyKey
 
 
@@ -212,9 +211,13 @@ class AttemptResult:
     pause_reason: PauseReason = PauseReason.NONE
     """Why this poll waited on Sonarr's work instead of this pending import's."""
 
-    placements: FileEpisodeMap = field(default_factory=dict[str, tuple[int, ...]])
-    """The files Sonarr's history placed for a download no candidate fetch saw (normalized file name -> ids), once
-    they are done, copied and wrapped read-only for the pending import store to persist. Empty otherwise."""
+    pending: PendingImport | None = None
+    """The pending import the attempt ended with, for the pending import store to persist when it isn't the stored
+    one: its ids followed to the rows that hold their TVDB episodes, and the files Sonarr's history placed for a
+    download no candidate fetch saw joined once they are done. None when the attempt read none."""
+
+    followed: bool = False
+    """Whether an id of `pending` moved when the attempt followed it."""
 
     unplaced_files: tuple[str, ...] = ()
     """The unplaced files in the download's folder (one per distinct file name), when that is all the poll
@@ -224,9 +227,6 @@ class AttemptResult:
     """The files in the download's folder the grab left for a hand import (`PendingImport.hand_import_files`), once
     every placed file is in and the hand import isn't. Its names are non-empty only from `needs_hand_import()`:
     `all_done` and `command_issued` False."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
 
     @property
     def paused(self) -> bool:

@@ -927,9 +927,11 @@ class TestTrustedGroups:
         store = FakeCacheStore(pending={str(Arr.SONARR): {sibling.infohash: sibling.to_json()}})
         sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1, ep_id=101, size=500, release_group="SibGrab")])
         strat = make_sonarr_sync(sonarr=sonarr, cache_store=store)
-        own = pending_import(release_group="Ours", file_episode_map={"Show - 01.mkv": [101]})
+        own = pending_import(
+            release_group="Ours", file_episode_map={"Show - 01.mkv": [101]}, seadex_files=["Show - 01.mkv"]
+        )
 
-        update = strat._reconciler._read_statuses(own, [101])
+        update = strat._reconciler._read(own)
 
         assert update is not None
         assert update.statuses.by_id == {101: EpisodeFileStatus.TRUSTED}

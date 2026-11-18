@@ -1,5 +1,6 @@
 """Import-time subsystem: decide a download's state, then build/POST the import."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
@@ -46,12 +47,12 @@ from .import_quality import (
 )
 from .output import hub_note, hub_warn
 from .output.console_text import count_noun, pluralize
-from .pending_import import FileEpisodeMap, PendingImport, joined_file_map
+from .pending_import import ClaimedRows, FileEpisodeMap, PendingImport, joined_file_map
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
 from .releases import EpisodeKey
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_episodes import SonarrEpisodes
+from .sonarr_episodes import SeriesRows
 from .sonarr_state import (
     CommandBlock,
     ContentPaths,
@@ -542,8 +543,9 @@ class ImportExecutor:
         """Import EXACTLY the files the file map intends, never over a trusted file that isn't a copy of this torrent's.
 
         The file map is the grab's, joined with the files Sonarr's history placed for a download no fetch saw. A video
-        file in the folder that the file map lacks is reported, never placed. The attempt result carries the history's
-        placements, once they are confirmed, for the pending import store to persist.
+        file in the folder that the file map lacks is reported, never placed. Once the history's placements are
+        confirmed, the attempt result carries the pending import with them joined, for the pending import store to
+        persist.
         """
 
         scan = inputs.candidates
@@ -577,10 +579,11 @@ class ImportExecutor:
                 result = AttemptResult.nothing_placed(context.names_in_folder(unplaced.when_nothing_placed))
         else:
             if unplaced.quiet:
-                # Another title's file or a final-unplaced duplicate the grab excluded was reported then and stays
-                # quiet.
+                # A file the pending import excludes was reported when it was excluded, by its grab or by the
+                # attempt that followed its ids, and stays quiet.
                 self.logger.debug(
-                    f"{pending.display_label}: {count_noun(unplaced.quiet, 'excluded file')} already reported at the grab"
+                    f"{pending.display_label}: {count_noun(unplaced.quiet, 'excluded file')} already reported "
+                    "when set aside"
                 )
             if skips := unplaced.skips:
                 # The hand-import files are named by the poll's outcome instead.
@@ -597,8 +600,11 @@ class ImportExecutor:
                 result = by_hand if by_hand is not None else hand_import
         # History's placements are kept only once they are confirmed, so a row never confirmed is re-derived next
         # run, not pinned.
-        keep_placements = result.all_done or bool(result.left_for_hand_import.files)
-        return replace(result, placements=recovered if keep_placements else {})
+        if not (result.all_done or result.left_for_hand_import.files):
+            return result
+        # A confirmed file is on a row of this poll, which gives its placement the row's TVDB episode.
+        placed_from = inputs.snapshot.tvdb_ids(ep_id for ids in recovered.values() for ep_id in ids)
+        return replace(result, pending=pending.with_placements(recovered, placed_from))
 
     def _verify_or_import(self, context: _ImportContext, file_map: FileEpisodeMap) -> AttemptResult:
         """Confirm the file map's files are done, or plan and POST the import for the ones still needed."""
@@ -832,8 +838,27 @@ class ImportExecutor:
 
 
 @dataclass(frozen=True, slots=True)
-class _FileMapStatuses:
-    """A pending import's snapshot, the file statuses over the file map's episodes, and the bar counts."""
+class _Intended:
+    """The episodes an import counts for a pending import, by how far its file map covers its listed files."""
+
+    episode_ids: list[int]
+    """The file map's episode ids when the pending import is accounted for (`FileMapCoverage.accounted`), else empty."""
+    covers_all: bool
+    """Whether the file map covers every intended file."""
+
+    @classmethod
+    def of(cls, pending: PendingImport) -> "_Intended":
+        """The episodes counted for `pending`, gated by its coverage."""
+
+        episode_ids = pending.file_map_episode_ids()
+        coverage = pending.file_map_coverage()
+        accounted = bool(episode_ids) and coverage.accounted
+        return cls(episode_ids if accounted else [], accounted and coverage.file_map)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ImportRead:
+    """One read of a pending import's series: the pending import to act on, its file statuses and the bar counts."""
 
     snapshot: ImportSnapshot
     """The snapshot of every series the pending import spans that the statuses were read over."""
@@ -843,11 +868,40 @@ class _FileMapStatuses:
     """Trusted files, less the preowned episodes."""
     total: int
     """File map episodes, less the preowned ones."""
+    covers_all: bool
+    """Whether the file map covers every intended file."""
+    followed: bool = False
+    """Whether an id of the pending import moved when it was followed under the rows read."""
+    set_aside: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
+    """Each file the follow took out of the file map -> its TVDB episodes with no row (`ClaimedRows.set_aside`)."""
 
-    def with_counts(self, result: AttemptResult) -> AttemptResult:
-        """`result` carrying these bar counts."""
+    @property
+    def pending(self) -> PendingImport:
+        """The pending import to act on: the stored one, or it followed under the rows read when an id moved."""
 
-        return replace(result, imported_count=self.done, file_map_episode_count=self.total)
+        return self.snapshot.pending
+
+    @property
+    def imported(self) -> bool:
+        """Whether the file map is whole and every episode of it has a trusted file."""
+
+        return self.covers_all and self.statuses.all_trusted()
+
+    def after(self, earlier: "_ImportRead") -> "_ImportRead":
+        """This read as the later of one attempt's two: followed when either read moved an id."""
+
+        return replace(self, followed=self.followed or earlier.followed)
+
+    def with_read(self, result: AttemptResult) -> AttemptResult:
+        """`result` carrying this read: the bar counts, whether an id moved, and its pending import when it has none."""
+
+        return replace(
+            result,
+            imported_count=self.done,
+            file_map_episode_count=self.total,
+            pending=self.pending if result.pending is None else result.pending,
+            followed=self.followed,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,33 +925,14 @@ class _SonarrView:
 
 @dataclass(frozen=True, slots=True)
 class _Attempt:
-    """One attempt's inputs and its file map episodes."""
+    """One attempt's inputs."""
 
     pending: PendingImport
-    """The pending import this poll imports."""
+    """The pending import this poll imports, as the attempt's last read of its series has it (`_ImportRead.pending`)."""
     content_path: str
     """The download's content path as qBittorrent reports it."""
     at_deadline: bool
     """Whether this is the final attempt."""
-    file_map_episode_ids: list[int]
-    """The file map's episode ids when the pending import is accounted for (`FileMapCoverage.accounted`), else empty."""
-    file_map_covers_all: bool
-    """Whether the file map covers every intended file."""
-
-    @classmethod
-    def of(cls, pending: PendingImport, content_path: str, attempt_kind: AttemptKind) -> "_Attempt":
-        """The attempt for `pending`, its file map episodes gated by its coverage."""
-
-        file_map_episode_ids = pending.file_map_episode_ids()
-        coverage = pending.file_map_coverage()
-        accounted = bool(file_map_episode_ids) and coverage.accounted
-        return cls(
-            pending,
-            content_path,
-            attempt_kind.at_deadline,
-            file_map_episode_ids if accounted else [],
-            accounted and coverage.file_map,
-        )
 
     @property
     def label(self) -> str:
@@ -909,48 +944,53 @@ class _Attempt:
 class ImportReconciler:
     """Decides a completed download's state."""
 
-    def __init__(self, pending_imports: PendingImportStore, episodes: SonarrEpisodes, executor: ImportExecutor) -> None:
-        """Bind the run's pending import store and the composed collaborators (the logger is the executor's)."""
+    def __init__(self, pending_imports: PendingImportStore, rows: SeriesRows, executor: ImportExecutor) -> None:
+        """Bind the run's pending import store and the composed collaborators (the logger is the executor's).
+
+        The store is only read: the wait pass saves what an attempt's result carries.
+        """
 
         self._pending_imports = pending_imports
-        self._episodes = episodes
+        self._rows = rows
         self._executor = executor
         self.logger = executor.logger
 
     def import_completed(self, pending: PendingImport, content_path: str, attempt_kind: AttemptKind) -> AttemptResult:
-        """One attempt. Episode files and Sonarr's queue are the truth, never the cache."""
+        """One attempt. Episode files and Sonarr's queue are the truth, never the cache.
 
-        attempt = _Attempt.of(pending, content_path, attempt_kind)
+        The attempt acts on the pending import as each read of its series has it (`_read`), and the result carries
+        that one.
+        """
+
         # Bar counts over the file map's episodes. A pending import not accounted for reports 0/0 (indeterminate).
-        fresh = self._read_statuses(attempt.pending, attempt.file_map_episode_ids)
-        if fresh is not None and (imported := self._already_imported(attempt, fresh)):
+        fresh = self._attempt_read(pending)
+        if fresh is not None and (imported := self._already_imported(fresh)):
             return imported
-        statuses = (
-            fresh if fresh is not None else self._last_known_statuses(attempt.pending, attempt.file_map_episode_ids)
-        )
+        statuses = fresh if fresh is not None else self._last_known_statuses(pending)
+        attempt = _Attempt(statuses.pending, content_path, attempt_kind.at_deadline)
 
         view = self._sonarr_view(attempt)
         if view is None:
             # Fail closed: an unreadable read waits, never reads as idle or untracked.
             self.logger.debug(f"{attempt.label}: Sonarr read failed; retrying")
-            return statuses.with_counts(AttemptResult.waiting())
+            return statuses.with_read(AttemptResult.waiting())
         if view.verdict is QueueState.WAIT:
             self.logger.debug(f"{attempt.label}: Sonarr still has it in motion; waiting")
-            return statuses.with_counts(AttemptResult.waiting())
+            return statuses.with_read(AttemptResult.waiting())
         if view.verdict is QueueState.IMPORTING:
             self.logger.debug(f"{attempt.label}: Sonarr is importing it; waiting")
-            return statuses.with_counts(AttemptResult.waiting(pause_reason=PauseReason.IMPORT))
+            return statuses.with_read(AttemptResult.waiting(pause_reason=PauseReason.IMPORT))
 
         # The guard holds every attempt kind, the final one included.
         if block := self._executor.command_block(view.commands, attempt.pending, attempt.content_path):
-            return statuses.with_counts(block.waiting())
+            return statuses.with_read(block.waiting())
         if (
             view.verdict is QueueState.IMPORT_PENDING_OK
             and not attempt.at_deadline
             and self._executor.completed_download_handling_enabled()
         ):
             self.logger.debug(f"{attempt.label}: Sonarr lists it as importPending and will import it; waiting")
-            return statuses.with_counts(AttemptResult.waiting())
+            return statuses.with_read(AttemptResult.waiting())
 
         taken = self._executor.take_kept_candidates(attempt.pending.infohash, attempt.content_path)
         kept = None if view.verdict is QueueState.NOT_IN_QUEUE else taken
@@ -960,20 +1000,25 @@ class ImportReconciler:
             else self._executor.candidate_fetcher.fetch(attempt.pending, attempt.content_path, untracked=view.untracked)
         )
         if scan is None:
-            return statuses.with_counts(AttemptResult.waiting())
+            return statuses.with_read(AttemptResult.waiting())
         result = self._auto_import(attempt, scan, statuses)
         if kept is None and result.pause_reason is PauseReason.BUSY:
             self._executor.keep_candidates(attempt.pending.infohash, attempt.content_path, scan)
         return result
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Read-only count of the imported files: this path can promote, so it never trusts exclusions."""
+        """Read-only count of the imported files: this path can promote, so it never trusts exclusions.
 
-        file_map_episode_ids = pending.file_map_episode_ids()
-        if not file_map_episode_ids or not pending.file_map_coverage().file_map:
+        Counted over the pending import as the read has it (`_read`), which nothing here saves. One the follow took
+        a file from has a file map that isn't whole, so it is never promoted.
+        """
+
+        if not _Intended.of(pending).covers_all:
             return NO_PROGRESS
-        statuses = self._read_statuses(pending, file_map_episode_ids)
-        return NO_PROGRESS if statuses is None else ImportProgress(statuses.done, statuses.total, determinate=True)
+        read = self._read(pending)
+        if read is None or not read.covers_all:
+            return NO_PROGRESS
+        return ImportProgress(read.done, read.total, determinate=True)
 
     def _sonarr_view(self, attempt: _Attempt) -> _SonarrView | None:
         """Sonarr's view this poll, read again after the rescan a lagging view may get. None when unreadable."""
@@ -1000,54 +1045,88 @@ class ImportReconciler:
         untracked = verdict is QueueState.NOT_IN_QUEUE and rescanned_since_add(commands, pending.added_at)
         return _SonarrView(verdict, commands, untracked)
 
-    def _auto_import(self, attempt: _Attempt, scan: _FetchedCandidates, statuses: _FileMapStatuses) -> AttemptResult:
-        """The attempt past the candidate fetch: the guard baseline, the files read again, the import hand-off."""
+    def _auto_import(self, attempt: _Attempt, scan: _FetchedCandidates, statuses: _ImportRead) -> AttemptResult:
+        """The attempt past the candidate fetch: the guard baseline, the files read again, the import hand-off.
+
+        Everything past the second read acts on the pending import as that read has it.
+        """
 
         baseline = self._executor.list_commands()
         if baseline is None:
             self.logger.debug(f"{attempt.label}: command list read failed; retrying")
-            return statuses.with_counts(AttemptResult.waiting())
-        fresh = self._read_statuses(attempt.pending, attempt.file_map_episode_ids)
+            return statuses.with_read(AttemptResult.waiting())
+        fresh = self._attempt_read(attempt.pending)
         if fresh is None:
             self.logger.debug(f"{attempt.label}: episode read failed; retrying")
-            return statuses.with_counts(AttemptResult.waiting())
-        if imported := self._already_imported(attempt, fresh):
+            return statuses.with_read(AttemptResult.waiting())
+        fresh = fresh.after(statuses)
+        attempt = replace(attempt, pending=fresh.pending)
+        if imported := self._already_imported(fresh):
             return imported
         if block := self._executor.command_block(baseline, attempt.pending, attempt.content_path):
-            return fresh.with_counts(block.waiting())
+            return fresh.with_read(block.waiting())
         inputs = AttemptInputs(scan, fresh.snapshot, baseline, at_deadline=attempt.at_deadline)
-        return fresh.with_counts(self._executor.run_auto_import(attempt.pending, attempt.content_path, inputs))
+        return fresh.with_read(self._executor.run_auto_import(attempt.pending, attempt.content_path, inputs))
 
-    def _already_imported(self, attempt: _Attempt, statuses: _FileMapStatuses) -> AttemptResult | None:
+    def _already_imported(self, read: _ImportRead) -> AttemptResult | None:
         """The imported attempt result when the file map is whole and every episode has a trusted file, else None."""
 
-        if not attempt.file_map_covers_all or not statuses.statuses.all_trusted():
+        if not read.imported:
             return None
-        self.logger.debug(f"{attempt.label}: already imported (every episode has a trusted file)")
-        return statuses.with_counts(AttemptResult.imported())
+        self.logger.debug(f"{read.pending.display_label}: already imported (every episode has a trusted file)")
+        return read.with_read(AttemptResult.imported())
 
-    def _read_statuses(self, pending: PendingImport, file_map_episode_ids: list[int]) -> _FileMapStatuses | None:
-        """The file map statuses from each claimed series' episodes read now. None when any read failed."""
+    def _attempt_read(self, pending: PendingImport) -> _ImportRead | None:
+        """`_read` for an attempt, whose result gets the pending import saved: warns of each file the follow set aside."""
+
+        read = self._read(pending)
+        if read is not None:
+            for name, tvdb_ids in read.set_aside.items():
+                hub_warn(
+                    f"{pending.display_label}: Sonarr no longer has "
+                    f"{pluralize(len(tvdb_ids), 'the episode', 'the episodes')} {name} was matched to "
+                    f"(TVDB episode {', '.join(map(str, tvdb_ids))}) - leaving the file out of the import"
+                )
+        return read
+
+    def _read(self, pending: PendingImport) -> _ImportRead | None:
+        """The pending import under each claimed series' episodes read now. None when a read failed.
+
+        One already imported by the ids it stores is answered as stored. Any other is followed under the rows read
+        (`PendingImport.followed`) and answered by the ids it has then. One that can't be followed under them
+        (`ClaimedRows.of`) reads as a failed read: its ids may name other episodes.
+        """
 
         lists: dict[int, list[SonarrEpisode]] = {}
         for series_id in pending.series_ids:
-            episodes = self._episodes.read_episodes(series_id)
+            episodes = self._rows.read_episodes(series_id)
             if episodes is None:
                 return None
             lists[series_id] = episodes
-        return self._statuses_from(pending, file_map_episode_ids, lists)
+        stored = self._statuses_from(pending, lists)
+        if stored.imported:
+            return stored
+        rows = ClaimedRows.of(pending, lists)
+        if rows is None:
+            self.logger.debug(
+                f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent; not using it"
+            )
+            return None
+        followed = pending.followed(rows)
+        if followed is pending:
+            return stored
+        return replace(self._statuses_from(followed, lists), followed=True, set_aside=rows.set_aside(pending))
 
-    def _last_known_statuses(self, pending: PendingImport, file_map_episode_ids: list[int]) -> _FileMapStatuses:
-        """The file map statuses from each claimed series' last successfully read episodes."""
+    def _last_known_statuses(self, pending: PendingImport) -> _ImportRead:
+        """The pending import as stored, under each claimed series' last successfully read episodes."""
 
-        lists = {sid: self._episodes.last_known_episodes(sid) for sid in pending.series_ids}
-        return self._statuses_from(pending, file_map_episode_ids, lists)
+        lists = {sid: self._rows.last_known_episodes(sid) for sid in pending.series_ids}
+        return self._statuses_from(pending, lists)
 
-    def _statuses_from(
-        self, pending: PendingImport, file_map_episode_ids: list[int], lists: dict[int, list[SonarrEpisode]]
-    ) -> _FileMapStatuses:
-        """Classify `file_map_episode_ids` under each claim's guards over the given episode lists, with bar counts."""
+    def _statuses_from(self, pending: PendingImport, lists: dict[int, list[SonarrEpisode]]) -> _ImportRead:
+        """Classify the episodes `pending` counts under each claim's guards over the given episode lists."""
 
+        intended = _Intended.of(pending)
         guards = self._pending_imports.guards()
         grabbed_groups: dict[int, GrabbedGroups] = {}
         by_series: dict[int, EpisodeSnapshot] = {}
@@ -1068,7 +1147,13 @@ class ImportReconciler:
             for claim in pending.claims
         }
         snapshot = ImportSnapshot(pending, by_series, by_claim)
-        statuses = snapshot.file_map_statuses(file_map_episode_ids, pending.file_episode_map)
-        preowned = sum(1 for ep_id in file_map_episode_ids if snapshot.preowned(ep_id))
+        statuses = snapshot.file_map_statuses(intended.episode_ids, pending.file_episode_map)
+        preowned = sum(1 for ep_id in intended.episode_ids if snapshot.preowned(ep_id))
         trusted = sum(1 for status in statuses.by_id.values() if status is EpisodeFileStatus.TRUSTED)
-        return _FileMapStatuses(snapshot, statuses, max(0, trusted - preowned), len(file_map_episode_ids) - preowned)
+        return _ImportRead(
+            snapshot=snapshot,
+            statuses=statuses,
+            done=max(0, trusted - preowned),
+            total=len(intended.episode_ids) - preowned,
+            covers_all=intended.covers_all,
+        )

@@ -435,3 +435,18 @@ class TestRunLoopActivityWiring:
         self._run(strategy, logger, config=make_config(ignore_seadex_update_times=True))
 
         assert strategy.history_calls == []
+
+    def test_the_start_of_run_hook_runs_once_over_the_library_with_activity_detection_off(
+        self, logger: logging.Logger
+    ) -> None:
+        strategy = self._strategy()
+        self._run(strategy, logger, config=make_config(detect_arr_activity=False))
+
+        assert strategy.start_of_run_calls == [[3]]
+
+    def test_the_titles_the_start_of_run_hook_names_are_marked_dirty(self, logger: logging.Logger) -> None:
+        strategy = self._strategy()
+        strategy.check_again = {42}
+        engine = self._run(strategy, logger, config=make_config(detect_arr_activity=False))
+
+        assert engine._services._dirty_anilist_ids == {42}

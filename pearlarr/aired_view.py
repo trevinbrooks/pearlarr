@@ -50,15 +50,26 @@ def is_stand_in(episode_id: int) -> bool:
     return episode_id < 0
 
 
+def stand_in_id(tvdb_id: int) -> int:
+    """The id of the stand-in for a TVDB episode: the same on every run, and never a Sonarr episode's."""
+
+    return -tvdb_id
+
+
+def stand_in_tvdb_id(episode_id: int) -> int:
+    """The TVDB episode id a stand-in's id (`stand_in_id`) stands for."""
+
+    return -episode_id
+
+
 def stand_in(row: OrderRow, details: EpisodeDetails) -> SonarrEpisode:
     """An aired episode Sonarr's order of the series leaves out, as a Sonarr row with no file.
 
-    Its id is the negated TVDB episode id: the same on every run, and never a Sonarr episode's. A missing title or
-    runtime reads as Sonarr's own rows have it.
+    Its id is its TVDB episode's `stand_in_id`. A missing title or runtime reads as Sonarr's own rows have it.
     """
 
     return SonarrEpisode(
-        id=-row.tvdb_id,
+        id=stand_in_id(row.tvdb_id),
         season_number=row.season,
         episode_number=row.episode,
         absolute_episode_number=row.absolute,

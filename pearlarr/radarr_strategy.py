@@ -90,6 +90,12 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         return filtered
 
     @override
+    def start_of_run(self, items: list[RadarrItem]) -> set[int]:
+        """Nothing: a movie has no episode ids to follow and no order to change."""
+
+        return set()
+
+    @override
     def item_mappings(
         self,
         item: RadarrItem,
