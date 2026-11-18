@@ -128,6 +128,30 @@ def aired_series(
     )
 
 
+def numbered_by(rows: Sequence[SonarrEpisode], order: Sequence[OrderRow]) -> bool:
+    """Whether Sonarr's `rows` are numbered by `order`'s rows, as far as the TVDB episodes both hold can tell.
+
+    False when a row whose TVDB episode `order` lists sits at a season and episode number `order` doesn't list that
+    episode at. One such row is enough, a special among them. A row with no TVDB episode id, or one `order` lacks,
+    says nothing.
+
+    Every row of `order` counts, the second of two episodes it gives one number too: a row for that episode at
+    any other number isn't numbered by `order`.
+
+    Rows numbered by an order that shares no episode with `order`, or that differs from it only in episodes of its
+    own, pass.
+    """
+
+    listed_at: dict[int, set[tuple[int, int]]] = {}
+    for row in order:
+        listed_at.setdefault(row.tvdb_id, set()).add((row.season, row.episode))
+    return all(
+        (ep.season_number, ep.episode_number) in numbers
+        for ep in rows
+        if ep.tvdb_id is not None and ep.tvdb_id > 0 and (numbers := listed_at.get(ep.tvdb_id)) is not None
+    )
+
+
 def _one_per_number(aired: Sequence[OrderRow]) -> dict[int, OrderRow]:
     """The aired rows by TVDB episode id, the first row of each `(season, episode)` only.
 

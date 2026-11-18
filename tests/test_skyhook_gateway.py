@@ -233,6 +233,68 @@ def test_other_orders_leave_out_official_and_empty_orders() -> None:
     assert gateway.other_orders(1) is NO_ORDERS
 
 
+_FACTS = SonarrSeriesOrders(_SERIES, AIRED_ORDER, {"official": 4, "dvd": 4})
+"""The series as Sonarr lists it, in aired order."""
+
+
+def test_a_refetch_writes_a_new_answer_over_one_that_is_still_fresh() -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, sonarr_counts={"official": 4, "dvd": 4}))
+    gateway = _gateway(cache=cache)
+
+    answer = gateway.refetch(_FACTS)
+
+    # The stored answer had one row per order.
+    assert answer is not None
+    assert [len(answer.orders[name]) for name in ("official", "dvd")] == [5, 4]
+    assert cache.get_tvdb_orders(_SERIES) == answer
+    assert gateway.cached_orders(_SERIES) == answer
+
+
+@pytest.mark.parametrize(
+    "by_the_prefetch", [pytest.param(True, id="by-the-prefetch"), pytest.param(False, id="by-a-refetch")]
+)
+def test_a_refetch_asks_nothing_for_an_answer_this_run_wrote(by_the_prefetch: bool) -> None:
+    client = FakeSkyHookClient(_REPLIES)
+    gateway = SkyHookGateway(client=client, cache_store=FakeCacheStore())
+    if by_the_prefetch:
+        gateway.prefetch([_FACTS], dry_run=True)
+    else:
+        gateway.refetch(_FACTS)
+    asked = list(client.fetch_calls)
+
+    again = gateway.refetch(_FACTS)
+
+    assert again is not None
+    assert again == gateway.cached_orders(_SERIES)
+    assert client.fetch_calls == asked == [(_SERIES, "official"), (_SERIES, "dvd")]
+
+
+def test_a_refetch_answers_none_and_keeps_the_stored_answer_when_skyhook_is_unreachable() -> None:
+    cache = FakeCacheStore()
+    stored = stored_orders(_STORED)
+    cache.put_tvdb_orders(_SERIES, stored)
+    gateway = _gateway(cache=cache, failing=frozenset({(_SERIES, AIRED_ORDER)}))
+
+    assert gateway.refetch(_FACTS) is None
+    assert gateway.cached_orders(_SERIES) == stored
+    assert cache.get_tvdb_orders(_SERIES) == stored
+
+
+def test_a_refetched_answer_waits_for_the_runs_next_save(tmp_path: Path) -> None:
+    path = str(tmp_path / "cache.db")
+    store = CacheStore.load(path, config_hash="x")
+    store.save(dry_run=False)
+    SkyHookGateway(client=FakeSkyHookClient(_REPLIES), cache_store=store).refetch(_FACTS)
+    # Closing without a save is how an interrupted run ends. A save by the refetch would have kept the answer,
+    # and whatever else the library item in flight had written by then.
+    store.close()
+
+    reopened = CacheStore.load(path, config_hash="x")
+    assert reopened.get_tvdb_orders(_SERIES) is None
+    reopened.close()
+
+
 @pytest.mark.parametrize(
     ("dry_run", "kept"), [pytest.param(False, True, id="real"), pytest.param(True, False, id="preview")]
 )

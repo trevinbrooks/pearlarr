@@ -37,6 +37,8 @@ class SkyHookGateway:
         self._client = client
         self._cache = cache_store
         self._answers: dict[int, CachedOrders | None] = {}
+        # The TVDB ids of the series whose answer this run fetched and wrote.
+        self._written: set[int] = set()
 
     @property
     def unreachable(self) -> bool:
@@ -62,16 +64,40 @@ class SkyHookGateway:
         due = [facts for facts in series if self._due(facts, now)]
         written = 0
         for done, facts in enumerate(due, start=1):
-            answer = self._fetch_series(facts, now)
-            if answer is None:
+            if self._write(facts, now) is None:
                 break
-            self._cache.put_tvdb_orders(facts.tvdb_id, answer)
-            self._answers[facts.tvdb_id] = answer
             self._cache.save(dry_run=dry_run)
             written += 1
             if progress is not None:
                 progress.progress(done / len(due), f"{done}/{len(due)}")
         return written
+
+    def refetch(self, facts: SonarrSeriesOrders) -> CachedOrders | None:
+        """Fetch and store the series' orders again, however fresh its stored answer is. None when unreachable.
+
+        An answer this run already wrote is given back with no request: SkyHook was asked for it this run.
+
+        The answer waits for the run's next save. A save here would land inside a library item's check, where the
+        run never commits.
+        """
+
+        if facts.tvdb_id in self._written:
+            return self._answers[facts.tvdb_id]
+        return self._write(facts, datetime.now())
+
+    def _write(self, facts: SonarrSeriesOrders, now: datetime) -> CachedOrders | None:
+        """Fetch one series' answer and store it whole, unsaved.
+
+        None, with the old answer left as it is, when SkyHook is unreachable.
+        """
+
+        answer = self._fetch_series(facts, now)
+        if answer is None:
+            return None
+        self._cache.put_tvdb_orders(facts.tvdb_id, answer)
+        self._answers[facts.tvdb_id] = answer
+        self._written.add(facts.tvdb_id)
+        return answer
 
     def cached_orders(self, tvdb_id: int) -> CachedOrders | None:
         """The series' cached answer at any age, or None when it has never been fetched."""
