@@ -14,6 +14,7 @@ from pearlarr.grab_placement import (
     FetchedSeadex,
     KnownTorrent,
     ListedFile,
+    OwnOnlyFile,
     PendingImportUpdate,
     PlacedEntry,
     PlacedGrab,
@@ -26,6 +27,7 @@ from pearlarr.grab_placement import (
     build_title_claim,
     build_update_without_window,
     entry_hashes,
+    own_only_files,
     place_release,
     size_over_name_files,
 )
@@ -2113,3 +2115,124 @@ class TestPlaceOnAnEpisodeSonarrHasNoRowFor:
         assert release.placed.covered_ids == frozenset()
         assert claim.claimed_coverage == "S01 E01-E02, E04"
         assert claim.ordered_episode_ids == (101, 102, -903, 104)
+
+
+class TestPlaceOnARowTheAiredOrderLacks:
+    """A pack numbered by the DVD order, on a series whose Sonarr has rows for two episodes the aired order lacks.
+
+    The aired order has the fourth season's opener whole. The DVD order numbers the fourth and fifth seasons as its
+    seventh and opens it with the opener's two halves, which Sonarr has rows for. The fourth season's title grabs
+    the pack, and SeaDex lists it under the fifth season's title too.
+    """
+
+    _FOURTH: ClassVar[list[SonarrEpisode]] = [
+        sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=7400 + n) for n in range(1, 13)
+    ]
+    _FIFTH: ClassVar[list[SonarrEpisode]] = [
+        sonarr_ep(5, n, ep_id=500 + n, episode_file_id=0, tvdb_id=7500 + n) for n in range(1, 8)
+    ]
+    _SEVENTH: ClassVar[SonarrEpisode] = sonarr_ep(7, 1, ep_id=701, episode_file_id=0, tvdb_id=7701)
+    """The aired order's own seventh season has one episode, which the pack's first file is matched as."""
+    _DVD: ClassVar[tuple[OrderRow, ...]] = (
+        OrderRow(7, 1, 7901, None),
+        OrderRow(7, 2, 7902, None),
+        *(OrderRow(7, n + 1, 7400 + n, None) for n in range(2, 13)),
+        *(OrderRow(7, n + 13, 7500 + n, None) for n in range(1, 8)),
+        OrderRow(7, 21, 7401, None),
+    )
+    _NAMES: ClassVar[TitleNames] = TitleNames("Show", ("Show Ending",))
+    _PACK: ClassVar[list[str]] = [normalize_file_name(f"[grp] Show - S07E{n:02d}.mkv") for n in range(1, 21)]
+    _FILES: ClassVar[list[ListedFile]] = [
+        ListedFile(_PACK[0], 1001, _matched(7, 1)),
+        *(ListedFile(name, 1000 + n, _season_episode_with_no_match(7, n)) for n, name in enumerate(_PACK[1:], 2)),
+    ]
+
+    _DVD_FIRST_HALF: ClassVar[EpisodeKey] = EpisodeKey(7, 1)
+
+    @classmethod
+    def _series(cls, first_half: EpisodeKey = _DVD_FIRST_HALF) -> EpisodeIndex:
+        """The series, with Sonarr's rows for the two halves numbered from `first_half` on, as the DVD order does."""
+
+        halves = [
+            sonarr_ep(first_half.season, first_half.episode + n, ep_id=9001 + n, episode_file_id=0, tvdb_id=7901 + n)
+            for n in (0, 1)
+        ]
+        return episode_index([*cls._FOURTH, *cls._FIFTH, cls._SEVENTH], {"dvd": cls._DVD}, halves)
+
+    @classmethod
+    def _title(cls, series: EpisodeIndex) -> GrabbingTitle:
+        return make_grabbing_title(episode_index(cls._FOURTH), series, names=cls._NAMES)
+
+    @classmethod
+    def _torrent(cls, series: EpisodeIndex, pending: PendingImport | None = None) -> KnownTorrent:
+        listed = (
+            title_window(1, (ep.id for ep in cls._FOURTH), names=cls._NAMES),
+            title_window(2, (ep.id for ep in cls._FIFTH), names=TitleNames("Show", ("Show Ending Part 2",))),
+        )
+        return known_torrent(pending, indexes={7: series}, evidence=torrent_evidence(*listed))
+
+    @classmethod
+    def _place(cls, series: EpisodeIndex, pending: PendingImport | None = None) -> PlacedRelease:
+        return place_release(cls._FILES, cls._title(series), cls._torrent(series, pending))
+
+    def test_the_halves_land_on_the_rows_and_count_toward_no_title(self) -> None:
+        placement = self._place(self._series())
+
+        placed = by_name(placement.placements)
+        assert placed[self._PACK[0]] == ((9001,), PlacementVerdict.OTHER_ORDER)
+        assert placed[self._PACK[1]] == ((9002,), PlacementVerdict.OTHER_ORDER)
+        assert placement.covered_ids == {ep.id for ep in self._FOURTH[1:]}
+        assert [(ep.season, ep.episode) for ep in placement.episodes] == [(4, n) for n in range(2, 13)]
+        assert placement.skip_reason is None
+
+    def test_a_placed_row_carries_its_tvdb_episode_id(self) -> None:
+        placement = self._place(self._series())
+
+        assert (placement.tvdb_ids.by_row_id[9001], placement.tvdb_ids.by_row_id[9002]) == (7901, 7902)
+
+    def test_a_stored_torrents_halves_stay_left_for_a_hand_import(self) -> None:
+        # An earlier grab stored the fourth season's files and left the halves for a hand import under their DVD
+        # keys, before Sonarr had rows for them. A later check never places a file left for a hand import.
+        stored = pending_import(
+            infohash="h1",
+            series_id=7,
+            anilist_id=1,
+            names=self._NAMES,
+            ordered_episode_ids=[ep.id for ep in self._FOURTH],
+            file_episode_map={name: [400 + n] for n, name in enumerate(self._PACK[2:13], 2)},
+            seadex_files=self._PACK,
+            hand_import_files=self._PACK[:2],
+            order_only={
+                self._PACK[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+                self._PACK[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+            },
+        )
+        series = self._series()
+
+        placement = self._place(series, stored)
+        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
+        joined = build_pending_import_update(release, self._title(series), title_facts()).joined()
+
+        assert placement.placements.placed == {}
+        assert joined is not None
+        assert dict(joined.file_episode_map) == dict(stored.file_episode_map)
+        assert (joined.hand_import_files, dict(joined.order_only)) == (
+            stored.hand_import_files,
+            dict(stored.order_only),
+        )
+
+    def test_the_files_on_such_rows_are_named_by_sonarrs_own_numbers(self) -> None:
+        # Sonarr numbers the series by an order that has the halves as S13E20 and S13E21.
+        series = self._series(EpisodeKey(13, 20))
+
+        named = own_only_files(self._place(series), [series])
+
+        assert named == (
+            OwnOnlyFile(self._PACK[0], (EpisodeKey(13, 20),)),
+            OwnOnlyFile(self._PACK[1], (EpisodeKey(13, 21),)),
+        )
+
+    def test_a_release_with_no_file_on_such_a_row_names_none(self) -> None:
+        placement = place_release(_season_files(), _grabbing_title(_SEASON), _NEW)
+
+        assert own_only_files(placement, _INDEXES.values()) == ()

@@ -641,7 +641,8 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
     def series_index(self, series_id: int) -> EpisodeIndex | None:
         """The whole series' placement index, numbered as aired, with its other TVDB orders read onto it.
 
-        Stand-ins included. Built once per read of the series' rows. None when the series has no view.
+        Stand-ins included. Sonarr's rows the aired order lacks are held apart (`EpisodeIndex.own_only`). Built once
+        per read of the series' rows. None when the series has no view.
         """
 
         view = self.aired_series(series_id)
@@ -649,7 +650,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
             return None
         read = self._series[series_id]
         if read.index is None:
-            read.index = episode_index(view.aired, self._other_orders(series_id))
+            read.index = episode_index(view.aired, self._other_orders(series_id), view.own_only)
         return read.index
 
     def _other_orders(self, series_id: int) -> OrdersByName:

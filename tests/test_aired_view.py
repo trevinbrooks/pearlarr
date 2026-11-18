@@ -59,6 +59,7 @@ def test_a_series_in_aired_order_keeps_sonarrs_rows_untouched(season_type: str) 
 
     assert isinstance(view, AiredSeries)
     assert (view.order, view.in_sonarr, view.stand_ins, view.aired) == (season_type, tuple(rows), (), tuple(rows))
+    assert view.own_only == ()
 
 
 def test_a_row_takes_the_aired_numbers_of_its_tvdb_episode_and_keeps_the_rest() -> None:
@@ -92,6 +93,21 @@ def test_a_row_only_the_series_own_order_lists_is_left_out() -> None:
 
     assert [ep.id for ep in view.in_sonarr] == [7]
     assert 555 not in {ep.tvdb_id for ep in view.aired}
+
+
+def test_a_row_only_the_series_own_order_lists_is_kept_apart_as_sonarr_sent_it() -> None:
+    own = sonarr_ep(1, 2, ep_id=8, tvdb_id=555, absolute=2, size=5, scene_season=1, scene_episode=2)
+
+    view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), own])
+
+    assert view.own_only == (own,)
+
+
+@pytest.mark.parametrize("tvdb_id", [None, 0, -4])
+def test_a_row_without_a_positive_tvdb_id_is_not_kept_apart(tvdb_id: int | None) -> None:
+    view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=tvdb_id)])
+
+    assert view.own_only == ()
 
 
 def test_an_aired_episode_sonarr_has_no_row_for_gets_a_stand_in_in_aired_position() -> None:
@@ -136,6 +152,14 @@ def test_two_aired_episodes_with_one_number_keep_the_first_listed() -> None:
     view = _view(rows, aired)
 
     assert _numbers(view.aired) == [(8, 1, 1, 1), (-103, 1, 2, 2)]
+
+
+def test_the_row_of_an_aired_episode_that_shares_a_kept_number_is_kept_apart() -> None:
+    # As above: the aired order lists the row's episode second under the first episode's number.
+    aired = (OrderRow(1, 1, 101, 1), OrderRow(1, 1, 102, 1), OrderRow(1, 2, 103, 2))
+    rows = [sonarr_ep(1, 1, ep_id=7, tvdb_id=102), sonarr_ep(1, 2, ep_id=8, tvdb_id=101)]
+
+    assert _view(rows, aired).own_only == (rows[0],)
 
 
 def test_an_aired_row_without_a_positive_tvdb_id_gets_no_stand_in() -> None:

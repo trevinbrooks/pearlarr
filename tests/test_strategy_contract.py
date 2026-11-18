@@ -13,7 +13,7 @@ is a real `ArrRunServices` subclass. The strategies are built bare
 (`object.__new__`) so no live Sonarr/Radarr client is constructed.
 """
 
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, NamedTuple, cast, override
@@ -2574,6 +2574,72 @@ class TestImportFollowsEpisodeIds:
         assert result.pending.tvdb_ids == TvdbIds({101: 9001})
 
 
+_SPLIT_RUN = tuple(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14))
+
+_STORED_ON_SPLIT_ROWS = pending_import(
+    file_episode_map={
+        _SPLIT_RUN[0]: (9001,),
+        _SPLIT_RUN[1]: (9002,),
+        **{_SPLIT_RUN[n]: (400 + n,) for n in range(2, 13)},
+    },
+    seadex_files=_SPLIT_RUN,
+    ordered_episode_ids=tuple(range(401, 413)),
+    tvdb_ids={9001: 7901, 9002: 7902, **{400 + n: 7400 + n for n in range(1, 13)}},
+)
+"""A 13-file pending import of title 1 on series 7, whose window is the twelve aired episodes 401 to 412.
+
+The aired opener 401 is two halves in the order Sonarr numbers the series by. The first two files sit on the
+halves' rows 9001 and 9002, outside the window, and the other eleven on 402 to 412.
+"""
+
+
+def _split_opener_rows(*, with_a_file: Iterable[int]) -> list[SonarrEpisode]:
+    """Series 7 as Sonarr numbers it: the two halves, the eleven after them, and the whole opener last.
+
+    The rows in `with_a_file` hold a file of the pending import's group, the others none.
+    """
+
+    held = frozenset(with_a_file)
+    numbered = [(1, 9001, 7901), (2, 9002, 7902), *((n + 1, 400 + n, 7400 + n) for n in range(2, 13)), (21, 401, 7401)]
+    return [
+        sonarr_ep(
+            7,
+            number,
+            ep_id=row_id,
+            tvdb_id=tvdb_id,
+            episode_file_id=1 if row_id in held else 0,
+            release_group="SubGroup" if row_id in held else None,
+        )
+        for number, row_id, tvdb_id in numbered
+    ]
+
+
+class TestImportOnRowsTheAiredOrderLacks:
+    """A file placed on a Sonarr row the aired order lacks is imported like any other file of the pending import."""
+
+    def test_a_file_on_such_a_row_is_posted_with_the_rows_id(self) -> None:
+        candidates = [manual_candidate(f"/d/{name}") for name in _SPLIT_RUN]
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=candidates, episodes=_split_opener_rows(with_a_file=range(402, 413))
+        )
+
+        result = strat.import_completed(_STORED_ON_SPLIT_ROWS, "/d", AttemptKind.ORDINARY)
+
+        assert _posted(sonarr) == [[(f"/d/{_SPLIT_RUN[0]}", [9001]), (f"/d/{_SPLIT_RUN[1]}", [9002])]]
+        assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 11, 13)
+
+    def test_the_pending_import_ends_once_such_rows_hold_its_files_too(self) -> None:
+        candidates = [manual_candidate(f"/d/{name}") for name in _SPLIT_RUN]
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=candidates, episodes=_split_opener_rows(with_a_file=(9001, 9002, *range(402, 413)))
+        )
+
+        result = strat.import_completed(_STORED_ON_SPLIT_ROWS, "/d", AttemptKind.ORDINARY)
+
+        assert result.all_done is True
+        assert sonarr.execute_calls == []
+
+
 def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
     """One Radarr `/history/since` record, as the import-evidence match reads it."""
 
@@ -3451,13 +3517,14 @@ class TestPlacementDebugLine:
     def test_a_release_skipped_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
         logger = debug_logger("pearlarr-placement-line")
         strat = make_bare_instance(SonarrStrategy, logger=logger)
-        grabbing_title = make_grabbing_title(episode_index([_EP1]), episode_index([_EP1]))
+        series = episode_index([_EP1])
+        grabbing_title = make_grabbing_title(series, series)
         placement = place_release(
             [ListedFile("Show - 01.mkv", 1000, None)], grabbing_title, new_torrent(grabbing_title)
         )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
 
         assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
         assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
@@ -3478,7 +3545,7 @@ class TestPlacementDebugLine:
         )
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
 
         halves = ", ".join(
             f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
@@ -3486,6 +3553,31 @@ class TestPlacementDebugLine:
         )
         assert [r.message for r in caplog.records] == [
             f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
+        ]
+
+    def test_a_file_on_a_row_the_aired_order_lacks_is_named_by_sonarrs_own_numbers(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The same 13 files, and Sonarr numbers the series by the DVD order, so it has a row for each half. The
+        # halves land on those rows, which have no aired number to print.
+        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
+        halves = tuple(sonarr_ep(7, n, ep_id=900 + n, episode_file_id=0, tvdb_id=9000 + n) for n in (1, 2))
+        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
+        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
+        series = episode_index(season, {"dvd": dvd}, halves)
+        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
+        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-own-rows"))
+        placement = place_release(
+            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
+        )
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
+
+        on_rows = ", ".join(f"{normalize_file_name(names[n - 1])} (S07 E0{n})" for n in (1, 2))
+        assert [r.message for r in caplog.records] == [
+            f"{_GRAB_URL}: placed S04 E02-E12; on episodes the aired order lacks, by Sonarr's numbers: {on_rows}"
         ]
 
     def test_a_file_on_an_episode_sonarr_has_no_row_for_is_named_with_its_aired_episode(
@@ -3498,7 +3590,7 @@ class TestPlacementDebugLine:
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
 
         with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}))
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
 
         (line,) = [r.message for r in caplog.records]
         assert line == (

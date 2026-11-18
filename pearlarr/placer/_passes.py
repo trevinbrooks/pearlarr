@@ -1,9 +1,11 @@
 """`place_batch`, the pass list below, and every pass not in `_sequence_passes` or `_orders`.
 
 The title's episode ids are authoritative. Sonarr's parse of a file name, and the number the name carries, only
-ever choose among them.
+ever choose among them. One kind of id comes from outside the window: a Sonarr row the aired order lacks, which no
+window can hold. Pass 16 alone places on one, through one function (`_orders._settle_off_aired`).
 
-The passes run in this order. Each places files only onto the ids that earlier passes left unused:
+The passes run in this order. Each places files only onto the window's ids that earlier passes left unused, but for
+those rows:
 
 1. Extras (`_pass_extras`): `EXTRA`.
 2. Title contradictions (`_pass_reject_contradicted`): rejects the parses a title contradicts or no title confirms.
@@ -24,7 +26,8 @@ The passes run in this order. Each places files only onto the ids that earlier p
 14. Numbered sequence (`_sequence_passes.pass_sequence`): `SEQUENCE`, `DUPLICATE`.
 15. Classify (`_pass_classify`): `MISNUMBERED`, `DUPLICATE`, `OUTSIDE_WINDOW`, `EPISODE_TITLES_CONTRADICT`,
     `NO_EPISODE_FOUND`.
-16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, `OTHER_ORDER_OUTSIDE_WINDOW`, `ORDER_ONLY`.
+16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, on a window id or on a row the aired order lacks,
+    `OTHER_ORDER_OUTSIDE_WINDOW`, `ORDER_ONLY`.
 
 At most one of passes 11 to 13 is tried: pairing in absolute order when its conditions hold, else the single-file
 pass when one id is unused, else pairing in name order. Their candidates are the unjudged files and the files left

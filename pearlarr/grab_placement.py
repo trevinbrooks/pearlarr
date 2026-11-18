@@ -403,7 +403,8 @@ class _OnWindow:
         claimed: set[int] = set()
         for f in files:
             for ep_id in whole_file_map.get(f.name, ()):
-                # A stored id on another series is not this title's. One inside the title counts toward its coverage.
+                # A stored id on another series is not this title's, and neither is a row the aired order lacks,
+                # which no title's index holds. One inside the title counts toward its coverage.
                 episode = index.by_id.get(ep_id)
                 if episode is None:
                     continue
@@ -469,6 +470,32 @@ def aired_only_files(placed: PlacedRelease) -> AiredOnlyFiles | None:
         return None
     episodes = tuple(dict.fromkeys(key for placement in aired_only for key in placement.aired_only))
     return AiredOnlyFiles(episodes=episodes, count=len(aired_only), listed=len(placed.files))
+
+
+@dataclass(frozen=True, slots=True)
+class OwnOnlyFile:
+    """A file this placement put on Sonarr's rows the aired order lacks, for the line that reports it."""
+
+    name: str
+    """The normalized file name."""
+    episodes: tuple[EpisodeKey, ...]
+    """The rows by Sonarr's own numbers, which no aired number stands for."""
+
+
+def own_only_files(placed: PlacedRelease, indexes: Iterable[EpisodeIndex]) -> tuple[OwnOnlyFile, ...]:
+    """One per file the release's placement put on a row the aired order lacks (`EpisodeIndex.own_only`).
+
+    `indexes` are the series indexes the release was placed with. The stored file map's files are not read.
+    """
+
+    rows = {row_id: row for index in indexes for row_id, row in index.own_only.items()}
+    found: list[OwnOnlyFile] = []
+    for name, ids in placed.placements.placed.items():
+        on_rows = [rows[ep_id] for ep_id in ids if ep_id in rows]
+        if on_rows:
+            keys = tuple(season_episode_key(row.season_number, row.episode_number) for row in on_rows)
+            found.append(OwnOnlyFile(name, keys))
+    return tuple(found)
 
 
 def _another_titles_counts(another_titles: frozenset[str], placements: BatchPlacements) -> AnotherTitlesCounts:

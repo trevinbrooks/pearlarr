@@ -21,6 +21,7 @@ from .grab_placement import (
     aired_only_files,
     build_pending_import_updates,
     entry_hashes,
+    own_only_files,
     size_over_name_files,
 )
 from .mappings import ExternalIds, MappingSource, TitleMapping
@@ -480,7 +481,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             ),
         )
         placed.attach_placements(seadex_dict)
-        self._log_placements(placed)
+        self._log_placements(placed, indexes.values())
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
         if self._config.advanced.interactive and len(seadex_dict) > 1 and releases_overlap(seadex_dict=seadex_dict):
@@ -621,15 +622,26 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         if left_out:
             self._services.log_aired_only("; ".join(left_out))
 
-    def _log_placements(self, placed: PlacedEntry) -> None:
-        """One debug line per release with video files: coverage, then each file excluded or left for a hand import."""
+    def _log_placements(self, placed: PlacedEntry, indexes: Iterable[EpisodeIndex]) -> None:
+        """One debug line per release with video files: the title's coverage, then the files it doesn't count.
 
+        Those are each file on a Sonarr row the aired order lacks (`own_only_files`, read off `indexes`, the series
+        indexes the releases were placed with), each file excluded, and each left for a hand import. The coverage
+        is in aired numbers. A row the aired order lacks has none, so it prints by Sonarr's own.
+        """
+
+        series_indexes = tuple(indexes)
         for url, placement in placed.by_url.items():
             if not placement.files:
                 continue
             # The skip and the failed read explain an empty coverage on a listed release. A release skipped on the
             # read names it once, in its skip reason.
             assignment = placement.placements
+            own_only = ", ".join(
+                f"{file.name} ({_coverage.coverage_string(file.episodes)})"
+                for file in own_only_files(placement, series_indexes)
+            )
+            own_only_note = f"; on episodes the aired order lacks, by Sonarr's numbers: {own_only}" if own_only else ""
             aside = ", ".join(_file_and_why(p) for p in assignment.excluded)
             by_hand = ", ".join(_file_and_why(p) for p in assignment.placements if p.verdict.left_for_hand_import)
             not_grabbed_note = "" if placement.skip_reason is None else f" (not grabbed: {placement.skip_reason})"
@@ -638,7 +650,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             )
             self.logger.debug(
                 f"{url}: placed {_coverage.coverage_string(ep.key for ep in placement.episodes) or 'nothing'}"
-                f"{' (a read failed)' if note_read_failed else ''}{not_grabbed_note}"
+                f"{' (a read failed)' if note_read_failed else ''}{not_grabbed_note}{own_only_note}"
                 f"{f'; set aside: {aside}' if aside else ''}"
                 f"{f'; left for a hand import: {by_hand}' if by_hand else ''}"
             )

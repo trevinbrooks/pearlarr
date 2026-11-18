@@ -306,7 +306,8 @@ class ImportSnapshot:
 
         The first claim with a window naming it decides. Otherwise the series whose index has it does, under its
         claim with no window when it has exactly one (two claims with no window on a series merge), else under its
-        merged evidence.
+        merged evidence. That second path also takes a file map id on a claim's series that no window names: a file
+        the grab placed on a Sonarr row the aired order lacks, which no title's window holds.
         """
 
         for claim in self.pending.claims:

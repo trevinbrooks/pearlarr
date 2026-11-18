@@ -1,12 +1,20 @@
 # pyright: strict
 """The other-orders pass: files the aired order left unplaced, placed where another TVDB order reads them."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import ClassVar
 
 from pearlarr.arr_models import ParsedFileInfo
 from pearlarr.pending_import import TitleNames
-from pearlarr.placement_types import NO_EVIDENCE, BatchPlacements, PlacementTarget, PlacementVerdict, SeadexEvidence
+from pearlarr.placement_types import (
+    NO_EVIDENCE,
+    BatchPlacements,
+    EpisodeIndex,
+    PlacementTarget,
+    PlacementVerdict,
+    SeadexEvidence,
+)
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 from pearlarr.tvdb_orders import OrderRow, OrdersByName
 from pearlarr.window_placement import WindowedPlacements, place_across_windows
@@ -72,9 +80,14 @@ class TestInterleavedSpecialByOrder:
         listed: tuple[int, ...] | None = None,
         absolutes: dict[int, int] | None = None,
         titles: dict[int, str] | None = None,
+        own_only: Mapping[EpisodeKey, int] | None = None,
     ) -> PlacementTarget:
         index = series_index(
-            cls._ID_BY_KEY, absolutes=cls._ABSOLUTES if absolutes is None else absolutes, titles=titles, orders=orders
+            cls._ID_BY_KEY,
+            absolutes=cls._ABSOLUTES if absolutes is None else absolutes,
+            titles=titles,
+            orders=orders,
+            own_only=own_only,
         )
         listing = NO_EVIDENCE if listed is None else SeadexEvidence(torrent_listing(title_window(1, listed)))
         return PlacementTarget(resolved, index, title_names=TitleNames("Show"), seadex=listing)
@@ -155,6 +168,8 @@ class TestInterleavedSpecialByOrder:
     _THIRD_PARSED: ClassVar[dict[str, ParsedFileInfo | None]] = {
         name: parsed_info(season=3, episodes=(n,)) for n, name in enumerate(_THIRD, start=1)
     }
+    _SPLIT_ROWS: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(3, 1): 9001, EpisodeKey(3, 2): 9002}
+    """Sonarr's rows for the two-part episode of `_SPLIT`, on a Sonarr that numbers the series by that order."""
 
     def test_a_key_the_order_gives_to_no_episode_of_sonarrs_is_left_for_a_hand_import(self) -> None:
         result = place(self._THIRD_PARSED, self._target(self._SEASON, {"dvd": self._SPLIT}))
@@ -171,6 +186,21 @@ class TestInterleavedSpecialByOrder:
             self._THIRD[1]: OrderOnlyKey("dvd", EpisodeKey(3, 2)),
         }
         assert result.hand_import_files == (self._THIRD[0], self._THIRD[1])
+
+    def test_with_no_window_a_key_on_a_row_the_aired_order_lacks_places_nothing_there(self) -> None:
+        index = series_index(
+            self._ID_BY_KEY, absolutes=self._ABSOLUTES, orders={"dvd": self._SPLIT}, own_only=self._SPLIT_ROWS
+        )
+
+        result = place(self._THIRD_PARSED, PlacementTarget([], index, title_names=TitleNames("Show")))
+
+        assert by_name(result) == {
+            self._THIRD[0]: ((), PlacementVerdict.NO_EPISODE_FOUND),
+            self._THIRD[1]: ((), PlacementVerdict.NO_EPISODE_FOUND),
+            self._THIRD[2]: ((601,), PlacementVerdict.OTHER_ORDER),
+            self._THIRD[3]: ((602,), PlacementVerdict.OTHER_ORDER),
+            self._THIRD[4]: ((603,), PlacementVerdict.OTHER_ORDER),
+        }
 
     def test_a_file_spanning_two_keys_only_the_order_has_is_left_under_the_first(self) -> None:
         # The two halves in one file.
@@ -198,6 +228,15 @@ class TestInterleavedSpecialByOrder:
         assert by_name(result)[self._THIRD[2]] == ((601,), PlacementVerdict.OTHER_ORDER)
         assert result.order_only == {}
 
+    def test_a_key_two_orders_read_onto_one_row_the_aired_order_lacks_stays_unplaced(self) -> None:
+        orders = {"dvd": self._SPLIT, "altdvd": self._SPLIT}
+
+        result = place(self._THIRD_PARSED, self._target(self._SEASON, orders, own_only=self._SPLIT_ROWS))
+
+        assert by_name(result)[self._THIRD[0]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        assert by_name(result)[self._THIRD[1]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        assert by_name(result)[self._THIRD[2]] == ((601,), PlacementVerdict.OTHER_ORDER)
+
     def test_a_key_one_order_reads_onto_an_episode_and_another_gives_to_none_of_sonarrs_is_left(self) -> None:
         # The second order opens its third season on the first aired episode and gives its next two numbers to
         # episodes Sonarr doesn't list, so the orders differ on "S03E01" and "S03E03".
@@ -208,6 +247,18 @@ class TestInterleavedSpecialByOrder:
         assert by_name(result)[self._THIRD[0]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
         assert by_name(result)[self._THIRD[2]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
         assert by_name(result)[self._THIRD[3]] == ((602,), PlacementVerdict.OTHER_ORDER)
+
+    def test_the_listing_keeps_an_order_that_reads_a_key_onto_a_row_the_aired_order_lacks(self) -> None:
+        # The second order swaps the last two episodes, so the orders read "S03E04" and "S03E05" apart and the
+        # listing picks among them. It holds neither row, and still keeps the order that reads the halves onto them:
+        # the second order alone would place "S03E01" on the first aired episode.
+        crossed = _order((3, 1, 601), (3, 2, 9002), (3, 3, 9003), (3, 4, 603), (3, 5, 602))
+        orders = {"dvd": self._SPLIT, "altdvd": crossed}
+        target = self._target(self._SEASON, orders, listed=(601, 602, 603), own_only=self._SPLIT_ROWS)
+
+        result = place(self._THIRD_PARSED, target)
+
+        assert by_name(result) == dict.fromkeys(self._THIRD, ((), PlacementVerdict.NO_EPISODE_FOUND))
 
     def test_a_key_only_the_order_has_is_left_for_a_hand_import_though_it_reads_the_rest_as_aired(self) -> None:
         # No special in the absolutes, so the aired keys place three and find no episode for "S01E04". The order
@@ -227,6 +278,23 @@ class TestInterleavedSpecialByOrder:
 
         assert by_name(result)[self._RUN[2]] == ((), PlacementVerdict.MISNUMBERED)
         assert by_name(result)[self._RUN[3]] == ((603,), PlacementVerdict.OTHER_ORDER)
+
+    def test_a_final_unplaced_member_read_onto_a_row_the_aired_order_lacks_stays_final_unplaced(self) -> None:
+        # As above, and Sonarr has a row for the order's third episode. The third file carries the special's title,
+        # so the special's window places it by that title under its own window, and the season's verdict stands
+        # over the windows.
+        order = _order((1, 1, 601), (1, 2, 602), (1, 3, 9001), (1, 4, 603))
+        titled = "[grp] Show - S01E03 - Lost Lantern.mkv"
+        windows = tuple(
+            self._target(ids, {"dvd": order}, titles={501: "Lost Lantern"}, own_only={EpisodeKey(1, 3): 9001})
+            for ids in (self._SEASON, [501])
+        )
+
+        result = place_across_windows(batch(self._renamed(2, titled)), windows)
+
+        assert by_name(under_window(result, 0))[titled] == ((), PlacementVerdict.MISNUMBERED)
+        assert by_name(under_window(result, 1))[titled] == ((501,), PlacementVerdict.EPISODE_TITLE)
+        assert by_name(merged_of(result))[titled] == ((), PlacementVerdict.MISNUMBERED)
 
     def test_an_order_only_half_outranks_a_window_that_only_found_no_episode_for_it(self) -> None:
         orderless = self._target([701], {})
@@ -561,14 +629,18 @@ class TestInterleavedSpecialByOrder:
     _LANTERN: ClassVar[str] = "[grp] Show - S01E03 - Lost Lantern.mkv"
     """The third file under the special's title."""
 
-    def _place_short(self, order: tuple[OrderRow, ...]) -> BatchPlacements:
+    def _place_short(
+        self, order: tuple[OrderRow, ...], own_only: Mapping[EpisodeKey, int] | None = None
+    ) -> BatchPlacements:
         """The first two members and `_LANTERN`, whose title contradicts them, under the season's window.
 
-        The torrent ends at the third file, so no number runs past the season's end.
+        The torrent ends at the third file, so no number runs past the season's end. `own_only` are Sonarr's rows
+        the aired order lacks.
         """
 
         parsed = {**{name: self._PARSED[name] for name in self._RUN[:2]}, self._LANTERN: self._PARSED[self._RUN[2]]}
-        return place(parsed, self._target(self._SEASON, {"dvd": order}, titles={501: "Lost Lantern"}))
+        target = self._target(self._SEASON, {"dvd": order}, titles={501: "Lost Lantern"}, own_only=own_only)
+        return place(parsed, target)
 
     def test_a_title_naming_another_episode_than_its_key_is_a_file_the_aired_order_fails_on(self) -> None:
         # The order reads the third file as the special its title names.
@@ -584,6 +656,18 @@ class TestInterleavedSpecialByOrder:
         # The order reads "S01E02" as aired and gives the other two keys to episodes Sonarr doesn't list: the
         # contradicted "S01E01", and "S01E03", whose title names the special.
         result = self._place_short(_order((1, 1, 9001), (1, 2, 602), (1, 3, 9002)))
+
+        assert by_name(result) == {
+            self._RUN[0]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
+            self._RUN[1]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
+            self._LANTERN: ((), PlacementVerdict.NO_EPISODE_FOUND),
+        }
+
+    def test_a_key_on_a_row_the_aired_order_lacks_answers_no_contradicted_file_either(self) -> None:
+        # As above, and Sonarr has a row for each of the order's two episodes.
+        order = _order((1, 1, 9001), (1, 2, 602), (1, 3, 9002))
+
+        result = self._place_short(order, {EpisodeKey(1, 1): 9001, EpisodeKey(1, 3): 9002})
 
         assert by_name(result) == {
             self._RUN[0]: ((), PlacementVerdict.EPISODE_TITLES_CONTRADICT),
@@ -692,10 +776,13 @@ class TestMisnumberedSpecialsByOrder:
     _LISTED: ClassVar[tuple[int, ...]] = (502, 504, 506)
 
     @classmethod
-    def _place(cls, order: tuple[OrderRow, ...]) -> BatchPlacements:
-        """The batch numbered 1, 2 and 3 under the listed specials' window, with `order` as the DVD order."""
+    def _place(cls, order: tuple[OrderRow, ...], own_only: Mapping[EpisodeKey, int] | None = None) -> BatchPlacements:
+        """The batch numbered 1, 2 and 3 under the listed specials' window, with `order` as the DVD order.
 
-        index = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)}, orders={"dvd": order})
+        `own_only` are Sonarr's rows the aired order lacks.
+        """
+
+        index = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)}, orders={"dvd": order}, own_only=own_only)
         listing = SeadexEvidence(torrent_listing(title_window(1, cls._LISTED)))
         target = PlacementTarget(list(cls._LISTED), index, title_names=TitleNames("Show"), seadex=listing)
         return place(parsed_specials(1, 2, 3), target)
@@ -717,6 +804,20 @@ class TestMisnumberedSpecialsByOrder:
         assert by_name(result) == {
             name: ((ep_id,), PlacementVerdict.OTHER_ORDER)
             for name, ep_id in zip(parsed_specials(1, 2, 3), self._LISTED, strict=True)
+        }
+
+    def test_a_special_read_onto_a_row_the_aired_order_lacks_stays_final_unplaced_beside_the_placed_ones(self) -> None:
+        # The order numbers the first and last listed specials 1 and 3. Its second special is one the aired order
+        # lacks, which Sonarr has a row for and the listing can't hold.
+        between = _order((0, 1, 502), (0, 2, 9001), (0, 3, 506))
+        first, second, third = parsed_specials(1, 2, 3)
+
+        result = self._place(between, {EpisodeKey(0, 2): 9001})
+
+        assert by_name(result) == {
+            first: ((502,), PlacementVerdict.OTHER_ORDER),
+            second: ((), PlacementVerdict.MISNUMBERED),
+            third: ((506,), PlacementVerdict.OTHER_ORDER),
         }
 
 
@@ -978,3 +1079,269 @@ class TestNameNumberSequenceByOrder:
         result = place(blind([*self._RUN, *self._SECOND]), self._target({"dvd": self._DVD}), self._RUN)
 
         assert by_name(result) == self._by_order()
+
+
+class TestRowsTheAiredOrderLacks:
+    """A series Sonarr numbers by another TVDB order, with rows for an opener's two halves that the aired order lacks.
+
+    The aired order has the opener whole, as the fourth season's first episode. The DVD order numbers the fourth and
+    fifth seasons as its seventh and opens it with the two halves. The alternate order numbers the two seasons as
+    its thirteenth with the halves at the end, and the specials as its seventh. One torrent is a pack of 20 files
+    that spells out the DVD numbers, listed under both seasons' titles. The other counts the fourth season from the
+    halves on, in 13 numbered names Sonarr parses nothing from.
+    """
+
+    _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {
+        **{EpisodeKey(4, n): 400 + n for n in range(1, 13)},
+        **{EpisodeKey(5, n): 500 + n for n in range(1, 8)},
+        EpisodeKey(7, 1): 701,
+        **{EpisodeKey(0, n): 300 + n for n in range(10, 15)},
+    }
+    _FOURTH: ClassVar[list[int]] = [400 + n for n in range(1, 13)]
+    _FIFTH: ClassVar[list[int]] = [500 + n for n in range(1, 8)]
+    _SPECIALS: ClassVar[list[int]] = [300 + n for n in range(10, 15)]
+    _ORDERS: ClassVar[OrdersByName] = {
+        "dvd": _order(
+            (7, 1, 9001),
+            (7, 2, 9002),
+            *((7, n + 1, 400 + n) for n in range(2, 13)),
+            *((7, n + 13, 500 + n) for n in range(1, 8)),
+            (7, 21, 401),
+        ),
+        "alternate": _order(
+            *((13, n, 400 + n) for n in range(1, 13)),
+            *((13, n + 12, 500 + n) for n in range(1, 8)),
+            (13, 20, 9001),
+            (13, 21, 9002),
+            *((7, n, 309 + n) for n in range(1, 6)),
+        ),
+    }
+    _DVD_ROWS: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(7, 1): 9001, EpisodeKey(7, 2): 9002}
+    """The halves' rows on a Sonarr that numbers the series by the DVD order."""
+    _ALT_ROWS: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(13, 20): 9001, EpisodeKey(13, 21): 9002}
+    """The halves' rows on a Sonarr that numbers the series by the alternate order."""
+
+    _PACK: ClassVar[list[str]] = [f"[grp] Show - S07E{n:02d}.mkv" for n in range(1, 21)]
+    _PACK_PARSED: ClassVar[dict[str, ParsedFileInfo | None]] = {
+        _PACK[0]: parsed_info(season=7, episodes=(1,), matched=((7, 1),)),
+        **{name: parsed_info(season=7, episodes=(n,)) for n, name in enumerate(_PACK[1:], start=2)},
+    }
+    """The aired order has a seventh season of one episode, so the pack's first file is matched as that episode."""
+    _RUN: ClassVar[list[str]] = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+
+    @classmethod
+    def _index(
+        cls,
+        rows: Mapping[EpisodeKey, int] | None,
+        *,
+        absolutes: Mapping[int, int] | None = None,
+        titles: Mapping[int, str] | None = None,
+    ) -> EpisodeIndex:
+        """The series with `rows` as Sonarr's rows the aired order lacks, None for a Sonarr that has none."""
+
+        return series_index(cls._ID_BY_KEY, absolutes=absolutes, titles=titles, orders=cls._ORDERS, own_only=rows)
+
+    @classmethod
+    def _fourth(cls, index: EpisodeIndex) -> PlacementTarget:
+        """The window of the fourth season's title, which the sequence is named for."""
+
+        return PlacementTarget(cls._FOURTH, index, title_names=TitleNames("Show", ("Show Ending",)))
+
+    @classmethod
+    def _fifth(cls, index: EpisodeIndex) -> PlacementTarget:
+        return PlacementTarget(cls._FIFTH, index, title_names=TitleNames("Show", ("Show Ending Part 2",)))
+
+    @classmethod
+    def _specials(cls, index: EpisodeIndex) -> PlacementTarget:
+        return PlacementTarget(cls._SPECIALS, index, title_names=TitleNames("Show", ("Show Ending Specials",)))
+
+    @classmethod
+    def _pack_by_order(cls) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+        """The pack as the DVD order reads it: the halves on Sonarr's two rows, the rest on the two seasons."""
+
+        ids = [9001, 9002, *cls._FOURTH[1:], *cls._FIFTH]
+        return {name: ((ep_id,), PlacementVerdict.OTHER_ORDER) for name, ep_id in zip(cls._PACK, ids, strict=True)}
+
+    @classmethod
+    def _run_by_order(cls) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+        """The sequence as the DVD order reads it: the halves on Sonarr's two rows, the rest on the fourth season."""
+
+        ids = [9001, 9002, *cls._FOURTH[1:]]
+        return {name: ((ep_id,), PlacementVerdict.OTHER_ORDER) for name, ep_id in zip(cls._RUN, ids, strict=True)}
+
+    @classmethod
+    def _pack_with(cls, at: int, name: str) -> dict[str, ParsedFileInfo | None]:
+        """The pack's parses with the file at `at` named `name`."""
+
+        return {name if member == cls._PACK[at] else member: info for member, info in cls._PACK_PARSED.items()}
+
+    def test_the_packs_halves_land_on_the_two_rows_under_the_older_titles_window(self) -> None:
+        index = self._index(self._DVD_ROWS)
+
+        result = place_across_windows(batch(self._PACK_PARSED), (self._fourth(index), self._fifth(index)))
+
+        assert by_name(merged_of(result)) == self._pack_by_order()
+        assert final_windows(result) == {**dict.fromkeys(self._PACK[:13], 0), **dict.fromkeys(self._PACK[13:], 1)}
+        assert merged_of(result).hand_import_files == ()
+
+    def test_the_younger_titles_window_takes_the_rows_when_it_is_placed_first(self) -> None:
+        index = self._index(self._DVD_ROWS)
+
+        result = place_across_windows(batch(self._PACK_PARSED), (self._fifth(index), self._fourth(index)))
+
+        assert by_name(merged_of(result)) == self._pack_by_order()
+        assert final_windows(result) == {
+            **dict.fromkeys(self._PACK[:2], 0),
+            **dict.fromkeys(self._PACK[2:13], 1),
+            **dict.fromkeys(self._PACK[13:], 0),
+        }
+        # A pending import that imports the older title's window alone leaves the halves out.
+        older = by_name(result.seen_by(1, {1}).placements)
+        assert older[self._PACK[0]] == older[self._PACK[1]] == ((), PlacementVerdict.ANOTHER_TITLES)
+
+    def test_the_halves_land_on_the_rows_of_their_tvdb_episodes_however_sonarr_numbers_those_rows(self) -> None:
+        # Sonarr numbers the halves S13E20 and S13E21, and the files spell out S07E01 and S07E02.
+        index = self._index(self._ALT_ROWS)
+
+        result = place_across_windows(batch(self._PACK_PARSED), (self._fourth(index), self._fifth(index)))
+
+        assert by_name(merged_of(result)) == self._pack_by_order()
+
+    def test_the_sequences_first_two_members_land_on_the_two_rows(self) -> None:
+        result = place(blind(self._RUN), self._fourth(self._index(self._DVD_ROWS)))
+
+        assert by_name(result) == self._run_by_order()
+        assert result.order_only == {}
+
+    def test_stored_halves_on_their_rows_are_where_the_order_reads_them_and_the_rest_of_the_pack_places(self) -> None:
+        # An earlier grab stored the halves on their rows, and the other 18 files are placed.
+        index = self._index(self._DVD_ROWS)
+        stored = batch(self._PACK_PARSED, self._PACK[2:], file_map={self._PACK[0]: (9001,), self._PACK[1]: (9002,)})
+
+        result = place_across_windows(stored, (self._fourth(index), self._fifth(index)))
+
+        assert by_name(merged_of(result)) == {name: self._pack_by_order()[name] for name in self._PACK[2:]}
+
+    def test_stored_members_on_their_rows_are_where_the_order_reads_them_and_the_rest_of_the_sequence_places(
+        self,
+    ) -> None:
+        file_map = {self._RUN[0]: (9001,), self._RUN[1]: (9002,)}
+
+        result = place(blind(self._RUN), self._fourth(self._index(self._DVD_ROWS)), self._RUN[2:], file_map=file_map)
+
+        assert by_name(result) == {name: self._run_by_order()[name] for name in self._RUN[2:]}
+
+    def test_a_stored_half_on_the_other_halfs_row_keeps_the_order_from_placing_the_rest(self) -> None:
+        # The halves are stored on each other's row, so the order would move both.
+        index = self._index(self._DVD_ROWS)
+        stored = batch(self._PACK_PARSED, self._PACK[2:], file_map={self._PACK[0]: (9002,), self._PACK[1]: (9001,)})
+
+        result = place_across_windows(stored, (self._fourth(index), self._fifth(index)))
+
+        assert merged_of(result).placed == {}
+
+    def test_two_files_the_order_reads_onto_one_row_are_both_left_under_every_window(self) -> None:
+        # A second cut of the second half, with the same season and episode.
+        uncut = "[grp] Show - S07E02 (Uncut).mkv"
+        parsed = {**self._PACK_PARSED, uncut: self._PACK_PARSED[self._PACK[1]]}
+        index = self._index(self._DVD_ROWS)
+
+        result = place_across_windows(batch(parsed), (self._fourth(index), self._fifth(index)))
+
+        older, younger = by_name(under_window(result, 0)), by_name(under_window(result, 1))
+        assert older[self._PACK[1]] == older[uncut] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        assert younger[self._PACK[1]] == younger[uncut] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        # The other 19 files go where the order reads them.
+        rest = {name: ids for name, (ids, _) in self._pack_by_order().items() if name != self._PACK[1]}
+        assert merged_of(result).placed == rest
+
+    def test_a_name_carrying_an_episodes_title_is_not_placed_on_a_row(self) -> None:
+        # The second half carries a special's title. The specials' window places it by that title, and the other
+        # 19 files go where the order reads them.
+        titled = "[grp] Show - S07E02 - Lost Lantern.mkv"
+        index = self._index(self._DVD_ROWS, titles={312: "Lost Lantern"})
+        windows = (self._fourth(index), self._fifth(index), self._specials(index))
+
+        result = place_across_windows(batch(self._pack_with(1, titled)), windows)
+
+        assert by_name(under_window(result, 0))[titled] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        by_order = self._pack_by_order()
+        del by_order[self._PACK[1]]
+        assert by_name(merged_of(result)) == {**by_order, titled: ((312,), PlacementVerdict.EPISODE_TITLE)}
+
+    def test_a_name_whose_bracketed_number_names_an_episode_is_not_placed_on_a_row(self) -> None:
+        # The second half carries the absolute number of the fifth season's third episode. The fourth season's
+        # files go where the order reads them all the same.
+        counted = "[grp] Show - S07E02 (0015).mkv"
+        absolutes = {**{400 + n: n for n in range(1, 13)}, **{500 + n: 12 + n for n in range(1, 8)}}
+        index = self._index(self._DVD_ROWS, absolutes=absolutes)
+
+        result = place(self._pack_with(1, counted), self._fourth(index))
+
+        assert by_name(result)[counted] == ((), PlacementVerdict.NO_EPISODE_FOUND)
+        by_order = self._pack_by_order()
+        assert result.placed == {name: by_order[name][0] for name in (self._PACK[0], *self._PACK[2:13])}
+
+    def test_a_window_the_order_reads_no_file_into_places_nothing_on_a_row(self) -> None:
+        # The specials' window comes first, and the order reads no file onto a special. The halves wait for the
+        # fourth season's window.
+        index = self._index(self._DVD_ROWS)
+        windows = (self._specials(index), self._fourth(index), self._fifth(index))
+
+        result = place_across_windows(batch(self._PACK_PARSED), windows)
+
+        assert under_window(result, 0).placed == {}
+        assert under_window(result, 0).order_only == {}
+        assert by_name(merged_of(result)) == self._pack_by_order()
+        assert [final_windows(result)[name] for name in self._PACK[:2]] == [1, 1]
+
+    def test_a_half_sonarr_has_no_row_for_is_left_under_its_key_beside_the_one_placed_on_its_row(self) -> None:
+        # Sonarr has a row for the first half only.
+        index = self._index({EpisodeKey(7, 1): 9001})
+
+        result = place_across_windows(batch(self._PACK_PARSED), (self._fourth(index), self._fifth(index)))
+
+        assert by_name(merged_of(result))[self._PACK[0]] == ((9001,), PlacementVerdict.OTHER_ORDER)
+        assert merged_of(result).order_only == {self._PACK[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
+
+    def test_a_member_sonarr_has_no_row_for_is_left_under_its_key_beside_the_one_placed_on_its_row(self) -> None:
+        # Sonarr has a row for the second half only.
+        result = place(blind(self._RUN), self._fourth(self._index({EpisodeKey(7, 2): 9002})))
+
+        assert by_name(result)[self._RUN[1]] == ((9002,), PlacementVerdict.OTHER_ORDER)
+        assert result.order_only == {self._RUN[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1))}
+
+    _PAIR: ClassVar[str] = "[grp] Show - S07E01-E02.mkv"
+    """The two halves in one file."""
+
+    @classmethod
+    def _place_pair(cls, rows: Mapping[EpisodeKey, int]) -> BatchPlacements:
+        """The pack with `_PAIR` in place of its first two files, over the fourth and fifth seasons' windows."""
+
+        pair = {cls._PAIR: parsed_info(season=7, episodes=(1, 2), matched=((7, 1),))}
+        parsed = {**pair, **{name: cls._PACK_PARSED[name] for name in cls._PACK[2:]}}
+        index = cls._index(rows)
+        return merged_of(place_across_windows(batch(parsed), (cls._fourth(index), cls._fifth(index))))
+
+    def test_a_file_spanning_both_halves_lands_on_both_rows(self) -> None:
+        result = self._place_pair(self._DVD_ROWS)
+
+        assert by_name(result)[self._PAIR] == ((9001, 9002), PlacementVerdict.OTHER_ORDER)
+
+    def test_a_file_spanning_a_row_and_a_key_sonarr_has_no_row_for_is_left_under_that_key(self) -> None:
+        result = self._place_pair({EpisodeKey(7, 1): 9001})
+
+        assert result.order_only == {self._PAIR: OrderOnlyKey("dvd", EpisodeKey(7, 2))}
+
+    def test_a_later_specials_window_judges_the_rest_of_the_pack_as_it_does_with_no_such_rows(self) -> None:
+        def under_specials(
+            rows: Mapping[EpisodeKey, int] | None,
+        ) -> dict[str, tuple[tuple[int, ...], PlacementVerdict]]:
+            index = self._index(rows)
+            windows = (self._fourth(index), self._fifth(index), self._specials(index))
+            judged = by_name(under_window(place_across_windows(batch(self._PACK_PARSED), windows), 2))
+            return {name: judged[name] for name in self._PACK[2:]}
+
+        with_rows, without = under_specials(self._DVD_ROWS), under_specials(None)
+
+        assert with_rows == without == dict.fromkeys(self._PACK[2:], ((), PlacementVerdict.NO_EPISODE_FOUND))

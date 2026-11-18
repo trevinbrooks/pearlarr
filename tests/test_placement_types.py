@@ -90,6 +90,45 @@ class TestEpisodeIndex:
         assert index.orders["dvd"].keys == {(1, 1), (1, 2)}
         assert episode_index(eps).orders == {}
 
+    def test_a_row_the_aired_order_lacks_is_in_no_facet_but_its_own(self) -> None:
+        # Sonarr's own order numbers the row like the aired first episode, with the same absolute number.
+        aired = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901, absolute=1, title="Beach Day")]
+        half = sonarr_ep(1, 1, ep_id=91, tvdb_id=991, absolute=1, title="Festival Night")
+        words = frozenset({"show"})
+
+        index = episode_index(aired, own_only=[half])
+
+        assert index.own_only == {91: half}
+        assert (index.by_id, index.id_by_key) == ({11: aired[0]}, {(1, 1): 11})
+        assert (index.season_counts, index.id_by_absolute) == ({1: 1}, {1: 11})
+        assert index.titles(words) == episode_index(aired).titles(words)
+
+    def test_another_order_reads_a_key_onto_a_row_the_aired_order_lacks_by_tvdb_id(self) -> None:
+        # The dvd order's second episode is one the aired order lacks and Sonarr has a row for. Its third has no
+        # row at all.
+        eps = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901)]
+        half = sonarr_ep(7, 4, ep_id=91, tvdb_id=991)
+        dvd = (OrderRow(1, 1, 901, None), OrderRow(1, 2, 991, None), OrderRow(1, 3, 992, None))
+
+        order = episode_index(eps, {"dvd": dvd}, [half]).orders["dvd"]
+
+        assert order.id_by_key == {(1, 1): 11}
+        assert order.own_only_by_key == {(1, 2): 91}
+        assert order.keys == {(1, 1), (1, 2), (1, 3)}
+
+    @pytest.mark.parametrize("listed", [(991, 901), (901, 991)], ids=["the row first", "the episode first"])
+    def test_a_key_an_order_lists_for_such_a_row_and_for_an_episode_reads_the_episode(
+        self, listed: tuple[int, int]
+    ) -> None:
+        eps = [sonarr_ep(1, 1, ep_id=11, tvdb_id=901)]
+        half = sonarr_ep(7, 4, ep_id=91, tvdb_id=991)
+        dvd = tuple(OrderRow(1, 1, tvdb_id, None) for tvdb_id in listed)
+
+        order = episode_index(eps, {"dvd": dvd}, [half]).orders["dvd"]
+
+        assert order.id_by_key == {(1, 1): 11}
+        assert order.own_only_by_key == {}
+
     def test_facets_detach_and_reject_mutation(self) -> None:
         source = {EpisodeKey(1, 1): 11}
         index = EpisodeIndex(by_id={}, id_by_key=source)
@@ -122,6 +161,13 @@ class TestEpisodeIndexTvdbIds:
         index = episode_index([sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)])
 
         assert index.tvdb_ids([101, 201]) == TvdbIds({101: 9001})
+
+    def test_a_row_the_aired_order_lacks_is_read_like_any_other_row(self) -> None:
+        index = episode_index(
+            [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)], own_only=[sonarr_ep(7, 1, ep_id=901, tvdb_id=9901)]
+        )
+
+        assert index.tvdb_ids([101, 901]) == TvdbIds({101: 9001, 901: 9901})
 
     def test_across_series_each_id_is_read_off_the_index_that_holds_it(self) -> None:
         show = episode_index([sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)])
