@@ -1521,6 +1521,46 @@ def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_import
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
 
 
+def test_a_stored_pending_import_is_not_followed_under_the_rows_of_a_series_the_run_holds() -> None:
+    # Sonarr went to the dvd order after the library read and is part way through renumbering: TVDB episode 9002
+    # is on none of the rows it sent. Followed under them, the file on that episode would leave the file map.
+    pending = pending_import(
+        infohash="h",
+        series_id=1,
+        file_episode_map={"show - 01 [1080p].mkv": (11,), "show - 02 [1080p].mkv": (12,)},
+        tvdb_ids={11: 9001, 12: 9002},
+    )
+    cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
+    sonarr = FakeSonarrClient(episodes=[_ROWS[0]])
+    reads = _reads([_series(1, 50)], cache, sonarr=sonarr)
+    sonarr.series_return[1] = _series(1, 50, season_type="dvd")
+    follower = make_pending_follower(cache, reads)
+    # A title's check asks for the index of every claimed series first, which is where the run comes to hold this one.
+    assert reads.series_index(1) is None
+
+    followed = follower.followed({"h": pending})
+
+    assert followed == {}
+    assert cache.get_pending_import_rows(Arr.SONARR) == {"h": pending.to_json()}
+
+
+def test_the_rows_a_series_view_is_built_from_are_as_sonarr_numbers_them() -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    cache.put_scene_mappings(50, stored_scene_mappings())
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=FakeSonarrClient(episodes=list(_DVD_ROWS)))
+
+    assert reads.viewed_episodes(1) == _DVD_ROWS
+
+
+def test_a_series_with_no_view_has_no_rows_a_view_is_built_from() -> None:
+    # Sonarr numbers the series by its dvd order, and no TVDB orders are stored for it.
+    reads = _reads([_series(1, 50, season_type="dvd")], FakeCacheStore(), sonarr=FakeSonarrClient(episodes=_DVD_ROWS))
+
+    assert reads.viewed_episodes(1) is None
+    assert reads.last_known_episodes(1) == _DVD_ROWS
+
+
 _SEASON_TWO_AIRED = {"official": (*_ORDERS["official"], OrderRow(2, 1, 9003, 3)), "dvd": _DVD}
 """A stored answer whose official order has a second season `_DVD` has no episode of."""
 

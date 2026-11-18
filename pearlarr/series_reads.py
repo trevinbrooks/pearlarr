@@ -68,6 +68,12 @@ class AiredParseSource(ABC):
 class SeriesRows(ABC):
     """A series' rows as Sonarr numbers them, which an import reads its files off and a pending import is followed by.
 
+    A stored pending import is followed (`pending_follow.follow`) only under rows the run reads the series by: the
+    ones an import has just read (`read_episodes`), or the ones a check's view of the series is built from
+    (`viewed_episodes`). Each is None when the run can't read the series by its rows. `last_known_episodes` are
+    whatever rows the run kept last, those of a series it holds among them, so they only count an import's files
+    while a read fails.
+
     `SeriesReads` is the real one.
     """
 

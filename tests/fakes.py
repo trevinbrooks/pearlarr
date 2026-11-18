@@ -832,8 +832,10 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
 
     @override
     def viewed_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
-        """The whole-series list off the client, None for a series with no view."""
+        """The series list as last read off the client, read now if it never was. None for a series with no view."""
 
+        if series_id in self._last_known and series_id not in self._no_views:
+            return self._last_known[series_id]
         episodes = self._series_episodes(series_id)
         return None if isinstance(episodes, NoView) else episodes
 
