@@ -1027,6 +1027,61 @@ def test_a_cached_parse_is_matched_as_aired_again_without_asking_sonarr(monkeypa
     assert sonarr.parse_calls == [_FIFTH]
 
 
+_FIFTH_ON_NO_EPISODE = _FIFTH_BY_SONARR.with_matched(())
+"""Sonarr's parse of `_FIFTH` when it matches the name to the series and to no episode of it."""
+
+_EITHER_PARSE = pytest.mark.parametrize(
+    "by_sonarr",
+    [
+        pytest.param(_FIFTH_BY_SONARR, id="matched-episodes"),
+        pytest.param(_FIFTH_ON_NO_EPISODE, id="no-matched-episode"),
+    ],
+)
+
+
+def _asked_to_parse(
+    monkeypatch: pytest.MonkeyPatch, cache: FakeCacheStore, series: SonarrSeries, by_sonarr: ParsedFileInfo
+) -> list[str]:
+    """The names one run asks Sonarr to parse for a release listing `_FIFTH`, over the parses `cache` holds.
+
+    The run's library read has `series` alone, and Sonarr answers `_FIFTH` with `by_sonarr`.
+    """
+
+    sonarr = _parsing({_FIFTH: by_sonarr})
+    strat = _sync(monkeypatch, [series], cache, sonarr=sonarr)
+    strat._parse.parsed_files(_listing(_FIFTH))
+    return sonarr.parse_calls
+
+
+@_EITHER_PARSE
+def test_a_parse_stored_under_another_order_is_asked_for_again_once_its_series_is_aired(
+    monkeypatch: pytest.MonkeyPatch, by_sonarr: ParsedFileInfo
+) -> None:
+    cache = _stored_as_one_season()
+    _asked_to_parse(monkeypatch, cache, _in_one_season(), by_sonarr)
+
+    assert _asked_to_parse(monkeypatch, cache, _series(1, 50), by_sonarr) == [_FIFTH]
+
+
+def test_a_parse_stored_with_no_order_is_asked_for_again_once_its_series_is_in_another_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _stored_as_one_season()
+    _asked_to_parse(monkeypatch, cache, _series(1, 50), _FIFTH_BY_SONARR)
+
+    assert _asked_to_parse(monkeypatch, cache, _in_one_season(), _FIFTH_BY_SONARR) == [_FIFTH]
+
+
+@_EITHER_PARSE
+def test_a_parse_stored_under_another_order_is_not_asked_for_again_while_its_series_stays_in_it(
+    monkeypatch: pytest.MonkeyPatch, by_sonarr: ParsedFileInfo
+) -> None:
+    cache = _stored_as_one_season()
+    _asked_to_parse(monkeypatch, cache, _in_one_season(), by_sonarr)
+
+    assert _asked_to_parse(monkeypatch, cache, _in_one_season(), by_sonarr) == []
+
+
 _SIXTH = "Show - 06.mkv"
 
 

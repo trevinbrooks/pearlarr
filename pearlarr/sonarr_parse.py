@@ -4,9 +4,11 @@
 the durable parse cache: cold-cache warm, TTL eviction, and the gather that
 pairs each video file with its parse for `place_release`. The cache rows
 themselves (`ParseCacheRows`, in `parse_cache`) are bound once on `ArrRunDeps`. The
-episode collaborator is handed in: it has the series hash that pins unmatched rows,
-and it matches a parse again for a series Sonarr numbers by another order
-(`EpisodeSource.aired_parse`). The cache keeps Sonarr's own answer, never that one.
+episode collaborator is handed in. It has the series hash that pins unmatched rows,
+and the order of each series, since a row is good only while its series stays in the
+order it was stored under. It matches a parse again for a series Sonarr numbers by
+another order (`EpisodeSource.aired_parse`). The cache keeps Sonarr's own answer,
+never that one.
 """
 
 import concurrent.futures
@@ -33,7 +35,7 @@ class SonarrParseCache:
     def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, episodes: EpisodeSource) -> None:
         """Bind the shared collaborators, the Sonarr client whose `/parse` the cache fills from, and the episode source.
 
-        The episode source gives the run's series hash and the aired matches of a parse.
+        The episode source gives the run's series hash, each series' order, and the aired matches of a parse.
         """
 
         self.sonarr = sonarr
@@ -119,14 +121,15 @@ class SonarrParseCache:
         """Each release's video files with their sizes and Sonarr parses, keyed by url as the groups key their releases.
 
         A name goes to Sonarr once, within a run (the same file across overlapping groups) and across
-        runs through the durable parse cache, its unmatched rows pinned by the run's series hash. A parse of a
-        series Sonarr numbers by another order is handed on with the episodes an aired Sonarr matches it to
+        runs through the durable parse cache, its unmatched rows pinned by the run's series hash and each row of
+        a series good only under the order the series was in when the row was stored. A parse of a series Sonarr
+        numbers by another order is handed on with the episodes an aired Sonarr matches it to
         (`_aired_parse_for`). Every release gets a value, empty when it lists no video file. Never mutates
         `seadex_dict`.
         """
 
         # Cutoffs computed once per call (not per file), all anchored to one instant.
-        window = ParseFreshness.open(self._episodes.series_hash)
+        window = ParseFreshness.open(self._episodes.series_hash, self._episodes.series_in_another_order)
 
         # Evict parse rows aged past that same cutoff so the stored parses stop
         # growing without bound. Staged like the writes below (committed at the

@@ -12,6 +12,7 @@ series-id hash, worker gating, and concurrent fresh episode prefetch.
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import override
 
@@ -75,18 +76,34 @@ def _matched(season: int, episode: int) -> ParsedFileInfo:
     return ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=season, episode_number=episode),))
 
 
+def _of_series(series_id: int) -> ParsedFileInfo:
+    """A parse Sonarr matched to the first episode of the series with that id."""
+
+    return ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(1,),
+        series_title="Show",
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=11),),
+        series_id=series_id,
+    )
+
+
 def _stamp(days_ago: float) -> str:
     return (_NOW - timedelta(days=days_ago)).strftime(STAMP_FORMAT)
 
 
-def _window(series_hash: str = "fp") -> ParseFreshness:
-    """The parse freshness anchored at `_NOW` (never the wall clock)."""
+def _window(series_hash: str = "fp", *, orders: Mapping[int, str] | None = None) -> ParseFreshness:
+    """The parse freshness anchored at `_NOW` (never the wall clock).
+
+    Each series of `orders` is numbered by its order there, and every other series as aired.
+    """
 
     return ParseFreshness(
         now_str=_NOW.strftime(STAMP_FORMAT),
         matched_cutoff=_MATCHED_CUTOFF,
         unmatched_cutoff=_UNMATCHED_CUTOFF,
         series_hash=series_hash,
+        series_orders=orders or {},
     )
 
 
@@ -160,6 +177,11 @@ class TestParseIsFresh:
         # re-parse once however recently they were stamped.
         assert not _fresh({"fetched_at": _stamp(1), "episodes": [{"season": 1, "episode": 1}]})
 
+    def test_a_row_stored_under_one_order_is_stale_once_its_series_is_in_another_of_its_orders(self) -> None:
+        stored = {**_record(_of_series(7)), "series_order": "dvd"}
+
+        assert not _parse_is_fresh(stored, window=_window(orders={7: "altdvd"}))
+
 
 class TestParseCacheRows:
     """The parse-cache leaf: fresh-only reads and shape-owning writes."""
@@ -199,6 +221,28 @@ class TestParseCacheRows:
         row = store.get_sonarr_parse("show - 01.mkv")
         assert row is not None
         assert "series_fp" not in row
+
+    def test_a_parse_of_a_series_in_another_order_is_written_with_that_order(self) -> None:
+        rows, store = self._parse_cache_rows()
+
+        rows.write("show - 01.mkv", _of_series(7), window=_window(orders={7: "dvd"}))
+
+        row = store.get_sonarr_parse("show - 01.mkv")
+        assert row is not None
+        assert row["series_order"] == "dvd"
+
+    @pytest.mark.parametrize(
+        "info",
+        [pytest.param(_of_series(8), id="of-an-aired-series"), pytest.param(_UNMATCHED, id="of-no-series")],
+    )
+    def test_a_parse_of_no_series_in_another_order_is_written_with_no_order(self, info: ParsedFileInfo) -> None:
+        rows, store = self._parse_cache_rows()
+
+        rows.write("show - 01.mkv", info, window=_window(orders={7: "dvd"}))
+
+        row = store.get_sonarr_parse("show - 01.mkv")
+        assert row is not None
+        assert "series_order" not in row
 
     def test_unreadable_parse_reads_as_a_miss(self) -> None:
         # A row whose values this build cannot validate re-parses: every field is present, so the key check passes

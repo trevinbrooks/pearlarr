@@ -48,8 +48,11 @@ class ParseFreshness(NamedTuple):
     series_hash: str
     """Pins unmatched rows to the current series-id set (so a newly-added series' files are parsed again)."""
 
+    series_orders: Mapping[int, str]
+    """Series id -> the order Sonarr numbers it by, for each series in an order other than the aired one."""
+
     @classmethod
-    def open(cls, series_hash: str) -> Self:
+    def open(cls, series_hash: str, series_orders: Mapping[int, str]) -> Self:
         """The cutoffs anchored to one instant (never per file)."""
 
         now = datetime.now()
@@ -58,7 +61,13 @@ class ParseFreshness(NamedTuple):
             matched_cutoff=now - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
             unmatched_cutoff=now - timedelta(days=SONARR_PARSE_UNMATCHED_TTL_DAYS),
             series_hash=series_hash,
+            series_orders=series_orders,
         )
+
+    def order_of(self, series_id: Json) -> str:
+        """The order a parse's series is numbered by. "" for the aired order, and for a parse that names no series."""
+
+        return self.series_orders.get(series_id, "") if isinstance(series_id, int) else ""
 
 
 class ParseCacheRow(TypedDict):
@@ -75,13 +84,18 @@ class ParseCacheRow(TypedDict):
     """`NotRequired` because only an UNMATCHED row carries it (pinning it to the series-id set), and the
     freshness check dispatches on exactly that presence."""
 
+    series_order: NotRequired[str]
+    """The order the parse's series was numbered by when the row was stored. `NotRequired` because only a parse of
+    a series in an order other than the aired one carries it."""
+
 
 def parse_to_json(info: ParsedFileInfo) -> dict[str, Json]:
     """The JSON the cache persists for one parse.
 
     The matched episodes' ids are kept so the placement cross-checks them against the episode index, which never
-    resolves a wrong-series match. A series re-add renumbers them, which only weakens the placement until the row
-    expires.
+    resolves a wrong-series match. A series added again has new ids, so its old ones resolve to no episode until
+    the row expires. Under another order of its series an id may be of another episode, so a row is stale once
+    its series' order differs from the one it was stored under (`_parse_is_fresh`).
     """
 
     return info.model_dump(mode="json")
@@ -112,14 +126,17 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
 
     A legacy row is stale: one with no whole parse, or whose parse lacks a field of `ParsedFileInfo`, which an
     older build wrote before the field existed. The model would read a missing field as its default, so only this
-    check re-parses the row, and the cache warm-up sees it stale too. MATCHED (no `series_fp`): valid for the
-    30-day `window.matched_cutoff`. UNMATCHED: valid only while the series-id set is unchanged (matching
-    `window.series_hash`) and within the short `window.unmatched_cutoff` backstop, so a newly-added series' files
-    are parsed again.
+    check re-parses the row, and the cache warm-up sees it stale too. So is a row whose series is numbered by
+    another order than the row was stored under, either way round: Sonarr matched the name by the numbers of the
+    order the series was in. MATCHED (no `series_fp`): valid for the 30-day `window.matched_cutoff`. UNMATCHED:
+    valid only while the series-id set is unchanged (matching `window.series_hash`) and within the short
+    `window.unmatched_cutoff` backstop, so a newly-added series' files are parsed again.
     """
 
     parse = row.get("parse")
     if not is_json_obj(parse) or not parse.keys() >= _PARSE_FIELDS:
+        return False
+    if row.get("series_order", "") != window.order_of(parse["series_id"]):
         return False
     stamped = cast("dict[str, Any]", row)
     if "series_fp" not in row:
@@ -152,9 +169,15 @@ class ParseCacheRows:
         return parse_from_json(row)
 
     def write(self, filename: str, info: ParsedFileInfo, *, window: ParseFreshness) -> None:
-        """Upsert one parse. An UNMATCHED parse (no matched episodes) is pinned to the series hash."""
+        """Upsert one parse. An UNMATCHED parse (no matched episodes) is pinned to the series hash.
+
+        A parse of a series in an order other than the aired one is stored with that order.
+        """
 
         row: ParseCacheRow = {"fetched_at": window.now_str, "parse": parse_to_json(info)}
         if not info.matched_episodes:
             row["series_fp"] = window.series_hash
+        order = window.order_of(info.series_id)
+        if order:
+            row["series_order"] = order
         self._store.put_sonarr_parse(filename, cast("dict[str, Any]", row))
