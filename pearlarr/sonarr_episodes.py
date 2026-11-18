@@ -8,6 +8,9 @@ existing files as `ArrFiles`, and the concurrent prefetch warm. It also keeps ea
 series' TVDB order facts and alternate titles. A title's check reads every series as
 aired (`aired_view`), whatever order Sonarr numbers it by, the episodes Sonarr matched a
 file name to included (`aired_parse`). The import reads Sonarr's own rows.
+
+Rows are read as already aired only when Sonarr says twice that the series is: in the
+library read, and in a read of the series alone made after its rows.
 """
 
 import concurrent.futures
@@ -20,12 +23,13 @@ from typing import assert_never, override
 from . import aired_view as _aired_view
 from .aired_view import AiredSeries, NoView, is_stand_in
 from .anibridge import TvdbMappings, season_holds
+from .arr_http import NoResource
 from .arr_models import AlternateTitle, ArrFiles, ParsedFileInfo, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
 from .config import AppConfig
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping
-from .output import Severity, hub_note
+from .output import Severity, hub_note, hub_warn
 from .placement_types import EpisodeIndex, episode_index
 from .progress import ProgressCallback
 from .releases import season_episode_key
@@ -127,7 +131,20 @@ class _LibrarySeries:
 
 
 _NOT_IN_LIBRARY = _LibrarySeries(SonarrSeriesOrders(tvdb_id=0, season_type="", counts=None))
-"""A series this run's library read doesn't have. It names no order, so it is read as aired, and has no other names."""
+"""A series this run's library read doesn't have: it names no order and has no other names."""
+
+_GONE = AiredSeries(order="", in_sonarr=(), stand_ins=())
+"""The view of a series Sonarr answers it doesn't have: no episodes, under no order."""
+
+
+def series_orders(series: SonarrItem) -> SonarrSeriesOrders:
+    """What one Sonarr series resource says about its orders, from the library read or a read of the series alone."""
+
+    return SonarrSeriesOrders(
+        tvdb_id=series.tvdbId,
+        season_type=series.seasonType,
+        counts={listed.type: listed.episode_count for listed in series.seasonTypes} if series.seasonTypes else None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +177,7 @@ class _SeriesRead:
     """The series' episodes as Sonarr sent them."""
 
     view: AiredSeries | NoView | None = None
-    """The aired view of `rows`. None until it is first asked for."""
+    """The aired view of `rows`. None until one is built, and never `NoView.READ_FAILED`, which is asked for again."""
 
     index: EpisodeIndex | None = None
     """The view's placement index. None until it is first asked for, and for a series with no view."""
@@ -257,8 +274,16 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         # state so they are parsed again once Sonarr has the series.
         self._series_hash: str = ""
 
-        # What the library read says of each series, rebuilt whole in refresh_library.
+        # What the library read says of each series in Sonarr, with an AniList mapping or without. Rebuilt whole in
+        # refresh_library and never changed inside a run, so a view is always built under the library read's order.
         self._library: dict[int, _LibrarySeries] = {}
+
+        # Whether Sonarr sent an order with any series of the library read (`SonarrItem.order_sent`). One that
+        # sends none numbers every series as aired, and no series is read a second time for it.
+        self._sends_order: bool = False
+
+        # The series with no aired view for the rest of the run (`_hold`). Reset in refresh_library, with the rows.
+        self._held: set[int] = set()
 
         # The AniList ids whose choice of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
@@ -276,35 +301,28 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         Drops the per-run episode cache and rehashes the series-id set so a
         fresh run always re-reads the current library. Called once per run from the
         strategy's `get_items` hook.
+
+        Sonarr is asked for its series once. The returned series and their hash are the mapped ones. What Sonarr
+        says of every series is kept for the run, since a pending import may claim one with no mapping.
         """
 
         self._series = {}
+        self._held = set()
         self._picks_logged = set()
-        series = self.get_all_sonarr_series()
+        in_sonarr = self.sonarr.all_series()
+        self._library = {s.id: _LibrarySeries(series_orders(s), s.alternateTitles) for s in in_sonarr}
+        self._sends_order = any(s.order_sent for s in in_sonarr)
+        series = self.mapped_series(in_sonarr)
         # Hash the current series-id set once per run to invalidate the parse cache
         # rows with no series (see sonarr_series_hash).
         self._series_hash = sonarr_series_hash(s.id for s in series)
-        self._library = {
-            s.id: _LibrarySeries(
-                orders=SonarrSeriesOrders(
-                    tvdb_id=s.tvdbId,
-                    season_type=s.seasonType,
-                    counts={listed.type: listed.episode_count for listed in s.seasonTypes} if s.seasonTypes else None,
-                ),
-                alternate_titles=s.alternateTitles,
-            )
-            for s in series
-        }
         return series
 
-    def get_all_sonarr_series(self) -> list[SonarrItem]:
-        """Get all series in Sonarr with AniList mapping info."""
+    def mapped_series(self, in_sonarr: list[SonarrItem]) -> list[SonarrItem]:
+        """The series among Sonarr's with AniList mapping info, sorted by name."""
 
         fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
-        return collect_anime_items(
-            self.sonarr.all_series,
-            build_id_filters(fields, self._resolver, self.anibridge),
-        )
+        return collect_anime_items(in_sonarr, build_id_filters(fields, self._resolver, self.anibridge))
 
     def prefetch(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.
@@ -403,7 +421,9 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
     def prefetch_orders(self, series_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB orders of the series (see `SkyHookGateway.prefetch`). Returns how many were written.
 
-        A series absent from this run's library read is left out: there is no TVDB id to ask for.
+        A series is asked for by the TVDB id the library read gives it, with an AniList mapping or without: a
+        pending import may claim one that has none. A series absent from the library read is left out, since there
+        is no TVDB id to ask for.
         """
 
         in_library = (self._library[sid].orders for sid in series_ids if sid in self._library)
@@ -421,8 +441,9 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         """Whether a check that reads these titles and these series' orders is missing one of their answers.
 
         A title is unread when AniList left it so (`AniListGateway.air_dates_unread`). A series is unread when it has
-        no stored orders, as when SkyHook was unreachable before its first fetch. A series this run's library read
-        doesn't have is never unread: nothing could fetch it.
+        no stored orders, as when SkyHook was unreachable before its first fetch. That counts for a series with no
+        AniList mapping too, which a pending import may claim. A series this run's library read doesn't have is
+        never unread: nothing could fetch it.
         """
 
         if any(self._anilist.air_dates_unread(anilist_id) for anilist_id in anilist_ids):
@@ -437,17 +458,80 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
     def aired_series(self, series_id: int) -> AiredSeries | NoView:
         """The series' episodes as aired (`aired_view.aired_series`), or why it has no view.
 
-        Sonarr's rows are fetched when the run holds none, and the view is built once per read of them.
+        Sonarr's rows are fetched when the run holds none, and the view is built once per read of them. A series
+        held for the run (`_hold`) has none, and Sonarr is asked nothing more about it.
         """
 
+        if series_id in self._held:
+            return NoView.READ_FAILED
         read = self._read(series_id)
         if read is None:
             return NoView.READ_FAILED
         if read.view is None:
-            facts = self._library_series(series_id).orders
-            stored = self._skyhook.cached_orders(facts.tvdb_id) if facts.in_another_order else None
-            read.view = _aired_view.aired_series(read.rows, facts, stored)
+            view = self._view_of(series_id, read.rows)
+            if view is NoView.READ_FAILED:
+                # Not kept with the rows, so the next call asks Sonarr again.
+                return view
+            read.view = view
         return read.view
+
+    def _view_of(self, series_id: int, rows: list[SonarrEpisode]) -> AiredSeries | NoView:
+        """The aired view of rows just read, under the order the library read gives the series.
+
+        A series in another order is renumbered by TVDB episode id, which is right whatever numbers its rows
+        carry. Rows taken as already aired are right only if the series is still in aired order, so on a Sonarr
+        that sends an order they are confirmed first (`_confirmed_aired`).
+        """
+
+        facts = self._library_series(series_id).orders
+        if facts.in_another_order:
+            return _aired_view.aired_series(rows, facts, self._skyhook.cached_orders(facts.tvdb_id))
+        if not self._sends_order:
+            return _aired_view.aired_series(rows, facts, None)
+        return self._confirmed_aired(series_id, rows)
+
+    def _confirmed_aired(self, series_id: int, rows: list[SonarrEpisode]) -> AiredSeries | NoView:
+        """The view of rows the library read takes as aired, once a read of the series alone agrees.
+
+        The read is made after the rows: an order Sonarr changed before it sent them shows in it. The two reads
+        agree when neither names another order. Counts and the TVDB id are not compared.
+
+        A series whose order changed, and one the library read doesn't have, is held for the run (`_hold`). A
+        failed read, a reply without the order among them, gives no view for this call only. A series Sonarr
+        answers it doesn't have has no episodes.
+        """
+
+        current = self.sonarr.series(series_id)
+        if current is NoResource.GONE:
+            return _GONE
+        if isinstance(current, NoResource) or not current.order_sent:
+            return NoView.READ_FAILED
+        name = current.title or f"Series {series_id}"
+        library = self._library.get(series_id)
+        if library is None:
+            self._hold(
+                series_id,
+                f"{name} not checked - the series was not in Sonarr when this run read its library - checking its "
+                "titles next run",
+            )
+            return NoView.READ_FAILED
+        if series_orders(current).in_another_order:
+            self._hold(
+                series_id,
+                f"{name} not checked - the order Sonarr numbers the series by changed during this run - checking "
+                "its titles again next run",
+            )
+            return NoView.READ_FAILED
+        return _aired_view.aired_series(rows, library.orders, None)
+
+    def _hold(self, series_id: int, warning: str) -> None:
+        """Leave the series without an aired view for the rest of the run, with one warning.
+
+        Nothing the run holds of it changes. Its titles are not cached, so the next run checks them.
+        """
+
+        self._held.add(series_id)
+        hub_warn(warning)
 
     @override
     def series_index(self, series_id: int) -> EpisodeIndex | None:
@@ -488,12 +572,16 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         Only a parse Sonarr matched to a series it numbers by another order changes. Sonarr matched that name by
         its own order's numbers, so its matched episodes are never passed on: they are matched again over the
         series' aired view (`aired_series`, which fetches a series the run hasn't read), by the series' alternate
-        titles (`AiredMatcher`), and one may be a stand-in.
+        titles (`AiredMatcher`), and one may be a stand-in. A parse of a series held for the run (`_hold`) has no
+        answer.
         """
 
         series_id = info.series_id
         if series_id is None:
             return info
+        if series_id in self._held:
+            # Asked first: Sonarr may have matched the name by an order the library read doesn't know of.
+            return NoAnswer.EPISODES_UNREAD
         series = self._library_series(series_id)
         if not series.orders.in_another_order:
             return info

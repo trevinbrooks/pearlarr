@@ -98,6 +98,7 @@ from .builders import (
     ScriptedAniListClient,
     claim_anilist_ids,
     episode_snapshot,
+    every_series,
     grab_plan,
     held_series_episodes,
     make_anilist_gateway,
@@ -159,6 +160,7 @@ class _Item:
     seasonType: str = AIRED_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     alternateTitles: tuple[AlternateTitle, ...] = ()
+    order_sent: bool = False
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)
@@ -505,13 +507,9 @@ class TestArrRunStartHook:
 
     def test_sonarr_get_items_clears_the_series_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
-        strat = make_sonarr_sync(series_episodes={5: [sonarr_ep(1, 1)]})
+        strat = make_sonarr_sync(sonarr=FakeSonarrClient(all_series=series), series_episodes={5: [sonarr_ep(1, 1)]})
         strat._episodes._picks_logged = {11}
-
-        def _all_series() -> list[SonarrItem]:
-            return series
-
-        monkeypatch.setattr(strat._episodes, "get_all_sonarr_series", _all_series)
+        monkeypatch.setattr(strat._episodes, "mapped_series", every_series)
 
         result = strat.get_items()
 
@@ -3358,16 +3356,12 @@ def _check_second_season(monkeypatch: pytest.MonkeyPatch, library: _SeriesInSona
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=cache,
     )
-    sonarr = FakeSonarrClient(episodes=library.episodes, parse_fn=library.parses.get)
+    sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
     deps = replace(
         make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
     )
     episodes = SonarrEpisodes(deps, sonarr, run)
-
-    def _library() -> list[SonarrItem]:
-        return [library.series]
-
-    monkeypatch.setattr(episodes, "get_all_sonarr_series", _library)
+    monkeypatch.setattr(episodes, "mapped_series", every_series)
     episodes.refresh_library()
     strat = make_bare_instance(
         SonarrStrategy,

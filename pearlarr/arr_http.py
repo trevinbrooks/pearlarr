@@ -81,6 +81,16 @@ class DeleteOutcome(Enum):
     """A transport error or any other non-2xx."""
 
 
+class NoResource(Enum):
+    """Why a read of one resource by its id has none (never rendered, so a plain Enum)."""
+
+    GONE = auto()
+    """404: the arr has no resource with the id."""
+
+    FAILED = auto()
+    """A transport error, any other non-200, or a body that isn't the resource."""
+
+
 class ArrUnreachableError(Exception):
     """An arr's load-bearing library fetch could not produce a result.
 
@@ -263,6 +273,11 @@ class ArrHttp:
         """
 
         response, detail = self._get_with_retries(path, params, timeout=timeout)
+        return self._json_body(response, detail, warn)
+
+    def _json_body(self, response: httpx.Response | None, detail: str, warn: str | None) -> object | None:
+        """The JSON body of a finished GET. Anything but a 200 with one fails through `warn` and gives None."""
+
         if response is None or response.status_code != 200:
             return self._fail(warn, detail)
         try:
@@ -328,6 +343,26 @@ class ArrHttp:
             return None
         if not isinstance(payload, dict):
             return self._fail(warn, "unexpected payload")
+        self._recover(warn)
+        return cast("dict[str, object]", payload)
+
+    def get_resource(self, path: str, *, warn: str | None) -> dict[str, object] | NoResource:
+        """GET one resource by the id in `path`, telling a resource the arr doesn't have from a failed read.
+
+        A 404 is an answer, not a failure: GONE, quietly, closing any open streak under `warn` as `delete` does.
+        Anything `get_json_dict` fails on is FAILED, warned of the same way.
+        """
+
+        response, detail = self._get_with_retries(path, None)
+        if response is not None and response.status_code == 404:
+            self._recover(warn)
+            return NoResource.GONE
+        payload = self._json_body(response, detail, warn)
+        if payload is None:
+            return NoResource.FAILED
+        if not isinstance(payload, dict):
+            self._fail(warn, "unexpected payload")
+            return NoResource.FAILED
         self._recover(warn)
         return cast("dict[str, object]", payload)
 

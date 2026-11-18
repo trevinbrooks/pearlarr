@@ -5,7 +5,7 @@ AniList mapping - shared by both Arrs (Sonarr series and Radarr movies), so
 it lives here rather than inside either client module.
 """
 
-from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -41,7 +41,7 @@ class IdFilter(NamedTuple):
 
 
 def collect_anime_items[ItemT: ArrItem](
-    list_fn: Callable[[], list[ItemT]],
+    items: Iterable[ItemT],
     filters: tuple[IdFilter, ...],
 ) -> list[ItemT]:
     """Arr library items that have an AniList mapping, sorted by name.
@@ -55,7 +55,7 @@ def collect_anime_items[ItemT: ArrItem](
     concrete item type the caller fetched.
 
     Args:
-        list_fn: Returns the unfiltered Arr item list.
+        items: The unfiltered Arr items.
         filters: Id spaces to filter by, in order, each
             carrying its own candidate sets (pass `set()` for a disabled source).
     """
@@ -70,7 +70,7 @@ def collect_anime_items[ItemT: ArrItem](
     # a large library
     kept: list[ItemT] = []
     seen_ids: set[int] = set()
-    for item in list_fn():
+    for item in items:
         if item.id in seen_ids:
             continue
 
@@ -93,8 +93,8 @@ def build_id_filters(
 
     Pairs each id space's Anime-IDs candidate set with AniBridge's (empty when
     AniBridge is off). Shared by `collect_anime_movies` and Sonarr's
-    `get_all_sonarr_series`, which each pass the result to `collect_anime_items`
-    with their own `list_fn`.
+    `SonarrEpisodes.mapped_series`, which each pass the result to `collect_anime_items`
+    with their own items.
     """
 
     return tuple(

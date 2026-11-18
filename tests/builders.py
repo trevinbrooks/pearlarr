@@ -31,6 +31,7 @@ from pearlarr.arr_models import (
     ParsedFileInfo,
     QueueRecord,
     SonarrEpisode,
+    SonarrItem,
 )
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
@@ -1574,12 +1575,20 @@ def make_sonarr_episodes(
         "_series": {},
         "_series_hash": "",
         "_library": {},
+        "_sends_order": False,
+        "_held": set[int](),
         "_picks_logged": set[int](),
     }
     defaults.update(attrs)
     episodes = make_bare_instance(SonarrEpisodes, **defaults)
     seed_series_episodes(episodes, series_episodes or {})
     return episodes
+
+
+def every_series(in_sonarr: list[SonarrItem]) -> list[SonarrItem]:
+    """Every series Sonarr lists, in place of `SonarrEpisodes.mapped_series` when each has an AniList mapping."""
+
+    return in_sonarr
 
 
 def seed_series_episodes(episodes: SonarrEpisodes, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:

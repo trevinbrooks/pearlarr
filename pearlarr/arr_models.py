@@ -77,7 +77,10 @@ class AlternateTitle(ApiModel):
 
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
-    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it and its alternate names."""
+    """An `ArrItem` keyed on `tvdbId`, with the TVDB orders Sonarr lists for it and its alternate names.
+
+    `order_sent` is whether Sonarr sent `seasonType` for the series at all, whatever its value.
+    """
 
     @property
     def tvdbId(self) -> int: ...
@@ -90,6 +93,9 @@ class SonarrItem(ArrItem, Protocol):
 
     @property
     def alternateTitles(self) -> tuple[AlternateTitle, ...]: ...
+
+    @property
+    def order_sent(self) -> bool: ...
 
 
 @runtime_checkable
@@ -118,6 +124,16 @@ class SonarrSeries(ApiModel):
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
     alternateTitles: tuple[AlternateTitle, ...] = ()
     """The series' other names, in Sonarr's order. Some name one season."""
+
+    @property
+    def order_sent(self) -> bool:
+        """Whether Sonarr sent `seasonType` for the series, whatever its value.
+
+        Read off the key and never the value: with no key the field defaults to the aired order, which a Sonarr
+        that sends the key can name too.
+        """
+
+        return "seasonType" in self.model_fields_set
 
     @field_validator("seasonTypes", mode="before")
     @classmethod

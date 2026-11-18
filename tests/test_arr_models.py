@@ -106,6 +106,21 @@ def test_sonarr_series_reads_its_orders_and_drops_a_junk_one_alone() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("raw", "sent"),
+    [
+        pytest.param({"id": 1, "title": "Show"}, False, id="no-key"),
+        pytest.param({"id": 1, "title": "Show", "seasonType": "official"}, True, id="aired"),
+        pytest.param({"id": 1, "title": "Show", "seasonType": "dvd"}, True, id="another-order"),
+        pytest.param({"id": 1, "title": "Show", "seasonType": None}, True, id="null"),
+    ],
+)
+def test_sonarr_series_knows_whether_its_order_was_sent(raw: dict[str, object], sent: bool) -> None:
+    """A series with no `seasonType` key and one sent as `official` read as the same order, and only the key tells them apart."""
+
+    assert SonarrSeries.model_validate(raw).order_sent is sent
+
+
 def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -> None:
     """A series with no `alternateTitles` has none, and a junk element (a null title among them) drops alone."""
 
