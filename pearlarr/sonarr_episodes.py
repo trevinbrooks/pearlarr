@@ -14,11 +14,12 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import override
 
-from .aired_view import NoView, is_stand_in, printed_key
+from .aired_view import NoView, printed_key
 from .anibridge import TvdbMappings, season_holds
 from .arr_models import ArrFiles, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices
 from .config import AppConfig
+from .episode_ids import is_stand_in
 from .library_filter import IdField, build_id_filters, collect_anime_items
 from .library_read import LibraryRead
 from .mappings import ExternalIds, MappingKind, MappingSource, TitleMapping

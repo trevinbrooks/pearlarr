@@ -46,6 +46,7 @@ from pearlarr.cache import (
 )
 from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
+from pearlarr.episode_ids import is_row_id
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeStatuses, TrustedGroups
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
@@ -1478,7 +1479,7 @@ def rows_without_tvdb_ids(file_map: FileEpisodeMap, claims: Iterable[TitleClaim]
     for claim in claims:
         held.update(claim.ordered_episode_ids)
         held.update(claim.preowned_episode_ids)
-    return TvdbIds(dict.fromkeys((ep_id for ep_id in held if ep_id > 0), None))
+    return TvdbIds(dict.fromkeys((ep_id for ep_id in held if is_row_id(ep_id)), None))
 
 
 def two_claim_pending_import(

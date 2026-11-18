@@ -5,9 +5,10 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
-from .aired_view import is_stand_in, printed_key
+from .aired_view import printed_key
 from .arr_models import MatchedEpisode, ParsedFileInfo
 from .coverage import coverage_of_episodes
+from .episode_ids import is_stand_in
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
 from .file_paths import normalize_file_name
 from .numberings import NumberingStep
