@@ -5,8 +5,15 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .aired_view import is_stand_in, stand_in_id, stand_in_tvdb_id
 from .arr_models import SonarrEpisode
+from .episode_ids import (
+    is_row_id,
+    is_stand_in,
+    stand_in_id,
+    stand_in_tvdb_id,
+    stand_ins_among,
+    without_stand_ins,
+)
 from .file_paths import normalize_file_name
 from .pairs import unambiguous
 from .releases import OrderOnlyKey
@@ -58,7 +65,7 @@ def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
     normalized: dict[str, tuple[int, ...]] = {}
     for name, ids in entries.items():
         clean = tuple(i for i in ids if i)
-        if clean and not any(is_stand_in(i) for i in clean):
+        if clean and not stand_ins_among(clean):
             normalized.setdefault(normalize_file_name(name), clean)
     return normalized
 
@@ -66,7 +73,7 @@ def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
 def _on_stand_ins(entries: FileEpisodeMap) -> tuple[str, ...]:
     """The normalized names of the file map's files with a stand-in's id among their ids."""
 
-    return tuple(normalize_file_name(name) for name, ids in entries.items() if any(is_stand_in(i) for i in ids))
+    return tuple(normalize_file_name(name) for name, ids in entries.items() if stand_ins_among(ids))
 
 
 def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
@@ -210,7 +217,7 @@ class TvdbIds:
     def of(cls, rows: Iterable[SonarrEpisode]) -> "TvdbIds":
         """The entries of the rows ids were placed from. A stand-in and a row with no id add none."""
 
-        return cls({row.id: _tvdb_id_of(row) for row in rows if row.id and not is_stand_in(row.id)})
+        return cls({row.id: _tvdb_id_of(row) for row in rows if is_row_id(row.id)})
 
     def joined(self, added: "TvdbIds") -> "TvdbIds":
         """These entries and `added`'s, a row held with no TVDB id taking the one `added` has for it.
@@ -430,6 +437,18 @@ class TitleClaim:
 
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
 
+    @property
+    def stand_ins(self) -> tuple[int, ...]:
+        """The stand-ins' ids of the window, in its order."""
+
+        return stand_ins_among(self.ordered_episode_ids)
+
+    @property
+    def window_row_ids(self) -> tuple[int, ...]:
+        """The window's ids less its stand-ins': the episodes of it Sonarr has a row for, in its order."""
+
+        return without_stand_ins(self.ordered_episode_ids)
+
     def moved(self, moves: IdMoves) -> "TitleClaim":
         """The claim with each moved id replaced by the id it is now, both lists deduplicated.
 
@@ -442,7 +461,7 @@ class TitleClaim:
         return replace(
             self,
             ordered_episode_ids=tuple(window),
-            preowned_episode_ids=tuple(ep_id for ep_id in preowned if not is_stand_in(ep_id)),
+            preowned_episode_ids=without_stand_ins(preowned),
         )
 
     @property
@@ -632,14 +651,12 @@ class PendingImport:
         for claim in self.claims:
             held.update(claim.ordered_episode_ids)
             held.update(claim.preowned_episode_ids)
-        return frozenset(ep_id for ep_id in held if ep_id and not is_stand_in(ep_id))
+        return frozenset(ep_id for ep_id in held if is_row_id(ep_id))
 
     def window_stand_ins(self) -> tuple[int, ...]:
         """The stand-ins' ids the claims' windows hold, each once."""
 
-        return tuple(
-            dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids if is_stand_in(ep_id))
-        )
+        return tuple(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.stand_ins))
 
     def file_map_episode_ids(self) -> list[int]:
         """The intended episode ids: the file map's values in first-claim order."""
@@ -653,11 +670,7 @@ class PendingImport:
         alone read as no window, so the file map's ids stand.
         """
 
-        windows = list(
-            dict.fromkeys(
-                ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids if not is_stand_in(ep_id)
-            )
-        )
+        windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.window_row_ids))
         return windows or sorted(self.file_map_episode_ids())
 
     def guards_for(self, series_id: int) -> OwnedAtGrab:

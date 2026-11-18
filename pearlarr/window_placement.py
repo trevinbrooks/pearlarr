@@ -44,7 +44,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
-from .aired_view import is_stand_in
+from .episode_ids import stand_ins_among
 from .numberings import NumberingProposals
 from .pending_import import TitleClaim, TitleWindow
 from .placement_types import (
@@ -292,7 +292,7 @@ class WindowedPlacements:
         stand-in the index has no episode for, and that one is left unnamed.
         """
 
-        stand_ins = [ep_id for ep_id in file.merged.ids if is_stand_in(ep_id)]
+        stand_ins = stand_ins_among(file.merged.ids)
         if not stand_ins:
             return file
         assert file.final_window_at is not None

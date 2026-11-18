@@ -6,6 +6,7 @@ from enum import Enum, auto
 from typing import Self
 
 from .arr_models import SonarrEpisode, episode_sort_key
+from .episode_ids import is_stand_in, stand_in_id
 from .releases import EpisodeKey, PrintedKey, season_episode_key
 from .scene_numbers import SceneNumbers
 from .tvdb_orders import CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
@@ -67,24 +68,6 @@ class AiredSeries:
             in_sonarr=tuple(_scene_numbered(ep, numbers) for ep in self.in_sonarr),
             stand_ins=tuple(_scene_numbered(ep, numbers) for ep in self.stand_ins),
         )
-
-
-def is_stand_in(episode_id: int) -> bool:
-    """Whether the id is a stand-in's, an episode Sonarr has no row for, and not a Sonarr episode's."""
-
-    return episode_id < 0
-
-
-def stand_in_id(tvdb_id: int) -> int:
-    """The id of the stand-in for a TVDB episode: the same on every run, and never a Sonarr episode's."""
-
-    return -tvdb_id
-
-
-def stand_in_tvdb_id(episode_id: int) -> int:
-    """The TVDB episode id a stand-in's id (`stand_in_id`) stands for."""
-
-    return -episode_id
 
 
 def printed_key(episode: SonarrEpisode) -> PrintedKey:

@@ -9,13 +9,11 @@ from pearlarr.aired_view import (
     AiredSeries,
     NoView,
     aired_series,
-    is_stand_in,
     numbered_by,
     printed_key,
-    stand_in_id,
-    stand_in_tvdb_id,
 )
 from pearlarr.arr_models import SonarrEpisode
+from pearlarr.episode_ids import is_stand_in, stand_in_id, stand_in_tvdb_id
 from pearlarr.releases import EpisodeKey, PrintedKey
 from pearlarr.scene_numbers import SceneNumbers
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
