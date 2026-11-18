@@ -1100,10 +1100,14 @@ def sonarr_ep(
     tvdb_id: int | None = None,
     air_date: str | None = None,
     runtime: int | None = None,
+    scene_season: int | None = None,
+    scene_episode: int | None = None,
+    scene_absolute: int | None = None,
 ) -> SonarrEpisode:
     """`episode_file_id=0` omits the `episodeFile` block, as Sonarr sends it for a missing episode.
 
-    `air_date` is Sonarr's `YYYY-MM-DD` string and `runtime` its minutes.
+    `air_date` is Sonarr's `YYYY-MM-DD` string and `runtime` its minutes. The three `scene_` numbers are the ones
+    releases number the episode by.
     """
 
     raw: dict[str, Any] = {
@@ -1111,6 +1115,9 @@ def sonarr_ep(
         "seasonNumber": season,
         "episodeNumber": episode,
         "absoluteEpisodeNumber": absolute,
+        "sceneSeasonNumber": scene_season,
+        "sceneEpisodeNumber": scene_episode,
+        "sceneAbsoluteEpisodeNumber": scene_absolute,
         "title": title,
         "tvdbId": tvdb_id,
         "airDate": air_date,
@@ -1303,6 +1310,7 @@ def parsed_info(
     absolutes: tuple[int, ...] = (),
     matched: tuple[tuple[int, int], ...] = (),
     full_season: bool = False,
+    special: bool = False,
     series_title: str = "",
 ) -> ParsedFileInfo:
     """Shorthand `ParsedFileInfo` for the placement tests: the name's own numbers and title, plus any matched pairs."""
@@ -1315,6 +1323,7 @@ def parsed_info(
             MatchedEpisode(season_number=matched_season, episode_number=episode) for matched_season, episode in matched
         ),
         full_season=full_season,
+        special=special,
         series_title=series_title,
     )
 

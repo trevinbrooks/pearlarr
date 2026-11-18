@@ -78,6 +78,9 @@ def aired_series(
     renumbered to the aired episode with the same TVDB episode id, and a stand-in for each aired episode none of its
     rows has. A row only its own order lists is left out. Where the aired order gives two episodes one number, the
     first listed is kept and the other left out, as Sonarr keeps them.
+
+    A renumbered row loses its scene numbers: they were given to the row under another number, so they may be
+    another episode's.
     """
 
     if not facts.in_another_order:
@@ -92,6 +95,9 @@ def aired_series(
                     "season_number": row.season,
                     "episode_number": row.episode,
                     "absolute_episode_number": row.absolute,
+                    "scene_season_number": None,
+                    "scene_episode_number": None,
+                    "scene_absolute_episode_number": None,
                 }
             )
             for ep in rows
