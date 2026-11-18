@@ -7,7 +7,9 @@ filtering, AniDB remaps, offset slicing, the specials chosen by air date, the
 existing files as `ArrFiles`, and the concurrent prefetch warm. It also keeps each
 series' TVDB order facts and alternate titles. A title's check reads every series as
 aired (`aired_view`), whatever order Sonarr numbers it by, the episodes Sonarr matched a
-file name to included (`aired_parse`). The import reads Sonarr's own rows.
+file name to included (`aired_parse`). The import reads Sonarr's own rows. A series in
+another order takes its scene numbers from TheXEM's mappings (`scene_numbers`), since
+Sonarr keeps none for it.
 
 Rows are read as already aired only when Sonarr says twice that the series is: in the
 library read, and in a read of the series alone made after its rows. For the check and
@@ -36,6 +38,7 @@ from .output import Severity, hub_note, hub_warn
 from .placement_types import EpisodeIndex, episode_index
 from .progress import ProgressCallback
 from .releases import season_episode_key
+from .scene_numbers import scene_numbers
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_matching import AiredMatcher, NoAnswer
 from .specials_by_date import specials_by_date
@@ -267,7 +270,8 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
     Constructed once per run in `SonarrStrategy` from the shared
     `ArrRunDeps`, the strategy's Sonarr client, and the arr run
     services (kept as `self._services` for the prefetch needs-check gate).
-    The TVDB orders come off `deps.skyhook`, read once per series per run.
+    The TVDB orders come off `deps.skyhook`, read once per series per run, and the scene mappings of a series in
+    another order off `deps.xem`.
     """
 
     def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, services: ArrRunServices) -> None:
@@ -275,7 +279,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         Args:
             deps: The shared collaborators (config/mappings/AniList
-                gateway/SkyHook order gateway are unpacked off it).
+                gateway/SkyHook order gateway/TheXEM mapping gateway are unpacked off it).
             sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
             services: The arr run services. `prefetch` calls into it to
@@ -291,6 +295,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         # arr run loop), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
         self._skyhook = deps.skyhook
+        self._xem = deps.xem
 
         # Per-run cache of the raw Sonarr episode fetch and what is built from it, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
@@ -477,9 +482,27 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         is no TVDB id to ask for.
         """
 
+        return self._skyhook.prefetch(
+            self._orders_by_tvdb(series_ids), dry_run=self._services.is_dry_run(), progress=progress
+        )
+
+    def prefetch_scene_numbers(self, series_ids: Iterable[int], *, progress: ProgressCallback | None = None) -> int:
+        """Read the due scene mappings of the series in another order (see `XemGateway.prefetch`).
+
+        Returns how many were written. The series are the ones `prefetch_orders` asks SkyHook for, less those in
+        aired order: Sonarr holds their scene numbers, so TheXEM is never asked for them.
+        """
+
+        return self._xem.prefetch(
+            self._orders_by_tvdb(series_ids), dry_run=self._services.is_dry_run(), progress=progress
+        )
+
+    def _orders_by_tvdb(self, series_ids: Iterable[int]) -> list[SonarrSeriesOrders]:
+        """The library read's order facts of the series it has a TVDB id for, once per TVDB id."""
+
         in_library = (self._library[sid].orders for sid in series_ids if sid in self._library)
         by_tvdb = {orders.tvdb_id: orders for orders in in_library if orders.tvdb_id > 0}
-        return self._skyhook.prefetch(list(by_tvdb.values()), dry_run=self._services.is_dry_run(), progress=progress)
+        return list(by_tvdb.values())
 
     @override
     def episode_count(self, anilist_id: int) -> int | None:
@@ -492,7 +515,8 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         """Whether a check that reads these titles and these series' orders is missing one of their answers.
 
         A title is unread when AniList left it so (`AniListGateway.air_dates_unread`). A series is unread when it has
-        no stored orders, as when SkyHook was unreachable before its first fetch. That counts for a series with no
+        no stored orders, as when SkyHook was unreachable before its first fetch, or when Sonarr numbers it by
+        another order and its scene mappings were never read, as when TheXEM was. That counts for a series with no
         AniList mapping too, which a pending import may claim. A series this run's library read doesn't have is
         never unread: nothing could fetch it.
         """
@@ -501,8 +525,11 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
             return True
         return any(
             (series := self._library.get(sid)) is not None
-            and series.orders.tvdb_id > 0
-            and not self._skyhook.has_cached_answer(series.orders.tvdb_id)
+            and (tvdb_id := series.orders.tvdb_id) > 0
+            and (
+                not self._skyhook.has_cached_answer(tvdb_id)
+                or (series.orders.in_another_order and self._xem.scene_mappings(tvdb_id) is None)
+            )
             for sid in series_ids
         )
 
@@ -530,16 +557,32 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         """The aired view of rows just read, under the order the library read gives the series.
 
         A series in another order is renumbered by TVDB episode id, which is right whatever numbers its rows
-        carry. Rows taken as already aired are right only if the series is still in aired order, so on a Sonarr
-        that sends an order they are confirmed first (`_confirmed_aired`).
+        carry, and then given its scene numbers (`_scene_numbered`). Rows taken as already aired are right only if
+        the series is still in aired order, so on a Sonarr that sends an order they are confirmed first
+        (`_confirmed_aired`).
         """
 
         facts = self._library_series(series_id).orders
         if facts.in_another_order:
-            return _aired_view.aired_series(rows, facts, self._skyhook.cached_orders(facts.tvdb_id))
+            view = _aired_view.aired_series(rows, facts, self._skyhook.cached_orders(facts.tvdb_id))
+            return view if isinstance(view, NoView) else self._scene_numbered(view, facts.tvdb_id)
         if not self._sends_order:
             return _aired_view.aired_series(rows, facts, None)
         return self._confirmed_aired(series_id, rows)
+
+    def _scene_numbered(self, view: AiredSeries, tvdb_id: int) -> AiredSeries | NoView:
+        """The view of a series in another order with the scene numbers TheXEM's stored mappings give its episodes.
+
+        Sonarr keeps no scene numbers for such a series, and the view's builder clears the ones its rows carry.
+        Mappings never read give no view: a file named by its scene numbers would be matched by the aired ones.
+        Mappings read at any age give one, and so does a series TheXEM has none for.
+        """
+
+        mappings = self._xem.scene_mappings(tvdb_id)
+        if mappings is None:
+            return NoView.SCENE_UNREAD
+        aired = (season_episode_key(ep.season_number, ep.episode_number) for ep in view.aired)
+        return view.with_scene_numbers(scene_numbers(aired, mappings))
 
     def _confirmed_aired(self, series_id: int, rows: list[SonarrEpisode]) -> AiredSeries | NoView:
         """The view of rows the library read takes as aired, once a read of the series alone agrees.
@@ -705,6 +748,8 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
                 return NoAnswer.EPISODES_UNREAD
             case NoView.ORDERS_UNREAD:
                 return NoAnswer.ORDERS_UNREAD
+            case NoView.SCENE_UNREAD:
+                return NoAnswer.SCENE_UNREAD
             case AiredSeries():
                 read = self._series[series_id]
                 if read.matcher is None:

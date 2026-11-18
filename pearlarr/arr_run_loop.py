@@ -33,6 +33,7 @@ class ArrRunLoop:
         self.cache_store = deps.cache_store
         self._anilist = deps.anilist
         self._skyhook = deps.skyhook
+        self._xem = deps.xem
         self._notifier = deps.notifier
         self._reporter = deps.reporter
 
@@ -178,6 +179,16 @@ class ArrRunLoop:
                     step.warn("unreachable")
                 else:
                     step.note("cached" if fetched == 0 else count_noun(fetched, "series", "series"))
+            # A step of its own, so an unreachable TheXEM is never shown under SkyHook's. A library with no series
+            # in another order has no step: TheXEM is asked nothing for it.
+            if strategy.reads_scene_numbers:
+                with boot.step("Fetching TheXEM scene numbers") as step:
+                    fetched = strategy.prefetch_scene_numbers(all_items, progress=step)
+                    if self._xem.unreachable:
+                        # Terse: the client already warned once with the failure detail.
+                        step.warn("unreachable")
+                    else:
+                        step.note("cached" if fetched == 0 else count_noun(fetched, "series", "series"))
         else:
             strategy.prefetch_episodes(all_items)
 
@@ -209,7 +220,10 @@ class ArrRunLoop:
         # past the cap, or one whose check didn't cache it, blocks neither: `is_unchanged` cleared its stamp, so the
         # next run checks it whatever is committed here. An unreachable AniList is left out: a Sonarr title whose
         # check read an entry with no stored answer for its air dates isn't cached, and Radarr reads AniList only for
-        # display.
+        # display. So is an unreachable TheXEM: a series whose scene mappings were never read leaves its titles
+        # unchecked (`NoView.SCENE_UNREAD`), so the next run checks them whatever is committed here. A series read by
+        # older mappings is where a series in aired order is when Sonarr's scene numbers of it move, and nothing
+        # checks its titles again for that either.
         full_scan = item_id is None and not self._seadex.unreachable and not self._skyhook.unreachable
 
         # Left unstaged while a source is unreachable so the next healthy run re-derives the same dirty ids (the query

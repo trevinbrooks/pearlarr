@@ -17,6 +17,7 @@ import respx
 
 _SONARR_FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 _SKYHOOK_FIXTURES = Path(__file__).parent / "fixtures" / "skyhook"
+_XEM_FIXTURES = Path(__file__).parent / "fixtures" / "xem"
 
 
 def sonarr_fixture(name: str) -> object:
@@ -29,6 +30,12 @@ def skyhook_fixture(name: str) -> object:
     """Decode a captured SkyHook reply by file name, cut down to a few rows and keys."""
 
     return json.loads((_SKYHOOK_FIXTURES / name).read_text())
+
+
+def xem_fixture(name: str) -> object:
+    """Decode a captured TheXEM mappings reply by file name, cut down to a few rows."""
+
+    return json.loads((_XEM_FIXTURES / name).read_text())
 
 
 def register_sonarr_reads(

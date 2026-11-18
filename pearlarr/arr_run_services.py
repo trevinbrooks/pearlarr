@@ -42,6 +42,8 @@ from .skyhook_gateway import SkyHookGateway
 from .torrent_service import TorrentService
 from .tvdb_orders import SeriesNumbering, order_display_name
 from .wait_types import ImportWaitMode
+from .xem_client import XemClient
+from .xem_gateway import XemGateway
 
 
 class QbitConnectionError(Exception):
@@ -109,6 +111,9 @@ class ArrRunDeps:
     anilist: AniListGateway
     skyhook: SkyHookGateway
     """The TVDB order cache. The Sonarr strategy reads its orders, and the arr run loop whether SkyHook is
+    unreachable."""
+    xem: XemGateway
+    """The scene mapping cache. The Sonarr strategy reads its mappings, and the arr run loop whether TheXEM is
     unreachable."""
     torrents: TorrentService
     notifier: Notifier
@@ -251,6 +256,7 @@ class ArrRunDeps:
             cache_store=cache_store,
             anilist=anilist,
             skyhook=SkyHookGateway(client=SkyHookClient(client=web), cache_store=cache_store),
+            xem=XemGateway(client=XemClient(client=web), cache_store=cache_store),
             torrents=torrents,
             # Discord notifier, a no-op when no webhook is configured. The
             # SecretStr urls are unwrapped here, at their point of use.

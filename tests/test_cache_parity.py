@@ -19,6 +19,7 @@ from typing import Any
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.pending_import import OwnedAtGrab
+from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.tvdb_orders import CachedOrders, EpisodeDetails, OrderRow
 
 from .builders import FakeCacheStore, pending_import, title_claim
@@ -146,6 +147,14 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_tvdb_orders(5, kept)
     store.put_tvdb_orders(6, CachedOrders(fetched_at=_NEW, fresh_until=_NEW, orders={}, sonarr_counts=None, details={}))
 
+    # Scene mappings: a row replaced whole, and a series read as having none.
+    store.put_scene_mappings(5, CachedSceneMappings(fresh_until=_OLD, mappings=(SceneMapping(1, 1, 1, 1, 1),)))
+    store.put_scene_mappings(
+        5,
+        CachedSceneMappings(fresh_until=_NEW, mappings=(SceneMapping(0, 1, 1, 12, 12), SceneMapping(1, 12, 1, 13, 13))),
+    )
+    store.put_scene_mappings(6, CachedSceneMappings(fresh_until=_NEW, mappings=()))
+
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:
     """Every observable read the fake-trusting tests rely on, as one comparable snapshot."""
@@ -183,6 +192,9 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "tvdb_orders_5": store.get_tvdb_orders(5),
         "tvdb_orders_6": store.get_tvdb_orders(6),
         "tvdb_orders_missing": store.get_tvdb_orders(4242),
+        "scene_mappings_5": store.get_scene_mappings(5),
+        "scene_mappings_6": store.get_scene_mappings(6),
+        "scene_mappings_missing": store.get_scene_mappings(4242),
         "stats_no_size": stats._replace(size_bytes=0),
         "integrity": store.integrity_check(),
     }

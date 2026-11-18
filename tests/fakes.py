@@ -61,12 +61,14 @@ from pearlarr.pending_import import PendingImport
 from pearlarr.placement_types import EpisodeIndex, episode_index
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
+from pearlarr.scene_numbers import SceneMapping
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import EpisodeSource, SeriesRows, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders, is_another_order
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
+from pearlarr.xem_client import AbstractXemClient, XemNoReply
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -352,6 +354,15 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
+        return 0
+
+    @property
+    @override
+    def reads_scene_numbers(self) -> bool:
+        return False
+
+    @override
+    def prefetch_scene_numbers(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
         return 0
 
     @override
@@ -686,12 +697,51 @@ class FakeSkyHookClient(AbstractSkyHookClient):
         return self._replies.get((tvdb_id, order_type), SkyHookNoReply.NOT_FOUND)
 
 
+class FakeXemClient(AbstractXemClient):
+    """TheXEM scripted per TVDB id, recording each series a request goes out for in `asked`.
+
+    An unscripted series answers with no mappings, as TheXEM does for a series it doesn't list. A read of an
+    `unusable` series is `XemNoReply.UNUSABLE` and stops nothing. A read of a `failing` series marks TheXEM
+    unreachable, and every read after it is `XemNoReply.UNREACHABLE` with nothing asked, as the real client makes it.
+    """
+
+    def __init__(
+        self,
+        mappings: Mapping[int, tuple[SceneMapping, ...]] | None = None,
+        *,
+        unusable: frozenset[int] = frozenset(),
+        failing: frozenset[int] = frozenset(),
+    ) -> None:
+        self._mappings = dict(mappings or {})
+        self._unusable = unusable
+        self._failing = failing
+        self._unreachable = False
+        self.asked: list[int] = []
+
+    @property
+    @override
+    def unreachable(self) -> bool:
+        return self._unreachable
+
+    @override
+    def mappings(self, tvdb_id: int) -> tuple[SceneMapping, ...] | XemNoReply:
+        if self._unreachable:
+            return XemNoReply.UNREACHABLE
+        self.asked.append(tvdb_id)
+        if tvdb_id in self._failing:
+            self._unreachable = True
+            return XemNoReply.UNREACHABLE
+        if tvdb_id in self._unusable:
+            return XemNoReply.UNUSABLE
+        return self._mappings.get(tvdb_id, ())
+
+
 class ScriptedEpisodes(EpisodeSource, SeriesRows):
     """An `EpisodeSource` scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
-    `orders_unread_views` reads as `NoView.ORDERS_UNREAD`. Every series is numbered by `order`, and Sonarr sent no
+    `no_views` has no view for the reason given. Every series is numbered by `order`, and Sonarr sent no
     count of its episodes. The `unread_series` have no stored order answer, and the `unread_anilist_ids` no AniList
     answer. `counts` are AniList's episode counts by AniList id, None for an id left out. No series has an alternate
     title, and a parse is taken as already matched the way an aired Sonarr matches it.
@@ -704,7 +754,7 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
         windows: Mapping[int, list[SonarrEpisode] | None] | None = None,
         ambiguous: frozenset[int] = frozenset(),
         order: str = AIRED_ORDER,
-        orders_unread_views: frozenset[int] = frozenset(),
+        no_views: Mapping[int, NoView] | None = None,
         unread_series: frozenset[int] = frozenset(),
         unread_anilist_ids: frozenset[int] = frozenset(),
         counts: Mapping[int, int] | None = None,
@@ -713,7 +763,7 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
         self._windows = windows
         self._ambiguous = ambiguous
         self._order = order
-        self._orders_unread_views = orders_unread_views
+        self._no_views: Mapping[int, NoView] = no_views or {}
         self._unread_series = unread_series
         self._unread_anilist_ids = unread_anilist_ids
         self._counts: Mapping[int, int] = counts or {}
@@ -740,8 +790,8 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
     def _series_episodes(self, series_id: int) -> list[SonarrEpisode] | NoView:
         """The whole-series list off the client, or why the series has no view."""
 
-        if series_id in self._orders_unread_views:
-            return NoView.ORDERS_UNREAD
+        if series_id in self._no_views:
+            return self._no_views[series_id]
         episodes = None if self._sonarr is None else self._sonarr.episodes(series_id)
         if episodes is None:
             return NoView.READ_FAILED

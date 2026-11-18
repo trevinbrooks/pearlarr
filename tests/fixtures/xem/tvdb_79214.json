@@ -1,0 +1,101 @@
+{
+  "result": "success",
+  "data": [
+    {
+      "scene": {
+        "season": 2,
+        "episode": 1,
+        "absolute": 1
+      },
+      "anidb": {
+        "season": 2,
+        "episode": 1,
+        "absolute": 1
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 1,
+        "absolute": 0
+      }
+    },
+    {
+      "scene": {
+        "season": 0,
+        "episode": 2,
+        "absolute": 0
+      },
+      "anidb": {
+        "season": 0,
+        "episode": 2,
+        "absolute": 0
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 2,
+        "absolute": 0
+      }
+    },
+    {
+      "scene": {
+        "season": 3,
+        "episode": 11,
+        "absolute": 11
+      },
+      "scene_2": {
+        "season": 3,
+        "episode": 12,
+        "absolute": 12
+      },
+      "anidb": {
+        "season": 3,
+        "episode": 11,
+        "absolute": 11
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 3,
+        "absolute": 0
+      }
+    },
+    {
+      "scene": {
+        "season": 3,
+        "episode": 11,
+        "absolute": 11
+      },
+      "scene_2": {
+        "season": 3,
+        "episode": 12,
+        "absolute": 12
+      },
+      "anidb": {
+        "season": 3,
+        "episode": 11,
+        "absolute": 11
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 4,
+        "absolute": 0
+      }
+    },
+    {
+      "scene": {
+        "season": 3,
+        "episode": 22,
+        "absolute": 22
+      },
+      "anidb": {
+        "season": 4,
+        "episode": 10,
+        "absolute": 10
+      },
+      "tvdb": {
+        "season": 2,
+        "episode": 20,
+        "absolute": 47
+      }
+    }
+  ],
+  "message": "full mapping for 79214 on tvdb. this was a cached version"
+}

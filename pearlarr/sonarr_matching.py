@@ -97,7 +97,7 @@ Each one more doubles the readings, so 4 leaves room and stays cheap.
 class NoAnswer(Enum):
     """Why an aired Sonarr's answer to a parse can't be known, where an empty answer says it matches no episode.
 
-    `AiredMatcher.matches` gives the first three. The other two are a series with no aired view to match over.
+    `AiredMatcher.matches` gives the first three. The other three are a series with no aired view to match over.
     """
 
     SONARR_FAILS = auto()
@@ -116,6 +116,9 @@ class NoAnswer(Enum):
     ORDERS_UNREAD = auto()
     """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""
 
+    SCENE_UNREAD = auto()
+    """Sonarr numbers the series by another order, and TheXEM's scene mappings of it were never read."""
+
 
 def parse_without_answer(info: ParsedFileInfo, reason: NoAnswer) -> ParsedFileInfo | None:
     """The parse the placement reads when an aired Sonarr's answer to it can't be known. None leaves it unread.
@@ -129,9 +132,9 @@ def parse_without_answer(info: ParsedFileInfo, reason: NoAnswer) -> ParsedFileIn
             return None
         case NoAnswer.LIMITED_ALIAS | NoAnswer.SPECIAL_BY_TITLE:
             return info.with_matched(())
-        case NoAnswer.ORDERS_UNREAD:
-            # Not unread: orders are fetched only for a series a run checks or waits on, so another series' may never
-            # be stored, and leaving its files unread would hold their release on every run.
+        case NoAnswer.ORDERS_UNREAD | NoAnswer.SCENE_UNREAD:
+            # Not unread: orders and scene mappings are fetched only for a series a run checks or waits on, so
+            # another series' may never be stored, and leaving its files unread would hold their release on every run.
             return info.with_matched(())
     assert_never(reason)
 

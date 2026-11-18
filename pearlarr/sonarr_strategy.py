@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
-from typing import override
+from typing import assert_never, override
 
 from . import coverage as _coverage
 from .aired_view import AiredSeries, NoView
@@ -71,6 +71,23 @@ def _in_sonarr(title_episodes: TitleEpisodes | NoView) -> tuple[SonarrEpisode, .
     """The title's episodes Sonarr has a row for. None of them when the series has no aired view."""
 
     return () if isinstance(title_episodes, NoView) else title_episodes.in_sonarr
+
+
+def _unstored_warning(reason: NoView, title_name: str, order: str) -> str | None:
+    """The warning for a title left unchecked because its series, in another order, has no aired view yet.
+
+    None for a failed read, which is warned of where it fails.
+    """
+
+    numbered = f"{title_name} not checked - Sonarr numbers its series by the {order_display_name(order)} order"
+    match reason:
+        case NoView.READ_FAILED:
+            return None
+        case NoView.ORDERS_UNREAD:
+            return f"{numbered} and the series' aired episodes are not stored yet - checking again next run"
+        case NoView.SCENE_UNREAD:
+            return f"{numbered} and the series' scene numbers from TheXEM are not stored yet - checking again next run"
+    assert_never(reason)
 
 
 def _file_and_why(placement: Placement) -> str:
@@ -148,8 +165,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Episode-domain collaborator: owns the per-run episode cache + series
         # hash and the (series, anilist_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
-        # prefetch_episodes / prefetch_orders to it, and takes every title's episodes and every
-        # series index from it, numbered as aired, and a series' alternate titles.
+        # prefetch_episodes / prefetch_orders / prefetch_scene_numbers to it, and takes every title's episodes
+        # and every series index from it, numbered as aired, and a series' alternate titles.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Reads every SeaDex entry of the series once per run, for each title's window and the size
@@ -305,7 +322,23 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @override
     def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
-        """Refetch the due TVDB orders of the series the scan reads and of every stored pending import's series.
+        """Refetch the due TVDB orders of the series the run reads (`_series_read`)."""
+
+        return self._episodes.prefetch_orders(self._series_read(items), progress=progress)
+
+    @property
+    @override
+    def reads_scene_numbers(self) -> bool:
+        return bool(self._episodes.series_in_another_order)
+
+    @override
+    def prefetch_scene_numbers(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
+        """Read the due scene mappings of the series the run reads (`_series_read`) that are in another order."""
+
+        return self._episodes.prefetch_scene_numbers(self._series_read(items), progress=progress)
+
+    def _series_read(self, items: list[SonarrItem]) -> list[int]:
+        """The series the scan reads and every stored pending import's series.
 
         A pending import's series is read at grab and import whether or not its own item needs a check, and
         whether or not the series has an AniList mapping.
@@ -317,7 +350,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             series_ids.extend(
                 sid for pending in pending_imports.load(pending_imports.rows()).values() for sid in pending.series_ids
             )
-        return self._episodes.prefetch_orders(series_ids, progress=progress)
+        return series_ids
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
@@ -369,13 +402,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         title_episodes = self._episodes.title_episodes(sonarr_series_id, anilist_id, mapping)
 
         if isinstance(title_episodes, NoView):
-            if title_episodes is NoView.ORDERS_UNREAD:
+            warning = _unstored_warning(title_episodes, title.name, item.seasonType)
+            if warning is not None:
                 # Nothing is placed or cached, so the next run checks the title again.
-                hub_warn(
-                    f"{title.name} not checked - Sonarr numbers its series by the "
-                    f"{order_display_name(item.seasonType)} order and the series' aired episodes are not stored yet"
-                    " - checking again next run"
-                )
+                hub_warn(warning)
                 services.owe_pause()
             return
         in_sonarr = title_episodes.in_sonarr

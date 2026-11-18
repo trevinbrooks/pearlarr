@@ -22,6 +22,7 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr import sonarr_import as sonarr_import_module
+from pearlarr.aired_view import NoView
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS
 from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.arr_http import DeleteOutcome
@@ -124,6 +125,7 @@ from .builders import (
     sonarr_ep,
     stand_in_ep,
     stored_orders,
+    stored_scene_mappings,
     title_claim,
     title_window,
     torrent_listing,
@@ -3333,13 +3335,22 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
 
         assert (len(run.grab_requests), run.left_out) == (1, [])
 
-    def test_a_series_whose_aired_episodes_are_not_stored_is_left_unchecked_with_a_warning(self) -> None:
+    @pytest.mark.parametrize(
+        ("reason", "not_stored"),
+        [
+            pytest.param(NoView.ORDERS_UNREAD, "aired episodes", id="aired-episodes"),
+            pytest.param(NoView.SCENE_UNREAD, "scene numbers from TheXEM", id="scene-numbers"),
+        ],
+    )
+    def test_a_series_with_no_aired_view_yet_is_left_unchecked_with_a_warning_of_what_is_not_stored(
+        self, reason: NoView, not_stored: str
+    ) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
         recording = install_recording_hub()
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), orders_unread_views=frozenset({7})),
+            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), no_views={7: reason}),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -3348,11 +3359,11 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
 
         (warning,) = diagnostic_messages(recording, Severity.WARNING)
         assert warning == (
-            "Show not checked - Sonarr numbers its series by the DVD order and the series' aired episodes are not "
+            f"Show not checked - Sonarr numbers its series by the DVD order and the series' {not_stored} are not "
             "stored yet - checking again next run"
         )
         assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 1)
-        assert (run.grab_requests, run.no_releases_calls) == ([], [])
+        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
 
 
 class TestSonarrCheckTitleOnASeriesInAiredOrder:
@@ -3396,7 +3407,8 @@ class _SeriesInSonarr:
     episodes: list[SonarrEpisode]
     parses: Mapping[str, ParsedFileInfo]
     orders: Mapping[str, tuple[OrderRow, ...]] | None = None
-    """The TVDB orders stored for the series, None when none are."""
+    """The TVDB orders stored for the series, with TheXEM read as mapping none of its episodes. None when nothing
+    is stored."""
 
 
 def _series_seven(season_type: str, alternate_title: dict[str, object]) -> SonarrSeries:
@@ -3420,6 +3432,7 @@ def _check_second_season(monkeypatch: pytest.MonkeyPatch, library: _SeriesInSona
     cache = FakeCacheStore()
     if library.orders is not None:
         cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
+        cache.put_scene_mappings(library.series.tvdbId, stored_scene_mappings())
     run = _FakeRunServices(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Second Season",

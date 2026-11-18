@@ -738,6 +738,7 @@ class CacheStatsReported:
     pending_imports: int
     guard_facts: int
     tvdb_orders: int
+    scene_mappings: int
     size_bytes: int
 
 
