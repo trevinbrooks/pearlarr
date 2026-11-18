@@ -389,18 +389,22 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             services.log_no_episodes(title.name)
             if title_episodes.aired:
                 # Only another numbering of the series or a changed entry can give the title an episode, and
-                # each checks it again. So it is cached, and the warning isn't repeated on every run.
+                # each checks it again. So it is cached, and the warning isn't repeated on every run. A check
+                # that missed one of the title's answers is not cached, and says the next run checks again.
+                unread = self._episodes.title_unread(anilist_id, sonarr_series_id)
+                has_none = (
+                    f"Sonarr's {order_display_name(orders.season_type)} order of the series has none of {title.name}"
+                )
                 hub_warn(
-                    f"Sonarr's {order_display_name(orders.season_type)} order of the series has none of "
-                    f"{title.name}'s episodes - not checked again until the series' order, its episode count or the "
-                    "title's SeaDex entry changes"
+                    f"{has_none}'s episodes - checking again next run"
+                    if unread
+                    else f"{has_none}'s episodes - not checked again until the series' order, its episode count "
+                    "or the title's SeaDex entry changes"
                 )
                 update["coverage"] = ""
                 update["url"] = sd_url
                 _store_numbering(update, orders)
-                services.cache_nothing_to_grab(
-                    anilist_id, update, metadata_unread=self._episodes.metadata_unread([anilist_id])
-                )
+                services.cache_nothing_to_grab(anilist_id, update, metadata_unread=unread)
                 return
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
@@ -447,7 +451,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the title whose window gave the coverage counts.
             services.report_no_releases(
-                anilist_id, update, metadata_unread=self._episodes.metadata_unread([anilist_id])
+                anilist_id, update, metadata_unread=self._episodes.title_unread(anilist_id, sonarr_series_id)
             )
             return
 

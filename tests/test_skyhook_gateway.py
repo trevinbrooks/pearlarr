@@ -224,6 +224,34 @@ def test_an_unreachable_source_mid_series_keeps_the_stale_answer_and_serves_it()
     assert gateway.cached_orders(_SERIES) == stale
 
 
+@pytest.mark.parametrize(
+    ("fresh_for", "failing", "missed"),
+    [
+        pytest.param(timedelta(days=-1), frozenset({(_SERIES, AIRED_ORDER)}), True, id="due-and-unreachable"),
+        pytest.param(timedelta(days=-1), frozenset[tuple[int, str]](), False, id="due-and-fetched"),
+        pytest.param(timedelta(days=1), frozenset({(_SERIES, AIRED_ORDER)}), False, id="not-due"),
+    ],
+)
+def test_a_due_fetch_the_unreachable_source_did_not_answer_is_missed_for_the_run(
+    fresh_for: timedelta, failing: frozenset[tuple[int, str]], missed: bool
+) -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, fresh_for=fresh_for))
+    gateway = _gateway(cache=cache, failing=failing)
+
+    _fetches(gateway)
+
+    assert gateway.fetch_missed(_SERIES) is missed
+
+
+def test_the_due_series_left_for_the_next_run_are_missed_with_the_one_that_failed() -> None:
+    gateway = _gateway(failing=frozenset({(_SERIES, AIRED_ORDER)}))
+
+    gateway.prefetch([SonarrSeriesOrders(_SERIES, AIRED_ORDER, None), SonarrSeriesOrders(1, "dvd", None)], dry_run=True)
+
+    assert (gateway.fetch_missed(_SERIES), gateway.fetch_missed(1)) == (True, True)
+
+
 def test_other_orders_leave_out_official_and_empty_orders() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(_SERIES, stored_orders({**_STORED, "alternate": ()}))

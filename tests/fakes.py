@@ -887,6 +887,11 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
 
         return not (self._unread_anilist_ids.isdisjoint(anilist_ids) and self._unread_series.isdisjoint(series_ids))
 
+    def title_unread(self, anilist_id: int, series_id: int) -> bool:
+        """Whether the title is one of the `unread_anilist_ids`. No series' orders are ever behind here."""
+
+        return anilist_id in self._unread_anilist_ids
+
 
 class CaptureHandler(logging.Handler):
     """A logging handler that collects records into `records`."""

@@ -591,8 +591,8 @@ class ArrRunServices:
     ) -> None:
         """Cache a title whose check ended with nothing to grab, and owe the pacing pause.
 
-        A title whose check read its entry without its AniList answer (`metadata_unread`) is not cached, so the
-        next run checks it again.
+        A title whose check was missing one of the answers it reads (`metadata_unread`) is not cached, so the next
+        run checks it again.
         """
 
         if not metadata_unread:

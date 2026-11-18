@@ -351,10 +351,11 @@ class SonarrEpisodes(EpisodeSource):
         """Whether a check that reads these titles and these series' orders is missing one of their answers.
 
         A title is unread when AniList left it so (`AniListGateway.air_dates_unread`). A series is unread when it has
-        no stored orders, as when SkyHook was unreachable before its first fetch, or when Sonarr numbers it by
-        another order and its scene mappings were never read, as when TheXEM was. That counts for a series with no
-        AniList mapping too, which a pending import may claim. A series this run's library read doesn't have is
-        never unread: nothing could fetch it.
+        no stored orders, as when SkyHook was unreachable before its first fetch. One Sonarr numbers by another
+        order is unread too when its scene mappings were never read, as when TheXEM was, and when its stored orders
+        are behind for the run (`_orders_behind`). That counts for a series with no AniList mapping too, which a
+        pending import may claim. A series this run's library read doesn't have is never unread: nothing could
+        fetch it.
         """
 
         if any(self._anilist.air_dates_unread(anilist_id) for anilist_id in anilist_ids):
@@ -366,9 +367,31 @@ class SonarrEpisodes(EpisodeSource):
             and (
                 not self._skyhook.has_cached_answer(tvdb_id)
                 or (series.orders.in_another_order and self._xem.scene_mappings(tvdb_id) is None)
+                or self._orders_behind(series.orders)
             )
             for sid in series_ids
         )
+
+    def title_unread(self, anilist_id: int, series_id: int) -> bool:
+        """Whether a check that reads the title's episodes alone, and places nothing, is missing one of their answers.
+
+        That is the title's AniList answer (`AniListGateway.air_dates_unread`), or newer orders of its series
+        (`_orders_behind`). What else `metadata_unread` asks of a series is for a check that places files.
+        """
+
+        if self._anilist.air_dates_unread(anilist_id):
+            return True
+        series = self._reads.library.by_id.get(series_id)
+        return series is not None and self._orders_behind(series.orders)
+
+    def _orders_behind(self, orders: SonarrSeriesOrders) -> bool:
+        """Whether the series is numbered by another order and its stored orders were due a fetch this run missed.
+
+        Its aired view is then built from the old answer (`SkyHookGateway.fetch_missed`). An episode Sonarr has
+        since gained is in no title's window, so a title cached on that view would not be checked again for it.
+        """
+
+        return orders.in_another_order and self._skyhook.fetch_missed(orders.tvdb_id)
 
     @override
     def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView:
