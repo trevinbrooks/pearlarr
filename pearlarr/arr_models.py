@@ -62,9 +62,15 @@ class SeasonTypeCount(ApiModel):
 
 
 class AlternateTitle(ApiModel):
-    """One `alternateTitles[]` element: another name Sonarr knows the series by."""
+    """One `alternateTitles[]` element: another name Sonarr knows the series by, and the season it names, if any."""
 
     title: str
+    scene_season_number: LenientInt = Field(default=None, validation_alias="sceneSeasonNumber")
+    """The season a release under the name is numbered as. None or -1 when the name stands for every season."""
+    season_number: LenientInt = Field(default=None, validation_alias="seasonNumber")
+    """The TVDB season that season is. None or -1 when the name maps no season."""
+    scene_origin: BlankStr = Field(default="", validation_alias="sceneOrigin")
+    """`tvdb` when releases under the name are numbered as TVDB numbers the series."""
 
 
 @runtime_checkable
@@ -109,7 +115,7 @@ class SonarrSeries(ApiModel):
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
     alternateTitles: tuple[AlternateTitle, ...] = ()
-    """The series' other names, in Sonarr's order. Some name one season, which this model doesn't keep."""
+    """The series' other names, in Sonarr's order. Some name one season."""
 
     @field_validator("seasonTypes", mode="before")
     @classmethod
@@ -689,6 +695,9 @@ class ParsedFileInfo(ApiModel):
     took none."""
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched episodes. The exact pass's fallback when the name carries no season and episode."""
+    series_id: LenientInt = Field(default=None, validation_alias=AliasPath("series", "id"))
+    """Sonarr's id of the series it matched the name to, with or without matched episodes. None when it matched
+    none."""
 
     @field_validator("matched_episodes", mode="before")
     @classmethod
