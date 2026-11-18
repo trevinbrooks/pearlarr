@@ -35,6 +35,7 @@ from pearlarr.parse_cache import (
 )
 from pearlarr.releases import SeadexDict
 from pearlarr.seadex_gateway import SeaDexNoEntry
+from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -53,13 +54,14 @@ from .builders import (
     make_entry_record,
     make_logger,
     make_release,
+    make_series_reads,
     make_services,
     make_sonarr_episodes,
     make_sonarr_parse,
     rg_group,
     sonarr_ep,
 )
-from .fakes import ScriptedEpisodes, debug_logger
+from .fakes import FakeSonarrClient, ScriptedEpisodes, debug_logger
 
 _NOW = datetime(2026, 6, 28, 12, 0, 0)
 _MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
@@ -333,7 +335,7 @@ class _Recorder:
         self.calls.append((fraction, detail))
 
 
-class _Sonarr:
+class _Sonarr(FakeSonarrClient):
     """A scripted Sonarr client for the prefetch warm.
 
     By default `episodes(sid)` returns a distinguishable one-episode list per
@@ -344,10 +346,12 @@ class _Sonarr:
     """
 
     def __init__(self, *, return_none: bool = False, raise_on: set[int] | None = None) -> None:
+        super().__init__()
         self.return_none = return_none
         self.raise_on: set[int] = set(raise_on or set())
         self.calls: list[tuple[int, bool]] = []
 
+    @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         self.calls.append((series_id, quiet))
         if series_id in self.raise_on:
@@ -523,27 +527,27 @@ class TestAiredSeriesRead:
     """`aired_series` fetches a cold series once per run and reports a failed fetch as `NoView.READ_FAILED`."""
 
     @staticmethod
-    def _eps(*, return_none: bool = False) -> tuple[SonarrEpisodes, _Sonarr]:
+    def _reads(*, return_none: bool = False) -> tuple[SeriesReads, _Sonarr]:
         sonarr = _Sonarr(return_none=return_none)
-        return make_sonarr_episodes(sonarr=sonarr, _config=make_config(sleep_time=0)), sonarr
+        return make_series_reads(sonarr), sonarr
 
     def test_second_call_serves_the_run_cache(self) -> None:
-        eps, sonarr = self._eps()
+        reads, sonarr = self._reads()
 
-        first = eps.aired_series(1)
+        first = reads.aired_series(1)
         assert isinstance(first, AiredSeries)
         assert first.in_sonarr == tuple(_eps_for(1))
-        assert eps.aired_series(1) is first
+        assert reads.aired_series(1) is first
         assert sonarr.calls == [(1, False)]
 
     def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
         # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
-        eps, _ = self._eps(return_none=True)
+        reads, _ = self._reads(return_none=True)
 
-        assert eps.aired_series(1) is NoView.READ_FAILED
-        assert eps.series_index(1) is None
-        assert held_series_episodes(eps) == {}
+        assert reads.aired_series(1) is NoView.READ_FAILED
+        assert reads.series_index(1) is None
+        assert reads.last_known_episodes(1) == []
 
 
 def _entry(dt: datetime) -> EntryRecord:
@@ -721,7 +725,7 @@ class TestParsedFilesCache:
         store = FakeCacheStore(sonarr_parse=sonarr_parse or {})
         parse = make_sonarr_parse(
             sonarr=sonarr,
-            _episodes=ScriptedEpisodes(),
+            _reads=ScriptedEpisodes(),
             _config=make_config(sleep_time=sleep_time),
             cache_store=store,
             rows=ParseCacheRows(store),

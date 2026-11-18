@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The tests assert on the strat's private collaborators (_parse / _episodes),
+# The tests assert on the strat's private collaborators (_parse / _reads),
 # which strict re-reports. The repo disables reportPrivateUsage for tests.
 """Unit tests for `build_pending_import_updates` over the strat's grab-time placement.
 
@@ -84,7 +84,7 @@ def _build(
 ) -> dict[str, PendingImportUpdate]:
     """Place the entry's files under `grabbing_title` (by default the strat's whole series), then build the updates."""
 
-    series = strat._episodes.last_known_episodes(facts.series_id)
+    series = strat._reads.last_known_episodes(facts.series_id)
     grabbing_title = grabbing_title or _grabbing_title(series, series)
     files = strat._parse.parsed_files(seadex_dict)
     placed = PlacedEntry.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))

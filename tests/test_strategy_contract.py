@@ -72,6 +72,7 @@ from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
+from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
@@ -140,6 +141,7 @@ from .fakes import (
     QbitCategoryReads,
     RecordingHub,
     ScriptedEpisodes,
+    both_roles,
     debug_logger,
     diagnostic_messages,
     install_recording_hub,
@@ -520,7 +522,7 @@ class TestArrRunStartHook:
         # The episode collaborator drops its caches + recomputes the series hash as it enumerates.
         assert held_series_episodes(strat._episodes) == {}
         assert strat._episodes._picks_logged == set()
-        assert strat._episodes._series_hash == sonarr_series_hash([5, 7])
+        assert strat._reads.series_hash == sonarr_series_hash([5, 7])
 
 
 class TestSonarrPrefetchDelegates:
@@ -596,7 +598,7 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=episodes,
+            **both_roles(episodes),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -621,7 +623,7 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=episodes,
+            **both_roles(episodes),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -645,7 +647,7 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored]))),
             _config=make_config(sleep_time=0, ignore_unmonitored=True),
             logger=make_logger(),
         )
@@ -661,7 +663,7 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=window)),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=window))),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -684,7 +686,7 @@ class TestCheckTitleThreadsServices:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)]))),
             _parse=_ScriptedParse(),
             _listings=_ScriptedListings(),
             _config=make_config(interactive=True, sleep_time=0),
@@ -2808,7 +2810,7 @@ def _sonarr_grab_run(
     strat = make_bare_instance(
         SonarrStrategy,
         _services=run,
-        _episodes=episodes,
+        **both_roles(episodes),
         _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
         _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0),
@@ -2846,10 +2848,12 @@ def _run_title_check(
     strat = make_bare_instance(
         SonarrStrategy,
         _services=run,
-        _episodes=ScriptedEpisodes(
-            FakeSonarrClient(episodes=window),
-            windows={5: window},
-            counts={} if episode_count is None else {5: episode_count},
+        **both_roles(
+            ScriptedEpisodes(
+                FakeSonarrClient(episodes=window),
+                windows={5: window},
+                counts={} if episode_count is None else {5: episode_count},
+            )
         ),
         _parse=_ScriptedParse({_GRAB_URL: files}),
         _listings=listings,
@@ -2923,7 +2927,9 @@ class TestSonarrCheckTitlePendingImportUpdates:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
+            **both_roles(
+                ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]})
+            ),
             _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
             _listings=_ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
             _config=make_config(sleep_time=0),
@@ -3016,7 +3022,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), windows={5: [_EP1]}),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), windows={5: [_EP1]})),
             _parse=_ScriptedParse(),
             _listings=listings,
             _config=make_config(sleep_time=0),
@@ -3053,7 +3059,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials}),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials})),
             _parse=_ScriptedParse({_GRAB_URL: files}),
             _listings=_ScriptedListings(
                 {"h1": torrent_listing(title_window(5, (101, 102), ignored=True), title_window(6, (501, 502)))}
@@ -3238,7 +3244,7 @@ def _check_title_in_another_order(
     strat = make_bare_instance(
         SonarrStrategy,
         _services=run,
-        _episodes=episodes,
+        **both_roles(episodes),
         _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
         _listings=_ScriptedListings(),
         _config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
@@ -3350,7 +3356,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason}),
+            **both_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason})),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -3387,7 +3393,7 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=ScriptedEpisodes(),
+            **both_roles(ScriptedEpisodes()),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -3475,14 +3481,16 @@ def _check_second_season(
     deps = replace(
         make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
     )
-    episodes = SonarrEpisodes(deps, sonarr, run)
+    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
+    episodes = SonarrEpisodes(deps, sonarr, run, reads)
     monkeypatch.setattr(episodes, "mapped_series", every_series)
     episodes.refresh_library()
     strat = make_bare_instance(
         SonarrStrategy,
         _services=run,
         _episodes=episodes,
-        _parse=SonarrParseCache(deps, sonarr, episodes),
+        _reads=reads,
+        _parse=SonarrParseCache(deps, sonarr, reads),
         _listings=_ScriptedListings(episode_by_size=episode_by_size),
         _config=make_config(sleep_time=0),
         logger=make_logger(),
@@ -3724,7 +3732,9 @@ class TestSonarrCheckTitleMetadataUnread:
         strat = make_bare_instance(
             SonarrStrategy,
             _services=run,
-            _episodes=_grab_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_anilist_ids=unread_anilist_ids),
+            **both_roles(
+                _grab_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_anilist_ids=unread_anilist_ids)
+            ),
             _config=make_config(sleep_time=0),
             logger=make_logger(),
         )
@@ -3757,7 +3767,11 @@ class TestSonarrCheckTitleMetadataUnread:
             unread_anilist_ids=unread_anilist_ids,
         )
         strat = make_bare_instance(
-            SonarrStrategy, _services=run, _episodes=episodes, _config=make_config(sleep_time=0), logger=make_logger()
+            SonarrStrategy,
+            _services=run,
+            **both_roles(episodes),
+            _config=make_config(sleep_time=0),
+            logger=make_logger(),
         )
 
         strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))

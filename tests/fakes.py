@@ -62,9 +62,10 @@ from pearlarr.placement_types import EpisodeIndex, episode_index
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.scene_numbers import SceneMapping
+from pearlarr.series_reads import AiredParseSource, SeriesRows
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.sonarr_episodes import AiredParseSource, EpisodeSource, SeriesRows, TitleEpisodes
+from pearlarr.sonarr_episodes import EpisodeSource, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders, is_another_order
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
@@ -737,7 +738,7 @@ class FakeXemClient(AbstractXemClient):
 
 
 class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
-    """A `SonarrEpisodes` scripted by hand: the series list off `sonarr`, one window per AniList id.
+    """A `SonarrEpisodes` and its `SeriesReads` scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
@@ -869,6 +870,12 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         """Whether any of the titles is one of the `unread_anilist_ids`, or any of the series one of the `unread_series`."""
 
         return not (self._unread_anilist_ids.isdisjoint(anilist_ids) and self._unread_series.isdisjoint(series_ids))
+
+
+def both_roles(episodes: ScriptedEpisodes) -> dict[str, ScriptedEpisodes]:
+    """The bare-strategy attributes one `ScriptedEpisodes` fills: the episode collaborator and the run's reads."""
+
+    return {"_episodes": episodes, "_reads": episodes}
 
 
 class CaptureHandler(logging.Handler):
