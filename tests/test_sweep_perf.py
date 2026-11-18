@@ -242,6 +242,7 @@ class _Series:
     seasonType: str = AIRED_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     alternateTitles: tuple[AlternateTitle, ...] = ()
+    order_sent: bool = False
 
     def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)

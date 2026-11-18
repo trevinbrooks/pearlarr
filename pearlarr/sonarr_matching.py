@@ -110,7 +110,8 @@ class NoAnswer(Enum):
     """Sonarr would search the release's name for a special's title (`FindEpisodeByTitle`), which isn't copied."""
 
     EPISODES_UNREAD = auto()
-    """Sonarr's episodes of the series couldn't be read this run."""
+    """Sonarr's episodes of the series couldn't be read this run, or the series has no aired view for the rest of it
+    (`NoView.READ_FAILED`)."""
 
     ORDERS_UNREAD = auto()
     """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""

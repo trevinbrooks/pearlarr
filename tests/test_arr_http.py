@@ -33,6 +33,7 @@ from pearlarr.arr_http import (
     ArrHttp,
     ArrUnreachableError,
     DeleteOutcome,
+    NoResource,
     make_arr_client,
 )
 from pearlarr.log import LOG_NAME
@@ -456,6 +457,65 @@ def test_delete_non_2xx_fails_with_one_warning() -> None:
     assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.FAILED
     assert route.call_count == 1  # one attempt, never retried
     assert _one_warning(recording).message == "rm (status code 500)"
+
+
+# --- get_resource() ----------------------------------------------------------
+
+
+@respx.mock
+def test_get_resource_reads_one_object() -> None:
+    respx.get(f"{_URL}/api/v3/series/7").respond(json={"id": 7})
+    http, recording = _bind()
+
+    assert http.get_resource("/api/v3/series/7", warn="one ({detail})") == {"id": 7}
+    assert recording.of_type(Diagnostic) == []
+
+
+@respx.mock
+def test_get_resource_404_is_gone_and_quiet() -> None:
+    """A 404 says the arr has no such resource: GONE with zero diagnostics and no retry, not the failure warning."""
+
+    route = respx.get(f"{_URL}/api/v3/series/7").respond(status_code=404, json={"message": "NotFound"})
+    http, recording = _bind()
+
+    assert http.get_resource("/api/v3/series/7", warn="one ({detail})") is NoResource.GONE
+    assert route.call_count == 1
+    assert recording.of_type(Diagnostic) == []
+
+
+@respx.mock
+def test_get_resource_404_after_a_failure_closes_the_streak() -> None:
+    """GONE is an answer, so it ends an open streak with the recovery note."""
+
+    route = respx.get(f"{_URL}/api/v3/series/7")
+    route.side_effect = [httpx.Response(401), httpx.Response(404)]
+    http, recording = _bind()
+
+    assert http.get_resource("/api/v3/series/7", warn="one ({detail})") is NoResource.FAILED
+    assert http.get_resource("/api/v3/series/7", warn="one ({detail})") is NoResource.GONE
+    assert [(note.severity, note.message) for note in recording.of_type(Diagnostic)] == [
+        (Severity.WARNING, "one (status code 401)"),
+        (Severity.INFO, "one - recovered after 1 failure (0s)"),
+    ]
+    assert http.streaks.active == {}
+
+
+@pytest.mark.parametrize(
+    ("reply", "detail"),
+    [
+        pytest.param(httpx.Response(401), "status code 401", id="another-status"),
+        pytest.param(httpx.ConnectError("boom"), "request failed (ConnectError)", id="no-reply"),
+        pytest.param(httpx.Response(200, content=b"<html>login</html>"), "non-JSON body", id="not-json"),
+        pytest.param(httpx.Response(200, json=[{"id": 7}]), "unexpected payload", id="not-an-object"),
+    ],
+)
+@respx.mock
+def test_get_resource_fails_with_one_warning_on_anything_else(reply: httpx.Response | Exception, detail: str) -> None:
+    respx.get(f"{_URL}/api/v3/series/7").mock(side_effect=[reply] * 10)
+    http, recording = _bind()
+
+    assert http.get_resource("/api/v3/series/7", warn="one ({detail})") is NoResource.FAILED
+    assert _one_warning(recording).message == f"one ({detail})"
 
 
 # --- get_json_list_strict() (the fail-CLOSED library fetch) ------------------

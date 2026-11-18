@@ -283,7 +283,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def prefetch_orders(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
         """Refetch the due TVDB orders of the series the scan reads and of every stored pending import's series.
 
-        A pending import's series is read at grab and import whether or not its own item needs a check.
+        A pending import's series is read at grab and import whether or not its own item needs a check, and
+        whether or not the series has an AniList mapping.
         """
 
         series_ids = self._episodes.titles_needing_check(items)

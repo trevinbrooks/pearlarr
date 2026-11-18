@@ -121,6 +121,6 @@ def collect_anime_movies(
 
     fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
     return collect_anime_items(
-        radarr_client.all_movies,
+        radarr_client.all_movies(),
         build_id_filters(fields, known_ids, anibridge),
     )
