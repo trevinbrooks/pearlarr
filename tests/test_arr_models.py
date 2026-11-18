@@ -101,11 +101,20 @@ def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -
                 {"title": "To Glimmer-Zu", "sceneSeasonNumber": -1},
                 {"title": None, "sceneSeasonNumber": 2},
                 "junk",
-                {"title": "Shin To Glimmer-Zu", "sceneSeasonNumber": 2},
+                {"title": "Shin To Glimmer-Zu", "sceneSeasonNumber": 2, "seasonNumber": 3, "sceneOrigin": "tvdb"},
             ],
         },
     )
-    assert series.alternateTitles == (AlternateTitle(title="To Glimmer-Zu"), AlternateTitle(title="Shin To Glimmer-Zu"))
+    assert series.alternateTitles == (
+        AlternateTitle(title="To Glimmer-Zu", scene_season_number=-1),
+        AlternateTitle(title="Shin To Glimmer-Zu", scene_season_number=2, season_number=3, scene_origin="tvdb"),
+    )
+
+
+def test_an_alternate_title_with_junk_season_fields_keeps_its_name() -> None:
+    raw = {"title": "To Glimmer-Zu", "sceneSeasonNumber": "two", "seasonNumber": None, "sceneOrigin": 7}
+
+    assert AlternateTitle.model_validate(raw) == AlternateTitle(title="To Glimmer-Zu")
 
 
 def test_parsed_file_info_null_number_arrays_reduce_to_empty() -> None:
@@ -124,6 +133,15 @@ def test_parsed_file_info_reads_the_parsed_series_name_and_reduces_a_null_one() 
     assert lifted.series_title == "To Glimmer-Zu"
     assert ParsedFileInfo.model_validate({"parsedEpisodeInfo": {"seriesTitle": None}}) == ParsedFileInfo()
     assert ParsedFileInfo.model_validate({"parsedEpisodeInfo": None, "episodes": []}) == ParsedFileInfo()
+
+
+def test_parsed_file_info_reads_the_series_sonarr_matched_with_no_matched_episodes() -> None:
+    assert ParsedFileInfo.model_validate({"series": {"id": 12, "title": "Show"}, "episodes": []}).series_id == 12
+
+
+@pytest.mark.parametrize("series", [None, "junk", {"id": "junk"}, {"title": "Show"}])
+def test_parsed_file_info_without_a_readable_series_id_names_no_series(series: object) -> None:
+    assert ParsedFileInfo.model_validate({"series": series}) == ParsedFileInfo()
 
 
 def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
