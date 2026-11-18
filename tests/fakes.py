@@ -765,16 +765,10 @@ class ScriptedEpisodes(EpisodeSource):
         return self._counts.get(anilist_id)
 
     @override
-    def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool:
-        """Whether any of the titles is one of the `unread_anilist_ids`."""
+    def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool:
+        """Whether any of the titles is one of the `unread_anilist_ids`, or any of the series one of the `unread_series`."""
 
-        return not self._unread_anilist_ids.isdisjoint(anilist_ids)
-
-    @override
-    def orders_unread(self, series_ids: Iterable[int]) -> bool:
-        """Whether any of the series is one of the `unread_series`."""
-
-        return not self._unread_series.isdisjoint(series_ids)
+        return not (self._unread_anilist_ids.isdisjoint(anilist_ids) and self._unread_series.isdisjoint(series_ids))
 
 
 class CaptureHandler(logging.Handler):

@@ -246,7 +246,7 @@ def test_a_library_series_with_no_stored_answer_is_unread(
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60), _series(3, 0)], cache)
 
-    assert strat._episodes.orders_unread([series_id]) is unread
+    assert strat._episodes.metadata_unread([], [series_id]) is unread
 
 
 def test_orders_are_fetched_once_per_tvdb_series(monkeypatch: pytest.MonkeyPatch) -> None:

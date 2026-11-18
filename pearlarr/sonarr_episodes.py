@@ -198,10 +198,7 @@ class EpisodeSource(ABC):
     def episode_count(self, anilist_id: int) -> int | None: ...
 
     @abstractmethod
-    def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool: ...
-
-    @abstractmethod
-    def orders_unread(self, series_ids: Iterable[int]) -> bool: ...
+    def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool: ...
 
 
 class SonarrEpisodes(EpisodeSource):
@@ -407,18 +404,16 @@ class SonarrEpisodes(EpisodeSource):
         return self._anilist.episode_count(anilist_id)
 
     @override
-    def any_air_dates_unread(self, anilist_ids: Iterable[int]) -> bool:
-        """Whether AniList left any of the titles unread (`AniListGateway.air_dates_unread`)."""
+    def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool:
+        """Whether a check that reads these titles and these series' orders is missing one of their answers.
 
-        return any(self._anilist.air_dates_unread(anilist_id) for anilist_id in anilist_ids)
-
-    @override
-    def orders_unread(self, series_ids: Iterable[int]) -> bool:
-        """Whether any of the series has no stored orders, as when SkyHook was unreachable before its first fetch.
-
-        A series this run's library read doesn't have is never unread: nothing could fetch it.
+        A title is unread when AniList left it so (`AniListGateway.air_dates_unread`). A series is unread when it has
+        no stored orders, as when SkyHook was unreachable before its first fetch. A series this run's library read
+        doesn't have is never unread: nothing could fetch it.
         """
 
+        if any(self._anilist.air_dates_unread(anilist_id) for anilist_id in anilist_ids):
+            return True
         return any(
             (series := self._library.get(sid)) is not None
             and series.orders.tvdb_id > 0
