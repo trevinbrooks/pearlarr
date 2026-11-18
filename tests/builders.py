@@ -85,7 +85,15 @@ from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotices
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, PlacedEpisode, Release, SeadexDict
+from pearlarr.releases import (
+    EpisodeKey,
+    GroupReleases,
+    OrderOnlyKey,
+    PlacedEpisode,
+    PrintedKey,
+    Release,
+    SeadexDict,
+)
 from pearlarr.reporter import RunReporter
 from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.seadex_filter import SeadexReleaseFilter
@@ -1050,6 +1058,12 @@ def make_planner(**overrides: Any) -> GrabPlanner:
     }
     defaults.update(overrides)
     return GrabPlanner(**defaults)
+
+
+def placed_episode(season: int, episode: int, size: int) -> PlacedEpisode:
+    """A placed episode that prints by its own numbers, as every one of a series in aired order does."""
+
+    return PlacedEpisode(season, episode, size, printed=PrintedKey(EpisodeKey(season, episode)))
 
 
 def make_release(

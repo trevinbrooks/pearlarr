@@ -269,7 +269,8 @@ class GrabPipeline:
             # Prefer the release's own placed episodes, falling back to the title's coverage so the summary's
             # files are never blank when none of a release's files placed.
             coverage_str = (
-                _coverage.coverage_string(ep.key for ep in release.episodes) or self._state.per_title.entry_coverage
+                _coverage.printed_coverage(ep.printed for ep in release.episodes)
+                or self._state.per_title.entry_coverage
             )
             self._state.stats.grabbed.append(
                 GrabbedRow(

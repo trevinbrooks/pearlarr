@@ -46,7 +46,15 @@ from pearlarr.output import (
     severity_of,
 )
 from pearlarr.pending_import import OwnedAtGrab, PendingImport
-from pearlarr.releases import AnotherTitlesCounts, Release, SeadexDict, SkipReason
+from pearlarr.releases import (
+    AnotherTitlesCounts,
+    EpisodeKey,
+    PlacedEpisode,
+    PrintedKey,
+    Release,
+    SeadexDict,
+    SkipReason,
+)
 from pearlarr.stamps import now_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, GrabResult, TorrentAddError
 from pearlarr.tracker_links import TrackerPageError
@@ -306,6 +314,19 @@ class TestGrabReleaseRegistersPending:
         assert n_added == 1
         assert pipeline._state.torrents_added == 1
         assert len(pipeline._state.stats.grabbed) == 1
+
+    def test_the_grabbed_row_names_the_placed_episodes_by_the_numbers_they_print_by(self) -> None:
+        # Sonarr lists the aired S02E01 as S01E04.
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-NAN0")}))
+        seadex = one_release_dict(srg="NAN0", infohash="h1")
+        (release,) = seadex["NAN0"].releases.values()
+        release.episodes = [PlacedEpisode(2, 1, 10, printed=PrintedKey(EpisodeKey(1, 4)))]
+
+        pipeline.grab_releases(
+            grab_request(seadex_dict=seadex, pending_import_updates={"h1": pending_import_update("h1")})
+        )
+
+        assert [row.coverage for row in pipeline._state.stats.grabbed] == ["S01 E04"]
 
     def test_already_in_qbit_does_not_count_toward_cap(self) -> None:
         # One already-present + one fresh, cap 1: only the fresh add counts.

@@ -22,7 +22,7 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr import sonarr_import as sonarr_import_module
-from pearlarr.aired_view import NoView
+from pearlarr.aired_view import AiredSeries, NoView, aired_series
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS
 from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.arr_http import DeleteOutcome
@@ -71,13 +71,13 @@ from pearlarr.placement_types import FetchedListings, TorrentListing, episode_in
 from pearlarr.planner import GrabPlan
 from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacedEpisode, SeadexDict, SkipReason
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SeriesNumbering
+from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SeriesNumbering, SonarrSeriesOrders
 from pearlarr.wait_types import (
     NO_PROGRESS,
     AttemptKind,
@@ -120,6 +120,7 @@ from .builders import (
     numbered_names,
     parsed_info,
     pending_import,
+    placed_episode,
     queue_record,
     rg_group,
     sonarr_ep,
@@ -228,7 +229,7 @@ class _FakeRunServices(ArrRunServices):
         self.no_episodes_titles: list[str] = []
         self.unmonitored_titles: list[str] = []
         self.missing_episodes: list[str] = []
-        self.numbered_as_aired: list[str] = []
+        self.numbers_orders: list[str] = []
         self.left_out: list[str] = []
         self.log_al_title_calls: list[str] = []
         self.title_block_coverages: list[str | None] = []
@@ -367,8 +368,8 @@ class _FakeRunServices(ArrRunServices):
         self.missing_episodes.append(missing)
 
     @override
-    def log_numbered_as_aired(self, order: str) -> None:
-        self.numbered_as_aired.append(order)
+    def log_numbers_order(self, order: str) -> None:
+        self.numbers_orders.append(order)
 
     @override
     def log_aired_only(self, left_out: str) -> None:
@@ -409,14 +410,12 @@ def test_the_services_log_missing_episodes_as_a_caution_detail() -> None:
     assert recording.of_type(TitleDetail) == [TitleDetail("missing", StyledValue("S01 E02", Accent.CAUTION))]
 
 
-def test_the_services_log_a_titles_aired_numbering_as_a_dim_detail_naming_sonarrs_order() -> None:
+def test_the_services_log_whose_numbers_a_titles_lines_print_as_a_dim_detail_naming_sonarrs_order() -> None:
     recording = install_recording_hub()
 
-    ArrRunServices(make_run_deps(), Arr.SONARR).log_numbered_as_aired("dvd")
+    ArrRunServices(make_run_deps(), Arr.SONARR).log_numbers_order("dvd")
 
-    assert recording.of_type(TitleDetail) == [
-        TitleDetail("numbers", StyledValue("as aired, not by Sonarr's DVD order", Accent.DIM))
-    ]
+    assert recording.of_type(TitleDetail) == [TitleDetail("numbers", StyledValue("by Sonarr's DVD order", Accent.DIM))]
 
 
 def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() -> None:
@@ -2898,7 +2897,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
         }
         # The planner reads the release by the whole file map's episodes inside this title's window.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [PlacedEpisode(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
         assert req.input_unread_groups == ()
         # The stored claim's window came off the per-run whole-series read.
         assert sonarr.episodes_calls == [7]
@@ -3081,7 +3080,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
         assert store.get_pending_import_row_calls == 0
         # The placement still runs: the planner's coverage never depends on the wait mode.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [PlacedEpisode(season=1, episode=2, size=1000)]
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
 
 
 _MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
@@ -3211,6 +3210,9 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
 _STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
 """The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
 
+_LISTED_EP1 = _EP1.model_copy(update={"listed_as": EpisodeKey(1, 1)})
+"""Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
+
 
 def _check_title_in_another_order(
     window: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
@@ -3263,41 +3265,41 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         assert (update.get("season_type"), update.get("series_row_count")) == ("dvd", None)
 
     def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
-        unmonitored = _EP1.model_copy(update={"monitored": False})
+        unmonitored = _LISTED_EP1.model_copy(update={"monitored": False})
 
         run, _ = _check_title_in_another_order([unmonitored, _STAND_IN_E2], ignore_unmonitored=True)
 
         assert (run.unmonitored_titles, run.log_al_title_calls) == (["Show"], [])
 
     def test_the_title_blocks_coverage_is_of_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (req,) = run.grab_requests
         assert (run.title_block_coverages, req.update.get("coverage")) == (["S01 E01"], "S01 E01")
 
     def test_a_cached_rows_coverage_backfill_is_of_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (coverage,) = run.cached_skip_coverages
         assert coverage() == "S01 E01"
 
     def test_only_an_episode_sonarr_has_is_reported_missing(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         assert run.missing_episodes == ["S01 E01"]
 
     def test_sonarrs_files_are_read_off_the_episodes_sonarr_has(self) -> None:
-        _, episodes = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        _, episodes = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
-        assert episodes.files_of == [(_EP1,)]
+        assert episodes.files_of == [(_LISTED_EP1,)]
 
     def test_the_plan_is_made_over_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
-        assert run.planned_title_episodes == [(_EP1,)]
+        assert run.planned_title_episodes == [(_LISTED_EP1,)]
 
     def test_the_titles_window_keeps_an_episode_sonarr_has_no_row_for(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (req,) = run.grab_requests
         update = req.pending_import_updates["h1"]
@@ -3305,13 +3307,13 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         assert update.file_map == {normalize_file_name(_GRAB_FILES[0]): (101,)}
         assert update.excluded == (normalize_file_name(_GRAB_FILES[1]),)
 
-    def test_the_title_block_says_once_that_its_numbers_are_the_aired_ones(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+    def test_the_title_block_names_once_the_order_its_numbers_are_sonarrs_by(self) -> None:
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
-        assert run.numbered_as_aired == ["dvd"]
+        assert run.numbers_orders == ["dvd"]
 
     def test_a_grabs_files_on_episodes_sonarr_has_no_row_for_are_reported_in_one_row(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2])
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is None
@@ -3329,7 +3331,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         assert run.left_out == ["S01 E01-E02 (2 of 2 files, NAN0)"]
 
     def test_a_release_the_plan_does_not_grab_reports_no_such_files(self) -> None:
-        run, _ = _check_title_in_another_order([_EP1, _STAND_IN_E2], grab=False)
+        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2], grab=False)
 
         assert (len(run.grab_requests), run.left_out) == (1, [])
 
@@ -3377,7 +3379,7 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
         run = self._checked()
 
-        assert (run.numbered_as_aired, run.left_out) == ([], [])
+        assert (run.numbers_orders, run.left_out) == ([], [])
 
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
@@ -3417,15 +3419,45 @@ def _series_seven(season_type: str, alternate_title: dict[str, object]) -> Sonar
     )
 
 
-def _check_second_season(monkeypatch: pytest.MonkeyPatch, library: _SeriesInSonarr) -> _FakeRunServices:
+def _sequel_in_dvd_order() -> _SeriesInSonarr:
+    """A sequel's four files numbered as a first season, on a series Sonarr numbers by its DVD order.
+
+    TVDB's aired order has two seasons, of three and four episodes. The DVD order is one season of the first six, so
+    Sonarr lists the aired S02E01 to S02E03 as S01E04 to S01E06 and has no row for the aired S02E04. It reads
+    "Show Zoku S01E0n" by the second season's name and matches nothing. An aired Sonarr matches the second season's
+    episodes.
+    """
+
+    aired = (
+        *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
+        *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
+    )
+    dvd = tuple(OrderRow(1, n, 9000 + n, None) for n in range(1, 7))
+    names = [f"Show Zoku S01E{n:02d}.mkv" for n in (1, 2, 3, 4)]
+    return _SeriesInSonarr(
+        series=_series_seven("dvd", {"title": "Show Zoku", "sceneSeasonNumber": 2}),
+        episodes=[sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, episode_file_id=0) for n in range(1, 7)],
+        parses={
+            name: ParsedFileInfo(season_number=1, episode_numbers=(n,), series_title="Show Zoku", series_id=7)
+            for n, name in enumerate(names, start=1)
+        },
+        orders={"official": aired, "dvd": dvd},
+    )
+
+
+def _check_second_season(
+    monkeypatch: pytest.MonkeyPatch, library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None
+) -> _FakeRunServices:
     """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
 
     The library read, the parse cache and each parse's matched episodes are the real ones. The plan grabs the
-    torrent, and AniList knows no title.
+    torrent, whose nth file is n thousand bytes, and AniList knows no title. `episode_by_size` is the episode id
+    SeaDex lists a one-episode release of each size for.
     """
 
     names = list(library.parses)
-    release = make_release(url=_GRAB_URL, infohash="h1", download=True, files=names, size=[1000] * len(names))
+    sizes = [1000 * n for n in range(1, len(names) + 1)]
+    release = make_release(url=_GRAB_URL, infohash="h1", download=True, files=names, size=sizes)
     seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
     cache = FakeCacheStore()
     if library.orders is not None:
@@ -3451,7 +3483,7 @@ def _check_second_season(monkeypatch: pytest.MonkeyPatch, library: _SeriesInSona
         _services=run,
         _episodes=episodes,
         _parse=SonarrParseCache(deps, sonarr, episodes),
-        _listings=_ScriptedListings(),
+        _listings=_ScriptedListings(episode_by_size=episode_by_size),
         _config=make_config(sleep_time=0),
         logger=make_logger(),
     )
@@ -3465,30 +3497,13 @@ class TestSonarrCheckTitleOverSonarrsParses:
     def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # TVDB's aired order has two seasons, of three and four episodes. Sonarr numbers the series by its DVD
-        # order, one season of the first six, so it reads "Show Zoku S01E0n" by the second season's name and
-        # matches nothing. An aired Sonarr matches the second season's episodes.
-        aired = (
-            *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
-            *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
-        )
-        dvd = tuple(OrderRow(1, n, 9000 + n, None) for n in range(1, 7))
-        names = [f"Show Zoku S01E{n:02d}.mkv" for n in (1, 2, 3, 4)]
-        library = _SeriesInSonarr(
-            series=_series_seven("dvd", {"title": "Show Zoku", "sceneSeasonNumber": 2}),
-            episodes=[sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, episode_file_id=0) for n in range(1, 7)],
-            parses={
-                name: ParsedFileInfo(season_number=1, episode_numbers=(n,), series_title="Show Zoku", series_id=7)
-                for n, name in enumerate(names, start=1)
-            },
-            orders={"official": aired, "dvd": dvd},
-        )
+        library = _sequel_in_dvd_order()
 
         run = _check_second_season(monkeypatch, library)
 
         (req,) = run.grab_requests
         update = req.pending_import_updates["h1"]
-        first, second, third, fourth = (normalize_file_name(name) for name in names)
+        first, second, third, fourth = (normalize_file_name(name) for name in library.parses)
         assert update.file_map == {first: (14,), second: (15,), third: (16,)}
         assert update.excluded == (fourth,)
         assert run.left_out == ["S02 E04 (1 of 4 files, NAN0)"]
@@ -3520,6 +3535,49 @@ class TestSonarrCheckTitleOverSonarrsParses:
 
         (req,) = run.grab_requests
         assert req.pending_import_updates["h1"].file_map == {normalize_file_name(name): (15,)}
+
+
+class TestSonarrCheckTitlePrintsSonarrsNumbers:
+    """On a series Sonarr numbers by another order, a title's lines print each episode by the number Sonarr lists."""
+
+    def test_the_titles_rows_and_stored_coverage_are_in_sonarrs_numbers_under_the_named_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _check_second_season(monkeypatch, _sequel_in_dvd_order())
+
+        (req,) = run.grab_requests
+        claim = req.pending_import_updates["h1"].claim
+        assert (run.title_block_coverages, run.missing_episodes) == (["S01 E04-E06"], ["S01 E04-E06"])
+        assert (req.update.get("coverage"), claim.window_coverage, claim.claimed_coverage) == ("S01 E04-E06",) * 3
+        assert run.numbers_orders == ["dvd"]
+
+    def test_a_placed_episode_prints_by_sonarrs_number_and_compares_by_its_aired_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _check_second_season(monkeypatch, _sequel_in_dvd_order())
+
+        (req,) = run.grab_requests
+        placed = req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes
+        assert [(ep.aired_key, ep.printed) for ep in placed] == [
+            (EpisodeKey(2, n), PrintedKey(EpisodeKey(1, 3 + n))) for n in (1, 2, 3)
+        ]
+
+    def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SeaDex lists a one-episode release of the first file's size for the aired S02E02, which Sonarr lists as
+        # S01E05, and one of the second file's size for the aired S02E01.
+        recording = install_recording_hub()
+
+        _check_second_season(monkeypatch, _sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
+
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            (
+                f"{_GRAB_URL}: show zoku s01e01.mkv goes on S01E05 because its size matches SeaDex's S01E05 release "
+                "(its name reads as S01E01)"
+                " (1 more file in the debug log)"
+            )
+        ]
 
 
 class TestPlacementDebugLine:
@@ -3566,16 +3624,18 @@ class TestPlacementDebugLine:
             f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
         ]
 
-    def test_a_file_on_a_row_the_aired_order_lacks_is_named_by_sonarrs_own_numbers(
+    def test_on_a_series_in_another_order_every_placed_file_is_named_by_sonarrs_numbers(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # The same 13 files, and Sonarr numbers the series by the DVD order, so it has a row for each half. The
-        # halves land on those rows, which have no aired number to print.
-        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
-        halves = tuple(sonarr_ep(7, n, ep_id=900 + n, episode_file_id=0, tvdb_id=9000 + n) for n in (1, 2))
+        # The same 13 files, and Sonarr numbers the series by the DVD order: it has a row for each half, where they
+        # land, and lists the aired second to twelfth episodes as S07E03 to S07E13.
+        aired = tuple(OrderRow(4, n, 400 + n, None) for n in range(1, 13))
         dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
         dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        series = episode_index(season, {"dvd": dvd}, halves)
+        rows = [sonarr_ep(7, row.episode, ep_id=row.tvdb_id, episode_file_id=0, tvdb_id=row.tvdb_id) for row in dvd]
+        view = aired_series(rows, SonarrSeriesOrders(70, "dvd", None), stored_orders({AIRED_ORDER: aired, "dvd": dvd}))
+        assert isinstance(view, AiredSeries)
+        series = episode_index(view.aired, {"dvd": dvd}, view.own_only)
         names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
         grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
         strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-own-rows"))
@@ -3588,13 +3648,13 @@ class TestPlacementDebugLine:
 
         on_rows = ", ".join(f"{normalize_file_name(names[n - 1])} (S07 E0{n})" for n in (1, 2))
         assert [r.message for r in caplog.records] == [
-            f"{_GRAB_URL}: placed S04 E02-E12; on episodes the aired order lacks, by Sonarr's numbers: {on_rows}"
+            f"{_GRAB_URL}: placed S07 E03-E13; on episodes the aired order lacks: {on_rows}"
         ]
 
     def test_a_file_on_an_episode_sonarr_has_no_row_for_is_named_with_its_aired_episode(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        series = episode_index([_EP1, _STAND_IN_E2])
+        series = episode_index([_LISTED_EP1, _STAND_IN_E2])
         grabbing_title = make_grabbing_title(series, series)
         files = [ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)]
         strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-aired"))

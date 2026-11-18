@@ -9,13 +9,13 @@ The grab is served a file's parse too, matched as an aired Sonarr matches it.
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import override
 
 import pytest
 from seadex import EntryRecord
 
-from pearlarr.aired_view import AiredSeries, NoView
+from pearlarr.aired_view import AiredSeries, NoView, stand_in
 from pearlarr.arr_http import NoResource
 from pearlarr.arr_models import (
     AlternateTitle,
@@ -39,10 +39,10 @@ from pearlarr.pending_import import PendingImport, TvdbIds
 from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.skyhook_client import SkyHookReply
-from pearlarr.sonarr_episodes import TitleEpisodes, sonarr_series_hash
+from pearlarr.sonarr_episodes import TitleEpisodes, _dated, sonarr_series_hash
 from pearlarr.sonarr_matching import AiredMatcher, NoAnswer
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
+from pearlarr.tvdb_orders import EpisodeDetails, OrderRow, SeriesNumbering
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
@@ -206,6 +206,13 @@ def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_o
     assert title.index().by_id[-9003] == stand_in_ep(1, 3, tvdb_id=9003).model_copy(
         update={"absolute_episode_number": 3}
     )
+
+
+def test_a_dated_special_sonarr_has_no_row_for_is_named_by_its_aired_number() -> None:
+    row = sonarr_ep(0, 4, ep_id=4, air_date="2019-02-20")
+    special = stand_in(OrderRow(0, 5, 905, None), EpisodeDetails(title="", air_date=date(2020, 8, 29), runtime=95))
+
+    assert _dated([row, special]) == "S00E04 (aired 2019-02-20), aired S00E05 (on 2020-08-29)"
 
 
 def test_a_series_numbered_by_another_order_with_nothing_stored_has_no_view(monkeypatch: pytest.MonkeyPatch) -> None:

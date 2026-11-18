@@ -26,7 +26,7 @@ from enum import Enum, auto
 from typing import assert_never, override
 
 from . import aired_view as _aired_view
-from .aired_view import AiredSeries, NoView, is_stand_in
+from .aired_view import AiredSeries, NoView, is_stand_in, printed_key
 from .anibridge import TvdbMappings, season_holds
 from .arr_http import NoResource
 from .arr_models import AlternateTitle, ArrFiles, ParsedFileInfo, SonarrEpisode, SonarrItem
@@ -118,11 +118,15 @@ def check_ep_by_anibridge(
 
 
 def _dated(episodes: Iterable[SonarrEpisode]) -> str:
-    """The episodes for a log line, each as its `S00E01` label and air date, comma-joined."""
+    """The episodes for a log line, each as the number it prints by (`printed_key`) and its air date, comma-joined."""
 
-    return ", ".join(
-        f"{season_episode_key(ep.season_number, ep.episode_number).label} (aired {ep.air_date})" for ep in episodes
-    )
+    dated: list[str] = []
+    for ep in episodes:
+        printed = printed_key(ep)
+        # A number marked as aired says the word itself.
+        date = f"on {ep.air_date}" if printed.aired else f"aired {ep.air_date}"
+        dated.append(f"{printed.label} ({date})")
+    return ", ".join(dated)
 
 
 @dataclass(frozen=True, slots=True)

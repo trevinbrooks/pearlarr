@@ -23,9 +23,37 @@ class EpisodeKey(NamedTuple):
         return f"S{self.season:02d}E{self.episode:02d}"
 
 
+def aired_label(numbers: str) -> str:
+    """Episode numbers marked as aired ones, for a line that prints Sonarr's own beside them (`PrintedKey`)."""
+
+    return f"aired {numbers}"
+
+
+@dataclass(frozen=True, slots=True)
+class PrintedKey:
+    """The number a line a person reads prints an episode by.
+
+    That is the number Sonarr lists the episode under, which differs from its aired number on a series Sonarr
+    numbers by another TVDB order. An aired episode Sonarr has no row for has no such number, so it prints its
+    aired one, marked as that. `aired_view.printed_key` gives a row's.
+    """
+
+    key: EpisodeKey
+    """The season and episode printed."""
+
+    aired: bool = False
+    """Whether `key` is the aired number of an episode Sonarr has no row for."""
+
+    @property
+    def label(self) -> str:
+        """The key as `S01E02`, an aired one as `aired S01E02`."""
+
+        return aired_label(self.key.label) if self.aired else self.key.label
+
+
 @dataclass(frozen=True, slots=True)
 class PlacedEpisode:
-    """One file of a release on one episode the placement put it on: the episode's numbers and the file's size.
+    """One file of a release on one episode the placement put it on: the episode's aired numbers and the file's size.
 
     A file on two episodes is two of these, and so are two files on one episode.
     """
@@ -34,9 +62,12 @@ class PlacedEpisode:
     episode: int
     size: int
 
+    printed: PrintedKey = field(compare=False)
+    """The number a line prints the episode by. Two placed episodes that differ only in it are equal."""
+
     @property
-    def key(self) -> EpisodeKey:
-        """The episode's `(season, episode)`."""
+    def aired_key(self) -> EpisodeKey:
+        """The episode's aired `(season, episode)`, the key every comparison goes by."""
 
         return EpisodeKey(self.season, self.episode)
 

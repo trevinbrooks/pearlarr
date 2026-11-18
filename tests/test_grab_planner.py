@@ -32,13 +32,16 @@ import logging
 
 import pytest
 
+from pearlarr.aired_view import AiredSeries, aired_series, printed_key
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import GrabPlan, GrabPlanner
 from pearlarr.releases import GroupReleases, PlacedEpisode, PlannedGrab, Release, SkipReason, releases_to_grab
+from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SonarrSeriesOrders
 
-from .builders import arr_files, make_planner, make_release, rg_group, sonarr_ep
+from .builders import arr_files, make_planner, make_release, placed_episode, rg_group, sonarr_ep, stored_orders
+from .fakes import debug_logger
 
 
 class TestAnyToGrab:
@@ -125,11 +128,11 @@ class TestReduceOverlappingGrabs:
         seadex = {
             "Priv": rg_group(
                 {"u1": make_release(download=True, is_public=False)},
-                episodes=[PlacedEpisode(season=1, episode=1, size=0)],
+                episodes=[placed_episode(season=1, episode=1, size=0)],
             ),
             "Fall": rg_group(
                 {"u2": make_release(download=True, is_public=True, is_fallback=True)},
-                episodes=[PlacedEpisode(season=1, episode=2, size=0)],
+                episodes=[placed_episode(season=1, episode=2, size=0)],
             ),
         }
         skips = planner.reduce_overlapping_grabs(seadex)
@@ -408,11 +411,11 @@ class TestReduceOverlappingGrabs:
         seadex = {
             "A": rg_group(
                 {"u1": make_release(download=True)},
-                episodes=[PlacedEpisode(season=1, episode=1, size=0)],
+                episodes=[placed_episode(season=1, episode=1, size=0)],
             ),
             "B": rg_group(
                 {"u2": make_release(download=True)},
-                episodes=[PlacedEpisode(season=1, episode=2, size=0)],
+                episodes=[placed_episode(season=1, episode=2, size=0)],
             ),
         }
         planner.reduce_overlapping_grabs(seadex)
@@ -427,11 +430,11 @@ class TestReduceOverlappingGrabs:
         seadex = {
             "P1": rg_group(
                 {"u1": make_release(download=True, is_public=False)},
-                episodes=[PlacedEpisode(season=1, episode=1, size=0)],
+                episodes=[placed_episode(season=1, episode=1, size=0)],
             ),
             "P2": rg_group(
                 {"u2": make_release(download=True, is_public=False)},
-                episodes=[PlacedEpisode(season=2, episode=1, size=0)],
+                episodes=[placed_episode(season=2, episode=1, size=0)],
             ),
         }
         skips = planner.reduce_overlapping_grabs(seadex)
@@ -447,8 +450,8 @@ class TestReduceOverlappingGrabs:
         # skip (set 2). The later set doesn't clear the outdated skip, and each set keeps
         # its own reason.
         planner = make_planner()
-        e1 = [PlacedEpisode(season=1, episode=1, size=0)]
-        e2 = [PlacedEpisode(season=2, episode=1, size=0)]
+        e1 = [placed_episode(season=1, episode=1, size=0)]
+        e2 = [placed_episode(season=2, episode=1, size=0)]
         seadex = {
             "Priv1": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}, episodes=e1),
             "Fall1": rg_group({"u2": make_release(download=False, is_public=True, is_fallback=True)}, episodes=e1),
@@ -469,8 +472,8 @@ class TestReduceOverlappingGrabs:
         # branch says "remaining files private-only" (the set had a public release).
         # One entry exercising both must surface both wordings, nothing skipped.
         planner = make_planner()
-        e1 = [PlacedEpisode(season=1, episode=1, size=0)]
-        e2 = [PlacedEpisode(season=2, episode=1, size=0)]
+        e1 = [placed_episode(season=1, episode=1, size=0)]
+        e2 = [placed_episode(season=2, episode=1, size=0)]
         seadex = {
             "PrivA": rg_group(
                 {"u1": make_release(download=True, is_public=False, upgrade=True)},
@@ -623,11 +626,11 @@ class TestSameGroupDuplicateDedup:
         seadex = {
             "A": rg_group(
                 {"u1": make_release(files=["X - S01E01.mkv"], download=True)},
-                episodes=[PlacedEpisode(season=1, episode=1, size=0)],
+                episodes=[placed_episode(season=1, episode=1, size=0)],
             ),
             "B": rg_group(
                 {"u2": make_release(files=["X - S01E01.mkv"], download=True)},
-                episodes=[PlacedEpisode(season=2, episode=1, size=0)],
+                episodes=[placed_episode(season=2, episode=1, size=0)],
             ),
         }
         planner.reduce_overlapping_grabs(seadex)
@@ -729,7 +732,7 @@ class TestFilterByReleaseGroup:
             "Other": rg_group(
                 {
                     "u2": make_release(
-                        episodes=[PlacedEpisode(season=0, episode=21, size=200)], size=[200], infohash="h2"
+                        episodes=[placed_episode(season=0, episode=21, size=200)], size=[200], infohash="h2"
                     )
                 },
             ),
@@ -746,7 +749,7 @@ class TestFilterByReleaseGroup:
         # title's copy is this group's at another size, an upgrade the
         # group-and-size comparison (a listed size in the arr) would have read as owned.
         planner = make_planner()
-        episodes = [PlacedEpisode(season=1, episode=1, size=999)]
+        episodes = [placed_episode(season=1, episode=1, size=999)]
         seadex = {"RG": rg_group({"u1": make_release(episodes=episodes, size=[100, 999], infohash="h1")})}
         result = planner.plan(
             seadex_dict=seadex,
@@ -761,7 +764,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -777,7 +780,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -793,7 +796,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=999)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=999)], infohash="h1"),
                 }
             ),
         }
@@ -811,7 +814,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -827,7 +830,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -845,7 +848,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=0)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=0)], infohash="h1"),
                 }
             ),
         }
@@ -866,8 +869,8 @@ class TestFilterByReleaseGroup:
                 {
                     "u1": make_release(
                         episodes=[
-                            PlacedEpisode(season=1, episode=1, size=100),
-                            PlacedEpisode(season=1, episode=2, size=200),
+                            placed_episode(season=1, episode=1, size=100),
+                            placed_episode(season=1, episode=2, size=200),
                         ],
                         infohash="h1",
                     ),
@@ -892,12 +895,12 @@ class TestFilterByReleaseGroup:
         planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1")},
-                episodes=[PlacedEpisode(season=1, episode=1, size=100)],
+                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
+                episodes=[placed_episode(season=1, episode=1, size=100)],
             ),
             "Other": rg_group(
-                {"u2": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=300)], infohash="h2")},
-                episodes=[PlacedEpisode(season=1, episode=1, size=300)],
+                {"u2": make_release(episodes=[placed_episode(season=1, episode=1, size=300)], infohash="h2")},
+                episodes=[placed_episode(season=1, episode=1, size=300)],
             ),
         }
         result = planner.plan(
@@ -920,7 +923,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "": rg_group({"u1": make_release(episodes=[], infohash="h1")}),
             "Era-Raws": rg_group(
-                {"u2": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h2")},
+                {"u2": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h2")},
             ),
         }
         result = planner.plan(
@@ -937,7 +940,7 @@ class TestFilterByReleaseGroup:
         planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1")},
+                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
             ),
         }
         result = planner.plan(
@@ -953,7 +956,7 @@ class TestFilterByReleaseGroup:
         planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1")},
+                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
             ),
         }
         result = planner.plan(
@@ -974,8 +977,8 @@ class TestFilterByReleaseGroup:
                 {
                     "u1": make_release(
                         episodes=[
-                            PlacedEpisode(season=1, episode=1, size=100),
-                            PlacedEpisode(season=1, episode=2, size=200),
+                            placed_episode(season=1, episode=1, size=100),
+                            placed_episode(season=1, episode=2, size=200),
                         ],
                         infohash="h1",
                     ),
@@ -1135,7 +1138,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -1166,7 +1169,7 @@ class TestFilterByReleaseGroup:
         seadex = {
             "Era-Raws": rg_group(
                 {
-                    "u1": make_release(episodes=[PlacedEpisode(season=1, episode=1, size=100)], infohash="h1"),
+                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
                 }
             ),
         }
@@ -1179,6 +1182,27 @@ class TestFilterByReleaseGroup:
         # Reset so a later test doesn't inherit DEBUG from the shared logger
         planner.logger.setLevel(logging.WARNING)
 
+    def test_the_debug_lines_name_an_episode_by_the_number_sonarr_lists_it_under(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Sonarr lists the aired S02E01 as S01E04. Its file there has no group and is the release's listed size.
+        in_sonarr = [sonarr_ep(1, 4, tvdb_id=9001, size=100)]
+        stored = stored_orders({AIRED_ORDER: (OrderRow(2, 1, 9001, None),)})
+        view = aired_series(in_sonarr, SonarrSeriesOrders(70, "dvd", None), stored)
+        assert isinstance(view, AiredSeries)
+        (row,) = view.in_sonarr
+        placed = PlacedEpisode(2, 1, 100, printed=printed_key(row))
+        planner = make_planner(logger=debug_logger("pearlarr-planner-printed-numbers"))
+        seadex = {"RG": rg_group({"u1": make_release(episodes=[placed], infohash="h1")})}
+
+        with caplog.at_level("DEBUG"):
+            planner.plan(seadex_dict=seadex, arr_files=ArrFiles(), title_episodes=[row])
+
+        assert [r.message for r in caplog.records if "S0" in r.message] == [
+            "Sonarr file for S01E04 has no release group but matches rg's listed size exactly - reading it as that release",
+            "Found SeaDex match to Sonarr for S01E04.",
+        ]
+
 
 class TestListedSizeOnTooManyEpisodes:
     """A listed size the group has on more episodes than the release places it on marks the release as an upgrade."""
@@ -1187,7 +1211,7 @@ class TestListedSizeOnTooManyEpisodes:
     def _listing(*sizes: int, is_public: bool = True) -> dict[str, GroupReleases]:
         """One Era-Raws release of season 1 episodes 1..n at `sizes`, one placement per size given."""
 
-        episodes = [PlacedEpisode(season=1, episode=n, size=size) for n, size in enumerate(sizes, 1)]
+        episodes = [placed_episode(season=1, episode=n, size=size) for n, size in enumerate(sizes, 1)]
         item = make_release(size=list(sizes), episodes=episodes, infohash="h1", is_public=is_public)
         return {"Era-Raws": rg_group({"u1": item})}
 
@@ -1229,7 +1253,7 @@ class TestListedSizeOnTooManyEpisodes:
 
     def test_a_listed_size_placed_on_no_episode_but_held_grabs(self) -> None:
         # File 999 is listed but placed nowhere, so the arr having it on E02 is one too many.
-        episodes = [PlacedEpisode(season=1, episode=1, size=100), PlacedEpisode(season=1, episode=2, size=200)]
+        episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
         seadex = {"Era-Raws": rg_group({"u1": make_release(size=[100, 200, 999], episodes=episodes, infohash="h1")})}
 
         item = self._decide(seadex, [self._ours(1, 100, 11), self._ours(2, 999, 12)])
@@ -1239,9 +1263,9 @@ class TestListedSizeOnTooManyEpisodes:
     def test_an_episode_two_listed_files_claim_at_different_sizes_is_left_out(self) -> None:
         # E01 is ambiguous, so size 200 counts once in the arr against its one placement on E02.
         episodes = [
-            PlacedEpisode(season=1, episode=1, size=100),
-            PlacedEpisode(season=1, episode=1, size=150),
-            PlacedEpisode(season=1, episode=2, size=200),
+            placed_episode(season=1, episode=1, size=100),
+            placed_episode(season=1, episode=1, size=150),
+            placed_episode(season=1, episode=2, size=200),
         ]
         seadex = {"Era-Raws": rg_group({"u1": make_release(size=[100, 150, 200], episodes=episodes, infohash="h1")})}
 
@@ -1315,7 +1339,7 @@ class TestListedSizeOnTooManyEpisodes:
     def _beside_public(*, is_fallback: bool) -> dict[str, GroupReleases]:
         """The private Era-Raws release of 100 and 200 beside a public group listing the same files."""
 
-        episodes = [PlacedEpisode(season=1, episode=1, size=100), PlacedEpisode(season=1, episode=2, size=200)]
+        episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
         public = make_release(
             url="https://nyaa.si/view/2", size=[100, 200], episodes=episodes, infohash="h2", is_fallback=is_fallback
         )
@@ -1366,7 +1390,7 @@ class TestGroupGuardFacts:
             "Y": rg_group(
                 {
                     "u1": make_release(
-                        episodes=[PlacedEpisode(season=1, episode=1, size=100)], size=[100], infohash="h1"
+                        episodes=[placed_episode(season=1, episode=1, size=100)], size=[100], infohash="h1"
                     )
                 },
             ),
@@ -1374,8 +1398,8 @@ class TestGroupGuardFacts:
                 {
                     "u2": make_release(
                         episodes=[
-                            PlacedEpisode(season=1, episode=1, size=300),
-                            PlacedEpisode(season=1, episode=13, size=400),
+                            placed_episode(season=1, episode=1, size=300),
+                            placed_episode(season=1, episode=13, size=400),
                         ],
                         size=[300, 400],
                         infohash="h2",
@@ -1441,14 +1465,14 @@ class TestGroupGuardFacts:
             "RG": rg_group(
                 {
                     "u1": make_release(
-                        episodes=[PlacedEpisode(season=1, episode=1, size=100)], size=[100], infohash="h1"
+                        episodes=[placed_episode(season=1, episode=1, size=100)], size=[100], infohash="h1"
                     )
                 },
             ),
             "Kept": rg_group(
                 {
                     "u2": make_release(
-                        episodes=[PlacedEpisode(season=1, episode=1, size=300)], size=[300], infohash="h2"
+                        episodes=[placed_episode(season=1, episode=1, size=300)], size=[300], infohash="h2"
                     )
                 },
             ),
@@ -1498,8 +1522,8 @@ class TestGroupGuardFacts:
 class TestReduceDropRescue:
     """Group-atomic drops must not lose episode coverage (the rescue pass)."""
 
-    E11 = PlacedEpisode(season=1, episode=1, size=100)
-    E21 = PlacedEpisode(season=2, episode=1, size=100)
+    E11 = placed_episode(season=1, episode=1, size=100)
+    E21 = placed_episode(season=2, episode=1, size=100)
 
     def _equal_union_pair(self, *, b_first: bool) -> dict[str, GroupReleases]:
         # Two mixed groups whose unions match (the private releases inflate both
@@ -1690,7 +1714,7 @@ class TestTorrentLeftForAHandImport:
         assert (item.to_grab, item.is_upgrade) == (True, False)
 
     def test_a_special_a_sibling_release_covers_is_in_place(self) -> None:
-        covered = PlacedEpisode(season=0, episode=3, size=999)
+        covered = placed_episode(season=0, episode=3, size=999)
         sibling = rg_group({"u2": make_release(url="u2", infohash="h2", episodes=[covered])}, episodes=[covered])
         arr_episodes = [
             self._ours(1, 100, 11),
@@ -1712,7 +1736,7 @@ class TestTorrentLeftForAHandImport:
 
     def test_a_special_another_release_of_the_group_placed_is_in_place(self) -> None:
         # The group's single-file release covers the third special, so the torrent has nothing left to cover there.
-        covered = PlacedEpisode(season=0, episode=3, size=999)
+        covered = placed_episode(season=0, episode=3, size=999)
         seadex = self._seadex()
         seadex["Pack"] = rg_group(
             {**seadex["Pack"].releases, "u2": make_release(url="u2", infohash="h2", episodes=[covered])},

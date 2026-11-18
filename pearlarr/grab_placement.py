@@ -5,8 +5,8 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
-from .aired_view import is_stand_in
-from .arr_models import ParsedFileInfo
+from .aired_view import is_stand_in, printed_key
+from .arr_models import MatchedEpisode, ParsedFileInfo
 from .coverage import coverage_of_episodes
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
 from .file_paths import normalize_file_name
@@ -47,11 +47,11 @@ from .releases import (
     OrderOnlyKey,
     PlacedEpisode,
     PlannedGrab,
+    PrintedKey,
     Release,
     SeadexDict,
     SkipReason,
     releases_to_grab,
-    season_episode_key,
 )
 from .window_placement import NOTHING_PLACED, WindowOrder, ordered_windows, place_across_windows, targets_of
 
@@ -412,7 +412,14 @@ class _OnWindow:
                 # An episode Sonarr sent without numbers fits no coverage key, so it adds no `PlacedEpisode`.
                 if episode.season_number is None or episode.episode_number is None:
                     continue
-                records.append(PlacedEpisode(season=episode.season_number, episode=episode.episode_number, size=f.size))
+                records.append(
+                    PlacedEpisode(
+                        season=episode.season_number,
+                        episode=episode.episode_number,
+                        size=f.size,
+                        printed=printed_key(episode),
+                    )
+                )
         return cls(tuple(records), frozenset(claimed))
 
 
@@ -478,8 +485,8 @@ class OwnOnlyFile:
 
     name: str
     """The normalized file name."""
-    episodes: tuple[EpisodeKey, ...]
-    """The rows by Sonarr's own numbers, which no aired number stands for."""
+    episodes: tuple[PrintedKey, ...]
+    """The rows as they print: by Sonarr's own numbers, which no aired number stands for."""
 
 
 def own_only_files(placed: PlacedRelease, indexes: Iterable[EpisodeIndex]) -> tuple[OwnOnlyFile, ...]:
@@ -493,8 +500,7 @@ def own_only_files(placed: PlacedRelease, indexes: Iterable[EpisodeIndex]) -> tu
     for name, ids in placed.placements.placed.items():
         on_rows = [rows[ep_id] for ep_id in ids if ep_id in rows]
         if on_rows:
-            keys = tuple(season_episode_key(row.season_number, row.episode_number) for row in on_rows)
-            found.append(OwnOnlyFile(name, keys))
+            found.append(OwnOnlyFile(name, tuple(printed_key(row) for row in on_rows)))
     return tuple(found)
 
 
@@ -517,11 +523,11 @@ class SizeOverName:
     """The normalized file name."""
 
     parsed_as: str
-    """What the name reads as, for the warning: its season and episode, else Sonarr's matched episodes, else its
-    absolute numbers."""
+    """What the name reads as, for the warning: its season and episode as the name has them, else Sonarr's matched
+    episodes as they print, else its absolute numbers."""
 
-    by_size: EpisodeKey
-    """The episode its size matched, where it was placed."""
+    by_size: PrintedKey
+    """The episode its size matched, where it was placed, as it prints."""
 
 
 def size_over_name_files(placed: PlacedRelease, series: EpisodeIndex) -> tuple[SizeOverName, ...]:
@@ -533,22 +539,35 @@ def size_over_name_files(placed: PlacedRelease, series: EpisodeIndex) -> tuple[S
         if placement.verdict is not PlacementVerdict.SIZE_OVER_NAME:
             continue
         if (episode := series.by_id.get(placement.ids[0])) is not None:
-            named = season_episode_key(episode.season_number, episode.episode_number)
-            overrides.append(SizeOverName(placement.name, _parsed_as(parses.get(placement.name)), named))
+            overrides.append(
+                SizeOverName(placement.name, _parsed_as(parses.get(placement.name), series), printed_key(episode))
+            )
     return tuple(overrides)
 
 
-def _parsed_as(info: ParsedFileInfo | None) -> str:
-    """How the warning shows a parse: its season and episode, else Sonarr's matched episodes, else its absolutes."""
+def _parsed_as(info: ParsedFileInfo | None, series: EpisodeIndex) -> str:
+    """How the warning shows a parse: its season and episode, else Sonarr's matched episodes, else its absolutes.
+
+    The season and episode are the name's own. A matched episode of `series` prints as its row does (`printed_key`),
+    so the warning never sets an aired number beside the one Sonarr lists the file's episode under.
+    """
 
     if info is None:
         return "nothing"
     if info.season_number is not None and info.episode_numbers:
-        keys = [EpisodeKey(info.season_number, episode) for episode in info.episode_numbers]
+        labels = [EpisodeKey(info.season_number, episode).label for episode in info.episode_numbers]
     else:
-        keys = [EpisodeKey(matched.season_number, matched.episode_number) for matched in info.matched_episodes]
-    labels = [key.label for key in keys] or [f"absolute {number}" for number in info.absolute_episode_numbers]
-    return ", ".join(labels) or "nothing"
+        labels = [_matched_label(matched, series) for matched in info.matched_episodes]
+    return ", ".join(labels or [f"absolute {number}" for number in info.absolute_episode_numbers]) or "nothing"
+
+
+def _matched_label(matched: MatchedEpisode, series: EpisodeIndex) -> str:
+    """One matched episode for the warning: as its row of `series` prints, else by the numbers the match carries."""
+
+    row = None if matched.id is None else series.by_id.get(matched.id)
+    if row is None:
+        return EpisodeKey(matched.season_number, matched.episode_number).label
+    return printed_key(row).label
 
 
 @dataclass(frozen=True, slots=True)
