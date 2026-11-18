@@ -669,6 +669,8 @@ class FakeSkyHookClient(AbstractSkyHookClient):
         self._replies = dict(replies or {})
         self._failing = failing
         self._unreachable = False
+        self.fetch_calls: list[tuple[int, str]] = []
+        """Each fetch's (TVDB id, order type), in call order, the ones answered unreachable among them."""
 
     @property
     @override
@@ -677,6 +679,7 @@ class FakeSkyHookClient(AbstractSkyHookClient):
 
     @override
     def fetch(self, tvdb_id: int, order_type: str) -> SkyHookReply | SkyHookNoReply:
+        self.fetch_calls.append((tvdb_id, order_type))
         if self._unreachable or (tvdb_id, order_type) in self._failing:
             self._unreachable = True
             return SkyHookNoReply.UNREACHABLE

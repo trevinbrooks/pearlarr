@@ -10,7 +10,9 @@ aired (`aired_view`), whatever order Sonarr numbers it by, the episodes Sonarr m
 file name to included (`aired_parse`). The import reads Sonarr's own rows.
 
 Rows are read as already aired only when Sonarr says twice that the series is: in the
-library read, and in a read of the series alone made after its rows.
+library read, and in a read of the series alone made after its rows. For the check and
+the import alike, rows count only while they are numbered by the order Sonarr names for
+the series, as far as its stored TVDB orders can tell (`aired_view.numbered_by`).
 """
 
 import concurrent.futures
@@ -18,6 +20,7 @@ import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import assert_never, override
 
 from . import aired_view as _aired_view
@@ -36,7 +39,7 @@ from .releases import season_episode_key
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_matching import AiredMatcher, NoAnswer
 from .specials_by_date import specials_by_date
-from .tvdb_orders import NO_ORDERS, OrdersByName, SonarrSeriesOrders
+from .tvdb_orders import AIRED_ORDER, NO_ORDERS, OrdersByName, SonarrSeriesOrders
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
 # advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (ArrRunDeps.build).
@@ -135,6 +138,25 @@ _NOT_IN_LIBRARY = _LibrarySeries(SonarrSeriesOrders(tvdb_id=0, season_type="", c
 
 _GONE = AiredSeries(order="", in_sonarr=(), stand_ins=())
 """The view of a series Sonarr answers it doesn't have: no episodes, under no order."""
+
+
+class _Numbering(Enum):
+    """Whether a series' rows are numbered by the order Sonarr names for it (`SonarrEpisodes._numbering`)."""
+
+    IN_STEP = auto()
+    """They are, or nothing stored can tell."""
+
+    OUT_OF_STEP = auto()
+    """They are not, by an answer SkyHook gave this run."""
+
+    UNCONFIRMED = auto()
+    """They are not by the stored answer, and SkyHook couldn't be reached for a new one."""
+
+
+def _name_of(series_id: int, series: SonarrItem) -> str:
+    """The series' name for a warning: its Sonarr title, or its id when Sonarr sent none."""
+
+    return series.title or f"Series {series_id}"
 
 
 def series_orders(series: SonarrItem) -> SonarrSeriesOrders:
@@ -285,6 +307,9 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         # The series with no aired view for the rest of the run (`_hold`). Reset in refresh_library, with the rows.
         self._held: set[int] = set()
 
+        # The series this run warned of rows out of step with their order (`_in_step`). Reset in refresh_library.
+        self._out_of_step: set[int] = set()
+
         # The AniList ids whose choice of specials by air date this run already logged. Reset in refresh_library.
         self._picks_logged: set[int] = set()
 
@@ -308,6 +333,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         self._series = {}
         self._held = set()
+        self._out_of_step = set()
         self._picks_logged = set()
         in_sonarr = self.sonarr.all_series()
         self._library = {s.id: _LibrarySeries(series_orders(s), s.alternateTitles) for s in in_sonarr}
@@ -496,9 +522,10 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         The read is made after the rows: an order Sonarr changed before it sent them shows in it. The two reads
         agree when neither names another order. Counts and the TVDB id are not compared.
 
-        A series whose order changed, and one the library read doesn't have, is held for the run (`_hold`). A
-        failed read, a reply without the order among them, gives no view for this call only. A series Sonarr
-        answers it doesn't have has no episodes.
+        A series whose order changed, and one the library read doesn't have, is held for the run (`_hold`). So is
+        one whose rows aren't numbered by the aired order both reads name (`_in_step`). A failed read, a reply
+        without the order among them, gives no view for this call only. A series Sonarr answers it doesn't have
+        has no episodes.
         """
 
         current = self.sonarr.series(series_id)
@@ -506,7 +533,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
             return _GONE
         if isinstance(current, NoResource) or not current.order_sent:
             return NoView.READ_FAILED
-        name = current.title or f"Series {series_id}"
+        name = _name_of(series_id, current)
         library = self._library.get(series_id)
         if library is None:
             self._hold(
@@ -522,6 +549,10 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
                 "its titles again next run",
             )
             return NoView.READ_FAILED
+        if not self._in_step(series_id, current, rows):
+            # Warned of there, once for the check and the import together.
+            self._held.add(series_id)
+            return NoView.READ_FAILED
         return _aired_view.aired_series(rows, library.orders, None)
 
     def _hold(self, series_id: int, warning: str) -> None:
@@ -532,6 +563,54 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         self._held.add(series_id)
         hub_warn(warning)
+
+    def _in_step(self, series_id: int, current: SonarrItem, rows: list[SonarrEpisode]) -> bool:
+        """Whether `rows` are numbered by the order `current`, a read of the series alone, names (`_numbering`).
+
+        Rows that aren't are warned of once per series per run, whichever of the check and the import asks first.
+        """
+
+        numbering = self._numbering(rows, series_orders(current))
+        if numbering is _Numbering.IN_STEP:
+            return True
+        if series_id not in self._out_of_step:
+            self._out_of_step.add(series_id)
+            name = _name_of(series_id, current)
+            if numbering is _Numbering.OUT_OF_STEP:
+                hub_warn(
+                    f"{name}: Sonarr's episodes of the series are not numbered by the order Sonarr names for it - "
+                    "holding off on the series until they are - refresh it in Sonarr"
+                )
+            else:
+                hub_warn(
+                    f"{name}: Sonarr's episodes of the series may not be numbered by the order Sonarr names for it, "
+                    "and SkyHook could not be reached to make sure - holding off on the series until it can"
+                )
+        return False
+
+    def _numbering(self, rows: list[SonarrEpisode], facts: SonarrSeriesOrders) -> _Numbering:
+        """Whether `rows` are numbered by the order `facts` names, by the series' stored TVDB orders.
+
+        This guards against rows Sonarr has not renumbered under an order it already names. Read as they are, or
+        imported onto, they would stand for other episodes than that order gives them.
+
+        With no stored answer, or no rows stored for the order, nothing can tell and the rows pass. Rows that fail
+        are tested once more by an answer fetched again, since the stored one may be the side that is behind. An
+        answer with no rows for the order doesn't clear them.
+        """
+
+        order = facts.season_type or AIRED_ORDER
+        stored = self._skyhook.cached_orders(facts.tvdb_id)
+        listed = None if stored is None else stored.orders.get(order)
+        if not listed or _aired_view.numbered_by(rows, listed):
+            return _Numbering.IN_STEP
+        fresh = self._skyhook.refetch(facts)
+        if fresh is None:
+            return _Numbering.UNCONFIRMED
+        listed = fresh.orders.get(order)
+        if listed and _aired_view.numbered_by(rows, listed):
+            return _Numbering.IN_STEP
+        return _Numbering.OUT_OF_STEP
 
     @override
     def series_index(self, series_id: int) -> EpisodeIndex | None:
@@ -620,13 +699,31 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
     def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' episodes as Sonarr numbers them, read now, refreshing the per-run cache.
 
-        None when the read failed.
+        None when the read failed. None too, on a Sonarr that sends an order, when the rows aren't numbered by the
+        order Sonarr names for the series once it has sent them (`_numbered_as_named`). Such rows are not kept, so
+        the run goes on holding the ones it had.
         """
 
         fetched = self.sonarr.episodes(series_id)
-        if fetched is not None:
-            self._store(series_id, fetched)
+        if fetched is None or (self._sends_order and not self._numbered_as_named(series_id, fetched)):
+            return None
+        self._store(series_id, fetched)
         return fetched
+
+    def _numbered_as_named(self, series_id: int, rows: list[SonarrEpisode]) -> bool:
+        """Whether a read of the series alone, made after `rows`, names an order they are numbered by (`_in_step`).
+
+        The order is that read's and not the library read's: an import follows a change of order Sonarr finished
+        during the run, which the library read's order would hold back until the next one.
+
+        False when the read fails, a reply without the order among them, and when Sonarr answers that it has no
+        such series.
+        """
+
+        current = self.sonarr.series(series_id)
+        if isinstance(current, NoResource) or not current.order_sent:
+            return False
+        return self._in_step(series_id, current, rows)
 
     @override
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:

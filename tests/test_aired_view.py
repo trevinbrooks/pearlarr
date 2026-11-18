@@ -5,7 +5,15 @@ from datetime import date
 
 import pytest
 
-from pearlarr.aired_view import AiredSeries, NoView, aired_series, is_stand_in, stand_in_id, stand_in_tvdb_id
+from pearlarr.aired_view import (
+    AiredSeries,
+    NoView,
+    aired_series,
+    is_stand_in,
+    numbered_by,
+    stand_in_id,
+    stand_in_tvdb_id,
+)
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
@@ -154,3 +162,57 @@ def test_a_series_in_another_order_has_no_view_until_its_aired_order_and_details
     rows = [sonarr_ep(1, 1, ep_id=7, tvdb_id=101)]
 
     assert aired_series(rows, _facts("dvd"), stored) is NoView.ORDERS_UNREAD
+
+
+_AIRED_ROWS = [
+    sonarr_ep(0, 1, ep_id=6, tvdb_id=900),
+    sonarr_ep(1, 1, ep_id=7, tvdb_id=101),
+    sonarr_ep(1, 2, ep_id=8, tvdb_id=102),
+    sonarr_ep(1, 3, ep_id=9, tvdb_id=103),
+]
+"""Sonarr's rows of the series, numbered by `_AIRED`."""
+
+
+def _moved(rows: list[SonarrEpisode], tvdb_id: int, season: int, episode: int) -> list[SonarrEpisode]:
+    """The rows with one TVDB episode's row at another season and episode number."""
+
+    return [
+        row.model_copy(update={"season_number": season, "episode_number": episode}) if row.tvdb_id == tvdb_id else row
+        for row in rows
+    ]
+
+
+def test_rows_at_the_numbers_an_order_lists_their_episodes_at_are_numbered_by_it() -> None:
+    assert numbered_by(_AIRED_ROWS, _AIRED) is True
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        # Another order of the series swaps the season's first two episodes.
+        pytest.param(_moved(_moved(_AIRED_ROWS, 101, 1, 2), 102, 1, 1), id="another-order"),
+        # Another order counts the special as the season's fourth episode, and agrees on every other row.
+        pytest.param(_moved(_AIRED_ROWS, 900, 1, 4), id="one-row"),
+        # Another order has the special as the second of two, and Sonarr has no row for the first.
+        pytest.param(_moved(_AIRED_ROWS, 900, 0, 2), id="a-special-alone"),
+    ],
+)
+def test_a_row_off_the_numbers_an_order_lists_its_episode_at_says_the_rows_are_not_numbered_by_it(
+    rows: list[SonarrEpisode],
+) -> None:
+    assert numbered_by(rows, _AIRED) is False
+
+
+def test_a_row_of_an_episode_the_order_lacks_says_nothing_of_the_numbering() -> None:
+    # Sonarr has a row for an episode TVDB's order doesn't list, and one with no TVDB episode at all.
+    rows = [*_AIRED_ROWS, sonarr_ep(1, 4, ep_id=10, tvdb_id=555), sonarr_ep(1, 5, ep_id=11)]
+
+    assert numbered_by(rows, _AIRED) is True
+
+
+def test_the_second_of_two_episodes_an_order_gives_one_number_is_not_numbered_by_it_anywhere_else() -> None:
+    # The order gives two episodes the season's first number. Sonarr's rows give the second one its own.
+    order = (OrderRow(1, 1, 101, 1), OrderRow(1, 1, 102, 1))
+    rows = [sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=102)]
+
+    assert numbered_by(rows, order) is False

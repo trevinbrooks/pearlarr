@@ -1577,6 +1577,7 @@ def make_sonarr_episodes(
         "_library": {},
         "_sends_order": False,
         "_held": set[int](),
+        "_out_of_step": set[int](),
         "_picks_logged": set[int](),
     }
     defaults.update(attrs)

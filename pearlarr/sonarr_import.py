@@ -1090,7 +1090,10 @@ class ImportReconciler:
         return read
 
     def _read(self, pending: PendingImport) -> _ImportRead | None:
-        """The pending import under each claimed series' episodes read now. None when a read failed.
+        """The pending import under each claimed series' episodes read now.
+
+        None when a read failed, or gave rows that aren't numbered by the order Sonarr names for the series
+        (`SonarrEpisodes.read_episodes`).
 
         One already imported by the ids it stores is answered as stored. Any other is followed under the rows read
         (`PendingImport.followed`) and answered by the ids it has then. One that can't be followed under them
