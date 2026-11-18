@@ -38,7 +38,8 @@ from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
 from pearlarr.log import LOG_NAME
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
-from pearlarr.pending_import import NO_TVDB_IDS, ClaimedRows, OwnedAtGrab, PendingImport, TvdbIds
+from pearlarr.pending_follow import follow
+from pearlarr.pending_import import NO_TVDB_IDS, OwnedAtGrab, PendingImport, TvdbIds
 from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import (
     NO_ATTEMPT,
@@ -2696,9 +2697,9 @@ def _two_titles_stored(*, awaiting_cleanup: bool = False) -> PendingImport:
 def _followed(pending: PendingImport) -> PendingImport:
     """`pending` as an attempt that read `_MOVED_DOWN_ONE` ends with it."""
 
-    rows = ClaimedRows.of(pending, {7: _MOVED_DOWN_ONE})
-    assert rows is not None
-    return pending.followed(rows)
+    followed = follow(pending, {7: _MOVED_DOWN_ONE})
+    assert followed is not None
+    return followed.pending
 
 
 class _PutRecordingStore(FakeCacheStore):
