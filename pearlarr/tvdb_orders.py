@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 from typing import Any, NamedTuple, Self
 
@@ -30,6 +31,32 @@ class OrderRow(NamedTuple):
     """TVDB's absolute number. Only the official order carries one."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EpisodeDetails:
+    """What TVDB says of one episode beside its numbers, the same in every order."""
+
+    title: str
+    """Empty when TVDB has no title for the episode."""
+
+    air_date: date | None
+    """The day the episode aired, None when TVDB has no date for it."""
+
+    runtime: int | None
+    """Minutes."""
+
+    def to_json(self) -> list[Any]:
+        """The details as the cache stores them, a `[title, air_date, runtime]` array with the day in ISO form."""
+
+        return [self.title, None if self.air_date is None else self.air_date.isoformat(), self.runtime]
+
+    @classmethod
+    def from_json(cls, raw: list[Any]) -> Self:
+        """Rebuild stored details. Raises `ValueError` or `TypeError` when `raw` doesn't have the stored shape."""
+
+        title, air_date, runtime = raw
+        return cls(title=title, air_date=None if air_date is None else date.fromisoformat(air_date), runtime=runtime)
+
+
 type OrdersByName = Mapping[str, Sequence[OrderRow]]
 """Order type name -> that order's rows."""
 
@@ -37,6 +64,17 @@ NO_ORDERS: OrdersByName = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
+class AiredOrder:
+    """A stored answer's aired order with what TVDB says of each of its episodes."""
+
+    rows: tuple[OrderRow, ...]
+    """Empty when SkyHook sent no usable rows for the aired order."""
+
+    details: Mapping[int, EpisodeDetails]
+    """TVDB episode id -> the episode's details, one for every row."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CachedOrders:
     """One series' cached orders, replaced whole on each fetch."""
 
@@ -54,33 +92,63 @@ class CachedOrders:
     """Sonarr's episode count per order it listed at fetch time, every listed order kept, SkyHook's or not. None
     when Sonarr listed no orders (always on v4)."""
 
+    details: Mapping[int, EpisodeDetails] | None
+    """TVDB episode id -> the episode's details, for every row of the official order. None on an answer stored
+    before details were kept."""
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
         if self.sonarr_counts is not None:
             object.__setattr__(self, "sonarr_counts", MappingProxyType(dict(self.sonarr_counts)))
+        if self.details is not None:
+            object.__setattr__(self, "details", MappingProxyType(dict(self.details)))
+
+    @property
+    def aired(self) -> AiredOrder | None:
+        """The aired order and its episodes' details, what numbering a series as aired reads.
+
+        None on an answer stored before details were kept. A series Sonarr numbers by another order has no aired
+        view from such an answer, and is due a fetch for one.
+        """
+
+        if self.details is None:
+            return None
+        return AiredOrder(self.orders.get(AIRED_ORDER, ()), self.details)
 
     def to_json(self) -> dict[str, Any]:
-        """The answer as the cache stores it, each row a `[season, episode, tvdb_id, absolute]` array."""
+        """The answer as the cache stores it, each row a `[season, episode, tvdb_id, absolute]` array.
 
+        `details` is keyed by the TVDB episode id as a string, since a JSON object has no other keys.
+        """
+
+        details = self.details
         return {
             "fetched_at": self.fetched_at,
             "fresh_until": self.fresh_until,
             "orders": {name: [list(row) for row in rows] for name, rows in self.orders.items()},
             "sonarr_counts": None if self.sonarr_counts is None else dict(self.sonarr_counts),
+            "details": None if details is None else {str(tvdb_id): row.to_json() for tvdb_id, row in details.items()},
         }
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> Self | None:
-        """Rebuild a stored answer, or None when it doesn't have the stored shape (the series then refetches)."""
+        """Rebuild a stored answer, or None when it doesn't have the stored shape (the series then refetches).
+
+        An answer stored before details were kept has no `details` key and rebuilds with `details` None.
+        """
 
         try:
             orders = {name: tuple(OrderRow(*row) for row in rows) for name, rows in raw["orders"].items()}
             counts = raw["sonarr_counts"]
+            details = raw.get("details")
             return cls(
                 fetched_at=raw["fetched_at"],
                 fresh_until=raw["fresh_until"],
                 orders=orders,
                 sonarr_counts=None if counts is None else dict(counts),
+                details=None
+                if details is None
+                else {int(tvdb_id): EpisodeDetails.from_json(row) for tvdb_id, row in details.items()},
             )
         except (KeyError, TypeError, ValueError, AttributeError):
             return None
@@ -96,6 +164,12 @@ class SonarrSeriesOrders:
 
     counts: Mapping[str, int] | None
     """Sonarr's episode count per listed order. None when Sonarr lists no orders (always on v4)."""
+
+    @property
+    def in_another_order(self) -> bool:
+        """Whether Sonarr names an order other than the aired one for the series. False when it names none."""
+
+        return self.season_type not in ("", AIRED_ORDER)
 
 
 class OrderTranslation(NamedTuple):

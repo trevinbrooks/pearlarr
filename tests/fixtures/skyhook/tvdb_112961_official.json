@@ -25,7 +25,9 @@
       "tvdbShowId": 112961,
       "tvdbId": 2273871,
       "seasonNumber": 0,
-      "episodeNumber": 1
+      "episodeNumber": 1,
+      "title": "New Work Information",
+      "runtime": 25
     },
     {
       "tvdbShowId": 112961,
@@ -33,7 +35,10 @@
       "seasonNumber": 1,
       "episodeNumber": 1,
       "airDateUtc": "1988-11-26T05:00:00Z",
-      "absoluteEpisodeNumber": 1
+      "absoluteEpisodeNumber": 1,
+      "title": "Separation",
+      "airDate": "1988-11-26",
+      "runtime": 25
     },
     {
       "tvdbShowId": 112961,
@@ -41,7 +46,10 @@
       "seasonNumber": 1,
       "episodeNumber": 2,
       "airDateUtc": "1989-06-28T04:00:00Z",
-      "absoluteEpisodeNumber": 2
+      "absoluteEpisodeNumber": 2,
+      "title": "Misgivings",
+      "airDate": "1989-06-28",
+      "runtime": 25
     },
     {
       "tvdbShowId": 112961,
@@ -49,7 +57,10 @@
       "seasonNumber": 1,
       "episodeNumber": 3,
       "airDateUtc": "1989-12-20T05:00:00Z",
-      "absoluteEpisodeNumber": 3
+      "absoluteEpisodeNumber": 3,
+      "title": "Disillusionment",
+      "airDate": "1989-12-20",
+      "runtime": 25
     },
     {
       "tvdbShowId": 112961,
@@ -57,7 +68,10 @@
       "seasonNumber": 1,
       "episodeNumber": 4,
       "airDateUtc": "1990-02-21T05:00:00Z",
-      "absoluteEpisodeNumber": 4
+      "absoluteEpisodeNumber": 4,
+      "title": "Extinction",
+      "airDate": "1990-02-21",
+      "runtime": 25
     }
   ]
 }

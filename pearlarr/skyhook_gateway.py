@@ -8,7 +8,15 @@ from .cache import AbstractCacheStore
 from .progress import ProgressCallback
 from .skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from .stamps import parse_stamp_or_none, stamp_of
-from .tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, OrderRow, OrdersByName, SonarrSeriesOrders
+from .tvdb_orders import (
+    AIRED_ORDER,
+    NO_ORDERS,
+    CachedOrders,
+    EpisodeDetails,
+    OrderRow,
+    OrdersByName,
+    SonarrSeriesOrders,
+)
 
 QUIET_AFTER_DAYS = 30
 """An ended series whose newest episode aired longer ago than this is quiet."""
@@ -86,13 +94,20 @@ class SkyHookGateway:
         return self.cached_orders(tvdb_id) is not None
 
     def _due(self, facts: SonarrSeriesOrders, now: datetime) -> bool:
-        """Whether the series needs a fetch: no cached answer, one past its `fresh_until`, or Sonarr's counts moved."""
+        """Whether the series needs a fetch.
+
+        It does with no cached answer, with one past its `fresh_until`, when Sonarr's counts moved, and when Sonarr
+        numbers it by another order and its answer was stored before episode details were kept.
+        """
 
         stored = self.cached_orders(facts.tvdb_id)
         if stored is None:
             return True
         fresh_until = parse_stamp_or_none(stored.fresh_until)
         if fresh_until is None or fresh_until <= now:
+            return True
+        # Only a series in another order reads the details, so an aired one waits for its next fetch.
+        if stored.aired is None and facts.in_another_order:
             return True
         # Against the counts Sonarr listed at fetch time, not the orders SkyHook sent: an order only Sonarr lists
         # would otherwise read as new on every run.
@@ -105,9 +120,11 @@ class SkyHookGateway:
         if aired_reply is SkyHookNoReply.UNREACHABLE:
             return None
         orders: dict[str, tuple[OrderRow, ...]] = {}
+        details: dict[int, EpisodeDetails] = {}
         quiet = False
         if aired_reply is not SkyHookNoReply.NOT_FOUND:
             orders[AIRED_ORDER] = _rows(aired_reply)
+            details = _details(aired_reply)
             quiet = _is_quiet(aired_reply, now)
             for listed in aired_reply.season_types:
                 if listed.type in orders:
@@ -122,6 +139,7 @@ class SkyHookGateway:
             fresh_until=stamp_of(now + fresh_for),
             orders=orders,
             sonarr_counts=facts.counts,
+            details=details,
         )
 
 
@@ -132,6 +150,15 @@ def _rows(reply: SkyHookReply) -> tuple[OrderRow, ...]:
         OrderRow(row.season_number, row.episode_number, row.tvdb_id, row.absolute_episode_number)
         for row in reply.episodes
     )
+
+
+def _details(aired_reply: SkyHookReply) -> dict[int, EpisodeDetails]:
+    """The aired reply's rows as details by TVDB episode id."""
+
+    return {
+        row.tvdb_id: EpisodeDetails(title=row.title, air_date=row.air_date, runtime=row.runtime)
+        for row in aired_reply.episodes
+    }
 
 
 def _is_quiet(aired_reply: SkyHookReply, now: datetime) -> bool:

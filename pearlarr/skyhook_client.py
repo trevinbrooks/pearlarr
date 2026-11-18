@@ -12,6 +12,9 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from .arr_models import SeasonTypeCount
 from .boundary import (
     ApiModel,
+    BlankStr,
+    LenientDay,
+    LenientInt,
     LenientStr,
     LenientTime,
     validate_all_or_none,
@@ -37,6 +40,11 @@ class SkyHookEpisode(ApiModel):
     air_date_utc: LenientTime = Field(default=None, validation_alias="airDateUtc")
     absolute_episode_number: int | None = Field(default=None, validation_alias="absoluteEpisodeNumber")
     """Sent on aired-order rows only."""
+    title: BlankStr = ""
+    air_date: LenientDay = Field(default=None, validation_alias="airDate")
+    """The day the episode aired, the `airDate` Sonarr's own episode rows carry. `air_date_utc` is the instant."""
+    runtime: LenientInt = None
+    """Minutes."""
 
 
 class SkyHookReply(ApiModel):

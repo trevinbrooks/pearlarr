@@ -2,7 +2,7 @@
 """The TVDB order cache: which series refetch, what a fetch stores, and what the readers are served."""
 
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,7 +11,7 @@ from pearlarr.cache import CacheStore
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.stamps import parse_stamp
-from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, OrderRow, SonarrSeriesOrders
+from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
 from .builders import FakeCacheStore, stored_orders
 from .fakes import FakeSkyHookClient
@@ -74,6 +74,38 @@ def test_a_first_fill_stores_every_listed_order_official_with_its_absolutes() ->
         ),
     }
     assert stored.sonarr_counts == {"official": 4, "dvd": 4}
+
+
+def test_a_fill_stores_each_aired_episodes_details_by_tvdb_id() -> None:
+    gateway = _gateway()
+
+    _fetches(gateway)
+
+    stored = gateway.cached_orders(_SERIES)
+    assert stored is not None
+    assert stored.details is not None
+    assert set(stored.details) == {row.tvdb_id for row in stored.orders["official"]}
+    assert stored.details[2273871] == EpisodeDetails(title="New Work Information", air_date=None, runtime=25)
+    assert stored.details[2273831] == EpisodeDetails(title="Separation", air_date=date(1988, 11, 26), runtime=25)
+
+
+@pytest.mark.parametrize(
+    ("season_type", "details", "fetched"),
+    [
+        pytest.param("dvd", None, 1, id="another-order-without-details"),
+        pytest.param("dvd", {}, 0, id="another-order-with-details"),
+        pytest.param(AIRED_ORDER, None, 0, id="aired"),
+        pytest.param("", None, 0, id="no-order-named"),
+    ],
+)
+def test_a_fresh_answer_without_details_refetches_only_for_a_series_in_another_order(
+    season_type: str, details: dict[int, EpisodeDetails] | None, fetched: int
+) -> None:
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(_SERIES, stored_orders(_STORED, details=details))
+    gateway = _gateway(cache=cache)
+
+    assert gateway.prefetch([SonarrSeriesOrders(_SERIES, season_type, None)], dry_run=True) == fetched
 
 
 def _recent(reply: SkyHookReply) -> SkyHookReply:
@@ -157,6 +189,7 @@ def test_a_series_skyhook_does_not_have_is_stored_without_orders_for_a_week() ->
     stored = gateway.cached_orders(_SERIES)
     assert stored is not None
     assert stored.orders == {}
+    assert stored.details == {}
     assert gateway.has_cached_answer(_SERIES) is True
     assert _fresh_days(gateway) == 7
 
