@@ -160,7 +160,7 @@ def test_arr_run_deps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest
 
 
 class _PassingQbit:
-    """A `qbittorrentapi.Client` stand-in whose login succeeds (build's qBittorrent client)."""
+    """A fake `qbittorrentapi.Client` whose login succeeds (build's qBittorrent client)."""
 
     def __init__(self, **kwargs: object) -> None:
         del kwargs

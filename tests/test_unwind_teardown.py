@@ -56,7 +56,7 @@ def _memory_resolver(
     retry: str,
     web: httpx.Client,
 ) -> MappingResolver | None:
-    """A network-free stand-in for `bootstrap.build_resolver` (no sources enabled)."""
+    """A network-free fake of `bootstrap.build_resolver` (no sources enabled)."""
 
     del app_config, mappings_db, boot, retry
     return MappingResolver(
@@ -181,7 +181,7 @@ class TestUnwindEmitsArrRunFinished:
 
 
 class _StubDeps:
-    """A `ArrRunDeps` stand-in whose only exercised method is the outer finally's close."""
+    """A fake `ArrRunDeps` whose only exercised method is the outer finally's close."""
 
     def close(self) -> None:
         """No run-scoped resources to release (bootstrap's outer finally calls this)."""

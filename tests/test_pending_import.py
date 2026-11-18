@@ -53,7 +53,7 @@ class TestPendingImportBuild:
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,), "show - 03.mkv": (103,)}
 
     def test_a_file_on_a_stand_in_leaves_the_map_whole_for_the_exclusions(self) -> None:
-        # A stand-in is an aired episode Sonarr has no row for, under a negative id: no file imports onto one.
+        # A stand-in holds an aired episode Sonarr has no row for, under a negative id: no file imports onto one.
         pending = pending_import(
             file_episode_map={"Show - 01.mkv": [-901], "Show - 02.mkv": [-902, 102], "Show - 03.mkv": [103]}
         )

@@ -2309,11 +2309,11 @@ class _RecordingCacheStore(FakeCacheStore):
 
 
 class _FinalizeWaitManager:
-    """A stand-in wait manager for the finish-ordering tests.
+    """A fake wait manager for the finish-ordering tests.
 
     Every step appends its ordering marker. The real ones return early on the
     empty working set these tests build - recording nothing - so a recording
-    stand-in is what makes each step observable. `raise_on` scripts one step to
+    fake is what makes each step observable. `raise_on` scripts one step to
     fail, for the unwind pins (the raise escapes `_finish_arr_run`, exactly as a
     real failure would, and bootstrap's finally is what closes the run).
     `check_result` / `blocking_result` script what the wait passes return, so the

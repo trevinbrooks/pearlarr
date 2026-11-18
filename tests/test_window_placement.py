@@ -871,7 +871,7 @@ def _season_one(*numbers: int) -> dict[str, ParsedFileInfo | None]:
 
 
 class TestAiredOnly:
-    """A file placed on a stand-in, an aired episode Sonarr has no row for, is set aside once the windows merge."""
+    """A file on a stand-in, which holds an aired episode Sonarr has no row for, is set aside once the windows merge."""
 
     def test_a_file_placed_on_a_stand_in_is_set_aside_under_its_aired_number(self) -> None:
         placed = _place_across(_season_one(1, 2, 3), (_window(_SWITCHED_SEASON, series=_SWITCHED),))

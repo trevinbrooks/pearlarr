@@ -115,7 +115,7 @@ class _FakeBound:
 
 
 class _FinalizeRecorder:
-    """A typed stand-in for `ArrRunLoop._finish_arr_run` that counts its calls."""
+    """A typed fake of `ArrRunLoop._finish_arr_run` that counts its calls."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -454,7 +454,7 @@ class TestArrRunStartKeepsPendingImports:
 
 
 class _GrabRecorder(_FakeBound):
-    """A grab pipeline stand-in that counts its `grab_and_cache` calls."""
+    """A fake grab pipeline that counts its `grab_and_cache` calls."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -481,7 +481,7 @@ class TestGrabPacing:
 
 
 class _RaisingNotifier:
-    """A `Notifier` stand-in whose wait-summary push raises a non-HTTP error."""
+    """A fake `Notifier` whose wait-summary push raises a non-HTTP error."""
 
     def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         del arr, result

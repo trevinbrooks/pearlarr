@@ -968,7 +968,7 @@ def test_progress_lines_drop_below_a_raised_threshold_but_the_cadence_advances()
 
 
 class _ExplodingStream(io.StringIO):
-    """A stream whose write raises while `armed` is set (the render-bug stand-in)."""
+    """A stream whose write raises while `armed` is set (it fakes a render bug)."""
 
     def __init__(self) -> None:
         super().__init__()

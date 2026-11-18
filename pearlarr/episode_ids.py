@@ -8,7 +8,7 @@ from collections.abc import Iterable
 
 
 def is_stand_in(episode_id: int) -> bool:
-    """Whether the id is a stand-in's, an episode Sonarr has no row for, and not a Sonarr episode's."""
+    """Whether the id is a stand-in's, held for an aired episode Sonarr has no row for, and not a Sonarr row's."""
 
     return episode_id < 0
 

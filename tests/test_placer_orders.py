@@ -187,7 +187,7 @@ class TestInterleavedSpecialByOrder:
         }
         assert result.hand_import_files == (self._THIRD[0], self._THIRD[1])
 
-    def test_with_no_window_a_key_on_a_row_the_aired_order_lacks_places_nothing_there(self) -> None:
+    def test_with_no_window_a_key_on_an_own_only_row_places_nothing_there(self) -> None:
         index = series_index(
             self._ID_BY_KEY, absolutes=self._ABSOLUTES, orders={"dvd": self._SPLIT}, own_only=self._SPLIT_ROWS
         )
@@ -228,7 +228,7 @@ class TestInterleavedSpecialByOrder:
         assert by_name(result)[self._THIRD[2]] == ((601,), PlacementVerdict.OTHER_ORDER)
         assert result.order_only == {}
 
-    def test_a_key_two_orders_read_onto_one_row_the_aired_order_lacks_stays_unplaced(self) -> None:
+    def test_a_key_two_orders_read_onto_one_own_only_row_stays_unplaced(self) -> None:
         orders = {"dvd": self._SPLIT, "altdvd": self._SPLIT}
 
         result = place(self._THIRD_PARSED, self._target(self._SEASON, orders, own_only=self._SPLIT_ROWS))
@@ -248,7 +248,7 @@ class TestInterleavedSpecialByOrder:
         assert by_name(result)[self._THIRD[2]] == ((), PlacementVerdict.NO_EPISODE_FOUND)
         assert by_name(result)[self._THIRD[3]] == ((602,), PlacementVerdict.OTHER_ORDER)
 
-    def test_the_listing_keeps_an_order_that_reads_a_key_onto_a_row_the_aired_order_lacks(self) -> None:
+    def test_the_listing_keeps_an_order_that_reads_a_key_onto_an_own_only_row(self) -> None:
         # The second order swaps the last two episodes, so the orders read "S03E04" and "S03E05" apart and the
         # listing picks among them. It holds neither row, and still keeps the order that reads the halves onto them:
         # the second order alone would place "S03E01" on the first aired episode.
@@ -279,7 +279,7 @@ class TestInterleavedSpecialByOrder:
         assert by_name(result)[self._RUN[2]] == ((), PlacementVerdict.MISNUMBERED)
         assert by_name(result)[self._RUN[3]] == ((603,), PlacementVerdict.OTHER_ORDER)
 
-    def test_a_final_unplaced_member_read_onto_a_row_the_aired_order_lacks_stays_final_unplaced(self) -> None:
+    def test_a_final_unplaced_member_read_onto_an_own_only_row_stays_final_unplaced(self) -> None:
         # As above, and Sonarr has a row for the order's third episode. The third file carries the special's title,
         # so the special's window places it by that title under its own window, and the season's verdict stands
         # over the windows.
@@ -634,8 +634,8 @@ class TestInterleavedSpecialByOrder:
     ) -> BatchPlacements:
         """The first two members and `_LANTERN`, whose title contradicts them, under the season's window.
 
-        The torrent ends at the third file, so no number runs past the season's end. `own_only` are Sonarr's rows
-        the aired order lacks.
+        The torrent ends at the third file, so no number runs past the season's end. `own_only` are the own-only
+        rows.
         """
 
         parsed = {**{name: self._PARSED[name] for name in self._RUN[:2]}, self._LANTERN: self._PARSED[self._RUN[2]]}
@@ -663,7 +663,7 @@ class TestInterleavedSpecialByOrder:
             self._LANTERN: ((), PlacementVerdict.NO_EPISODE_FOUND),
         }
 
-    def test_a_key_on_a_row_the_aired_order_lacks_answers_no_contradicted_file_either(self) -> None:
+    def test_a_key_on_an_own_only_row_answers_no_contradicted_file_either(self) -> None:
         # As above, and Sonarr has a row for each of the order's two episodes.
         order = _order((1, 1, 9001), (1, 2, 602), (1, 3, 9002))
 
@@ -779,7 +779,7 @@ class TestMisnumberedSpecialsByOrder:
     def _place(cls, order: tuple[OrderRow, ...], own_only: Mapping[EpisodeKey, int] | None = None) -> BatchPlacements:
         """The batch numbered 1, 2 and 3 under the listed specials' window, with `order` as the DVD order.
 
-        `own_only` are Sonarr's rows the aired order lacks.
+        `own_only` are the own-only rows.
         """
 
         index = series_index({EpisodeKey(0, n): 500 + n for n in range(1, 7)}, orders={"dvd": order}, own_only=own_only)
@@ -806,7 +806,7 @@ class TestMisnumberedSpecialsByOrder:
             for name, ep_id in zip(parsed_specials(1, 2, 3), self._LISTED, strict=True)
         }
 
-    def test_a_special_read_onto_a_row_the_aired_order_lacks_stays_final_unplaced_beside_the_placed_ones(self) -> None:
+    def test_a_special_read_onto_an_own_only_row_stays_final_unplaced_beside_the_placed_ones(self) -> None:
         # The order numbers the first and last listed specials 1 and 3. Its second special is one the aired order
         # lacks, which Sonarr has a row for and the listing can't hold.
         between = _order((0, 1, 502), (0, 2, 9001), (0, 3, 506))
@@ -1081,7 +1081,7 @@ class TestNameNumberSequenceByOrder:
         assert by_name(result) == self._by_order()
 
 
-class TestRowsTheAiredOrderLacks:
+class TestOwnOnlyRows:
     """A series Sonarr numbers by another TVDB order, with rows for an opener's two halves that the aired order lacks.
 
     The aired order has the opener whole, as the fourth season's first episode. The DVD order numbers the fourth and
@@ -1137,7 +1137,7 @@ class TestRowsTheAiredOrderLacks:
         absolutes: Mapping[int, int] | None = None,
         titles: Mapping[int, str] | None = None,
     ) -> EpisodeIndex:
-        """The series with `rows` as Sonarr's rows the aired order lacks, None for a Sonarr that has none."""
+        """The series with `rows` as its own-only rows, None for a Sonarr that has none."""
 
         return series_index(cls._ID_BY_KEY, absolutes=absolutes, titles=titles, orders=cls._ORDERS, own_only=rows)
 

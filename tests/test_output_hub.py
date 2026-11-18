@@ -309,7 +309,7 @@ def test_null_renderer_satisfies_the_protocol() -> None:
 
 
 class _FileishRecorder(Renderer):
-    """A recording survivor that claims to be the file renderer (a FileLogRenderer stand-in)."""
+    """A recording survivor that claims to be the file renderer (a fake FileLogRenderer)."""
 
     writes_file_only: ClassVar[bool] = True
 

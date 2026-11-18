@@ -80,7 +80,7 @@ def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPSta
 
 
 class _SequencedPush:
-    """`discord_push` stand-in: raises the queued errors in order, then succeeds."""
+    """Fake `discord_push`: raises the queued errors in order, then succeeds."""
 
     def __init__(self, *errors: httpx.HTTPStatusError) -> None:
         self.errors = list(errors)

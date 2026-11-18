@@ -91,7 +91,7 @@ def test_sonarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
+        """Fake of the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 
@@ -232,7 +232,7 @@ def test_radarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
+        """Fake of the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 

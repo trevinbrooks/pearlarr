@@ -100,7 +100,7 @@ class _AddCall:
 
 
 class _FakeQbit:
-    """A typed recording stand-in for `qbittorrentapi.Client`.
+    """A typed recording fake of `qbittorrentapi.Client`.
 
     Models qBittorrent's dedup-by-hash: `torrents_info` reports whichever hashes
     are `present` or in `rows`, and lists a category's `rows` (`list_error` fails the list). `torrents_add`

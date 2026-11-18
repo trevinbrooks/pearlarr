@@ -168,7 +168,7 @@ def test_a_stand_in_prints_by_its_aired_number_marked_as_aired() -> None:
 
 
 def test_a_row_as_sonarr_sent_it_prints_by_its_own_number() -> None:
-    # A row of a series in aired order, and a row the aired order lacks.
+    # A row of a series in aired order, and an own-only row.
     view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=555)])
 
     as_sent = [PrintedKey.of(ep) for ep in (sonarr_ep(2, 5), *view.own_only)]

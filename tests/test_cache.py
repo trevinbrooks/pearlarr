@@ -42,7 +42,7 @@ from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, Orde
 from .builders import claim_anilist_ids, make_entry_record, pending_import, title_claim, title_is_cached
 from .fakes import RecordingHub
 
-# Stand-in for a config hash. `CacheStore` only stores and compares the
+# A placeholder config hash. `CacheStore` only stores and compares the
 # value it is handed. It never computes one, so any string works here.
 CONFIG_HASH = "0123456789abcdef0123456789abcdef"
 
@@ -323,7 +323,7 @@ class TestSchemaVersionGate:
     """The schema-version gate: older dbs migrate step-by-step, newer dbs are refused."""
 
     def test_fresh_db_carries_its_schema_version_through_promote(self, tmp_path: Path) -> None:
-        # The :memory: stand-in gets its schema version on create. The backup-API promote must
+        # The :memory: database gets its schema version on create. The backup-API promote must
         # carry that version into the file it writes, or every fresh install would
         # look like a v0 db on its second run.
         with _open(tmp_path) as store:
@@ -1621,7 +1621,7 @@ class TestCorruptStore:
 
     def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
-        db.write_text("this is not a sqlite database")  # torn-write stand-in
+        db.write_text("this is not a sqlite database")  # what a torn write can leave
         recording = RecordingHub()
         install_hub(recording.hub)  # conftest teardown restores the default
 

@@ -20,7 +20,7 @@ short would read as a new sequence and could land wrong. Then the windows merge 
 
 The order of the season windows shows in what another TVDB order places (pass 16). A window that holds a key's
 aired episode places the file there, and that placement is final against the order under every later window. A key
-the order reads onto a Sonarr row the aired order lacks has no window, since every window is cut from the aired
+the order reads onto an own-only row has no window, since every window is cut from the aired
 episodes. The first window the order lands in places that file (`placer._orders._settle_off_aired`), so which title
 imports it follows the window order. A pending import that doesn't import that window leaves the file out as another
 title's, and every later placement of the torrent places it under that window again.
@@ -275,7 +275,7 @@ class WindowedPlacements:
     def aired_only_set_aside(self) -> Self:
         """The placements with each file placed on a stand-in set aside as `AIRED_ONLY`, with no ids.
 
-        A stand-in is an aired episode Sonarr has no row for (`aired_view.stand_in`), so Sonarr can't import a
+        A stand-in holds an aired episode Sonarr has no row for (`aired_view.stand_in`), so Sonarr can't import a
         file onto it. A file placed on a stand-in and a Sonarr episode both is set aside whole.
 
         Call it after `with_proposals`, which can place a file on a stand-in, and before `seen_by`: a file
@@ -352,8 +352,8 @@ _HAND_IMPORT_VERDICTS = frozenset(
     {PlacementVerdict.EPISODE_TITLES_CONTRADICT, PlacementVerdict.OTHER_ORDER_OUTSIDE_WINDOW}
 )
 """Two of the three hand-import verdicts: contradicted by its sequence's titles, or read by another TVDB order
-outside the window. Another window may still place such a file, one left for another order only on the episodes
-that order reads it onto. `ORDER_ONLY`, the third, is left out."""
+outside the window. Another window may still place such a file, though one left for another order goes only onto
+the episodes that order reads it onto. `ORDER_ONLY`, the third, is left out."""
 
 
 @dataclass(slots=True)

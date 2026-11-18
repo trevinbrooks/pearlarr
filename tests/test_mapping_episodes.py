@@ -35,7 +35,7 @@ _NO_AIRING = AniListAiring(start=None, end=None, episodes=None, duration=None)
 
 
 class _FakeSonarr:
-    """Minimal Sonarr-client stand-in: `episodes` returns a fixed list.
+    """Minimal fake Sonarr client: `episodes` returns a fixed list.
 
     `title_episodes` reaches the empty-map short-circuit only after the per-series
     episode fetch, so the fake just returns the scripted list (called positionally,
@@ -76,13 +76,13 @@ class _RecordingAniList:
 
 
 class _NoAniDbMappings:
-    """A mappings stand-in with no AniDB data (the anime-ids fast path)."""
+    """Fake mappings with no AniDB data (the anime-ids fast path)."""
 
     has_anidb = False
 
 
 class _FakeAniDbMappings:
-    """An AniDB-bearing mappings stand-in: records lookups, returns a scripted map."""
+    """Fake AniDB-bearing mappings: records lookups, returns a scripted map."""
 
     has_anidb = True
 

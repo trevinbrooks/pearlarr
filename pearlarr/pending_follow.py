@@ -156,13 +156,13 @@ def _set_aside(file_map: FileEpisodeMap, tvdb_ids: TvdbIds, row_by_tvdb: _RowByT
     """Each file of the stored `file_map` the follow takes out of it -> its TVDB episodes with no row."""
 
     tvdb_by_row = tvdb_ids.by_row_id
-    without_row = {
+    by_file = {
         name: tuple(
             tvdb_id for ep_id in ids if (tvdb_id := tvdb_by_row.get(ep_id)) is not None and tvdb_id not in row_by_tvdb
         )
         for name, ids in file_map.items()
     }
-    return {name: no_row for name, no_row in without_row.items() if no_row}
+    return {name: episodes for name, episodes in by_file.items() if episodes}
 
 
 class PendingFollower:

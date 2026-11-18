@@ -60,7 +60,7 @@ def bridged(app_logger: logging.Logger) -> Generator[tuple[RecordingRenderer, lo
 
 
 def _third_party(name: str, level: int = logging.DEBUG) -> logging.Logger:
-    """A propagating stand-in for a library logger (fresh handlers, own level)."""
+    """A propagating fake of a library logger (fresh handlers, own level)."""
 
     logger = logging.getLogger(name)
     logger.handlers.clear()

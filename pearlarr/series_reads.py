@@ -213,7 +213,7 @@ class SeriesReads(AiredParseSource, SeriesRows):
     def series_index(self, series_id: int) -> EpisodeIndex | None:
         """The whole series' placement index, numbered as aired, with its other TVDB orders read onto it.
 
-        Stand-ins included. Sonarr's rows the aired order lacks are held apart (`EpisodeIndex.own_only`). Built once
+        Stand-ins included. Own-only rows are held apart (`EpisodeIndex.own_only`). Built once
         per read of the series' rows. None when the series has no view.
         """
 

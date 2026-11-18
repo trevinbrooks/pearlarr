@@ -150,7 +150,7 @@ from .fakes import (
 
 
 class _Item:
-    """A stand-in Arr item exposing whatever id attributes a test sets.
+    """A fake Arr item exposing whatever id attributes a test sets.
 
     Declares the full `ArrItem` surface so it structurally satisfies the
     `SonarrItem` / `RadarrItem` protocols. Each test sets only the attributes
@@ -2631,8 +2631,8 @@ def _split_opener_rows(*, with_a_file: Iterable[int]) -> list[SonarrEpisode]:
     ]
 
 
-class TestImportOnRowsTheAiredOrderLacks:
-    """A file placed on a Sonarr row the aired order lacks is imported like any other file of the pending import."""
+class TestImportOnOwnOnlyRows:
+    """A file placed on an own-only row is imported like any other file of the pending import."""
 
     def test_a_file_on_such_a_row_is_posted_with_the_rows_id(self) -> None:
         candidates = [manual_candidate(f"/d/{name}") for name in _SPLIT_RUN]
