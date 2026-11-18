@@ -666,6 +666,26 @@ class TestFollowed:
         assert followed.claims[0].ordered_episode_ids == (101, 112)
         assert followed.tvdb_ids == TvdbIds({101: None, 112: 9002})
 
+    def test_a_file_on_a_row_outside_every_window_leaves_the_file_map_when_its_row_is_gone(self) -> None:
+        # A season's opener is two halves in the order Sonarr numbered the series by when the 13 files were stored:
+        # the first two sit on the halves' rows, outside the window. Sonarr sends neither row at this read.
+        names = [f"[grp] show ending s1 - {n:02d} [abcd1234].mkv" for n in range(1, 14)]
+        rest = {names[n]: (400 + n,) for n in range(2, 13)}
+        aired = {400 + n: 7400 + n for n in range(1, 13)}
+        pending = pending_import(
+            file_episode_map={names[0]: (9001,), names[1]: (9002,), **rest},
+            seadex_files=names,
+            ordered_episode_ids=tuple(aired),
+            tvdb_ids={9001: 7901, 9002: 7902, **aired},
+        )
+
+        followed = _followed(pending, *aired.items())
+
+        assert dict(followed.file_episode_map) == rest
+        assert followed.excluded_files == (names[0], names[1])
+        assert followed.claims[0].ordered_episode_ids == tuple(aired)
+        assert followed.tvdb_ids == TvdbIds(aired)
+
     def test_a_pending_import_stored_without_tvdb_ids_is_not_followed(self) -> None:
         pending = pending_import(tvdb_ids=None)
         rows = ClaimedRows({9001: 111})

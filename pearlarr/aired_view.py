@@ -24,7 +24,11 @@ class NoView(Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AiredSeries:
-    """One series' episodes, numbered as aired."""
+    """One series' episodes, numbered as aired.
+
+    For a series in another order, Sonarr's rows are `in_sonarr` plus `own_only` plus the rows with no positive TVDB
+    episode id, and the aired episodes are `in_sonarr` plus `stand_ins`.
+    """
 
     order: str
     """The order Sonarr numbers the series by (`seasonType`)."""
@@ -34,6 +38,10 @@ class AiredSeries:
 
     stand_ins: tuple[SonarrEpisode, ...]
     """One per aired episode Sonarr's order of the series has no row for. Empty for a series in aired order."""
+
+    own_only: tuple[SonarrEpisode, ...] = ()
+    """Sonarr's rows for the TVDB episodes the aired episodes lack, as sent: an episode only the series' own order
+    lists, or the second of two the aired order gives one number. Empty for a series in aired order."""
 
     aired: tuple[SonarrEpisode, ...] = field(init=False)
     """Both, in aired order."""
@@ -88,8 +96,9 @@ def aired_series(
 
     A series in aired order keeps its rows untouched, whatever is stored. A series in another order has each row
     renumbered to the aired episode with the same TVDB episode id, and a stand-in for each aired episode none of its
-    rows has. A row only its own order lists is left out. Where the aired order gives two episodes one number, the
-    first listed is kept and the other left out, as Sonarr keeps them.
+    rows has. Where the aired order gives two episodes one number, the first listed is kept and the other left out,
+    as Sonarr keeps them. A row whose TVDB episode is none of the aired episodes kept is kept apart, as sent
+    (`AiredSeries.own_only`).
 
     A renumbered row loses its scene numbers: they were given to the row under another number, so they may be
     another episode's.
@@ -125,6 +134,7 @@ def aired_series(
         stand_ins=tuple(
             stand_in(row, aired.details[tvdb_id]) for tvdb_id, row in by_tvdb.items() if tvdb_id not in held
         ),
+        own_only=tuple(ep for ep in rows if ep.tvdb_id is not None and ep.tvdb_id > 0 and ep.tvdb_id not in by_tvdb),
     )
 
 
