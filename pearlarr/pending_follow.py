@@ -6,7 +6,8 @@ read. `follow` is the one place an id moves.
 
 `PendingFollower` follows the stored pending imports a title's check reads, and gives one stored before pearlarr
 kept TVDB ids its own at the start of a run. The import follows the one it is importing itself
-(`ImportReconciler`), under the rows it reads then.
+(`ImportReconciler`), under the rows it reads then. Both follow only under rows the run reads the series by
+(`SeriesRows`).
 """
 
 import logging
@@ -205,16 +206,23 @@ class PendingFollower:
         return self._claimed_series
 
     def followed(self, stored: Mapping[str, PendingImport]) -> dict[str, PendingImport]:
-        """The stored pending imports by hash, each followed under the rows the run holds of the series it claims.
+        """The stored pending imports by hash, each followed under the rows of the series it claims.
 
-        Those are the rows the series indexes were built from, so every id a placement joins names the episode
-        the index has it on. One whose ids moved is saved, and its titles are checked again next run. One that
-        can't be followed under them (`follow`) is left out: its ids may name other episodes.
+        Those are the rows each series' view is built from (`SeriesRows.viewed_episodes`), and so its index: every
+        id a placement joins names the episode the index has it on. One whose ids moved is saved, and its titles
+        are checked again next run. One that can't be followed under them (`follow`) is left out, since its ids
+        may name other episodes. That includes one claiming a series with no view this run: the rows kept of a
+        series the run holds may be part way through a change of order, with an episode on none of them.
         """
 
         followed: dict[str, PendingImport] = {}
         for infohash, pending in stored.items():
-            result = follow(pending, {sid: self._rows.last_known_episodes(sid) for sid in pending.series_ids})
+            rows = {
+                series_id: viewed
+                for series_id in pending.series_ids
+                if (viewed := self._rows.viewed_episodes(series_id)) is not None
+            }
+            result = follow(pending, rows)
             if result is None:
                 self.logger.debug(
                     f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent - "
