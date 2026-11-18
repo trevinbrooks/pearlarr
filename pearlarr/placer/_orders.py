@@ -418,7 +418,7 @@ def _name_number_fit(state: PlacerState, name: str, sequence: NumberedSequence) 
         if (final := _final_ids(state, member)) is not None:
             if final != (() if ep_id is None else (ep_id,)):
                 return None
-        elif not member.to_place:
+        elif member.left_for_hand_import:
             continue
         elif not _no_episode_found(member):
             return None

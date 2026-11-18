@@ -352,9 +352,10 @@ class PendingImport:
     hand_import_files: tuple[str, ...] = ()
     """Normalized file names of the video files the grab left for a hand import (misnumbered, contradicted by their
     sequence's episode titles, or numbered by another TVDB order onto no episode it could place), which keep the
-    pending import from being done once the placed files are in. Normalized and deduplicated in order as
-    the pending import is built, never a name the file map holds, and a name here is never excluded. Empty on rows
-    written before it was stored."""
+    pending import from being done once the placed files are in. A later check reads one as evidence and never
+    places it. Normalized and deduplicated in order as the pending import is built, never a name the file map holds,
+    and a name here is never excluded. A row written before it was stored reads every listed video file it neither
+    placed nor excluded as one (`from_json`)."""
 
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY
     """Normalized file name -> its key, for each hand-import file that only another TVDB order numbers. Reduced as

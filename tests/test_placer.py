@@ -41,14 +41,15 @@ from .builders import (
     verdicts_of,
 )
 
-_GONE = "gone.mkv"
-"""A name outside the batch: parsed blind it keeps pairing in name order out, unread (None) it makes the batch wait."""
+_HAND_IMPORT = "hand import.mkv"
+"""A name the batch reads without placing, as one left for a hand import. Parsed blind it counts in passes 11 to 13
+and takes no id. Unread (None) it makes the batch wait."""
 
 
-def _pair_in_order_blocked(parsed: Mapping[str, ParsedFileInfo | None]) -> dict[str, ParsedFileInfo | None]:
-    """The parses plus a blind name outside the batch, so pairing in name order never places what a pass would not."""
+def _pairing_blocked(parsed: Mapping[str, ParsedFileInfo | None]) -> dict[str, ParsedFileInfo | None]:
+    """The parses plus a blind name left for a hand import, which keeps both pairings and the lone-file pick out."""
 
-    return {**parsed, _GONE: parsed_info()}
+    return {**parsed, _HAND_IMPORT: parsed_info()}
 
 
 class TestFromMatchedPlacement:
@@ -1313,6 +1314,57 @@ class TestPlaceBesideFilesOutsideTheWindow:
         assert by_name(result)["show - S01E01.mkv"] == ((), PlacementVerdict.OUTSIDE_WINDOW)
 
 
+class TestPlaceBesideFilesLeftForAHandImport:
+    """A file left for a hand import counts in passes 11 to 13 and takes no id, unless it reads outside the window."""
+
+    _ID_BY_KEY: ClassVar[dict[EpisodeKey, int]] = {EpisodeKey(1, 1): 501, EpisodeKey(0, 1): 901}
+
+    def test_a_file_whose_parse_resolves_nowhere_pairs_in_no_absolute_order(self) -> None:
+        # One file with an absolute number meets one unused id, and another file of the torrent is left for a hand
+        # import.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "x.mkv": parsed_info(season=9, episodes=(9,), absolutes=(9,)),
+            "show - Bonus.mkv": parsed_info(),
+        }
+
+        result = place(parsed, PlacementTarget([501], series_index(self._ID_BY_KEY)), ["x.mkv"])
+
+        assert by_name(result) == {"x.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND)}
+
+    @pytest.mark.parametrize(
+        "parsed",
+        [
+            pytest.param(
+                {"show - 08.mkv": parsed_info(absolutes=(8,)), "show - 09.mkv": parsed_info(absolutes=(9,))},
+                id="in absolute order",
+            ),
+            pytest.param(blind(["show - Picture Drama.mkv", "show - Recap.mkv"]), id="in name order"),
+        ],
+    )
+    def test_a_count_that_is_even_only_with_a_file_left_for_a_hand_import_pairs_nothing(
+        self, parsed: dict[str, ParsedFileInfo | None]
+    ) -> None:
+        # Two files meet two unused ids, and the first of them is left for a hand import. A pairing would give the
+        # second file the second id.
+        to_place = list(parsed)[1:]
+        index = series_index({EpisodeKey(0, 1): 901, EpisodeKey(0, 2): 902})
+
+        result = place(parsed, PlacementTarget([901, 902], index), to_place)
+
+        assert by_name(result) == dict.fromkeys(to_place, ((), PlacementVerdict.NO_EPISODE_FOUND))
+
+    def test_one_reading_outside_the_window_keeps_no_pass_from_pairing(self) -> None:
+        # The file left for a hand import names another season, so the OVA is still the only contender.
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "show - S01E01.mkv": parsed_info(season=1, episodes=(1,)),
+            "show - OVA.mkv": parsed_info(),
+        }
+
+        result = place(parsed, PlacementTarget([901], series_index(self._ID_BY_KEY)), ["show - OVA.mkv"])
+
+        assert by_name(result) == {"show - OVA.mkv": ((901,), PlacementVerdict.SINGLE)}
+
+
 class TestDuplicateEvidence:
     """A collision is a duplicate only when the file on the id reads there too. Otherwise it is unplaced, to report."""
 
@@ -1339,6 +1391,22 @@ class TestDuplicateEvidence:
 
         assert by_name(result) == {self._SPELLED_NAME: ((), PlacementVerdict.NO_EPISODE_FOUND)}
         assert result.excluded == ()
+
+    def test_a_file_left_for_a_hand_import_reading_the_same_episode_proves_no_duplicate(self) -> None:
+        # The file left for a hand import spells out the episode, and its "(0013)" is the next episode's absolute
+        # number, so its parse is rejected. The file map's file on 2586 has no parsed number.
+        left = "[grp] Show S01E12 (0013) (WEB 1080p) [ABCD1234].mkv"
+        parsed: dict[str, ParsedFileInfo | None] = {
+            "seeded.mkv": parsed_info(),
+            left: parsed_info(season=1, episodes=(12,), matched=((1, 12),)),
+            self._SPELLED_NAME: parsed_info(season=1, episodes=(12,)),
+        }
+        index = series_index(self._ID_BY_KEY, absolutes={2586: 12, 2587: 13})
+        target = PlacementTarget([2586, 2587], index, title_names=TitleNames("Show"))
+
+        result = place(parsed, target, [self._SPELLED_NAME], file_map={"seeded.mkv": (2586,)})
+
+        assert by_name(result) == {self._SPELLED_NAME: ((), PlacementVerdict.NO_EPISODE_FOUND)}
 
 
 class TestPlaceWindowGate:
@@ -1913,13 +1981,13 @@ class TestNameNumberForms:
     def _place(cls, names: Sequence[str], *, blocked: bool = False) -> BatchPlacements:
         """Run three blind names against a 3-wide specials window.
 
-        `blocked` adds a fourth parse so pairing in name order can never place a
-        blocked sequence instead, leaving the sequence pass the only thing under test.
+        `blocked` adds a fourth name, left for a hand import, so no pairing pass can place a blocked sequence
+        instead, leaving the sequence pass the only thing under test.
         """
 
         parsed = blind(names)
         return place(
-            _pair_in_order_blocked(parsed) if blocked else parsed,
+            _pairing_blocked(parsed) if blocked else parsed,
             PlacementTarget([501, 502, 503], series_index(cls._ID_BY_KEY)),
             names,
         )
@@ -2258,8 +2326,8 @@ class TestPlaceSequenceOverParse:
         assert result.placed == {names[0]: (503,), names[1]: (501,)}
 
     def test_a_two_season_window_blocks_the_pass(self) -> None:
-        # The extra parse keeps pairing in name order out, so the block is what is pinned.
-        parsed = _pair_in_order_blocked(blind(self._RUN))
+        # The name left for a hand import keeps the pairing passes out, so the block is what is pinned.
+        parsed = _pairing_blocked(blind(self._RUN))
 
         result = place(parsed, PlacementTarget([501, 502, 601], series_index(self._ID_BY_KEY)), self._RUN)
 
@@ -2327,7 +2395,7 @@ class TestPlaceSequenceOverParse:
         parsed = blind(run)
         parsed[run[0]] = parsed_info(matched=((1, 1),))
 
-        result = place(_pair_in_order_blocked(parsed), self._target(), run)
+        result = place(_pairing_blocked(parsed), self._target(), run)
 
         assert by_name(result) == {
             run[0]: ((), PlacementVerdict.OUTSIDE_WINDOW),
@@ -2364,9 +2432,19 @@ class TestPlaceSequenceOverParse:
     def test_two_sequences_from_anywhere_are_ambiguous(self) -> None:
         run_a = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
         run_b = [f"extra - {n} [grp].mkv" for n in (20, 21, 22)]
-        parsed = _pair_in_order_blocked(blind((*run_a, *run_b)))
+        parsed = _pairing_blocked(blind((*run_a, *run_b)))
 
         result = place(parsed, self._target(), [*run_a, *run_b])
+
+        assert result.placed == {}
+
+    def test_a_sequence_a_file_left_for_a_hand_import_belongs_to_still_ties_with_another(self) -> None:
+        # "extra - 23" is left for a hand import. The three "extra" files left to place fit the window at any start,
+        # as the "sp" files do.
+        run_a = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
+        run_b = [f"extra - {n} [grp].mkv" for n in (20, 21, 22, 23)]
+
+        result = place(blind((*run_a, *run_b)), self._target(), [*run_a, *run_b[:3]])
 
         assert result.placed == {}
 
@@ -2454,8 +2532,9 @@ class TestPlaceSequenceOverParse:
         assert result.placed == {}
 
     def test_an_empty_episode_index_blocks_the_pass(self) -> None:
-        # With no index there is no window to index, and the extra parse keeps pairing in name order out.
-        parsed = _pair_in_order_blocked(blind(self._RUN))
+        # With no index there is no window to index, and the name left for a hand import keeps the pairing passes
+        # out.
+        parsed = _pairing_blocked(blind(self._RUN))
 
         result = place(parsed, PlacementTarget(self._WINDOW, series_index({})), self._RUN)
 
@@ -2465,7 +2544,7 @@ class TestPlaceSequenceOverParse:
     def test_an_unknown_parse_keeps_the_members_waiting(self) -> None:
         # One unreadable name anywhere in the batch, and no pass may place the sequence.
         parsed = blind(self._RUN)
-        parsed[_GONE] = None
+        parsed[_HAND_IMPORT] = None
 
         result = place(parsed, self._target(), self._RUN)
 
@@ -2480,7 +2559,7 @@ class TestPlaceSequenceOverParse:
             name: parsed_info(matched=((0, i),)) for i, name in enumerate(self._RUN, 1)
         }
         parsed[names[3]] = parsed_info(matched=((0, 2),))
-        parsed[_GONE] = None
+        parsed[_HAND_IMPORT] = None
 
         result = place(parsed, self._target(), names)
 
@@ -2707,7 +2786,7 @@ class TestPlaceSequenceOverParse:
         # Three files fit three unused ids by chance once an earlier window used the rest of the target:
         # the numbering only speaks for the whole target.
         run = [f"sp - {n} [grp].mkv" for n in (14, 15, 16)]
-        parsed = _pair_in_order_blocked(blind(run))
+        parsed = _pairing_blocked(blind(run))
         target = PlacementTarget(
             [601, 602, 603, 604, 605, 606], series_index(self._SEASONED), used=frozenset({601, 602, 603})
         )
@@ -2723,7 +2802,7 @@ class TestPlaceSequenceOverParse:
         mapped = {
             f"show - {n:02d} [grp].mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in (1, 2, 3)
         }
-        parsed = _pair_in_order_blocked({**mapped, **blind(run)})
+        parsed = _pairing_blocked({**mapped, **blind(run)})
         target = PlacementTarget([601, 602, 603, 604, 605, 606], series_index(self._SEASONED))
 
         result = place(parsed, target, run, file_map={name: (600 + n,) for n, name in enumerate(mapped, 1)})
@@ -2740,7 +2819,7 @@ class TestPlaceAbsoluteWindow:
     """S01E01, then the special TVDB interleaved after it, then S01E02."""
 
     @classmethod
-    def _place(cls, *absolutes: int | None, blocked: bool = False) -> BatchPlacements:
+    def _place(cls, *absolutes: int | None) -> BatchPlacements:
         """Sonarr's shifted parse over the slots carrying `absolutes`: the third file collides with the second."""
 
         carried = {ep_id: n for ep_id, n in zip(cls._ID_BY_KEY.values(), absolutes, strict=True) if n is not None}
@@ -2750,7 +2829,7 @@ class TestPlaceAbsoluteWindow:
             cls._RUN[2]: parsed_info(matched=((1, 2),)),
         }
         target = PlacementTarget(cls._WINDOW, series_index(cls._ID_BY_KEY, absolutes=carried))
-        return place(_pair_in_order_blocked(parsed) if blocked else parsed, target, cls._RUN)
+        return place(parsed, target, cls._RUN)
 
     def test_the_sequence_follows_the_absolute_order_across_seasons(self) -> None:
         # A title holding a special TVDB interleaved: "02" is absolute 2, the special, whatever season it sits in.
@@ -2763,7 +2842,7 @@ class TestPlaceAbsoluteWindow:
     def test_without_an_absolute_order_the_parse_stands(self, absolutes: tuple[int | None, ...]) -> None:
         # A slot with no absolute, or a gap between them, leaves the sequence nothing to index by: the parse
         # stands, and the collided third file is the one unplaced file onto the one unused slot.
-        result = self._place(*absolutes, blocked=True)
+        result = self._place(*absolutes)
 
         assert by_name(result) == {
             self._RUN[0]: ((601,), PlacementVerdict.EXACT),
@@ -2805,7 +2884,7 @@ class TestPlaceSequenceTitleEvidence:
         names = [name for run in runs for name in run]
         parsed = blind(names)
         series = series_index(cls._ID_BY_KEY, titles={**cls._TITLES, **(retitled or {})})
-        return place(_pair_in_order_blocked(parsed) if blocked else parsed, PlacementTarget(cls._WINDOW, series), names)
+        return place(_pairing_blocked(parsed) if blocked else parsed, PlacementTarget(cls._WINDOW, series), names)
 
     def test_the_sequence_whose_members_name_the_window_is_picked(self) -> None:
         result = self._place(self._INSIDE, self._OUTSIDE)
@@ -3768,7 +3847,7 @@ class TestPlaceNumberedSequence:
         # An unreadable name anywhere blocks every name number pass, the blind one too.
         run = self._run("extra ", range(1, 4))
         parsed = self._batch(run)
-        parsed[_GONE] = None
+        parsed[_HAND_IMPORT] = None
 
         result = place(parsed, self._target(), [self._MAIN, *run])
 
@@ -4257,12 +4336,12 @@ class TestInterleavedSpecial:
 
 
 class TestPlacerFacts:
-    """`PlacerResult.facts`: every name as the passes read it before the first pass, file map and gone names too."""
+    """`PlacerResult.facts`: every name as the passes read it before the first pass, placed by the batch or not."""
 
     def test_every_torrent_name_gets_the_facts_the_passes_judge_by(self) -> None:
         # The titled file carries episode 2's title, and the extra is an NCOP. The file in the file map is numbered by
-        # its own title's number, which no title confirms. The gone name reads inside the window on its matched
-        # episode.
+        # its own title's number, which no title confirms. The name left for a hand import reads inside the window on
+        # its matched episode.
         titled, extra, counted = (
             "show - 02 The Return [grp].mkv",
             "[grp] show - NCOP1 [bd].mkv",
@@ -4272,7 +4351,7 @@ class TestPlacerFacts:
             titled: parsed_info(absolutes=(2,), matched=((1, 2),)),
             extra: parsed_info(),
             counted: parsed_info(absolutes=(3,), matched=((1, 3),)),
-            _GONE: parsed_info(absolutes=(1,), matched=((1, 1),)),
+            _HAND_IMPORT: parsed_info(absolutes=(1,), matched=((1, 1),)),
         }
 
         facts = place_batch(batch(parsed, [titled, extra], file_map={counted: (603,)}), _target(_FIRST_THREE)).facts
@@ -4287,7 +4366,7 @@ class TestPlacerFacts:
             counted: NameFacts(
                 episode_by_title=None, parses_inside_window=True, extra=False, parsed_by_title_number=True
             ),
-            _GONE: NameFacts(
+            _HAND_IMPORT: NameFacts(
                 episode_by_title=None, parses_inside_window=True, extra=False, parsed_by_title_number=False
             ),
         }

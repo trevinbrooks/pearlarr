@@ -519,9 +519,10 @@ class NumberingStep:
 
 
 def _absolute_only_files(batch: PlacementBatch, facts: Mapping[str, NameFacts]) -> list[_AbsoluteOnlyFile]:
-    """The pool's files: every absolute-only file of the torrent, names in the file map and gone names included.
+    """The pool's files: every absolute-only file of the torrent.
 
-    `facts` must cover every name of the torrent (`PlacerResult.facts` does).
+    The file map's files and the ones left for a hand import are among them. `facts` must cover every name of the
+    torrent (`PlacerResult.facts` does).
     """
 
     pool: list[_AbsoluteOnlyFile] = []

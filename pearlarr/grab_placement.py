@@ -26,7 +26,6 @@ from .pending_import import (
 )
 from .placement_types import (
     EMPTY_LISTING,
-    NO_FILE_MAP,
     BatchPlacements,
     EpisodeBySize,
     EpisodeIndex,
@@ -192,8 +191,8 @@ class PlacedRelease:
 
     placements: BatchPlacements
     """This placement's verdicts, one per distinct normalized file name: the whole batch when the torrent
-    is new, else the files the stored pending import's file map does not cover. A file that is another listed title's
-    is `ANOTHER_TITLES` (`TitleView.placements`)."""
+    is new, else the files the stored pending import neither placed nor left for a hand import. A file that is
+    another listed title's is `ANOTHER_TITLES` (`TitleView.placements`)."""
 
     episodes: tuple[PlacedEpisode, ...]
     """One `(season, episode, size)` per file and episode of the whole file map inside the title, in file order.
@@ -237,18 +236,23 @@ def _sizes_by_name(files: Sequence[ListedFile]) -> dict[str, int]:
     return unambiguous((f.name, f.size) for f in files)
 
 
-def listed_batch(files: Sequence[ListedFile], file_map: FileEpisodeMap = NO_FILE_MAP) -> PlacementBatch:
+def listed_batch(files: Sequence[ListedFile], stored: PendingImport | None = None) -> PlacementBatch:
     """One release's files as a placement batch keyed by NORMALIZED file name, as the downloaded names are at import.
 
     NFC/NFD-safe: two listed files with one normalized name share its verdict (the first parse) and keep their sizes.
-    `file_map` is the stored pending import's file map (`PendingImport.file_episode_map`), whose names are never
-    placed.
+    `stored` is the torrent's pending import, None when the torrent is new. The names in its file map
+    (`PendingImport.file_episode_map`) and the names it left for a hand import (`PendingImport.hand_import_files`)
+    are read as evidence and never placed.
     """
 
     parsed: dict[str, ParsedFileInfo | None] = {}
     for f in files:
         parsed.setdefault(f.name, f.parse)
-    return PlacementBatch(list(parsed), parsed, file_map)
+    if stored is None:
+        return PlacementBatch(list(parsed), parsed)
+    left_for_hand_import = frozenset(stored.hand_import_files)
+    to_place = [name for name in parsed if name not in left_for_hand_import]
+    return PlacementBatch(to_place, parsed, stored.file_episode_map)
 
 
 def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, torrent: KnownTorrent) -> PlacedRelease:
@@ -261,12 +265,14 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     when a file of the grabbing title's window is misnumbered, when a read the placement needs failed, or when nothing
     of it lands on the title and either the title's window left a file for a hand import or some of it is another
     title's.
+
+    Under a stored pending import, the files in its file map and the files it left for a hand import are not placed
+    (`listed_batch`). An earlier check judged them, and a check with fewer files to place could count a file left
+    for a hand import onto an episode that check kept it off.
     """
 
-    file_map: FileEpisodeMap = (
-        NO_FILE_MAP if torrent.pending_import is None else torrent.pending_import.file_episode_map
-    )
-    batch = listed_batch(files, file_map=file_map)
+    stored = torrent.pending_import
+    batch = listed_batch(files, stored)
     sizes = _sizes_by_name(files)
     order = torrent.order(grabbing_title.window)
 
@@ -282,7 +288,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         view = windowed.with_proposals(batch, proposals).seen_by(order.grabbing_window_at, order.imports)
 
     # 2. What the whole file map puts on the title.
-    whole_file_map = joined_file_map(file_map, view.placements.placed)
+    whole_file_map = joined_file_map(batch.file_map, view.placements.placed)
     on_window = _OnWindow.of(files, grabbing_title.title_index, whole_file_map)
     placed_on_window = bool(on_window.covered_ids)
 
@@ -293,7 +299,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         or torrent.fetched.episode_by_size is None
         # Every video file's parse feeds the checks on the files being placed, those in the file map included, and
         # nothing places a file after the grab, so an unknown parse skips the release while it has a file left to
-        # place. A release the pending import's file map covers whole needs no parse.
+        # place. A release with no file left to place needs no parse.
         or (bool(batch.new_names) and not batch.all_parses_read)
     )
     # With nothing of the whole file map on the title, a file another title's window placed or left for a hand import
@@ -315,7 +321,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     # With every window's series read, a grabbing title that can't place (`GrabbingTitle.can_place`) still places
     # nothing. A new torrent is then judged by group and size. A stored one's claim joins with nothing placed, a
     # grab-time verdict that would be final, so its title is re-checked.
-    known = order is not None and (torrent.pending_import is None or grabbing_title.can_place)
+    known = order is not None and (stored is None or grabbing_title.can_place)
     return PlacedRelease(
         files=tuple(files),
         placements=view.placements,
@@ -329,7 +335,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
             if skip_reason is SkipReason.PLACED_ELSEWHERE
             else NO_ANOTHER_TITLES_COUNTS
         ),
-        pending_import=torrent.pending_import,
+        pending_import=stored,
         intended_sizes=sizes_by_episode(whole_file_map, sizes),
     )
 
@@ -620,8 +626,8 @@ class PendingImportUpdate:
     """The torrent's identity fields for a new pending import. A stored one keeps its own."""
 
     file_map: FileEpisodeMap
-    """This placement's fresh file map: the whole batch when the torrent is new, else the files the stored file map
-    lacks."""
+    """This placement's fresh file map: the whole batch when the torrent is new, else the files the stored pending
+    import neither placed nor left for a hand import."""
 
     excluded: tuple[str, ...]
     """The names this placement proved aren't the pending import's to import under its current claims."""

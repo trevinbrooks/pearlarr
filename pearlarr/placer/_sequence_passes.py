@@ -174,7 +174,10 @@ def pass_misnumbered_specials(state: PlacerState) -> None:
 
 
 def _unjudged_of(files: Iterable[TorrentFile]) -> list[TorrentFile]:
-    """The files still to place, in the order given. File map, gone, and already judged ones drop out."""
+    """The files still to place, in the order given.
+
+    The file map's, the ones left for a hand import, and the already judged ones drop out.
+    """
 
     return [file for file in files if file.unjudged]
 
@@ -220,9 +223,10 @@ def _misnumbered_specials(state: PlacerState) -> _ListedSpecials | None:
 def _sole_specials_sequence(state: PlacerState, width: int) -> NumberedSequence | None:
     """The batch as one sequence of `width` distinct `S00Exx` names, each parsed by Sonarr as its own number's special.
 
-    File map and gone files count as members. None if a parse is unknown, the pairing passes are off, a file other
-    than an extra already has a verdict, the batch holds another sequence or a file outside the sequence, a number
-    repeats or spans several episodes, or every member's title confirms its number.
+    The file map's files and the ones left for a hand import count as members. None if a parse is unknown, the
+    pairing passes are off, a file other than an extra already has a verdict, the batch holds another sequence or a
+    file outside the sequence, a number repeats or spans several episodes, or every member's title confirms its
+    number.
     """
 
     if not state.all_parses_read or state.pairing_off or not state.only_extras_judged:
@@ -365,6 +369,20 @@ class _SequenceFit:
             if sequence.consecutive(width) and not any(file.parsed_episodes.complete for file in sequence.members)
         ]
 
+    def cut_short(self, sequence: NumberedSequence) -> bool:
+        """Whether a file left for a hand import (`PlacerState.left_for_hand_import`) carries the sequence's prefix.
+
+        By its prefix alone the file is taken as one of the sequence that is not among its members here. The members
+        left read as a shorter sequence, which a fit at any start would place by position alone, so the pass doesn't
+        place one picked that way. The sequence is still a candidate: it ties with another sequence as it would with
+        every file to place.
+        """
+
+        return any(
+            (member := file.name_parts.member) is not None and member.prefix == sequence.prefix
+            for file in self.state.left_for_hand_import
+        )
+
     def seasons_parsed(self, sequence: NumberedSequence) -> set[int]:
         """The seasons Sonarr parsed the sequence's members into."""
 
@@ -429,7 +447,8 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
     sequence the titles select, the one an AniList name of the title points at, or the best fit kind. The sequence's
     own numbers place its members onto the unused episodes (`SEQUENCE_OVER_PARSE`), unless Sonarr's parse already
     puts each member on its own unused episode. A sequence isn't placed when a file sharing its prefix was placed by
-    size against that file's numbers (`PlacerState.size_contradicted_prefixes`). With any parse unknown, the pick is
+    size against that file's numbers (`PlacerState.size_contradicted_prefixes`), or when it fits only at any start
+    and a file left for a hand import shares its prefix (`_SequenceFit.cut_short`). With any parse unknown, the pick is
     `WAITING_ON_PARSE`. It is blocked by `_SequenceFit.final_unplaced`, `whole_season_final_unplaced` for a
     whole-season pick, a member parsed into another season, a member whose numbers disagree by position
     (`TorrentFile.numbers_disagree_by_position`), titles that contradict it (`EpisodeTitleMatches.contradicts`), or an
@@ -461,6 +480,8 @@ def pass_sequence_over_parse(state: PlacerState) -> None:
         return
     sequence = chosen.sequence
     if sequence.prefix in state.size_contradicted_prefixes:
+        return
+    if chosen.fit_kind is _FitKind.ANY_CONSECUTIVE and fit.cut_short(sequence):
         return
     if not state.all_parses_read:
         state.set_aside_each(sequence.all_versions, PlacementVerdict.WAITING_ON_PARSE)

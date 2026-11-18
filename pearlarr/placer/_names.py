@@ -64,7 +64,7 @@ class TorrentNames:
 
     @classmethod
     def of(cls, batch: PlacementBatch, target: PlacementTarget, parsed_by_name: Mapping[str, ParsedEpisodes]) -> Self:
-        """Read every name, file map and gone ones included.
+        """Read every name, the file map's and the ones left for a hand import included.
 
         Two versions of one file carrying the same title still count as carrying it. A file whose parsed season and
         episode Sonarr's match agrees with (`ParsedEpisodes.key_confirmed`) is an episode, whatever extras word its

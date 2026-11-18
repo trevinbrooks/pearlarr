@@ -440,7 +440,8 @@ class PlacementBatch:
     """A torrent's files to place, with the parses of the WHOLE torrent and its file map.
 
     `parsed` may cover MORE files than `to_place`. Every parsed file is read as evidence, placed or not, and a name
-    `file_map` holds is never placed, in `to_place` or not.
+    `file_map` holds is never placed, in `to_place` or not. A parsed name that is neither to place nor in the file map
+    is one the pending import leaves for a hand import (`PendingImport.hand_import_files`).
     """
 
     to_place: Sequence[str]
@@ -458,12 +459,12 @@ class PlacementBatch:
     """The distinct names to place, batch order: `to_place` less the names in the file map."""
 
     all_names: tuple[str, ...] = field(init=False, repr=False, compare=False)
-    """The distinct names the placer reads: the names to place, then the rest of `parsed` (file map, gone). A name
-    in the file map with no parse entry is left out."""
+    """The distinct names the placer reads: the names to place, then the rest of `parsed` (the file map's and the
+    ones left for a hand import). A name in the file map with no parse entry is left out."""
 
     all_parses_read: bool = field(init=False, repr=False, compare=False)
-    """Every parse came from Sonarr this run: no miss (None). File map and gone files are parsed by name too, so a
-    miss on any of them counts, as does a file to place that has no parse entry."""
+    """Every parse came from Sonarr this run: no miss (None). The file map's files and the ones left for a hand
+    import are parsed by name too, so a miss on any of them counts, as does a file to place that has no parse entry."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's collections, then wrap read-only. The ids are tupled whatever the type says: a
