@@ -355,7 +355,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         if len(seadex_dict) == 0:
             # Nothing is placed here, so only the title whose window gave the coverage counts.
             services.report_no_releases(
-                anilist_id, update, metadata_unread=self._episodes.any_air_dates_unread([anilist_id])
+                anilist_id, update, metadata_unread=self._episodes.metadata_unread([anilist_id])
             )
             return
 
@@ -446,10 +446,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 pending_import_updates=pending_import_updates,
                 input_unread_groups=placed.input_unread_groups(seadex_dict),
                 # Every title of the series: the placement reads the window of each one SeaDex has an entry for.
-                metadata_unread=(
-                    self._episodes.any_air_dates_unread(resolved.kept_and_ignored)
-                    or self._episodes.orders_unread(series_ids)
-                ),
+                metadata_unread=self._episodes.metadata_unread(resolved.kept_and_ignored, series_ids),
             ),
         )
 

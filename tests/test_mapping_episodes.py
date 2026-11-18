@@ -142,8 +142,8 @@ def test_a_title_the_gateway_left_unread_is_unread() -> None:
     down.episode_count(4)
     episodes = make_sonarr_episodes(_anilist=down)
 
-    assert episodes.any_air_dates_unread([4, 5]) is True
-    assert episodes.any_air_dates_unread([4]) is False
+    assert episodes.metadata_unread([4, 5]) is True
+    assert episodes.metadata_unread([4]) is False
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:

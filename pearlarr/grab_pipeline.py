@@ -93,9 +93,8 @@ class GrabRequest:
     """Groups with a release whose grab-time placement waited on a read that failed this run, so a sequence may
     have been left waiting on it: the title is never cached and re-checks next run."""
     metadata_unread: bool = False
-    """A title of the series was looked up without its AniList answer (`EpisodeSource.any_air_dates_unread`), or a
-    series was read without its TVDB orders (`EpisodeSource.orders_unread`): the title is never cached and
-    re-checks next run."""
+    """A title of the series was looked up without its AniList answer, or a series was read without its TVDB orders
+    (`EpisodeSource.metadata_unread`): the title is never cached and re-checks next run."""
 
 
 def _reacquire_stamp(added_on: datetime | None) -> str:
