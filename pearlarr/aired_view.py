@@ -37,8 +37,8 @@ class NoView(Enum):
     """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""
 
     SCENE_UNREAD = auto()
-    """Sonarr numbers the series by another order, and TheXEM's scene mappings of it were never read. Sonarr keeps
-    no scene numbers for such a series, so without the mappings a release's own numbers can't be matched."""
+    """Sonarr numbers the series by another order, and TheXEM's scene mappings of it were never read. Such a series
+    takes its scene numbers from the mappings alone, so without them a release's own numbers can't be matched."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -106,8 +106,8 @@ def aired_series(
 
     A series in aired order keeps its rows untouched, whatever is stored. A series in another order has each row
     renumbered to the aired episode with the same TVDB episode id, and a stand-in for each aired episode none of its
-    rows has. Where the aired order gives two episodes one number, the first listed is kept and the other left out,
-    as Sonarr keeps them. A row whose TVDB episode is none of the aired episodes kept is kept apart, as sent
+    rows has. Where the aired order gives two episodes one number, the first listed is kept and the other left out
+    (`_one_per_number`). A row whose TVDB episode is none of the aired episodes kept is kept apart, as sent
     (`AiredSeries.own_only`).
 
     A renumbered row loses its scene numbers and keeps the number Sonarr lists it under
@@ -180,9 +180,10 @@ def _scene_numbered(episode: SonarrEpisode, numbers: Mapping[EpisodeKey, SceneNu
 def _one_per_number(aired: Sequence[OrderRow]) -> dict[int, OrderRow]:
     """The aired rows by TVDB episode id, the first row of each `(season, episode)` only.
 
-    Sonarr keeps the first of two episodes TVDB gives one number, in the order SkyHook lists them
-    (`RefreshEpisodeService.RefreshEpisodeInfo`), and the stored rows keep that order. A row whose TVDB episode id
-    isn't positive is left out: negated, it wouldn't mark a stand-in.
+    Of two episodes TVDB gives one number, the first in the order SkyHook lists them is kept, and the stored rows keep
+    that order. A Sonarr in aired order holds only one of the two, most often this one. Where it holds the other, a file
+    for that number lands on another episode here than it does there. A row whose TVDB episode id isn't positive is left
+    out: negated, it wouldn't mark a stand-in.
     """
 
     by_tvdb: dict[int, OrderRow] = {}

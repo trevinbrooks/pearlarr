@@ -18,12 +18,12 @@ short would read as a new sequence and could land wrong. Then the windows merge 
 - A file with no final verdict takes its highest-ranked provisional one (`PlacementVerdict.rank`).
 - A file the special aliases point at under one window but its numbers place elsewhere is always `MISNUMBERED`.
 
-The order of the season windows shows in what another TVDB order places (pass 16). A window that holds a key's
-aired episode places the file there, and that placement is final against the order under every later window. A key
-the order reads onto an own-only row has no window, since every window is cut from the aired
-episodes. The first window the order lands in places that file (`placer._orders._settle_off_aired`), so which title
-imports it follows the window order. A pending import that doesn't import that window leaves the file out as another
-title's, and every later placement of the torrent places it under that window again.
+The order of the season windows shows in what another TVDB order places (pass 16). A window that holds a key's aired
+episode places the file there, and that placement is final against the order under every later window. A key the order
+reads onto an own-only row has no window, since every window is cut from the aired episodes. The first window the order
+lands in places that file (`placer._orders._settle_off_aired`), so which title imports it follows the window order. A
+pending import that doesn't import that window leaves the file out as another title's, and every later placement of the
+torrent places it under that window again.
 
 After the merge, the numbering step (`numberings`) places files in the gaps the windows left
 (`WindowedPlacements.with_proposals`): a file named by number alone that every window left `NO_EPISODE_FOUND` or

@@ -248,26 +248,13 @@ def _place_season_episode_files(state: PlacerState) -> None:
 def _settle_off_aired(state: PlacerState, file: TorrentFile, judging: Sequence[_OrderFit]) -> None:
     """Settle a file every order in `judging` reads off aired: place it, name its key, or leave it.
 
-    The file is placed (`OTHER_ORDER`) on own-only rows (`EpisodeIndex.own_only`) when all of this holds:
+    Naming a key `ORDER_ONLY` only reports, so the first order that reads one names it. Placing the file on own-only
+    rows (`OTHER_ORDER`) writes into Sonarr, so it asks for more. A name is read against the aired episodes' titles
+    only, never these rows' own, so one that carries any of those titles is not placed here.
 
-    - every key of the file reads onto one, and the orders agree on the rows,
-    - one of the orders lands in the window (`_OrderFit.lands_in_window`), which none does with no window,
-    - no file of the torrent sits on any of the rows: an earlier window's, this call's, or the file map's,
-    - no order reads another file, or another key of this one, onto any of the rows,
-    - and the name carries no episode's title and no bracketed number that names an episode.
-
-    When a key is order only, the file is `ORDER_ONLY` under the first order that says so, naming that key. Any
-    other file keeps the verdict it had.
-
-    No other code places a file outside the window. A title's window is cut from the aired episodes, so no window
-    can hold one of these rows, and every other pass finds its episodes through the aired index, so none can name
-    one. For the same reason the rows' own titles are in no title check: a name is read against the aired episodes'
-    titles only, and one that carries any of them is not placed here.
-
-    The season-episode path names a key only under the one explaining order, so it places only under that order
-    too. Placing still asks for more than naming does, because naming only reports and placing writes into Sonarr.
-
-    Every window places every file, so the rows go to the first window in placement order that an order lands in.
+    This is the one place a file lands outside the window. Windows are cut from the aired episodes, and every other
+    pass finds its episodes through the aired index, so no other pass can hold or name an own-only row. Every
+    window places every file, so the rows go to the first window in placement order that an order lands in.
     `window_placement` says what follows when a pending import doesn't import that window.
     """
 
@@ -432,10 +419,10 @@ def _brings_outside_files_in(
 ) -> bool:
     """Whether the torrent has outside files and the order reads every one into the window or the listing.
 
-    An outside file (`_SeasonEpisodeFiles.outside_files`) is a file nothing placed, whose key the aired order reads
-    onto an episode that the window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`).
-    An order explains none of them when it reads one onto another such episode, reads its key off aired, or has
-    no key for it: the torrent still holds a file its listing doesn't account for.
+    An outside file (`_SeasonEpisodeFiles.outside_files`) is a file nothing placed, whose key the aired order reads onto
+    an episode that the window doesn't hold and SeaDex doesn't list for the torrent (`_in_window_or_listing`). An order
+    explains none of them when it reads one onto another such episode, reads its key off aired, or has no key for it:
+    the torrent still holds a file its listing doesn't account for.
     """
 
     outside_files = files.outside_files

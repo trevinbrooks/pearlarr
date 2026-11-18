@@ -326,7 +326,7 @@ class SonarrEpisodes(EpisodeSource):
         """Read the due scene mappings of the series in another order (see `XemGateway.prefetch`).
 
         Returns how many were written. The series are the ones `prefetch_orders` asks SkyHook for, less those in
-        aired order: Sonarr holds their scene numbers, so TheXEM is never asked for them.
+        aired order: their scene numbers are read off Sonarr's rows, so TheXEM is never asked for them.
         """
 
         return self._xem.prefetch(

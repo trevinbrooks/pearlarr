@@ -131,8 +131,8 @@ def _parse_is_fresh(row: Mapping[str, object], *, window: ParseFreshness) -> boo
     A legacy row is stale: one with no whole parse, or whose parse lacks a field of `ParsedFileInfo`, which an
     older build wrote before the field existed. The model would read a missing field as its default, so only this
     check re-parses the row, and the cache warm-up sees it stale too. So is a row whose series is numbered by
-    another order than the row was stored under, either way round: Sonarr matched the name by the numbers of the
-    order the series was in. A row with matched episodes (no `series_fp`) is valid for the 30-day
+    another order than the row was stored under, either way round: its matched episodes are taken to follow the
+    numbers of the order the series was in. A row with matched episodes (no `series_fp`) is valid for the 30-day
     `window.matched_cutoff`. One with none is valid only while the series-id set is unchanged (matching
     `window.series_hash`) and within the short `window.no_episodes_cutoff` backstop, so a newly-added series'
     files are parsed again.

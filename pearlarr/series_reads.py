@@ -2,7 +2,7 @@
 
 A title's check reads every series as aired (`aired_view`), whatever order Sonarr numbers it by, the episodes Sonarr
 matched a file name to included (`aired_parse`). The import reads Sonarr's own rows. A series in another order takes
-its scene numbers from TheXEM's mappings (`scene_numbers`), since Sonarr keeps none for it.
+its scene numbers from TheXEM's mappings (`scene_numbers`), not from Sonarr's rows.
 
 Whether a series' rows can be read at all is asked of `row_order_guard`, which holds every rule for it.
 """
@@ -199,9 +199,9 @@ class SeriesReads(AiredParseSource, SeriesRows):
     def _scene_numbered(self, view: AiredSeries, tvdb_id: int) -> AiredSeries | NoView:
         """The view of a series in another order with the scene numbers TheXEM's stored mappings give its episodes.
 
-        Sonarr keeps no scene numbers for such a series, and the view's builder clears the ones its rows carry.
-        Mappings never read give no view: a file named by its scene numbers would be matched by the aired ones.
-        Mappings read at any age give one, and so does a series TheXEM has none for.
+        The view's builder clears whatever scene numbers its rows carry (`SonarrEpisode.renumbered`), and these take
+        their place. Mappings never read give no view: a file named by its scene numbers would be matched by the aired
+        ones. Mappings read at any age give one, and so does a series TheXEM has none for.
         """
 
         mappings = self._xem.scene_mappings(tvdb_id)
@@ -213,8 +213,8 @@ class SeriesReads(AiredParseSource, SeriesRows):
     def series_index(self, series_id: int) -> EpisodeIndex | None:
         """The whole series' placement index, numbered as aired, with its other TVDB orders read onto it.
 
-        Stand-ins included. Own-only rows are held apart (`EpisodeIndex.own_only`). Built once
-        per read of the series' rows. None when the series has no view.
+        Stand-ins included. Own-only rows are held apart (`EpisodeIndex.own_only`). Built once per read of the series'
+        rows. None when the series has no view.
         """
 
         view = self.aired_series(series_id)
@@ -235,11 +235,11 @@ class SeriesReads(AiredParseSource, SeriesRows):
     def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer | NoView:
         """The parse with the matched episodes an aired Sonarr gives it, or why its answer can't be known.
 
-        Only a parse Sonarr matched to a series it numbers by another order changes. Sonarr matched that name by
-        its own order's numbers, so its matched episodes are never passed on: they are matched again over the
-        series' aired view (`aired_series`, which fetches a series the run hasn't read), by the series' alternate
-        titles (`AiredMatcher`), and one may be a stand-in. A series with no aired view answers why it has none,
-        and so does a parse of a series held for the run (`RowOrderGuard.holds`).
+        Only a parse Sonarr matched to a series it numbers by another order changes. Its matched episodes are taken to
+        follow that order's numbers, so they are never passed on: they are matched again over the series' aired view
+        (`aired_series`, which fetches a series the run hasn't read), by the series' alternate titles (`AiredMatcher`),
+        and one may be a stand-in. A series with no aired view answers why it has none, and so does a parse of a series
+        held for the run (`RowOrderGuard.holds`).
         """
 
         series_id = info.series_id

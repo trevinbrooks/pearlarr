@@ -1,9 +1,9 @@
 """A series' scene numbers, worked out from TheXEM's mappings.
 
 Scene numbers are the season, episode and absolute number releases give an episode where they number a series
-differently from TVDB. TheXEM maps them per TVDB episode, and Sonarr keeps them on its episode rows, except for a
-series it numbers by another TVDB order. This is a copy of how Sonarr works them out for a series in aired order
-(`XemService`; Sonarr and pearlarr are both GPL-3), on season and episode numbers in place of episode rows:
+differently from TVDB. TheXEM maps them per TVDB episode, and Sonarr's episode rows carry them. For a series Sonarr
+numbers by another TVDB order they are worked out here, as a copy of how Sonarr works them out for a series in aired
+order (`XemService`; Sonarr and pearlarr are both GPL-3), on season and episode numbers in place of episode rows:
 `scene_numbers` is `PerformUpdate`, and `_numbered_on` is `ExtrapolateMappings`.
 
 Where it departs from Sonarr:
