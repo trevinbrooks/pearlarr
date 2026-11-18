@@ -370,7 +370,7 @@ def _place_name_number_sequences(state: PlacerState) -> None:
     if chosen is None:
         return
     sequence = unjudged_sequences[chosen]
-    if len(sequence.members) <= len(state.target.real_ids):
+    if len(sequence.members) <= len(state.target.window_ids):
         return
     fits = [fit for name in state.index.orders if (fit := _name_number_fit(state, name, sequence)) is not None]
     for member in sequence.members:
@@ -398,7 +398,7 @@ def _name_number_fit(state: PlacerState, name: str, sequence: NumberedSequence) 
     """
 
     order = state.index.orders[name]
-    window = state.target.real_ids
+    window = state.target.window_ids
     if (season := _season_holding(state, name)) is None:
         return None
     key_by_id = state.index.key_by_id
@@ -435,7 +435,7 @@ def _name_number_fit(state: PlacerState, name: str, sequence: NumberedSequence) 
 def _season_holding(state: PlacerState, name: str) -> int | None:
     """The one season of the order `name` that holds every window episode, else None."""
 
-    window = state.target.real_ids
+    window = state.target.window_ids
     id_by_key = state.index.orders[name].id_by_key
     seasons = {key.season for key, ep_id in id_by_key.items() if ep_id in window}
     if len(seasons) != 1:

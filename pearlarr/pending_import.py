@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
+from .aired_view import is_stand_in
 from .arr_models import SonarrEpisode
 from .file_paths import normalize_file_name
 from .pairs import unambiguous
@@ -44,14 +45,15 @@ def sizes_by_episode(file_map: FileEpisodeMap, listed: Mapping[str, int]) -> dic
 
 
 def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
-    """The file map with every key normalized and zero ids dropped, minus the files that leaves empty.
+    """The file map with every key normalized and only Sonarr episode ids kept, minus the files that leaves empty.
 
-    Of two keys that normalize alike, the first one left with ids wins.
+    A zero id and a stand-in's id (`aired_view.stand_in`) are dropped: Sonarr has no episode to import either
+    onto. Of two keys that normalize alike, the first one left with ids wins.
     """
 
     normalized: dict[str, tuple[int, ...]] = {}
     for name, ids in entries.items():
-        clean = tuple(i for i in ids if i)
+        clean = tuple(i for i in ids if i and not is_stand_in(i))
         if clean:
             normalized.setdefault(normalize_file_name(name), clean)
     return normalized
@@ -224,7 +226,9 @@ class TitleClaim:
     """The SeaDex entry URL when it claimed, for the carried-over pending import's inline `link` line."""
 
     ordered_episode_ids: tuple[int, ...]
-    """The title's resolved episode ids in season order. Empty means no window: any id of the series."""
+    """The title's resolved episode ids in season order, as the placer was handed them: a stand-in's id
+    (`aired_view.stand_in`) is kept, so a later placement of the torrent's other files runs under the same window.
+    Empty means no window: any id of the series."""
 
     names: TitleNames
     """The series and AniList names the placement breaks ties by (see `TitleNames`)."""
@@ -333,9 +337,9 @@ class PendingImport:
     excluded_files: tuple[str, ...] = ()
     """Normalized file names of video files that aren't this pending import's to import under the claims it has now
     (a duplicate a collision left unplaced, a file every window resolves outside, one another listed title's window
-    placed or left for a hand import), found at grab time. They only quiet the import's warning: a later claim's grab
-    can still place one. Normalized and deduplicated in order as the pending import is built, and never a name the
-    file map holds."""
+    placed or left for a hand import), or that sit on an aired episode Sonarr has no row for, found at grab time.
+    They only quiet the import's warning: a later claim's grab can still place one. Normalized and deduplicated in
+    order as the pending import is built, and never a name the file map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's files from an outdated
@@ -423,9 +427,17 @@ class PendingImport:
         return list(dict.fromkeys(ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids))
 
     def window_episode_ids(self) -> list[int]:
-        """The episodes a hand import must make done (`all_done`): the claims' windows in order, else file map ids."""
+        """The episodes a hand import must make done (`all_done`): the claims' windows in order, else file map ids.
 
-        windows = list(dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids))
+        A window's stand-ins are left out, since Sonarr has no episode for one to be done. Windows of stand-ins
+        alone read as no window, so the file map's ids stand.
+        """
+
+        windows = list(
+            dict.fromkeys(
+                ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids if not is_stand_in(ep_id)
+            )
+        )
         return windows or sorted(self.file_map_episode_ids())
 
     def guards_for(self, series_id: int) -> OwnedAtGrab:

@@ -403,7 +403,7 @@ class _SequenceFit:
 
         parsed_by_name = [file.parsed_episodes for file in sequence.members]
         if all(r.either_ids is not None for r in parsed_by_name):
-            return not any(i in self.state.target.real_ids for r in parsed_by_name for i in r.either_ids or ())
+            return not any(i in self.state.target.window_ids for r in parsed_by_name for i in r.either_ids or ())
         if not all(r.wholly_outside and r.sonarr_agrees and len(r.ids) == 1 for r in parsed_by_name):
             return False
         return len({r.ids[0] for r in parsed_by_name}) == len(parsed_by_name)

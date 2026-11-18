@@ -501,7 +501,7 @@ def _named_by_title(state: PlacerState, candidate_files: Sequence[TorrentFile]) 
     """
 
     target = state.target
-    one_episode = len(target.real_ids) == 1 and target.episode_count in (None, 1)
+    one_episode = len(target.window_ids) == 1 and target.episode_count in (None, 1)
     nameable = [
         file
         for file in candidate_files

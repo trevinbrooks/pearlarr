@@ -16,6 +16,7 @@ from pearlarr.placement_types import (
     PlacementTarget,
     PlacementVerdict,
     SeadexEvidence,
+    episode_index,
 )
 from pearlarr.releases import EpisodeKey
 from pearlarr.window_placement import (
@@ -38,6 +39,8 @@ from .builders import (
     parsed_specials,
     place,
     series_index,
+    sonarr_ep,
+    stand_in_ep,
     title_claim,
     title_window,
     torrent_listing,
@@ -853,3 +856,92 @@ class TestFileMap:
 
         assert merged_of(result).placed == {}
         assert PlacementVerdict.SPECIAL_ALIAS not in verdicts_of(merged_of(result))
+
+
+_STAND_IN = -902
+# A season of three whose second episode Sonarr has no row for: the series holds it as a stand-in.
+_SWITCHED = episode_index([sonarr_ep(1, 1, ep_id=601), stand_in_ep(1, 2, tvdb_id=902), sonarr_ep(1, 3, ep_id=603)])
+_SWITCHED_SEASON = [601, _STAND_IN, 603]
+
+
+def _season_one(*numbers: int) -> dict[str, ParsedFileInfo | None]:
+    """`Show - S01Exx.mkv` per number, each matched to that episode of season 1."""
+
+    return {f"Show - S01E{n:02d}.mkv": parsed_info(season=1, episodes=(n,), matched=((1, n),)) for n in numbers}
+
+
+class TestAiredOnly:
+    """A file placed on a stand-in, an aired episode Sonarr has no row for, is set aside once the windows merge."""
+
+    def test_a_file_placed_on_a_stand_in_is_set_aside_under_its_aired_number(self) -> None:
+        placed = _place_across(_season_one(1, 2, 3), (_window(_SWITCHED_SEASON, series=_SWITCHED),))
+
+        after = placed.aired_only_set_aside()
+
+        # The passes placed it as on any episode, and what the window gave each file is kept.
+        assert by_name(merged_of(placed))["Show - S01E02.mkv"] == ((_STAND_IN,), PlacementVerdict.EXACT)
+        assert under_window(after, 0) == under_window(placed, 0)
+        assert by_name(merged_of(after)) == {
+            "Show - S01E01.mkv": ((601,), PlacementVerdict.EXACT),
+            "Show - S01E02.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "Show - S01E03.mkv": ((603,), PlacementVerdict.EXACT),
+        }
+        assert merged_of(after).placements[1].aired_only == (EpisodeKey(1, 2),)
+
+    @pytest.mark.parametrize(
+        ("episodes", "ids"),
+        [
+            pytest.param((2, 3), (_STAND_IN, 603), id="stand-in-first"),
+            pytest.param((1, 2), (601, _STAND_IN), id="stand-in-last"),
+        ],
+    )
+    def test_a_file_on_a_stand_in_and_a_sonarr_episode_is_set_aside_whole(
+        self, episodes: tuple[int, int], ids: tuple[int, int]
+    ) -> None:
+        parsed = {
+            "Show - double.mkv": parsed_info(season=1, episodes=episodes, matched=((1, episodes[0]), (1, episodes[1])))
+        }
+        placed = _place_across(parsed, (_window(_SWITCHED_SEASON, series=_SWITCHED),))
+
+        (placement,) = merged_of(placed.aired_only_set_aside()).placements
+
+        assert merged_of(placed).placed == {"Show - double.mkv": ids}
+        assert (placement.ids, placement.verdict) == ((), PlacementVerdict.AIRED_ONLY)
+        assert placement.aired_only == (EpisodeKey(1, 2),)
+
+    def test_a_file_the_numbering_step_placed_on_a_stand_in_is_set_aside(self) -> None:
+        _, proposed = _before_and_after_proposals(
+            _gap_and_placed(), (_window(_SWITCHED_SEASON, series=_SWITCHED),), {_GAP: (_STAND_IN,)}
+        )
+
+        assert by_name(merged_of(proposed))[_GAP] == ((_STAND_IN,), PlacementVerdict.NUMBERINGS_AGREE)
+        assert by_name(merged_of(proposed.aired_only_set_aside()))[_GAP] == ((), PlacementVerdict.AIRED_ONLY)
+
+    def test_a_file_another_titles_window_placed_on_a_stand_in_is_never_that_titles(self) -> None:
+        # The second window is a title's the pending import doesn't import. Its file on a Sonarr episode is that
+        # title's to import, and its file on the stand-in is nobody's.
+        windows = (_window([601], series=_SWITCHED), _window([_STAND_IN, 603], series=_SWITCHED))
+
+        view = _place_across(_season_one(1, 2, 3), windows).aired_only_set_aside().seen_by(0, {0})
+
+        assert by_name(view.placements) == {
+            "Show - S01E01.mkv": ((601,), PlacementVerdict.EXACT),
+            "Show - S01E02.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "Show - S01E03.mkv": ((), PlacementVerdict.ANOTHER_TITLES),
+        }
+        assert view.another_titles == {"Show - S01E03.mkv"}
+
+    def test_a_torrent_with_no_file_on_a_stand_in_is_left_as_placed(self) -> None:
+        placed = _place_across(_season_one(1, 3), (_window(_SWITCHED_SEASON, series=_SWITCHED),))
+
+        assert placed.aired_only_set_aside() == placed
+
+    def test_a_stand_in_the_series_no_longer_lists_still_sets_its_file_aside_unnamed(self) -> None:
+        # A stored window keeps the ids it was claimed with, and the lone file goes on its only id.
+        gone = -999
+        placed = _place_across(blind(["Show OVA.mkv"]), (_window([gone], series=_SWITCHED),))
+
+        (placement,) = merged_of(placed.aired_only_set_aside()).placements
+
+        assert merged_of(placed).placed == {"Show OVA.mkv": (gone,)}
+        assert (placement.verdict, placement.aired_only) == (PlacementVerdict.AIRED_ONLY, ())

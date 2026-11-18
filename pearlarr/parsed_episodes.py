@@ -123,7 +123,7 @@ def _resolve(key: _ParsedKey, target: PlacementTarget) -> int | None:
 def _all_inside(keys: Iterable[_ParsedKey], target: PlacementTarget) -> bool:
     """Whether every season and episode resolves to an episode of the window."""
 
-    return all(_resolve(key, target) in target.real_ids for key in keys)
+    return all(_resolve(key, target) in target.window_ids for key in keys)
 
 
 def _is_season_shift(own: Sequence[_ParsedKey], matched: Sequence[_ParsedKey]) -> bool:
@@ -320,5 +320,5 @@ def spans_multiple(info: ParsedFileInfo, target: PlacementTarget) -> bool:
     if not info.full_season:
         return True
     return any(
-        target.id_by_key.get(season_episode_key(season, episode)) in target.real_ids for season, episode in pairs
+        target.id_by_key.get(season_episode_key(season, episode)) in target.window_ids for season, episode in pairs
     )
