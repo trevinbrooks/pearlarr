@@ -98,6 +98,7 @@ from pearlarr.reporter import RunReporter
 from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexNoEntry, SeaDexSource
+from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
@@ -1600,26 +1601,39 @@ def queue_record(
     )
 
 
+def make_series_reads(
+    sonarr: AbstractSonarrClient | None = None,
+    cache_store: AbstractCacheStore | None = None,
+    *,
+    skyhook_client: AbstractSkyHookClient | None = None,
+    xem_client: AbstractXemClient | None = None,
+) -> SeriesReads:
+    """A real `SeriesReads` over typed fakes, before any library read: no series is known, and no order was sent.
+
+    Its TVDB orders and scene mappings are the ones `cache_store` holds, fetched through the two clients.
+    """
+
+    cache_store = cache_store or FakeCacheStore()
+    return SeriesReads(
+        sonarr or FakeSonarrClient(),
+        SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
+        XemGateway(client=xem_client or FakeXemClient(), cache_store=cache_store),
+    )
+
+
 def make_sonarr_episodes(
     *, series_episodes: Mapping[int, list[SonarrEpisode]] | None = None, **attrs: Any
 ) -> SonarrEpisodes:
-    """A bare `SonarrEpisodes` with `__init__` bypassed, its per-run caches defaulted empty.
+    """A bare `SonarrEpisodes` with `__init__` bypassed, over real reads of its `sonarr` before any library read.
 
     `series_episodes` are the rows the run already read, by series id.
     """
 
-    defaults: dict[str, Any] = {
-        "_series": {},
-        "_series_hash": "",
-        "_library": {},
-        "_sends_order": False,
-        "_held": set[int](),
-        "_out_of_step": set[int](),
-        "_picks_logged": set[int](),
-    }
+    defaults: dict[str, Any] = {"sonarr": FakeSonarrClient(), "_picks_logged": set[int]()}
     defaults.update(attrs)
+    defaults.setdefault("_reads", make_series_reads(defaults["sonarr"]))
     episodes = make_bare_instance(SonarrEpisodes, **defaults)
-    seed_series_episodes(episodes, series_episodes or {})
+    seed_series_episodes(episodes._reads, series_episodes or {})
     return episodes
 
 
@@ -1629,17 +1643,17 @@ def every_series(in_sonarr: list[SonarrItem]) -> list[SonarrItem]:
     return in_sonarr
 
 
-def seed_series_episodes(episodes: SonarrEpisodes, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:
+def seed_series_episodes(reads: SeriesReads, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:
     """Hold each series' rows as read this run, as a prefetch leaves them."""
 
     for series_id, rows in series_episodes.items():
-        episodes._store(series_id, rows)
+        reads.store(series_id, rows)
 
 
 def held_series_episodes(episodes: SonarrEpisodes) -> dict[int, list[SonarrEpisode]]:
-    """The rows the run holds, by series id."""
+    """The rows the run holds, by series id, off the reads the episode collaborator warms."""
 
-    return {series_id: read.rows for series_id, read in episodes._series.items()}
+    return {series_id: read.rows for series_id, read in episodes._reads._series.items()}
 
 
 _NO_EPISODE_DETAILS: Mapping[int, EpisodeDetails] = MappingProxyType({})
@@ -1710,7 +1724,7 @@ def make_sonarr_sync(
         sonarr_client=sonarr if sonarr is not None else FakeSonarrClient(),
     )
     if series_episodes is not None:
-        seed_series_episodes(strat._episodes, series_episodes)
+        seed_series_episodes(strat._reads, series_episodes)
     return strat
 
 

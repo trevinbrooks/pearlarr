@@ -51,8 +51,8 @@ from .pending_import import ClaimedRows, FileEpisodeMap, PendingImport, joined_f
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
 from .releases import EpisodeKey
+from .series_reads import SeriesRows
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_episodes import SeriesRows
 from .sonarr_state import (
     CommandBlock,
     ContentPaths,
@@ -1093,7 +1093,7 @@ class ImportReconciler:
         """The pending import under each claimed series' episodes read now.
 
         None when a read failed, or gave rows that aren't numbered by the order Sonarr names for the series
-        (`SonarrEpisodes.read_episodes`).
+        (`SeriesReads.read_episodes`).
 
         One already imported by the ids it stores is answered as stored. Any other is followed under the rows read
         (`PendingImport.followed`) and answered by the ids it has then. One that can't be followed under them

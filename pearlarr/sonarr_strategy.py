@@ -32,6 +32,7 @@ from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_ind
 from .progress import ProgressCallback
 from .releases import EpisodeKey, SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
 from .series_listings import SeriesListings
+from .series_reads import SeriesReads
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes, TitleEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
@@ -173,12 +174,16 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 logger=self.logger,
             )
 
-        # Episode-domain collaborator: owns the per-run episode cache + series
-        # hash and the (series, anilist_id, mapping) -> episodes resolution. Built
+        # The run's reads: the library read, the per-run episode cache, and each series as aired. The episode
+        # collaborator, the parse cache and the import share this one, so each reads a series off the same rows.
+        # The strategy takes every series index, order and alternate title from it.
+        self._reads = SeriesReads(self.sonarr, deps.skyhook, deps.xem)
+
+        # Episode-domain collaborator: owns the (series, anilist_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes / prefetch_orders / prefetch_scene_numbers to it, and takes every title's episodes
-        # and every series index from it, numbered as aired, and a series' alternate titles.
-        self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
+        # from it, numbered as aired.
+        self._episodes = SonarrEpisodes(deps, self.sonarr, self._services, self._reads)
 
         # Reads every SeaDex entry of the series once per run, for each title's window and the size
         # matches files are placed by. Window names are the ones a title's own check resolves.
@@ -191,8 +196,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
-        # It reads the run's series hash and each parse's aired matches off the episode collaborator.
-        self._parse = SonarrParseCache(deps, self.sonarr, self._episodes)
+        # It reads the run's series hash and each parse's aired matches off the run's reads.
+        self._parse = SonarrParseCache(deps, self.sonarr, self._reads)
 
         # Import-execution collaborator: builds + POSTs the authoritative auto
         # import from the pending import's file map, owns the per-run quality/language
@@ -202,9 +207,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         self._executor = ImportExecutor(deps, self.sonarr)
 
         # Import-reconcile collaborator: the import_completed decision + the
-        # grab-time pending import update build. Composes the episode collaborator + the
+        # grab-time pending import update build. Composes the run's reads + the
         # executor. The import_completed / check_title hooks delegate to it.
-        self._reconciler = ImportReconciler(self._services.pending_imports, self._episodes, self._executor)
+        self._reconciler = ImportReconciler(self._services.pending_imports, self._reads, self._executor)
 
     # --- ArrStrategy hooks ------------------------------------------------------
 
@@ -213,7 +218,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         """Every Sonarr series with AniList mapping info.
 
         Also the arr run's start hook: reset the per-run import scratch here, and let the
-        episode collaborator reset its own cache + recompute the series hash
+        episode collaborator start the run's reads over the library
         as it enumerates (this is called once, before the per-item loop).
         """
 
@@ -259,7 +264,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         renumbered: set[int] = set()
         for item in items:
-            numbering = self._episodes.library_orders(item.id).numbering
+            numbering = self._reads.library_orders(item.id).numbering
             for anilist_id in self.item_mappings(item, log_ignored=False):
                 cached = self._services.cached_numbering(anilist_id)
                 if cached is not None and cached.differs_from(numbering):
@@ -276,9 +281,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         it stores. One with a series that couldn't be read is left for the next run.
         """
 
-        views = {series_id: self._episodes.aired_series(series_id) for series_id in pending.series_ids}
+        views = {series_id: self._reads.aired_series(series_id) for series_id in pending.series_ids}
         if any(
-            isinstance(view, AiredSeries) and self._episodes.library_orders(series_id).in_another_order
+            isinstance(view, AiredSeries) and self._reads.library_orders(series_id).in_another_order
             for series_id, view in views.items()
         ):
             self._drop_unless_imported(
@@ -287,7 +292,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 "checking its titles again (episodes it already imported may be on the wrong episodes)",
             )
             return
-        rows = [self._episodes.last_known_episodes(series_id) for series_id in views]
+        rows = [self._reads.last_known_episodes(series_id) for series_id in views]
         if not all(rows) or any(isinstance(view, NoView) for view in views.values()):
             return
         sent = [row for series_rows in rows for row in series_rows]
@@ -343,7 +348,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     @property
     @override
     def reads_scene_numbers(self) -> bool:
-        return bool(self._episodes.series_in_another_order)
+        return bool(self._reads.series_in_another_order)
 
     @override
     def prefetch_scene_numbers(self, items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
@@ -412,7 +417,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Setup info for cache
         update = services.new_cached_title_update(title, sd_entry)
 
-        orders = self._episodes.library_orders(sonarr_series_id)
+        orders = self._reads.library_orders(sonarr_series_id)
 
         # Get the title's episodes, numbered as aired whatever order Sonarr numbers the series by
         title_episodes = self._episodes.title_episodes(sonarr_series_id, anilist_id, mapping)
@@ -517,7 +522,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             series_index=indexes.get(sonarr_series_id, episode_index([])),
             title_names=title.names,
             episode_count=self._episodes.episode_count(anilist_id),
-            alternate_titles=tuple(alt.title for alt in self._episodes.alternate_titles(sonarr_series_id)),
+            alternate_titles=tuple(alt.title for alt in self._reads.alternate_titles(sonarr_series_id)),
         )
         placed = PlacedEntry.place(
             grabbing_title,
@@ -603,7 +608,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def _series_indexes(self, series_ids: Iterable[int]) -> dict[int, EpisodeIndex]:
         """One index per series, numbered as aired (a cold read fetches once). One with no aired view is absent."""
 
-        return {sid: index for sid in series_ids if (index := self._episodes.series_index(sid)) is not None}
+        return {sid: index for sid in series_ids if (index := self._reads.series_index(sid)) is not None}
 
     def _followed(self, stored: Mapping[str, PendingImport]) -> dict[str, PendingImport]:
         """The stored pending imports by hash, each followed under the rows the run holds of the series it claims.
@@ -615,7 +620,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         followed: dict[str, PendingImport] = {}
         for infohash, pending in stored.items():
-            rows = ClaimedRows.of(pending, {sid: self._episodes.last_known_episodes(sid) for sid in pending.series_ids})
+            rows = ClaimedRows.of(pending, {sid: self._reads.last_known_episodes(sid) for sid in pending.series_ids})
             if rows is None:
                 self.logger.debug(
                     f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent - "

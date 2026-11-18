@@ -19,7 +19,7 @@ class NoView(Enum):
 
     READ_FAILED = auto()
     """Sonarr's episodes of the series couldn't be read, its order couldn't be read after them, or the series is
-    held for the run (`SonarrEpisodes.aired_series`)."""
+    held for the run (`SeriesReads.aired_series`)."""
 
     ORDERS_UNREAD = auto()
     """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""

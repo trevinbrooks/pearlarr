@@ -4,9 +4,9 @@
 the durable parse cache: cold-cache warm, TTL eviction, and the gather that
 pairs each video file with its parse for `place_release`. The cache rows
 themselves (`ParseCacheRows`, in `parse_cache`) are bound once on `ArrRunDeps`. The
-episode collaborator is handed in. It has the series hash that pins rows with no
+run's reads are handed in. They have the series hash that pins rows with no
 matched episodes, and the order of each series, since a row is good only while its
-series stays in the order it was stored under. It matches a parse again for a series
+series stays in the order it was stored under. They match a parse again for a series
 Sonarr numbers by another order (`AiredParseSource.aired_parse`). The cache keeps
 Sonarr's own answer, never that one.
 """
@@ -22,8 +22,9 @@ from .grab_placement import ListedFile
 from .output.console_text import count_noun
 from .parse_cache import ParseFreshness
 from .releases import SeadexDict
+from .series_reads import AiredParseSource
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_episodes import AiredParseSource, fetch_workers
+from .sonarr_episodes import fetch_workers
 from .sonarr_matching import NoAnswer
 from .video_files import indexed_video_files
 
@@ -53,14 +54,14 @@ class SonarrParseCache:
     Reads go through `rows`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
-    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, episodes: AiredParseSource) -> None:
-        """Bind the shared collaborators, the Sonarr client whose `/parse` the cache fills from, and the episode source.
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, reads: AiredParseSource) -> None:
+        """Bind the shared collaborators, the Sonarr client whose `/parse` the cache fills from, and the run's reads.
 
-        The episode source gives the run's series hash, each series' order, and the aired matches of a parse.
+        The reads give the run's series hash, each series' order, and the aired matches of a parse.
         """
 
         self.sonarr = sonarr
-        self._episodes = episodes
+        self._reads = reads
         self._config = deps.config
         self.cache_store = deps.cache_store
         self.rows = deps.parse_cache_rows
@@ -99,7 +100,7 @@ class SonarrParseCache:
         info = self._parse_for(f, window=window)
         if info is None:
             return None
-        aired = NoView.READ_FAILED if info.series_id in unread else self._episodes.aired_parse(info)
+        aired = NoView.READ_FAILED if info.series_id in unread else self._reads.aired_parse(info)
         if isinstance(aired, ParsedFileInfo):
             return aired
         if aired is NoAnswer.SONARR_FAILS:
@@ -151,7 +152,7 @@ class SonarrParseCache:
         """
 
         # Cutoffs computed once per call (not per file), all anchored to one instant.
-        window = ParseFreshness.open(self._episodes.series_hash, self._episodes.series_in_another_order)
+        window = ParseFreshness.open(self._reads.series_hash, self._reads.series_in_another_order)
 
         # Evict parse rows aged past that same cutoff so the stored parses stop
         # growing without bound. Staged like the writes below (committed at the
