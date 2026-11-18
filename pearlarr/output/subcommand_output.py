@@ -195,6 +195,7 @@ class CliTextRenderer(Renderer):
             ("pending_imports", str(event.pending_imports)),
             ("guard_facts", str(event.guard_facts)),
             ("tvdb_orders", str(event.tvdb_orders)),
+            ("scene_mappings", str(event.scene_mappings)),
             ("size", f"{event.size_bytes / (1024 * 1024):.2f} MiB"),
         ]
         for key, value in rows:

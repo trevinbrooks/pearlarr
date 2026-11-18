@@ -87,6 +87,7 @@ from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, GroupReleases, OrderOnlyKey, PlacedEpisode, Release, SeadexDict
 from pearlarr.reporter import RunReporter
+from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexNoEntry, SeaDexSource
 from pearlarr.skyhook_client import AbstractSkyHookClient
@@ -107,8 +108,10 @@ from pearlarr.wait_types import (
     PauseReason,
 )
 from pearlarr.window_placement import WindowedPlacements
+from pearlarr.xem_client import AbstractXemClient
+from pearlarr.xem_gateway import XemGateway
 
-from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient
+from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient, FakeXemClient
 
 # The display separator the wait region, boot step lines and report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
@@ -289,6 +292,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
         self._tvdb_orders: dict[int, CachedOrders] = {}
+        self._scene_mappings: dict[int, CachedSceneMappings] = {}
         self._kv: dict[str, str] = {}
 
     # -- lifecycle --
@@ -445,6 +449,18 @@ class FakeCacheStore(AbstractCacheStore):
     def put_tvdb_orders(self, tvdb_id: int, row: CachedOrders) -> None:
         self._tvdb_orders[tvdb_id] = row
 
+    # -- scene mappings --
+    @override
+    def get_scene_mappings(self, tvdb_id: int) -> CachedSceneMappings | None:
+        """Round-trips through the stored JSON shape, as the real store's column does."""
+
+        stored = self._scene_mappings.get(tvdb_id)
+        return None if stored is None else CachedSceneMappings.from_json(json.loads(json.dumps(stored.to_json())))
+
+    @override
+    def put_scene_mappings(self, tvdb_id: int, row: CachedSceneMappings) -> None:
+        self._scene_mappings[tvdb_id] = row
+
     # -- history checkpoints --
     @override
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None:
@@ -464,6 +480,7 @@ class FakeCacheStore(AbstractCacheStore):
             pending_imports=sum(len(recs) for recs in self._pending.values()),
             guard_facts=sum(len(g) for g in self._guards.values()),
             tvdb_orders=len(self._tvdb_orders),
+            scene_mappings=len(self._scene_mappings),
             size_bytes=0,
         )
 
@@ -733,6 +750,7 @@ def make_run_deps(
     logger: logging.Logger | None = None,
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
+    xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> ArrRunDeps:
     """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (dry run).
@@ -775,6 +793,7 @@ def make_run_deps(
         cache_store=cache_store,
         anilist=anilist,
         skyhook=SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
+        xem=XemGateway(client=xem_client or FakeXemClient(), cache_store=cache_store),
         torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
@@ -1638,6 +1657,17 @@ def stored_orders(
     )
 
 
+def stored_scene_mappings(
+    mappings: tuple[SceneMapping, ...] = (), *, fresh_for: timedelta = timedelta(days=1)
+) -> CachedSceneMappings:
+    """A series' stored scene mappings, fresh for `fresh_for` from now (past it when negative).
+
+    With none it is a series TheXEM was asked for and has no mappings of.
+    """
+
+    return CachedSceneMappings(fresh_until=stamp_of(datetime.now() + fresh_for), mappings=mappings)
+
+
 def make_sonarr_sync(
     *,
     sonarr: AbstractSonarrClient | None = None,
@@ -1646,12 +1676,18 @@ def make_sonarr_sync(
     series_episodes: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
+    xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> SonarrStrategy:
     """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`."""
 
     deps = make_run_deps(
-        config=config, cache_store=cache_store, clock=clock, skyhook_client=skyhook_client, categories=categories
+        config=config,
+        cache_store=cache_store,
+        clock=clock,
+        skyhook_client=skyhook_client,
+        xem_client=xem_client,
+        categories=categories,
     )
     services = ArrRunServices(deps, Arr.SONARR)
     strat = SonarrStrategy(

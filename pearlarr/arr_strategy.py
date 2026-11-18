@@ -92,6 +92,21 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
         Runs after `prefetch_episodes`, only when `warms_episodes`.
         """
 
+    @property
+    @abstractmethod
+    def reads_scene_numbers(self) -> bool:
+        """Whether the library `get_items` read has a series whose scene numbers come from TheXEM.
+
+        The arr run calls `prefetch_scene_numbers` only when it does, so a library without one never asks TheXEM.
+        """
+
+    @abstractmethod
+    def prefetch_scene_numbers(self, items: list[ItemT], *, progress: ProgressCallback | None = None) -> int:
+        """Read the due TheXEM scene mappings of the series the run reads, returning how many were written.
+
+        Runs after `prefetch_orders`, for the same series, only when `reads_scene_numbers`.
+        """
+
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """Arr history records since `date`, or None on failure."""

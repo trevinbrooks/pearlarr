@@ -15,6 +15,8 @@ from pearlarr.aired_view import (
     stand_in_tvdb_id,
 )
 from pearlarr.arr_models import SonarrEpisode
+from pearlarr.releases import EpisodeKey
+from pearlarr.scene_numbers import SceneNumbers
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
 from .builders import sonarr_ep, stored_orders
@@ -84,6 +86,29 @@ def test_a_renumbered_row_loses_its_scene_numbers() -> None:
     assert renumbered.scene_season_number is None
     assert renumbered.scene_episode_number is None
     assert renumbered.scene_absolute_episode_number is None
+
+
+def test_scene_numbers_are_set_by_aired_number_on_the_rows_and_stand_ins_they_name() -> None:
+    # Sonarr's order has rows for the aired S01E02 and S01E03. The special and S01E01 are stand-ins.
+    view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=102, size=5), sonarr_ep(1, 2, ep_id=8, tvdb_id=103)])
+    # Releases split the season after its second episode and count absolutely through. They don't number the special.
+    numbers = {
+        EpisodeKey(1, 1): SceneNumbers(season=1, episode=1, absolute=1),
+        EpisodeKey(1, 2): SceneNumbers(season=1, episode=2, absolute=2),
+        EpisodeKey(1, 3): SceneNumbers(season=2, episode=1, absolute=3),
+    }
+
+    numbered = view.with_scene_numbers(numbers)
+
+    assert [
+        (ep.id, ep.scene_season_number, ep.scene_episode_number, ep.scene_absolute_episode_number)
+        for ep in numbered.aired
+    ] == [(-900, None, None, None), (-101, 1, 1, 1), (7, 1, 2, 2), (8, 2, 1, 3)]
+    assert [ep.id for ep in numbered.stand_ins] == [-900, -101]
+    assert numbered.in_sonarr[0] == view.in_sonarr[0].model_copy(
+        update={"scene_season_number": 1, "scene_episode_number": 2, "scene_absolute_episode_number": 2}
+    )
+    assert numbered.order == view.order
 
 
 def test_a_row_only_the_series_own_order_lists_is_left_out() -> None:

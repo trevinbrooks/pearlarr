@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from seadex import EntryRecord
 
+from pearlarr.aired_view import NoView
 from pearlarr.anibridge import SpecialAliasing
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.mappings import ResolvedMappings, TitleMapping
@@ -214,7 +215,7 @@ class TestRead:
 
     def test_a_series_with_no_aired_view_marks_its_hashes_unread(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1)})
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=_episodes(1)), orders_unread_views=frozenset({7}))
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=_episodes(1)), no_views={7: NoView.ORDERS_UNREAD})
 
         read = _reader(seadex, episodes).read(7, _mappings(1))
 

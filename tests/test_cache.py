@@ -34,6 +34,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.parse_cache import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
+from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SeriesNumbering
@@ -1366,6 +1367,67 @@ def _insert_tvdb_orders(tmp_path: Path, record: dict[str, object]) -> None:
     raw.execute("INSERT INTO tvdb_orders (tvdb_id, record) VALUES (1, jsonb(?))", (json.dumps(record),))
     raw.commit()
     raw.close()
+
+
+_SCENE = CachedSceneMappings(
+    fresh_until="2026-07-08 10:00:00",
+    mappings=(SceneMapping(0, 3, 0, 0, 0), SceneMapping(1, 13, 2, 1, 13)),
+)
+
+
+class TestSceneMappings:
+    """One row per series, replaced whole, and a row that no longer reads counts as never read."""
+
+    def test_mappings_round_trip_and_a_put_replaces_them(self, tmp_path: Path) -> None:
+        with _open(tmp_path) as store:
+            assert store.get_scene_mappings(1) is None
+
+            store.put_scene_mappings(1, CachedSceneMappings(fresh_until="x", mappings=(SceneMapping(1, 1, 1, 1, 1),)))
+            store.put_scene_mappings(1, _SCENE)
+
+            assert store.get_scene_mappings(1) == _SCENE
+            assert store.stats().scene_mappings == 1
+
+    def test_a_mapping_read_back_still_tells_scene_numbers_that_are_all_zero(self, tmp_path: Path) -> None:
+        with _open(tmp_path) as store:
+            store.put_scene_mappings(1, _SCENE)
+
+            read = store.get_scene_mappings(1)
+
+        assert read is not None
+        assert [mapping.names_no_episode for mapping in read.mappings] == [True, False]
+
+    @pytest.mark.parametrize(
+        "record",
+        [
+            pytest.param({"fresh_until": "2026-07-08 10:00:00"}, id="no-mappings"),
+            pytest.param({**_SCENE.to_json(), "mappings": [[1, 13, 2, 1]]}, id="mapping-too-short"),
+        ],
+    )
+    def test_mappings_of_another_shape_read_as_none(self, tmp_path: Path, record: dict[str, object]) -> None:
+        with _open(tmp_path) as store:
+            store.save(dry_run=False)
+        raw = sqlite3.connect(str(tmp_path / "cache.db"))
+        raw.execute("INSERT INTO scene_mappings (tvdb_id, record) VALUES (1, jsonb(?))", (json.dumps(record),))
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as reopened:
+            assert reopened.get_scene_mappings(1) is None
+
+    def test_a_file_written_before_the_table_existed_gains_it_with_no_migration(self, tmp_path: Path) -> None:
+        db = tmp_path / "cache.db"
+        with _open(tmp_path) as store:
+            store.save(dry_run=False)
+        raw = sqlite3.connect(str(db))
+        raw.execute("DROP TABLE scene_mappings")
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as store:
+            store.put_scene_mappings(1, _SCENE)
+            assert store.get_scene_mappings(1) == _SCENE
+        assert _user_version(db) == SCHEMA_VERSION
 
 
 class TestHistoryCheckpoints:

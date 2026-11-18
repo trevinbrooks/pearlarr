@@ -409,6 +409,7 @@ def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
         Field("pending_imports", event.pending_imports),
         Field("guard_facts", event.guard_facts),
         Field("tvdb_orders", event.tvdb_orders),
+        Field("scene_mappings", event.scene_mappings),
         Field("size_bytes", event.size_bytes),
     )
 

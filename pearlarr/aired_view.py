@@ -1,10 +1,13 @@
 """A Sonarr series' episodes as TVDB's aired order numbers them, whatever order Sonarr numbers the series by."""
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
+from typing import Self
 
 from .arr_models import SonarrEpisode, episode_sort_key
+from .releases import EpisodeKey, season_episode_key
+from .scene_numbers import SceneNumbers
 from .tvdb_orders import CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
 _UNTITLED = "TBA"
@@ -20,6 +23,10 @@ class NoView(Enum):
 
     ORDERS_UNREAD = auto()
     """Sonarr numbers the series by another order, and its aired order or its episode details aren't stored."""
+
+    SCENE_UNREAD = auto()
+    """Sonarr numbers the series by another order, and TheXEM's scene mappings of it were never read. Sonarr keeps
+    no scene numbers for such a series, so without the mappings a release's own numbers can't be matched."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -51,6 +58,18 @@ class AiredSeries:
         if self.stand_ins:
             aired = tuple(sorted((*self.in_sonarr, *self.stand_ins), key=episode_sort_key))
         object.__setattr__(self, "aired", aired)
+
+    def with_scene_numbers(self, numbers: Mapping[EpisodeKey, SceneNumbers]) -> Self:
+        """The view with the scene numbers `numbers` has for an episode set on it, a stand-in included.
+
+        `numbers` go by aired season and episode number. An episode they leave out stays as it is.
+        """
+
+        return replace(
+            self,
+            in_sonarr=tuple(_scene_numbered(ep, numbers) for ep in self.in_sonarr),
+            stand_ins=tuple(_scene_numbered(ep, numbers) for ep in self.stand_ins),
+        )
 
 
 def is_stand_in(episode_id: int) -> bool:
@@ -159,6 +178,21 @@ def numbered_by(rows: Sequence[SonarrEpisode], order: Sequence[OrderRow]) -> boo
         (ep.season_number, ep.episode_number) in numbers
         for ep in rows
         if ep.tvdb_id is not None and ep.tvdb_id > 0 and (numbers := listed_at.get(ep.tvdb_id)) is not None
+    )
+
+
+def _scene_numbered(episode: SonarrEpisode, numbers: Mapping[EpisodeKey, SceneNumbers]) -> SonarrEpisode:
+    """The episode with its scene numbers from `numbers`, or as it is when they have none for it."""
+
+    scene = numbers.get(season_episode_key(episode.season_number, episode.episode_number))
+    if scene is None:
+        return episode
+    return episode.model_copy(
+        update={
+            "scene_season_number": scene.season,
+            "scene_episode_number": scene.episode,
+            "scene_absolute_episode_number": scene.absolute,
+        }
     )
 
 

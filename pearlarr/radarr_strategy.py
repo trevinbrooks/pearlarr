@@ -127,6 +127,18 @@ class RadarrStrategy(ArrStrategy[RadarrItem]):
         del items, progress
         return 0
 
+    @property
+    @override
+    def reads_scene_numbers(self) -> bool:
+        return False
+
+    @override
+    def prefetch_scene_numbers(self, items: list[RadarrItem], *, progress: ProgressCallback | None = None) -> int:
+        """No-op: movies have no scene numbers. Returns 0 (wrote none)."""
+
+        del items, progress
+        return 0
+
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """Radarr history since `date` (delegates to the client)."""

@@ -1,0 +1,52 @@
+{
+  "result": "success",
+  "data": [
+    {
+      "anidb": {
+        "season": 1,
+        "episode": 8,
+        "absolute": 8
+      },
+      "anidb_2": {
+        "season": 1,
+        "episode": 9,
+        "absolute": 9
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 1,
+        "absolute": 0
+      }
+    },
+    {
+      "anidb": {
+        "season": 1,
+        "episode": 10,
+        "absolute": 10
+      },
+      "anidb_2": {
+        "season": 1,
+        "episode": 11,
+        "absolute": 11
+      },
+      "tvdb": {
+        "season": 0,
+        "episode": 2,
+        "absolute": 0
+      }
+    },
+    {
+      "anidb": {
+        "season": 1,
+        "episode": 1,
+        "absolute": 1
+      },
+      "tvdb": {
+        "season": 1,
+        "episode": 1,
+        "absolute": 1
+      }
+    }
+  ],
+  "message": "full mapping for 80900 on tvdb. this was a cached version"
+}

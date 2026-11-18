@@ -23,6 +23,7 @@ from .json_narrow import is_json_obj
 from .log import LOG_NAME
 from .output import hub_note
 from .pending_import import OwnedAtGrab
+from .scene_numbers import CachedSceneMappings
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
 from .tvdb_orders import CachedOrders, SeriesNumbering
@@ -89,6 +90,12 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 
 CREATE TABLE IF NOT EXISTS tvdb_orders (
     -- One record per series, every TVDB order SkyHook lists for it, replaced whole on each fetch. Never evicted.
+    tvdb_id INTEGER PRIMARY KEY,
+    record  BLOB    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scene_mappings (
+    -- One record per series, TheXEM's scene mappings of it, replaced whole on each read. Never evicted.
     tvdb_id INTEGER PRIMARY KEY,
     record  BLOB    NOT NULL
 );
@@ -462,6 +469,7 @@ _SONARR_PARSE = _JsonTable("sonarr_parse", ("filename",))
 _PENDING_IMPORTS = _JsonTable("pending_imports", ("arr", "infohash"))
 _GUARD_FACTS = _JsonTable("guard_facts", ("arr", "anilist_id"))
 _TVDB_ORDERS = _JsonTable("tvdb_orders", ("tvdb_id",))
+_SCENE_MAPPINGS = _JsonTable("scene_mappings", ("tvdb_id",))
 
 
 class CacheStats(NamedTuple):
@@ -473,6 +481,7 @@ class CacheStats(NamedTuple):
     pending_imports: int
     guard_facts: int
     tvdb_orders: int
+    scene_mappings: int
     size_bytes: int
 
 
@@ -539,6 +548,10 @@ class AbstractCacheStore(ABC):
     def get_tvdb_orders(self, tvdb_id: int) -> CachedOrders | None: ...
     @abstractmethod
     def put_tvdb_orders(self, tvdb_id: int, row: CachedOrders) -> None: ...
+    @abstractmethod
+    def get_scene_mappings(self, tvdb_id: int) -> CachedSceneMappings | None: ...
+    @abstractmethod
+    def put_scene_mappings(self, tvdb_id: int, row: CachedSceneMappings) -> None: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -895,6 +908,21 @@ class CacheStore(AbstractCacheStore):
 
         self._json_put(_TVDB_ORDERS, (tvdb_id,), row.to_json())
 
+    # -- scene mappings ----------------------------------------------------------
+
+    @override
+    def get_scene_mappings(self, tvdb_id: int) -> CachedSceneMappings | None:
+        """The series' stored scene mappings at any age, or None (also for a row that no longer reads)."""
+
+        raw = self._json_get(_SCENE_MAPPINGS, (tvdb_id,))
+        return None if raw is None else CachedSceneMappings.from_json(raw)
+
+    @override
+    def put_scene_mappings(self, tvdb_id: int, row: CachedSceneMappings) -> None:
+        """Replace the series' stored scene mappings (staged, persisted at a save point)."""
+
+        self._json_put(_SCENE_MAPPINGS, (tvdb_id,), row.to_json())
+
     # -- history checkpoints --------------------------------------------------
 
     @override
@@ -959,6 +987,7 @@ class CacheStore(AbstractCacheStore):
             pending_imports=self._count("pending_imports"),
             guard_facts=self._count("guard_facts"),
             tvdb_orders=self._count("tvdb_orders"),
+            scene_mappings=self._count("scene_mappings"),
             size_bytes=size,
         )
 
