@@ -12,14 +12,14 @@ equal, then the eviction counts and a post-drop/post-save re-read.
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.pending_import import OwnedAtGrab
-from pearlarr.tvdb_orders import CachedOrders, OrderRow
+from pearlarr.tvdb_orders import CachedOrders, EpisodeDetails, OrderRow
 
 from .builders import FakeCacheStore, pending_import, title_claim
 
@@ -117,11 +117,27 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.store_selection_hash(Arr.SONARR, "digest-old")
     store.store_selection_hash(Arr.SONARR, "digest-new")
 
-    # TVDB orders: a row replaced whole (the dvd order goes), an empty listed order, a series with no orders.
+    # TVDB orders: a row replaced whole (the dvd order goes, details arrive), an empty listed order, a series with
+    # no orders.
     row = (OrderRow(1, 1, 101, 1),)
-    store.put_tvdb_orders(5, CachedOrders(_OLD, _OLD, {"official": row, "dvd": row}, {"official": 1, "dvd": 1}))
-    store.put_tvdb_orders(5, CachedOrders(_NEW, _NEW, {"official": row, "alt": ()}, {"official": 1}))
-    store.put_tvdb_orders(6, CachedOrders(_NEW, _NEW, {}, None))
+    details = {101: EpisodeDetails(title="First", air_date=date(2020, 1, 5), runtime=24)}
+    replaced = CachedOrders(
+        fetched_at=_OLD,
+        fresh_until=_OLD,
+        orders={"official": row, "dvd": row},
+        sonarr_counts={"official": 1, "dvd": 1},
+        details=None,
+    )
+    kept = CachedOrders(
+        fetched_at=_NEW,
+        fresh_until=_NEW,
+        orders={"official": row, "alt": ()},
+        sonarr_counts={"official": 1},
+        details=details,
+    )
+    store.put_tvdb_orders(5, replaced)
+    store.put_tvdb_orders(5, kept)
+    store.put_tvdb_orders(6, CachedOrders(fetched_at=_NEW, fresh_until=_NEW, orders={}, sonarr_counts=None, details={}))
 
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:

@@ -94,7 +94,15 @@ from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
-from pearlarr.tvdb_orders import NO_ORDERS, CachedOrders, IndexOrders, OrderRow, OrdersByName
+from pearlarr.tvdb_orders import (
+    AIRED_ORDER,
+    NO_ORDERS,
+    CachedOrders,
+    EpisodeDetails,
+    IndexOrders,
+    OrderRow,
+    OrdersByName,
+)
 from pearlarr.wait_types import (
     NO_HAND_IMPORT_FILES,
     AttemptResult,
@@ -1542,20 +1550,32 @@ def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     return make_bare_instance(SonarrEpisodes, **defaults)
 
 
+_NO_EPISODE_DETAILS: Mapping[int, EpisodeDetails] = MappingProxyType({})
+
+
 def stored_orders(
     orders: Mapping[str, tuple[OrderRow, ...]],
     *,
     fresh_for: timedelta = timedelta(days=1),
     sonarr_counts: Mapping[str, int] | None = None,
+    details: Mapping[int, EpisodeDetails] | None = _NO_EPISODE_DETAILS,
 ) -> CachedOrders:
-    """A series' cached order answer fetched a day ago, fresh for `fresh_for` from now (past it when negative)."""
+    """A series' cached order answer fetched a day ago, fresh for `fresh_for` from now (past it when negative).
 
+    With `details=None` it is an answer stored before details were kept. Otherwise every aired row has details, as
+    a fetch stores them: blank ones for a row `details` leaves out.
+    """
+
+    if details is not None:
+        blank = EpisodeDetails(title="", air_date=None, runtime=None)
+        details = {row.tvdb_id: blank for row in orders.get(AIRED_ORDER, ())} | dict(details)
     now = datetime.now()
     return CachedOrders(
         fetched_at=stamp_of(now - timedelta(days=1)),
         fresh_until=stamp_of(now + fresh_for),
         orders=orders,
         sonarr_counts=sonarr_counts,
+        details=details,
     )
 
 

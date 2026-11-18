@@ -1,6 +1,8 @@
 # pyright: strict
 """The SkyHook wire client over `respx`: reply validation, not found, and the unreachable flag."""
 
+from datetime import date
+
 import httpx
 import pytest
 import respx
@@ -50,6 +52,33 @@ def test_a_reply_reads_with_its_rows_and_absolutes() -> None:
         (1, 3, 3),
         (1, 4, 4),
     ]
+    assert [(e.title, e.air_date, e.runtime) for e in reply.episodes[:2]] == [
+        ("New Work Information", None, 25),
+        ("Separation", date(1988, 11, 26), 25),
+    ]
+
+
+def test_a_row_with_unreadable_details_still_reads() -> None:
+    body = {
+        "tvdbId": _SERIES,
+        "seasonTypes": [{"type": "official", "episodeCount": 2}],
+        "episodes": [
+            {"tvdbId": 2273831, "seasonNumber": 1, "episodeNumber": 1, "title": None, "airDate": None, "runtime": None},
+            {
+                "tvdbId": 2273841,
+                "seasonNumber": 1,
+                "episodeNumber": 2,
+                "title": 7,
+                "airDate": "soon",
+                "runtime": "long",
+            },
+        ],
+    }
+
+    reply = _reply(_SERIES, "official", body)
+
+    assert isinstance(reply, SkyHookReply)
+    assert [(e.title, e.air_date, e.runtime) for e in reply.episodes] == [("", None, None), ("", None, None)]
 
 
 @pytest.mark.parametrize(
