@@ -213,8 +213,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending import update build. Composes the run's reads + the
-        # executor. The import_completed / check_title hooks delegate to it.
-        self._reconciler = ImportReconciler(self._services.pending_imports, self._reads, self._executor)
+        # executor + the follower. The import_completed / check_title hooks delegate to it.
+        self._reconciler = ImportReconciler(self._services.pending_imports, self._reads, self._executor, self._follower)
 
     # --- ArrStrategy hooks ------------------------------------------------------
 

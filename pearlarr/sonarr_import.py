@@ -47,7 +47,7 @@ from .import_quality import (
 )
 from .output import hub_note, hub_warn
 from .output.console_text import count_noun, pluralize
-from .pending_follow import follow
+from .pending_follow import PendingFollower, follow
 from .pending_import import FileEpisodeMap, PendingImport, joined_file_map
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
@@ -945,15 +945,19 @@ class _Attempt:
 class ImportReconciler:
     """Decides a completed download's state."""
 
-    def __init__(self, pending_imports: PendingImportStore, rows: SeriesRows, executor: ImportExecutor) -> None:
+    def __init__(
+        self, pending_imports: PendingImportStore, rows: SeriesRows, executor: ImportExecutor, follower: PendingFollower
+    ) -> None:
         """Bind the run's pending import store and the composed collaborators (the logger is the executor's).
 
-        The store is only read: the wait pass saves what an attempt's result carries.
+        The store is only read: the wait pass saves what an attempt's result carries. The follower is the one the
+        title checks follow through, so a file either sets aside is warned of once.
         """
 
         self._pending_imports = pending_imports
         self._rows = rows
         self._executor = executor
+        self._follower = follower
         self.logger = executor.logger
 
     def import_completed(self, pending: PendingImport, content_path: str, attempt_kind: AttemptKind) -> AttemptResult:
@@ -1082,12 +1086,7 @@ class ImportReconciler:
 
         read = self._read(pending)
         if read is not None:
-            for name, tvdb_ids in read.set_aside.items():
-                hub_warn(
-                    f"{pending.display_label}: Sonarr no longer has "
-                    f"{pluralize(len(tvdb_ids), 'the episode', 'the episodes')} {name} was matched to "
-                    f"(TVDB episode {', '.join(map(str, tvdb_ids))}) - leaving the file out of the import"
-                )
+            self._follower.warn_set_aside(pending, read.set_aside)
         return read
 
     def _read(self, pending: PendingImport) -> _ImportRead | None:
