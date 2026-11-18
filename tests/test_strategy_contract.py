@@ -3216,7 +3216,7 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
 _STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
 """The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
 
-_LISTED_EP1 = _EP1.model_copy(update={"listed_as": EpisodeKey(1, 1)})
+_LISTED_EP1 = _EP1.renumbered(season=1, episode=1, absolute=None)
 """Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
 
 

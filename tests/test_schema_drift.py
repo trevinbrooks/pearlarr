@@ -154,8 +154,7 @@ ROSTER: Final = (
     # order v4 numbers by, and the empty `seasonTypes` is how the order fetch tells v4 apart.
     Spec(SonarrSeries, "SeriesResource", _SONARR, exempt=frozenset({"seasonType", "seasonTypes"})),
     Spec(AlternateTitle, "AlternateTitleResource", _SONARR),
-    # `listed_as` is no wire field: `aired_view` sets it on a row it renumbers.
-    Spec(SonarrEpisode, "EpisodeResource", _SONARR, exempt=frozenset({"listed_as"})),
+    Spec(SonarrEpisode, "EpisodeResource", _SONARR),
     Spec(SonarrEpisodeFile, "EpisodeFileResource", _SONARR),
     Spec(ParsedFileInfo, "ParseResource", _SONARR),
     Spec(MatchedEpisode, "EpisodeResource", _SONARR),

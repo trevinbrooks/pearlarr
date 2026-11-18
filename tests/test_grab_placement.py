@@ -345,7 +345,7 @@ class TestPlaceSizeMatches:
         # Sonarr lists the aired S01E01 and S01E02 as S02E01 and S02E02. Sonarr matched the name to the second,
         # and its size puts it on the first.
         rows = [
-            sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0).model_copy(update={"listed_as": EpisodeKey(2, n)})
+            sonarr_ep(2, n, ep_id=100 + n, episode_file_id=0).renumbered(season=1, episode=n, absolute=None)
             for n in (1, 2)
         ]
         series = episode_index(rows)

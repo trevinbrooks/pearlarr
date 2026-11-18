@@ -10,7 +10,6 @@ from pearlarr.aired_view import (
     NoView,
     aired_series,
     numbered_by,
-    printed_key,
 )
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.episode_ids import is_stand_in, stand_in_id, stand_in_tvdb_id
@@ -73,9 +72,7 @@ def test_a_row_takes_the_aired_numbers_of_its_tvdb_episode_and_keeps_the_rest() 
     view = _view(rows)
 
     assert _numbers(view.in_sonarr) == [(8, 1, 1, 1), (7, 1, 2, 2)]
-    assert view.in_sonarr[1] == rows[0].model_copy(
-        update={"episode_number": 2, "absolute_episode_number": 2, "listed_as": EpisodeKey(1, 1)}
-    )
+    assert view.in_sonarr[1] == rows[0].renumbered(season=1, episode=2, absolute=2)
 
 
 def test_a_renumbered_row_loses_its_scene_numbers() -> None:
@@ -159,13 +156,13 @@ def test_a_renumbered_row_prints_by_the_number_sonarr_lists_it_under() -> None:
     # Sonarr lists the aired third episode as its second.
     view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=103)])
 
-    assert [printed_key(ep) for ep in view.in_sonarr] == [PrintedKey(EpisodeKey(1, 1)), PrintedKey(EpisodeKey(1, 2))]
+    assert [PrintedKey.of(ep) for ep in view.in_sonarr] == [PrintedKey(EpisodeKey(1, 1)), PrintedKey(EpisodeKey(1, 2))]
 
 
 def test_a_stand_in_prints_by_its_aired_number_marked_as_aired() -> None:
     view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=103)])
 
-    printed = printed_key(view.stand_ins[1])
+    printed = PrintedKey.of(view.stand_ins[1])
 
     assert (printed, printed.label) == (PrintedKey(EpisodeKey(1, 2), aired=True), "aired S01E02")
 
@@ -174,7 +171,7 @@ def test_a_row_as_sonarr_sent_it_prints_by_its_own_number() -> None:
     # A row of a series in aired order, and a row the aired order lacks.
     view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=555)])
 
-    as_sent = [printed_key(ep) for ep in (sonarr_ep(2, 5), *view.own_only)]
+    as_sent = [PrintedKey.of(ep) for ep in (sonarr_ep(2, 5), *view.own_only)]
 
     assert as_sent == [PrintedKey(EpisodeKey(2, 5)), PrintedKey(EpisodeKey(1, 2))]
 

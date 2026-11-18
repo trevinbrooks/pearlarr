@@ -32,12 +32,20 @@ import logging
 
 import pytest
 
-from pearlarr.aired_view import AiredSeries, aired_series, printed_key
+from pearlarr.aired_view import AiredSeries, aired_series
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
 from pearlarr.planner import GrabPlan, GrabPlanner
-from pearlarr.releases import GroupReleases, PlacedEpisode, PlannedGrab, Release, SkipReason, releases_to_grab
+from pearlarr.releases import (
+    GroupReleases,
+    PlacedEpisode,
+    PlannedGrab,
+    PrintedKey,
+    Release,
+    SkipReason,
+    releases_to_grab,
+)
 from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SonarrSeriesOrders
 
 from .builders import arr_files, make_planner, make_release, placed_episode, rg_group, sonarr_ep, stored_orders
@@ -1220,7 +1228,7 @@ class TestFilterByReleaseGroup:
         view = aired_series(in_sonarr, SonarrSeriesOrders(70, "dvd", None), stored)
         assert isinstance(view, AiredSeries)
         (row,) = view.in_sonarr
-        placed = PlacedEpisode(2, 1, 100, printed=printed_key(row))
+        placed = PlacedEpisode(2, 1, 100, printed=PrintedKey.of(row))
         planner = make_planner(logger=debug_logger("pearlarr-planner-printed-numbers"))
         seadex = {"RG": rg_group({"u1": make_release(episodes=[placed], infohash="h1")})}
 

@@ -3,11 +3,16 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 from seadex import Tag, TorrentRecord, Tracker
 
+from .episode_ids import is_stand_in
 from .tvdb_orders import order_display_name
+
+if TYPE_CHECKING:
+    # Annotation-only (PrintedKey.of): arr_models imports this module at runtime (cycle).
+    from .arr_models import SonarrEpisode
 
 
 class EpisodeKey(NamedTuple):
@@ -35,7 +40,7 @@ class PrintedKey:
 
     That is the number Sonarr lists the episode under, which differs from its aired number on a series Sonarr
     numbers by another TVDB order. An aired episode Sonarr has no row for has no such number, so it prints its
-    aired one, marked as that. `aired_view.printed_key` gives a row's.
+    aired one, marked as that. `of` gives an episode's.
     """
 
     key: EpisodeKey
@@ -43,6 +48,20 @@ class PrintedKey:
 
     aired: bool = False
     """Whether `key` is the aired number of an episode Sonarr has no row for."""
+
+    @classmethod
+    def of(cls, episode: "SonarrEpisode") -> Self:
+        """The key `episode` prints by.
+
+        A renumbered row prints the number it remembers (`SonarrEpisode.listed_as`), and a row as Sonarr sent it
+        its own. A stand-in prints its aired number, marked as that. A missing number prints as
+        `SONARR_MISSING_KEY`.
+        """
+
+        listed_as = episode.listed_as
+        if listed_as is None:
+            listed_as = season_episode_key(episode.season_number, episode.episode_number)
+        return cls(listed_as, aired=is_stand_in(episode.id))
 
     @property
     def label(self) -> str:

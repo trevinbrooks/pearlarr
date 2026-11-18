@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
 
-from .aired_view import printed_key
 from .arr_models import ArrFiles, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .output import Severity
@@ -24,6 +23,7 @@ from .pending_import import OwnedAtGrab, SizeMatchedEpisode
 from .releases import (
     EpisodeKey,
     GroupReleases,
+    PrintedKey,
     Release,
     SeadexDict,
     SkipReason,
@@ -535,7 +535,7 @@ class GrabPlanner:
         if debug_on:
             for key, identity in identities.items():
                 if identity.by_size:
-                    label = printed_key(sonarr_by_key[key]).label
+                    label = PrintedKey.of(sonarr_by_key[key]).label
                     self.logger.debug(
                         f"{self.arr.capitalize()} file for {label} has no release group "
                         f"but matches {identity.group}'s listed size exactly - reading it as that release",
