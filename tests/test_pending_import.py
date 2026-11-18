@@ -8,22 +8,35 @@ from typing import cast
 
 import pytest
 
+from pearlarr.arr_models import SonarrEpisode
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
+    NO_TVDB_IDS,
+    ClaimedRows,
     OwnedAtGrab,
     PendingImport,
     SizeMatchedEpisode,
     TitleClaim,
     TitleNames,
     TitleWindow,
+    TvdbIds,
     added_at_of,
     joined_file_map,
     sizes_by_episode,
 )
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
-from .builders import SEP, claim_anilist_ids, pending_import, sonarr_ep, title_claim, title_window
+from .builders import (
+    SEP,
+    claim_anilist_ids,
+    pending_import,
+    rows_without_tvdb_ids,
+    sonarr_ep,
+    title_claim,
+    title_window,
+    two_claim_pending_import,
+)
 
 HALVES = tuple(normalize_file_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
 """The two halves of a split opener, which only the DVD order numbers."""
@@ -42,11 +55,14 @@ class TestPendingImportBuild:
 
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,), "show - 03.mkv": (103,)}
 
-    def test_the_map_drops_a_stand_ins_id(self) -> None:
+    def test_a_file_on_a_stand_in_leaves_the_map_whole_for_the_exclusions(self) -> None:
         # A stand-in is an aired episode Sonarr has no row for, under a negative id: no file imports onto one.
-        pending = pending_import(file_episode_map={"Show - 01.mkv": [-901], "Show - 02.mkv": [-902, 102]})
+        pending = pending_import(
+            file_episode_map={"Show - 01.mkv": [-901], "Show - 02.mkv": [-902, 102], "Show - 03.mkv": [103]}
+        )
 
-        assert dict(pending.file_episode_map) == {"show - 02.mkv": (102,)}
+        assert dict(pending.file_episode_map) == {"show - 03.mkv": (103,)}
+        assert pending.excluded_files == ("show - 01.mkv", "show - 02.mkv")
 
     def test_two_spellings_of_one_name_keep_the_first(self) -> None:
         pending = pending_import(file_episode_map={"Show - 01.mkv": [101], "show - 01.mkv": [111]})
@@ -104,14 +120,14 @@ class TestPendingImportBuild:
 
 
 _NO_OP_CHANGES: dict[str, Callable[[PendingImport], PendingImport]] = {
-    "no placements": lambda p: p.with_placements({}),
-    "a placement of a held name": lambda p: p.with_placements({"show - 01.mkv": (111,)}),
+    "no placements": lambda p: p.with_placements({}, NO_TVDB_IDS),
+    "a placement of a held name": lambda p: p.with_placements({"show - 01.mkv": (111,)}, TvdbIds({111: None})),
     "no exclusions": lambda p: p.with_exclusions(()),
     "an exclusion already held": lambda p: p.with_exclusions(["SHOW - 02.MKV"]),
     "no sizes onto none": lambda p: p.with_sizes_by_name({}),
     "no hand-import files": lambda p: p.with_hand_import_files((), NO_ORDER_ONLY),
     "a hand-import file already held": lambda p: p.with_hand_import_files(["SHOW - 03.MKV"], NO_ORDER_ONLY),
-    "the stored claim again": lambda p: p.with_claim(p.claims[0]),
+    "the stored claim again": lambda p: p.with_claim(p.claims[0], NO_TVDB_IDS),
 }
 """Changes that leave a pending import equal: it has `show - 01.mkv` on 101, excludes `show - 02.mkv`, and leaves
 `show - 03.mkv` for a hand import."""
@@ -147,7 +163,7 @@ class TestPendingImportPlacements:
     def test_with_placements_keeps_the_stored_ids_of_a_name_it_holds(self) -> None:
         pending = pending_import(file_episode_map={"show - 01.mkv": [101]})
 
-        healed = pending.with_placements({"show - 01.mkv": (111,), "show - 02.mkv": (102,)})
+        healed = pending.with_placements({"show - 01.mkv": (111,), "show - 02.mkv": (102,)}, TvdbIds({102: None}))
 
         assert dict(healed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
 
@@ -167,7 +183,7 @@ class TestPendingImportPlacements:
             excluded_files=["show - 02.mkv", "show - 03.mkv"],
         )
 
-        healed = pending.with_placements({"show - 02.mkv": (102,)})
+        healed = pending.with_placements({"show - 02.mkv": (102,)}, TvdbIds({102: None}))
 
         assert healed.excluded_files == ("show - 03.mkv",)
         assert dict(healed.file_episode_map) == {"show - 01 [1080p].mkv": (101,), "show - 02.mkv": (102,)}
@@ -175,7 +191,7 @@ class TestPendingImportPlacements:
     def test_with_placements_lifts_a_placed_name_out_of_the_hand_import_files(self) -> None:
         pending = pending_import(hand_import_files=["show - 02.mkv", "show - 03.mkv"])
 
-        healed = pending.with_placements({"show - 02.mkv": (102,)})
+        healed = pending.with_placements({"show - 02.mkv": (102,)}, TvdbIds({102: None}))
 
         assert healed.hand_import_files == ("show - 03.mkv",)
 
@@ -387,7 +403,7 @@ class TestPendingImportClaims:
         pending = pending_import()
         added = title_claim(anilist_id=2, series_id=8)
 
-        assert pending.with_claim(added).claims == (*pending.claims, added)
+        assert pending.with_claim(added, NO_TVDB_IDS).claims == (*pending.claims, added)
         assert len(pending.claims) == 1
 
     def test_with_claim_replaces_the_titles_claim_in_place_keeping_its_preowned_ids(self) -> None:
@@ -397,7 +413,7 @@ class TestPendingImportClaims:
         pending = pending_import(claims=(stored, other))
         fresh = title_claim(anilist_id=1, ordered_episode_ids=[101, 102], preowned_episode_ids=[102])
 
-        refreshed = pending.with_claim(fresh)
+        refreshed = pending.with_claim(fresh, rows_without_tvdb_ids({}, (fresh,)))
 
         assert refreshed.claims == (replace(fresh, preowned_episode_ids=(101,)), other)
         assert pending.claims == (stored, other)
@@ -407,8 +423,256 @@ class TestPendingImportClaims:
         # its owed effects re-run at the eventual cleanup instead of the pass that finishes cleanups cleaning it up.
         flagged = pending_import(awaiting_cleanup=True)
 
-        assert flagged.with_claim(title_claim(anilist_id=2, series_id=8)).awaiting_cleanup is False
-        assert flagged.with_claim(title_claim(ordered_episode_ids=[101])).awaiting_cleanup is False
+        assert flagged.with_claim(title_claim(anilist_id=2, series_id=8), NO_TVDB_IDS).awaiting_cleanup is False
+        assert flagged.with_claim(title_claim(ordered_episode_ids=[101]), NO_TVDB_IDS).awaiting_cleanup is False
+
+
+class TestTvdbIds:
+    """The TVDB episode id a pending import stores with each Sonarr row id it holds."""
+
+    def test_of_reads_each_rows_tvdb_id(self) -> None:
+        rows = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001), sonarr_ep(1, 2, ep_id=102, tvdb_id=9002)]
+
+        assert TvdbIds.of(rows) == TvdbIds({101: 9001, 102: 9002})
+
+    @pytest.mark.parametrize("sent", [None, 0])
+    def test_a_row_sonarr_sent_with_no_tvdb_id_is_held_with_none(self, sent: int | None) -> None:
+        assert TvdbIds.of([sonarr_ep(1, 1, ep_id=101, tvdb_id=sent)]) == TvdbIds({101: None})
+
+    def test_a_stand_in_has_no_entry(self) -> None:
+        rows = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001), sonarr_ep(1, 2, ep_id=-9002, tvdb_id=9002)]
+
+        assert TvdbIds.of(rows) == TvdbIds({101: 9001})
+
+    def test_joined_gives_a_row_held_with_none_the_tvdb_id_added(self) -> None:
+        held = TvdbIds({101: None, 102: 9002})
+
+        joined = held.joined(TvdbIds({101: 9001, 102: None, 103: 9003}))
+
+        assert joined == TvdbIds({101: 9001, 102: 9002, 103: 9003})
+
+    def test_joined_refuses_another_tvdb_id_for_a_row_that_has_one(self) -> None:
+        with pytest.raises(ValueError, match="episode id 101 is stored for TVDB episode 9001"):
+            TvdbIds({101: 9001}).joined(TvdbIds({101: 9002}))
+
+    def test_a_pending_import_keeps_the_entries_of_the_ids_it_holds(self) -> None:
+        pending = pending_import(
+            ordered_episode_ids=[101, 102, -9004],
+            preowned_episode_ids=[103],
+            tvdb_ids={101: 9001, 102: 9002, 103: 9003, 105: 9005},
+        )
+
+        assert pending.tvdb_ids == TvdbIds({101: 9001, 102: 9002, 103: 9003})
+
+    def test_a_pending_import_holding_an_id_with_no_entry_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="no TVDB episode id is stored for episode ids \\[102\\]"):
+            replace(pending_import(), file_episode_map={"show - 01 [1080p].mkv": (102,)})
+
+    def test_with_placements_stores_the_tvdb_ids_of_the_rows_placed_on(self) -> None:
+        pending = pending_import(tvdb_ids={101: 9001})
+
+        placed = pending.with_placements({"show - 02 [1080p].mkv": (102,)}, TvdbIds({102: 9002, 103: 9003}))
+
+        assert placed.tvdb_ids == TvdbIds({101: 9001, 102: 9002})
+
+    def test_with_placements_refuses_a_row_placed_from_another_episode_than_stored(self) -> None:
+        pending = pending_import(tvdb_ids={101: 9001})
+
+        with pytest.raises(ValueError, match="episode id 101"):
+            pending.with_placements({"show - 02 [1080p].mkv": (101,)}, TvdbIds({101: 9002}))
+
+    def test_with_claim_stores_the_tvdb_ids_of_the_claims_rows(self) -> None:
+        pending = pending_import(tvdb_ids={101: 9001})
+        added = title_claim(anilist_id=2, series_id=8, ordered_episode_ids=[201], preowned_episode_ids=[202])
+
+        claimed = pending.with_claim(added, TvdbIds({201: 9201, 202: 9202}))
+
+        assert claimed.tvdb_ids == TvdbIds({101: 9001, 201: 9201, 202: 9202})
+
+    def test_a_pending_import_stored_without_tvdb_ids_takes_none_from_a_placement(self) -> None:
+        pending = pending_import(tvdb_ids=None)
+
+        placed = pending.with_placements({"show - 02 [1080p].mkv": (102,)}, TvdbIds({102: 9002}))
+
+        assert placed.tvdb_ids is None
+
+
+def _rows(*pairs: tuple[int, int | None]) -> list[SonarrEpisode]:
+    """One season's rows with no file, each an `(id, TVDB episode id)` pair, numbered in the order given."""
+
+    return [
+        sonarr_ep(1, number, ep_id=row_id, tvdb_id=tvdb_id, episode_file_id=0)
+        for number, (row_id, tvdb_id) in enumerate(pairs, start=1)
+    ]
+
+
+def _followed(pending: PendingImport, *pairs: tuple[int, int | None]) -> PendingImport:
+    """`pending`, claimed on series 7 alone, followed under the series' rows read as `pairs` (`_rows`)."""
+
+    rows = ClaimedRows.of(pending, {7: _rows(*pairs)})
+    assert rows is not None
+    return pending.followed(rows)
+
+
+class TestClaimedRows:
+    """The rows a pending import is followed under, and when it can't be."""
+
+    def test_holds_the_row_of_each_tvdb_episode_the_pending_import_holds(self) -> None:
+        pending = pending_import(ordered_episode_ids=[101, -9002], tvdb_ids={101: 9001})
+
+        rows = ClaimedRows.of(pending, {7: _rows((111, 9001), (112, 9002), (113, 9003))})
+
+        assert rows == ClaimedRows({9001: 111, 9002: 112})
+
+    def test_reads_the_rows_of_every_claimed_series(self) -> None:
+        pending = two_claim_pending_import(
+            series_ids=(7, 8),
+            windows=((101,), (201,)),
+            file_episode_map={},
+            tvdb_ids={101: 9001, 201: 9201},
+        )
+
+        rows = ClaimedRows.of(pending, {7: _rows((111, 9001)), 8: _rows((211, 9201))})
+
+        assert rows == ClaimedRows({9001: 111, 9201: 211})
+
+    @pytest.mark.parametrize(
+        "rows_by_series",
+        [
+            pytest.param({}, id="a-series-not-read"),
+            pytest.param({7: []}, id="a-series-with-no-rows"),
+            pytest.param({7: _rows((111, 9001), (112, 9001))}, id="two-rows-on-an-episode-it-holds"),
+        ],
+    )
+    def test_a_pending_import_cannot_be_followed_under(self, rows_by_series: dict[int, list[SonarrEpisode]]) -> None:
+        pending = pending_import(tvdb_ids={101: 9001})
+
+        assert ClaimedRows.of(pending, rows_by_series) is None
+
+    def test_two_rows_on_an_episode_it_does_not_hold_are_passed_over(self) -> None:
+        pending = pending_import(tvdb_ids={101: 9001})
+
+        rows = ClaimedRows.of(pending, {7: _rows((111, 9001), (112, 9002), (113, 9002))})
+
+        assert rows == ClaimedRows({9001: 111})
+
+    def test_set_aside_names_each_file_the_follow_takes_out_with_its_episodes_that_have_no_row(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02-03.mkv": [102, 103]},
+            tvdb_ids={101: 9001, 102: 9002, 103: 9003},
+        )
+
+        rows = ClaimedRows.of(pending, {7: _rows((101, 9001), (103, 9003))})
+
+        assert rows is not None
+        assert rows.set_aside(pending) == {"show - 02-03.mkv": (9002,)}
+
+
+class TestFollowed:
+    """`followed` puts every id a pending import holds on the row that holds its TVDB episode."""
+
+    def test_an_id_moves_to_the_row_that_holds_its_episode(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02.mkv": [102]},
+            claims=(
+                title_claim(anilist_id=1, ordered_episode_ids=[101, 102], preowned_episode_ids=[102]),
+                title_claim(anilist_id=2, ordered_episode_ids=[102, 103]),
+            ),
+            tvdb_ids={101: 9001, 102: 9002, 103: 9003},
+        )
+
+        followed = _followed(pending, (101, 9001), (112, 9002), (103, 9003))
+
+        assert dict(followed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (112,)}
+        assert [claim.ordered_episode_ids for claim in followed.claims] == [(101, 112), (112, 103)]
+        assert followed.claims[0].preowned_episode_ids == (112,)
+        assert followed.tvdb_ids == TvdbIds({101: 9001, 112: 9002, 103: 9003})
+
+    def test_two_ids_that_swapped_episodes_both_move(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02.mkv": [102]},
+            ordered_episode_ids=[101, 102],
+            tvdb_ids={101: 9001, 102: 9002},
+        )
+
+        followed = _followed(pending, (101, 9002), (102, 9001))
+
+        assert dict(followed.file_episode_map) == {"show - 01.mkv": (102,), "show - 02.mkv": (101,)}
+        assert followed.claims[0].ordered_episode_ids == (102, 101)
+        assert followed.tvdb_ids == TvdbIds({102: 9001, 101: 9002})
+
+    def test_an_id_whose_episode_has_no_row_becomes_its_stand_in(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02-03.mkv": [102, 103]},
+            ordered_episode_ids=[101, 102, 103],
+            preowned_episode_ids=[101, 102],
+            tvdb_ids={101: 9001, 102: 9002, 103: 9003},
+        )
+
+        followed = _followed(pending, (101, 9001), (103, 9003))
+
+        assert followed.claims[0].ordered_episode_ids == (101, -9002, 103)
+        assert followed.claims[0].preowned_episode_ids == (101,)
+        assert dict(followed.file_episode_map) == {"show - 01.mkv": (101,)}
+        assert followed.excluded_files == ("show - 02-03.mkv",)
+        assert followed.tvdb_ids == TvdbIds({101: 9001, 103: 9003})
+
+    def test_a_windows_stand_in_becomes_the_id_of_the_row_its_episode_has(self) -> None:
+        pending = pending_import(ordered_episode_ids=[101, -9002], tvdb_ids={101: 9001})
+
+        followed = _followed(pending, (101, 9001), (102, 9002))
+
+        assert followed.claims[0].ordered_episode_ids == (101, 102)
+        assert followed.tvdb_ids == TvdbIds({101: 9001, 102: 9002})
+
+    def test_a_switch_and_a_switch_back_leave_every_id_on_its_episodes_row(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02.mkv": [102]},
+            ordered_episode_ids=[101, 102, 103],
+            tvdb_ids={101: 9001, 102: 9002, 103: 9003},
+        )
+
+        switched = _followed(pending, (101, 9002), (102, 9001))
+        back = _followed(switched, (101, 9001), (102, 9002), (113, 9003))
+
+        assert switched.claims[0].ordered_episode_ids == (102, 101, -9003)
+        assert back.claims[0].ordered_episode_ids == (101, 102, 113)
+        assert dict(back.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (102,)}
+        assert back.tvdb_ids == TvdbIds({101: 9001, 102: 9002, 113: 9003})
+
+    def test_a_pending_import_whose_ids_stayed_is_returned_itself(self) -> None:
+        pending = pending_import(ordered_episode_ids=[101, 102], tvdb_ids={101: 9001, 102: 9002})
+
+        assert _followed(pending, (101, 9001), (102, 9002), (103, 9003)) is pending
+
+    def test_a_window_whose_every_episode_lost_its_row_keeps_its_length(self) -> None:
+        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], tvdb_ids={101: 9001, 102: 9002})
+
+        followed = _followed(pending, (103, 9003))
+
+        assert followed.claims[0].ordered_episode_ids == (-9001, -9002)
+        assert followed.tvdb_ids == NO_TVDB_IDS
+
+    def test_an_id_stored_with_no_tvdb_id_stays(self) -> None:
+        pending = pending_import(
+            file_episode_map={"show - 01.mkv": [101], "show - 02.mkv": [102]},
+            ordered_episode_ids=[101, 102],
+            tvdb_ids={102: 9002},
+        )
+
+        followed = _followed(pending, (101, 9001), (112, 9002))
+
+        assert dict(followed.file_episode_map) == {"show - 01.mkv": (101,), "show - 02.mkv": (112,)}
+        assert followed.claims[0].ordered_episode_ids == (101, 112)
+        assert followed.tvdb_ids == TvdbIds({101: None, 112: 9002})
+
+    def test_a_pending_import_stored_without_tvdb_ids_is_not_followed(self) -> None:
+        pending = pending_import(tvdb_ids=None)
+        rows = ClaimedRows({9001: 111})
+
+        assert ClaimedRows.of(pending, {7: _rows((111, 9001))}) is None
+        assert pending.followed(rows) is pending
+        assert rows.set_aside(pending) == {}
 
 
 class TestDisplayLabel:
@@ -492,6 +756,7 @@ class TestPendingImportRoundTrip:
             added_at="2026-06-24 12:00:00",
             file_episode_map={"ep1.mkv": (11,), "ep2.mkv": (12,)},
             claims=(claim,),
+            tvdb_ids=TvdbIds({11: 9011, 12: None}),
             excluded_files=("other-slice.mkv",),
             release_sizes=(700, 710),
             awaiting_cleanup=True,
@@ -530,7 +795,7 @@ class TestPendingImportRoundTrip:
         # pending import loads with them placed on the next run.
         pending = pending_import(file_episode_map={}, seadex_files=["Show - 01 [1080p].mkv"], ordered_episode_ids=[101])
 
-        healed = pending.with_placements({"show - 01 [1080p].mkv": (101,)})
+        healed = pending.with_placements({"show - 01 [1080p].mkv": (101,)}, NO_TVDB_IDS)
 
         assert PendingImport.from_json(healed.to_json(), guards={}) == healed
         assert (pending.file_map_coverage().file_map, healed.file_map_coverage().file_map) == (False, True)
@@ -542,6 +807,15 @@ class TestPendingImportRoundTrip:
         raw = {"infohash": "h", "guards": stale, "claims": [{"anilist_id": 1, "series_id": 1, "guards": stale}]}
 
         assert PendingImport.from_json(raw, guards={}).claims[0].guards == OwnedAtGrab()
+
+    def test_a_row_without_tvdb_ids_loads_with_none_and_is_stored_without_them(self) -> None:
+        raw = pending_import().to_json()
+        del raw["tvdb_ids"]
+
+        rebuilt = PendingImport.from_json(raw, guards={})
+
+        assert rebuilt.tvdb_ids is None
+        assert "tvdb_ids" not in rebuilt.to_json()
 
     def test_from_json_tolerates_missing_keys(self) -> None:
         rebuilt = PendingImport.from_json({"infohash": "h"}, guards={})

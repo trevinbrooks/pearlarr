@@ -285,7 +285,7 @@ class WindowedPlacements:
         """The file set aside as `AIRED_ONLY` when its merged placement holds a stand-in, else the file as it is.
 
         The episodes it names are read off the index of the window that placed it. A stored window can hold a
-        stand-in the series has since lost, and that one is left unnamed.
+        stand-in the index has no episode for, and that one is left unnamed.
         """
 
         stand_ins = [ep_id for ep_id in file.merged.ids if is_stand_in(ep_id)]

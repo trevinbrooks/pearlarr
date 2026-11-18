@@ -201,7 +201,20 @@ class EpisodeSource(ABC):
     def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool: ...
 
 
-class SonarrEpisodes(EpisodeSource):
+class SeriesRows(ABC):
+    """A series' rows as Sonarr numbers them, which an import reads its files off and follows a pending import by.
+
+    `SonarrEpisodes` is the real one.
+    """
+
+    @abstractmethod
+    def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None: ...
+
+    @abstractmethod
+    def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]: ...
+
+
+class SonarrEpisodes(EpisodeSource, SeriesRows):
     """Owns the per-run episode cache + the (series, anilist_id, mapping) -> episodes logic, and each series' orders.
 
     Constructed once per run in `SonarrStrategy` from the shared
@@ -515,6 +528,7 @@ class SonarrEpisodes(EpisodeSource):
         read = self._series[series_id] = _SeriesRead(rows)
         return read
 
+    @override
     def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' episodes as Sonarr numbers them, read now, refreshing the per-run cache.
 
@@ -526,6 +540,7 @@ class SonarrEpisodes(EpisodeSource):
             self._store(series_id, fetched)
         return fetched
 
+    @override
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
         """The series' last successfully read episodes this run, as Sonarr numbers them, or empty."""
 

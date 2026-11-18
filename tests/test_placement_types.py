@@ -8,7 +8,7 @@ import pytest
 
 from pearlarr.arr_models import ParsedFileInfo, SonarrEpisode
 from pearlarr.episode_titles import EpisodeTitles
-from pearlarr.pending_import import FileEpisodeMap
+from pearlarr.pending_import import FileEpisodeMap, TvdbIds
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     EpisodeIndex,
@@ -18,6 +18,7 @@ from pearlarr.placement_types import (
     SeadexEvidence,
     all_specials,
     episode_index,
+    tvdb_ids_across,
 )
 from pearlarr.releases import SONARR_MISSING_KEY, EpisodeKey
 from pearlarr.tvdb_orders import OrderRow
@@ -107,6 +108,26 @@ class TestEpisodeIndex:
         assert index.season_counts == {0: 1, 1: 2}
         assert index.absolute_of == {601: 1, 602: 2}
         assert index.id_by_absolute == {1: 601, 2: 602}
+
+
+class TestEpisodeIndexTvdbIds:
+    """The TVDB episode ids a pending import stores, read off the rows its ids were placed on."""
+
+    def test_reads_the_tvdb_id_of_each_ids_row(self) -> None:
+        index = episode_index([sonarr_ep(1, 1, ep_id=101, tvdb_id=9001), sonarr_ep(1, 2, ep_id=102, tvdb_id=9002)])
+
+        assert index.tvdb_ids([102]) == TvdbIds({102: 9002})
+
+    def test_an_id_the_index_has_no_row_for_adds_no_entry(self) -> None:
+        index = episode_index([sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)])
+
+        assert index.tvdb_ids([101, 201]) == TvdbIds({101: 9001})
+
+    def test_across_series_each_id_is_read_off_the_index_that_holds_it(self) -> None:
+        show = episode_index([sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)])
+        other = episode_index([sonarr_ep(1, 1, ep_id=201, tvdb_id=9201)])
+
+        assert tvdb_ids_across([show, other], [101, 201]) == TvdbIds({101: 9001, 201: 9201})
 
 
 class TestEpisodeIndexViews:

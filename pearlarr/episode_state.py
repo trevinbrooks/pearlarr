@@ -8,8 +8,16 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from .arr_models import SonarrEpisodeFile
-from .pending_import import FileEpisodeMap, OwnedAtGrab, PendingImport, TitleClaim, TorrentGroup, sizes_by_episode
-from .placement_types import EpisodeIndex
+from .pending_import import (
+    FileEpisodeMap,
+    OwnedAtGrab,
+    PendingImport,
+    TitleClaim,
+    TorrentGroup,
+    TvdbIds,
+    sizes_by_episode,
+)
+from .placement_types import EpisodeIndex, tvdb_ids_across
 from .releases import normalize_group
 
 type TrustedGroups = Mapping[str, frozenset[int] | None]
@@ -332,6 +340,11 @@ class ImportSnapshot:
 
         snapshot = self.snapshot_for(ep_id)
         return _NO_FILE if snapshot is None else snapshot.status_of(ep_id, intended_size)
+
+    def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
+        """The TVDB episode id of the row each of `episode_ids` has in this poll's read of the claimed series."""
+
+        return tvdb_ids_across((snapshot.episodes for snapshot in self.by_series.values()), episode_ids)
 
     def file_map_statuses(self, file_map_episode_ids: Sequence[int], file_map: FileEpisodeMap) -> EpisodeStatuses:
         """Classify each de-duplicated episode like `status_of`, against the listed size of its file in `file_map`."""

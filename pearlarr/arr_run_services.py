@@ -383,7 +383,7 @@ class ArrRunServices:
         """
 
         self._state = state
-        # Per-arr-run state: the loop's activity read re-marks dirty ids after this.
+        # Per-arr-run state: the loop re-marks dirty ids after this.
         self._dirty_anilist_ids.clear()
         self._filter.bind_arr_run(state)
         self._grab_pipeline.bind_arr_run(state)
@@ -441,9 +441,10 @@ class ArrRunServices:
         return cached
 
     def mark_dirty(self, anilist_ids: Iterable[int]) -> None:
-        """Record AniList ids whose arr-side file state changed since the last run.
+        """Record AniList ids to check again this run whatever the cache holds of them.
 
-        Fed by the arr run loop's `ArrActivityReader` read.
+        Fed by the arr run loop: the titles whose arr-side file state changed since the last run (its
+        `ArrActivityReader` read) and the ones the strategy names (`ArrStrategy.start_of_run`).
         `title_needs_check` and `is_unchanged` bypass the unchanged-title
         short-circuit for exactly these ids.
         """

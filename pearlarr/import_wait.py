@@ -336,7 +336,7 @@ class PostImportCleanup:
         # FINAL, not ORDINARY: finishing the cleanup is one attempt per run with no clock to escalate it,
         # and a partial file map is only done past a clean importPending through an auto import.
         result = self._pollers.try_import_completed(pending, path, AttemptKind.FINAL)
-        pending = self._pending_imports.save_history_placements(pending, result)
+        pending = self._pending_imports.save_after_attempt(pending, result)
         if result.all_done:
             self._finish_cleanup(pending)
         elif result.pause_reason is PauseReason.ISSUED:
@@ -409,10 +409,10 @@ class ImportWaitManager:
 
         self._state.pending_import_states[key] = PENDING_IMPORT_STATE_FOR_OUTCOME[outcome]
 
-    def save_history_placements(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
-        """Persist the files a poll's Sonarr history placed onto the pending import and return the updated copy."""
+    def save_after_attempt(self, pending: PendingImport, result: AttemptResult) -> PendingImport:
+        """Persist the pending import the attempt ended with when it isn't `pending`, and return it."""
 
-        return self._pending_imports.save_history_placements(pending, result)
+        return self._pending_imports.save_after_attempt(pending, result)
 
     def apply_outcome(self, pending: PendingImport, outcome: Outcome, *, carried_over: bool) -> None:
         """One outcome's store effects: clean up on IMPORTED, drop on GONE, else note the state.
@@ -711,8 +711,8 @@ class _WaitRow:
     """One pending import's live state within a wait pass. The row owns its `TorrentView` presentation."""
 
     pending: PendingImport
-    """The stored pending import this row tracks, replaced after a poll whose attempt placed files from Sonarr's
-    history."""
+    """The stored pending import this row tracks, replaced after a poll by the one its attempt ended with
+    (`PendingImportStore.save_after_attempt`)."""
     dl_start: float
     """Download-phase clock, stamped at construction."""
     carried_over: bool
@@ -954,9 +954,9 @@ class WaitPass:
             path,
             AttemptKind.FINAL if at_deadline else AttemptKind.ORDINARY,
         )
-        # The placements are stored before any outcome: the cleanup, the awaiting-cleanup save, the next poll, and the
-        # progress poll's bar read them.
-        pending = row.pending = self._mgr.save_history_placements(pending, result)
+        # The pending import the attempt ended with is stored before any outcome: the cleanup, the awaiting-cleanup
+        # save, the next poll, and the progress poll's bar read it.
+        pending = row.pending = self._mgr.save_after_attempt(pending, result)
         progressed = clock.note_progress(result.imported_count, result.file_map_episode_count, now_ts)
         # Waiting on Sonarr's import work is not this pending import stalling (a poll that got a file done already
         # re-anchored harder than a pause would).

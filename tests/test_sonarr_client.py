@@ -36,7 +36,7 @@ from pearlarr.arr_models import (
 )
 from pearlarr.boundary import BoundaryContractError
 from pearlarr.output import Severity
-from pearlarr.pending_import import PendingImport
+from pearlarr.pending_import import NO_TVDB_IDS, PendingImport
 from pearlarr.sonarr_client import SonarrClient
 
 from .builders import title_claim
@@ -79,6 +79,7 @@ def _make_pending_import(*, infohash: str, title: str) -> PendingImport:
         added_at="",
         file_episode_map={},
         claims=(title_claim(title=title),),
+        tvdb_ids=NO_TVDB_IDS,
     )
 
 

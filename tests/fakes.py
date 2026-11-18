@@ -63,7 +63,7 @@ from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.sonarr_episodes import EpisodeSource, TitleEpisodes
+from pearlarr.sonarr_episodes import EpisodeSource, SeriesRows, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
 from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
@@ -320,6 +320,9 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         # Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
         self.history_calls: list[str] = []
+        # Assign to script the titles the start-of-run hook names.
+        self.check_again: set[int] = set()
+        self.start_of_run_calls: list[list[int]] = []
 
     @override
     def get_items(self) -> list[FakeArrItem]:
@@ -328,6 +331,11 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
     @override
     def filter_to_single(self, items: list[FakeArrItem], item_id: int) -> list[FakeArrItem]:
         return [i for i in items if i.id == item_id]
+
+    @override
+    def start_of_run(self, items: list[FakeArrItem]) -> set[int]:
+        self.start_of_run_calls.append([item.id for item in items])
+        return set(self.check_again)
 
     @override
     def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
@@ -664,7 +672,7 @@ class FakeSkyHookClient(AbstractSkyHookClient):
         return self._replies.get((tvdb_id, order_type), SkyHookNoReply.NOT_FOUND)
 
 
-class ScriptedEpisodes(EpisodeSource):
+class ScriptedEpisodes(EpisodeSource, SeriesRows):
     """An `EpisodeSource` scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
@@ -695,6 +703,7 @@ class ScriptedEpisodes(EpisodeSource):
         self._unread_series = unread_series
         self._unread_anilist_ids = unread_anilist_ids
         self._counts: Mapping[int, int] = counts or {}
+        self._last_known: dict[int, list[SonarrEpisode]] = {}
         self.calls: list[tuple[int, int]] = []
         """Each `title_episodes` call's (series id, AniList id), in call order."""
         self.files_of: list[tuple[SonarrEpisode, ...]] = []
@@ -711,7 +720,10 @@ class ScriptedEpisodes(EpisodeSource):
         if series_id in self._orders_unread_views:
             return NoView.ORDERS_UNREAD
         episodes = None if self._sonarr is None else self._sonarr.episodes(series_id)
-        return NoView.READ_FAILED if episodes is None else episodes
+        if episodes is None:
+            return NoView.READ_FAILED
+        self._last_known[series_id] = episodes
+        return episodes
 
     @override
     def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView:
@@ -737,6 +749,19 @@ class ScriptedEpisodes(EpisodeSource):
 
         episodes = self._series_episodes(series_id)
         return None if isinstance(episodes, NoView) else episode_index(episodes)
+
+    @override
+    def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The whole-series list off the client, None for a series with no view."""
+
+        episodes = self._series_episodes(series_id)
+        return None if isinstance(episodes, NoView) else episodes
+
+    @override
+    def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
+        """The series list as last read off the client, none for a series never read."""
+
+        return self._last_known.get(series_id, [])
 
     @override
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:

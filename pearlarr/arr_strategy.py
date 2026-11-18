@@ -22,8 +22,8 @@ class ImportCompleter(ABC):
         """Reconcile one completed torrent with the arr (one attempt).
 
         An auto import goes by pearlarr's file map, never the arr's parse of the names.
-        The attempt result carries any files the arr's history put on episodes, for the wait pass to persist onto the
-        pending import.
+        The attempt result carries the pending import the attempt ended with (`AttemptResult.pending`), for the wait
+        pass to persist.
         """
 
     @abstractmethod
@@ -59,6 +59,14 @@ class ArrStrategy[ItemT: ArrItem](ImportCompleter):
     @abstractmethod
     def filter_to_single(self, items: list[ItemT], item_id: int) -> list[ItemT]:
         """Narrow the item list to the single external id `item_id`."""
+
+    @abstractmethod
+    def start_of_run(self, items: list[ItemT]) -> set[int]:
+        """The strategy's own work at the start of an arr run, over the run's `items`.
+
+        Runs once, after the library read and before any prefetch. Returns the AniList ids of the titles to check
+        again this run whatever the cache holds of them.
+        """
 
     @abstractmethod
     def item_mappings(

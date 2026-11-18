@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from pearlarr.aired_view import AiredSeries, NoView, aired_series, is_stand_in
+from pearlarr.aired_view import AiredSeries, NoView, aired_series, is_stand_in, stand_in_id, stand_in_tvdb_id
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
@@ -97,6 +97,13 @@ def test_an_aired_episode_sonarr_has_no_row_for_gets_a_stand_in_in_aired_positio
     assert (second.title, second.air_date, second.runtime, second.tvdb_id) == ("Second", date(2020, 1, 12), 24, 102)
     assert (second.episode_file_id, second.episode_file) == (0, None)
     assert [is_stand_in(ep.id) for ep in view.aired] == [True, False, True, False]
+
+
+def test_a_stand_ins_id_gives_back_its_tvdb_episode() -> None:
+    view = _view([sonarr_ep(1, 1, ep_id=7, tvdb_id=101), sonarr_ep(1, 2, ep_id=8, tvdb_id=103)])
+
+    assert [stand_in_tvdb_id(ep.id) for ep in view.stand_ins] == [900, 102]
+    assert [stand_in_id(tvdb_id) for tvdb_id in (900, 102)] == [ep.id for ep in view.stand_ins]
 
 
 def test_a_stand_in_without_a_title_or_runtime_reads_as_sonarrs_rows_do() -> None:

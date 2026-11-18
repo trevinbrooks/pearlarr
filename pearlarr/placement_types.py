@@ -10,7 +10,7 @@ from typing import Self
 from .anibridge import NO_ALIASES, SpecialAliases
 from .arr_models import ParsedFileInfo, SonarrEpisode, index_episodes_by_key
 from .episode_titles import EpisodeTitles
-from .pending_import import FileEpisodeMap, TitleNames, TitleWindow
+from .pending_import import NO_TVDB_IDS, FileEpisodeMap, TitleNames, TitleWindow, TvdbIds
 from .releases import EpisodeKey, OrderOnlyKey
 from .tvdb_orders import NO_ORDERS, OrderRow, OrdersByName
 
@@ -97,6 +97,24 @@ class EpisodeIndex:
         if titles is None:
             titles = self._titles[series_words] = EpisodeTitles.of(self.by_id, self.id_by_key, series_words)
         return titles
+
+    def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
+        """The TVDB episode id of the row each of `episode_ids` was placed on, for a pending import to store.
+
+        An id this index has no Sonarr row for adds no entry.
+        """
+
+        return TvdbIds.of(ep for ep_id in episode_ids if (ep := self.by_id.get(ep_id)) is not None)
+
+
+def tvdb_ids_across(indexes: Iterable[EpisodeIndex], episode_ids: Iterable[int]) -> TvdbIds:
+    """`EpisodeIndex.tvdb_ids` of `episode_ids` over several series' indexes, as one."""
+
+    ids = tuple(episode_ids)
+    found = NO_TVDB_IDS
+    for index in indexes:
+        found = found.joined(index.tvdb_ids(ids))
+    return found
 
 
 def episode_index(episodes: Iterable[SonarrEpisode], other_orders: OrdersByName = NO_ORDERS) -> EpisodeIndex:

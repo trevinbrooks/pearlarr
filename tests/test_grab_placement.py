@@ -29,7 +29,15 @@ from pearlarr.grab_placement import (
     place_release,
     size_over_name_files,
 )
-from pearlarr.pending_import import NO_ORDER_ONLY, FileEpisodeMap, PendingImport, TitleNames, TitleWindow
+from pearlarr.pending_import import (
+    NO_ORDER_ONLY,
+    NO_TVDB_IDS,
+    FileEpisodeMap,
+    PendingImport,
+    TitleNames,
+    TitleWindow,
+    TvdbIds,
+)
 from pearlarr.placement_types import (
     EMPTY_LISTING,
     NO_EVIDENCE,
@@ -272,6 +280,7 @@ class TestPlaceRelease:
             another_titles_counts=NO_ANOTHER_TITLES_COUNTS,
             pending_import=None,
             intended_sizes={},
+            tvdb_ids=NO_TVDB_IDS,
         )
 
 
@@ -1265,6 +1274,7 @@ class TestPlaceWhereEveryNumberingAgrees:
             another_titles_counts=NO_ANOTHER_TITLES_COUNTS,
             pending_import=pending,
             intended_sizes={9254: 1_400_000_000},
+            tvdb_ids=NO_TVDB_IDS,
         )
 
     def test_a_batch_counted_from_one_places_on_the_seasons_title(self) -> None:
@@ -1769,6 +1779,7 @@ class TestPendingImportAt:
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
             claim=claim,
+            tvdb_ids=TvdbIds({101: 9101}),
             pending_import=None,
         )
 
@@ -1783,6 +1794,7 @@ class TestPendingImportAt:
             added_at=_STAMP,
             file_episode_map={"show - 01.mkv": (101,)},
             claims=(claim,),
+            tvdb_ids=TvdbIds({101: 9101}),
             excluded_files=("show - 02.mkv",),
             release_sizes=(10,),
             sizes_by_name={"show - 01.mkv": 10},
@@ -1807,6 +1819,7 @@ class TestPendingImportAt:
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
             claim=claim,
+            tvdb_ids=TvdbIds({101: 9101, 102: 9102, 103: 9103}),
             pending_import=stored,
         )
 
@@ -1821,6 +1834,7 @@ class TestPendingImportAt:
         # Not a new add: the pending import keeps its `added_at`, and the identity stays the stored one's.
         assert pending.added_at == "2026-01-01 00:00:00"
         assert pending.release_group == stored.release_group
+        assert pending.tvdb_ids == TvdbIds({101: 9101, 102: 9102, 103: 9103})
 
     def test_joined_appends_a_new_titles_claim(self) -> None:
         stored = pending_import(infohash="h1", added_at="2026-01-01 00:00:00")
@@ -1839,6 +1853,7 @@ class TestPendingImportAt:
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
             claim=title_claim(),
+            tvdb_ids=NO_TVDB_IDS,
             pending_import=stored,
         )
 
@@ -1853,6 +1868,7 @@ class TestPendingImportAt:
             hand_import_files=(),
             order_only=NO_ORDER_ONLY,
             claim=title_claim(),
+            tvdb_ids=NO_TVDB_IDS,
             pending_import=stored,
         )
 

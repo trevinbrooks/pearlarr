@@ -1,11 +1,11 @@
 """The pending import each grab leaves for the wait pass, with its claims, windows and file map coverage."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .aired_view import is_stand_in
+from .aired_view import is_stand_in, stand_in_id, stand_in_tvdb_id
 from .arr_models import SonarrEpisode
 from .file_paths import normalize_file_name
 from .pairs import unambiguous
@@ -14,6 +14,10 @@ from .releases import OrderOnlyKey
 type FileEpisodeMap = Mapping[str, tuple[int, ...]]
 """A read view of normalized file name -> episode ids: a pending import's file map, a placement's, or both joined
 (`joined_file_map`). Producers normalize the keys, and readers take them as given."""
+
+type IdMoves = Mapping[int, int]
+"""An episode id a pending import holds -> the id it is now, for each one that moved: the row that holds its TVDB
+episode, or that episode's stand-in (`aired_view.stand_in`) when no row does."""
 
 NO_ORDER_ONLY: Mapping[str, OrderOnlyKey] = MappingProxyType({})
 """No file numbered by another TVDB order."""
@@ -45,18 +49,24 @@ def sizes_by_episode(file_map: FileEpisodeMap, listed: Mapping[str, int]) -> dic
 
 
 def _normalized_file_map(entries: FileEpisodeMap) -> dict[str, tuple[int, ...]]:
-    """The file map with every key normalized and only Sonarr episode ids kept, minus the files that leaves empty.
+    """The file map with every key normalized and its zero ids dropped, minus the files Sonarr can't take whole.
 
-    A zero id and a stand-in's id (`aired_view.stand_in`) are dropped: Sonarr has no episode to import either
-    onto. Of two keys that normalize alike, the first one left with ids wins.
+    A file left with no id goes, and so does one with a stand-in's id (`aired_view.stand_in`) among its ids:
+    Sonarr has no episode to import either onto. Of two keys that normalize alike, the first one kept wins.
     """
 
     normalized: dict[str, tuple[int, ...]] = {}
     for name, ids in entries.items():
-        clean = tuple(i for i in ids if i and not is_stand_in(i))
-        if clean:
+        clean = tuple(i for i in ids if i)
+        if clean and not any(is_stand_in(i) for i in clean):
             normalized.setdefault(normalize_file_name(name), clean)
     return normalized
+
+
+def _on_stand_ins(entries: FileEpisodeMap) -> tuple[str, ...]:
+    """The normalized names of the file map's files with a stand-in's id among their ids."""
+
+    return tuple(normalize_file_name(name) for name, ids in entries.items() if any(is_stand_in(i) for i in ids))
 
 
 def _normalized_keys[V](by_name: Mapping[str, V]) -> dict[str, V]:
@@ -176,9 +186,176 @@ class TitleWindow:
         )
 
 
+def _tvdb_id_of(row: SonarrEpisode) -> int | None:
+    """The row's TVDB episode id, None when Sonarr sent the row without one."""
+
+    return row.tvdb_id if row.tvdb_id is not None and row.tvdb_id > 0 else None
+
+
+@dataclass(frozen=True, slots=True)
+class TvdbIds:
+    """The TVDB episode id each Sonarr row had when a pending import stored the row's id.
+
+    A row Sonarr sent with no TVDB id is held as None, and its id is never followed. A stand-in's id has no entry.
+    """
+
+    by_row_id: Mapping[int, int | None] = field(default_factory=dict[int, int | None])
+    """Sonarr row id -> the row's TVDB episode id."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "by_row_id", MappingProxyType(dict(self.by_row_id)))
+
+    @classmethod
+    def of(cls, rows: Iterable[SonarrEpisode]) -> "TvdbIds":
+        """The entries of the rows ids were placed from. A stand-in and a row with no id add none."""
+
+        return cls({row.id: _tvdb_id_of(row) for row in rows if row.id and not is_stand_in(row.id)})
+
+    def joined(self, added: "TvdbIds") -> "TvdbIds":
+        """These entries and `added`'s, a row held with no TVDB id taking the one `added` has for it.
+
+        Raises `ValueError` when `added` gives a row id another TVDB id than it has here: the id was stored for
+        another episode than its row holds.
+        """
+
+        joined = dict(self.by_row_id)
+        for row_id, tvdb_id in added.by_row_id.items():
+            held = joined.get(row_id)
+            if held is None:
+                joined[row_id] = tvdb_id
+            elif tvdb_id is not None and tvdb_id != held:
+                raise ValueError(f"episode id {row_id} is stored for TVDB episode {held}, and its row holds {tvdb_id}")
+        return TvdbIds(joined)
+
+    def held(self, row_ids: Iterable[int]) -> "TvdbIds":
+        """The entries of `row_ids` alone. Raises `ValueError` when one has no entry."""
+
+        wanted = set(row_ids)
+        if missing := wanted - self.by_row_id.keys():
+            raise ValueError(f"no TVDB episode id is stored for episode ids {sorted(missing)}")
+        return TvdbIds({row_id: tvdb_id for row_id, tvdb_id in self.by_row_id.items() if row_id in wanted})
+
+    def moved(self, moves: IdMoves) -> "TvdbIds":
+        """These entries after `moves`.
+
+        A moved row id's entry goes to the id it is now, one whose episode has no row is dropped, and a stand-in
+        that has a row gives the row its TVDB episode id.
+        """
+
+        moved: dict[int, int | None] = {}
+        for row_id, tvdb_id in self.by_row_id.items():
+            now = moves.get(row_id, row_id)
+            if is_stand_in(now):
+                continue
+            if tvdb_id is None:
+                # Never moved, so `now` is its own id. A row id that moved onto it brings the TVDB id.
+                moved.setdefault(now, None)
+            else:
+                moved[now] = tvdb_id
+        for was, now in moves.items():
+            if is_stand_in(was):
+                moved[now] = stand_in_tvdb_id(was)
+        return TvdbIds(moved)
+
+    def to_json(self) -> list[list[int | None]]:
+        """The `[row id, TVDB episode id]` pairs persisted in the pending import, by row id."""
+
+        return [[row_id, self.by_row_id[row_id]] for row_id in sorted(self.by_row_id)]
+
+    @classmethod
+    def from_json(cls, pairs: Iterable[Sequence[int | None]]) -> "TvdbIds":
+        """Rebuild from the persisted pairs. A pair with no row id is dropped."""
+
+        return cls({row_id: pair[1] for pair in pairs if (row_id := pair[0]) is not None})
+
+
+NO_TVDB_IDS = TvdbIds()
+"""No entry: a pending import that holds no Sonarr row id (a Radarr grab)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedRows:
+    """The rows read now of every series a pending import claims, as `PendingImport.followed` reads them."""
+
+    row_by_tvdb: Mapping[int, int]
+    """TVDB episode id -> the id of the row that holds it now, for each TVDB episode the pending import holds."""
+
+    def __post_init__(self) -> None:
+        # Detach from the caller's dict, then wrap read-only.
+        object.__setattr__(self, "row_by_tvdb", MappingProxyType(dict(self.row_by_tvdb)))
+
+    @classmethod
+    def of(
+        cls, pending: "PendingImport", rows_by_series: Mapping[int, Sequence[SonarrEpisode]]
+    ) -> "ClaimedRows | None":
+        """The rows `pending` is followed under, None when it can't be followed under them.
+
+        `rows_by_series` holds each series' rows as read, a series that wasn't read left out. None when the pending
+        import stores no TVDB ids, when a claimed series wasn't read or has no rows, and when a TVDB episode the
+        pending import holds sits on two of the rows.
+        """
+
+        if pending.tvdb_ids is None:
+            return None
+        held = {tvdb_id for tvdb_id in pending.tvdb_ids.by_row_id.values() if tvdb_id is not None}
+        held.update(stand_in_tvdb_id(ep_id) for ep_id in pending.window_stand_ins())
+        row_by_tvdb: dict[int, int] = {}
+        for series_id in pending.series_ids:
+            rows = rows_by_series.get(series_id)
+            if not rows:
+                return None
+            for row in rows:
+                tvdb_id = _tvdb_id_of(row)
+                if tvdb_id not in held or not row.id:
+                    continue
+                if row_by_tvdb.setdefault(tvdb_id, row.id) != row.id:
+                    return None
+        return cls(row_by_tvdb)
+
+    def moves(self, tvdb_ids: TvdbIds, stand_ins: Iterable[int]) -> dict[int, int]:
+        """Where each id that isn't where its TVDB episode is now went (`IdMoves`), from `tvdb_ids` and `stand_ins`.
+
+        Worked out whole before any id is replaced: rows can swap episodes, and replacing ids one at a time would
+        undo a swap. A row id held with no TVDB id never moves.
+        """
+
+        moves: dict[int, int] = {}
+        for row_id, tvdb_id in tvdb_ids.by_row_id.items():
+            if tvdb_id is None:
+                continue
+            now = self.row_by_tvdb.get(tvdb_id, stand_in_id(tvdb_id))
+            if now != row_id:
+                moves[row_id] = now
+        for ep_id in stand_ins:
+            if (now := self.row_by_tvdb.get(stand_in_tvdb_id(ep_id))) is not None:
+                moves[ep_id] = now
+        return moves
+
+    def set_aside(self, pending: "PendingImport") -> dict[str, tuple[int, ...]]:
+        """Each file `pending.followed` takes out of the file map under these rows -> its TVDB episodes with no row."""
+
+        if pending.tvdb_ids is None:
+            return {}
+        tvdb_by_row = pending.tvdb_ids.by_row_id
+        without_row = {
+            name: tuple(
+                tvdb_id
+                for ep_id in ids
+                if (tvdb_id := tvdb_by_row.get(ep_id)) is not None and tvdb_id not in self.row_by_tvdb
+            )
+            for name, ids in pending.file_episode_map.items()
+        }
+        return {name: tvdb_ids for name, tvdb_ids in without_row.items() if tvdb_ids}
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OwnedAtGrab:
-    """The plan's per-title overwrite-guard evidence, carried whole."""
+    """The plan's per-title overwrite-guard evidence, carried whole.
+
+    Its episode ids stay as stored when a pending import's ids are followed (`PendingImport.followed`): a pair
+    describes a file on a row, and a row with a file keeps its id.
+    """
 
     entry_groups: tuple[str, ...] = ()
     """Groups of preferred releases the plan confirmed owned by size."""
@@ -226,15 +403,17 @@ class TitleClaim:
     """The SeaDex entry URL when it claimed, for the carried-over pending import's inline `link` line."""
 
     ordered_episode_ids: tuple[int, ...]
-    """The title's resolved episode ids in season order, as the placer was handed them: a stand-in's id
-    (`aired_view.stand_in`) is kept, so a later placement of the torrent's other files runs under the same window.
-    Empty means no window: any id of the series."""
+    """The title's resolved episode ids in season order. A stand-in's id (`aired_view.stand_in`) is kept in its
+    place, so a later placement of the torrent's other files runs under the same window, and each id is on the row
+    that held its TVDB episode when the pending import was last followed (`PendingImport.followed`). Empty means no
+    window: any id of the series."""
 
     names: TitleNames
     """The series and AniList names the placement breaks ties by (see `TitleNames`)."""
 
     preowned_episode_ids: tuple[int, ...]
-    """Claimed ids that already had a trusted file at the FIRST claim (the wait bar leaves them out)."""
+    """The claimed episodes that already had a trusted file at the FIRST claim, each by the id of the row that held
+    it when the pending import was last followed (the wait bar leaves them out)."""
 
     claimed_coverage: str | None
     """This claim's ids as a coverage string (e.g. `"S02 E06"`)."""
@@ -250,6 +429,21 @@ class TitleClaim:
         """
 
         return not self.ordered_episode_ids or ep_id in self.ordered_episode_ids
+
+    def moved(self, moves: IdMoves) -> "TitleClaim":
+        """The claim with each moved id replaced by the id it is now, both lists deduplicated.
+
+        The window takes it in place, a stand-in too, so it never gets smaller. The preowned ids drop an episode
+        that has no row. The coverage strings stay as stored.
+        """
+
+        window = dict.fromkeys(moves.get(ep_id, ep_id) for ep_id in self.ordered_episode_ids)
+        preowned = dict.fromkeys(moves.get(ep_id, ep_id) for ep_id in self.preowned_episode_ids)
+        return replace(
+            self,
+            ordered_episode_ids=tuple(window),
+            preowned_episode_ids=tuple(ep_id for ep_id in preowned if not is_stand_in(ep_id)),
+        )
 
     @property
     def window(self) -> TitleWindow:
@@ -334,12 +528,18 @@ class PendingImport:
     claims: tuple[TitleClaim, ...]
     """Every title's claim on the torrent, in the order added."""
 
+    tvdb_ids: TvdbIds | None
+    """The TVDB episode id of every Sonarr row id held here (the file map's, each claim's window and preowned
+    ids), which `followed` moves the ids by when Sonarr renumbers. Reduced as the pending import is built to the
+    ids it holds, every one of which must have an entry. None only on a row written before it was stored: such a
+    pending import is never followed."""
+
     excluded_files: tuple[str, ...] = ()
     """Normalized file names of video files that aren't this pending import's to import under the claims it has now
     (a duplicate a collision left unplaced, a file every window resolves outside, one another listed title's window
-    placed or left for a hand import), or that sit on an aired episode Sonarr has no row for, found at grab time.
-    They only quiet the import's warning: a later claim's grab can still place one. Normalized and deduplicated in
-    order as the pending import is built, and never a name the file map holds."""
+    placed or left for a hand import), or that sit on an aired episode Sonarr has no row for, as the grab found or
+    as `followed` did. They only quiet the import's warning: a later claim's grab can still place one. Normalized
+    and deduplicated in order as the pending import is built, and never a name the file map holds."""
 
     release_sizes: tuple[int, ...] = ()
     """The grabbed listing's file sizes. Lets the import tell this release's files from an outdated
@@ -372,15 +572,16 @@ class PendingImport:
 
     def __post_init__(self) -> None:
         # Normalize the file map, the exclusions, the hand-import files, their order-only keys and the by-name sizes
-        # so readers can take the names as normalized, the file map's ids as non-zero, and no name as two of placed,
-        # excluded and left for a hand import. The file map wins, then the hand import: a title's window can leave a
-        # file for a hand import that a sibling's earlier grab excluded as another title's, and the pending import
-        # must still say so. Detach the mappings and wrap them read-only.
+        # so readers can take the names as normalized, the file map's ids as Sonarr rows', and no name as two of
+        # placed, excluded and left for a hand import. The file map wins, then the hand import: a title's window can
+        # leave a file for a hand import that a sibling's earlier grab excluded as another title's, and the pending
+        # import must still say so. A file the file map had on a stand-in is excluded. Detach the mappings and wrap
+        # them read-only.
         file_map = _normalized_file_map(self.file_episode_map)
         hand_import = tuple(name for name in _normalized_names_in_order(self.hand_import_files) if name not in file_map)
         excluded = (
             name
-            for name in _normalized_names_in_order(self.excluded_files)
+            for name in _normalized_names_in_order((*self.excluded_files, *_on_stand_ins(self.file_episode_map)))
             if name not in file_map and name not in hand_import
         )
         order_only = {name: key for name, key in _normalized_keys(self.order_only).items() if name in hand_import}
@@ -389,6 +590,9 @@ class PendingImport:
         object.__setattr__(self, "hand_import_files", hand_import)
         object.__setattr__(self, "order_only", MappingProxyType(order_only))
         object.__setattr__(self, "sizes_by_name", MappingProxyType(_normalized_keys(self.sizes_by_name)))
+        if self.tvdb_ids is not None:
+            # A row id with no entry could never be followed, so a pending import that holds one is refused.
+            object.__setattr__(self, "tvdb_ids", self.tvdb_ids.held(self.row_ids()))
 
     @property
     def torrent_group(self) -> TorrentGroup:
@@ -420,6 +624,22 @@ class PendingImport:
         if slices := ", ".join(dict.fromkeys(c.claimed_coverage for c in self.claims if c.claimed_coverage)):
             base = f"{base} · {slices}"
         return base
+
+    def row_ids(self) -> frozenset[int]:
+        """Every Sonarr row id the pending import holds: the file map's, and each claim's window and preowned ids."""
+
+        held = {ep_id for file_ids in self.file_episode_map.values() for ep_id in file_ids}
+        for claim in self.claims:
+            held.update(claim.ordered_episode_ids)
+            held.update(claim.preowned_episode_ids)
+        return frozenset(ep_id for ep_id in held if ep_id and not is_stand_in(ep_id))
+
+    def window_stand_ins(self) -> tuple[int, ...]:
+        """The stand-ins' ids the claims' windows hold, each once."""
+
+        return tuple(
+            dict.fromkeys(ep_id for claim in self.claims for ep_id in claim.ordered_episode_ids if is_stand_in(ep_id))
+        )
 
     def file_map_episode_ids(self) -> list[int]:
         """The intended episode ids: the file map's values in first-claim order."""
@@ -480,13 +700,48 @@ class PendingImport:
 
         return self if changed == self else changed
 
-    def with_placements(self, placements: FileEpisodeMap) -> "PendingImport":
-        """The pending import with `placements` joined onto its file map (`joined_file_map`).
+    def _tvdb_ids_with(self, placed_from: TvdbIds) -> TvdbIds | None:
+        """The stored TVDB ids with `placed_from` joined (`TvdbIds.joined`), None while none are stored."""
 
-        Their names are lifted out of the exclusions and the hand-import files.
+        return None if self.tvdb_ids is None else self.tvdb_ids.joined(placed_from)
+
+    def followed(self, rows: ClaimedRows) -> "PendingImport":
+        """The pending import with every id on the row that holds its TVDB episode under `rows`, itself when none moved.
+
+        An id whose episode has no row becomes the episode's stand-in in a window and leaves the preowned ids, and
+        a file on it leaves the file map whole for the exclusions. A window's stand-in whose episode has a row
+        becomes the row's id. An id stored with no TVDB id stays, and so does a pending import that stores none.
         """
 
-        return self._or_self(replace(self, file_episode_map=joined_file_map(self.file_episode_map, placements)))
+        if self.tvdb_ids is None:
+            return self
+        moves = rows.moves(self.tvdb_ids, self.window_stand_ins())
+        if not moves:
+            return self
+        file_map = {
+            name: tuple(dict.fromkeys(moves.get(ep_id, ep_id) for ep_id in ids))
+            for name, ids in self.file_episode_map.items()
+        }
+        return replace(
+            self,
+            file_episode_map=file_map,
+            claims=tuple(claim.moved(moves) for claim in self.claims),
+            tvdb_ids=self.tvdb_ids.moved(moves),
+        )
+
+    def with_placements(self, placements: FileEpisodeMap, placed_from: TvdbIds) -> "PendingImport":
+        """The pending import with `placements` joined onto its file map (`joined_file_map`).
+
+        Their names are lifted out of the exclusions and the hand-import files. `placed_from` holds the rows they
+        were placed on.
+        """
+
+        joined = replace(
+            self,
+            file_episode_map=joined_file_map(self.file_episode_map, placements),
+            tvdb_ids=self._tvdb_ids_with(placed_from),
+        )
+        return self._or_self(joined)
 
     def with_exclusions(self, names: Iterable[str]) -> "PendingImport":
         """The pending import with `names` added to its exclusions, less any the file map or hand-import files have."""
@@ -515,11 +770,12 @@ class PendingImport:
         )
         return self._or_self(joined)
 
-    def with_claim(self, claim: TitleClaim) -> "PendingImport":
+    def with_claim(self, claim: TitleClaim, placed_from: TvdbIds) -> "PendingImport":
         """The pending import with `claim` joined and its cleanup mark cleared (new files to import reactivate it).
 
         A new grab plan by a title already claiming replaces its claim, keeping the stored claim's preowned ids: the
-        window follows the newest plan, and the ids the wait bar leaves out never reset.
+        window follows the newest plan, and the ids the wait bar leaves out never reset. `placed_from` holds the
+        rows the claim's ids were read from.
         """
 
         claims = (*self.claims, claim)
@@ -528,12 +784,13 @@ class PendingImport:
                 kept = replace(claim, preowned_episode_ids=stored.preowned_episode_ids)
                 claims = (*self.claims[:index], kept, *self.claims[index + 1 :])
                 break
-        return self._or_self(replace(self, claims=claims, awaiting_cleanup=False))
+        joined = replace(self, claims=claims, awaiting_cleanup=False, tvdb_ids=self._tvdb_ids_with(placed_from))
+        return self._or_self(joined)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under `pending_imports`."""
 
-        return {
+        row: dict[str, Any] = {
             "infohash": self.infohash,
             "release_group": self.release_group,
             "is_dual_audio": self.is_dual_audio,
@@ -549,6 +806,10 @@ class PendingImport:
             "order_only": {name: key.to_json() for name, key in self.order_only.items()},
             "cross_seed": self.is_cross_seed,
         }
+        if self.tvdb_ids is not None:
+            # A row written before the ids were stored keeps no key, so it loads as such a row again.
+            row["tvdb_ids"] = self.tvdb_ids.to_json()
+        return row
 
     @classmethod
     def from_json(cls, raw: dict[str, Any], *, guards: Mapping[int, OwnedAtGrab]) -> "PendingImport":
@@ -565,6 +826,7 @@ class PendingImport:
             added_at=added_at_of(raw),
             file_episode_map=file_map,
             claims=tuple(TitleClaim.from_json(claim, guards=guards) for claim in raw.get("claims", [])),
+            tvdb_ids=TvdbIds.from_json(raw["tvdb_ids"]) if "tvdb_ids" in raw else None,
             excluded_files=excluded,
             release_sizes=tuple(raw.get("release_sizes", [])),
             awaiting_cleanup=is_awaiting_cleanup(raw),

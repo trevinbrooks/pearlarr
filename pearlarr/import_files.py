@@ -89,7 +89,7 @@ class UnplacedInFolder:
 
     @property
     def quiet(self) -> int:
-        """How many names the pending import excludes: reported at the grab, not again."""
+        """How many names the pending import excludes: reported when they were excluded, not again."""
 
         return len(self.names) - len(self.reported)
 

@@ -115,7 +115,10 @@ class ArrRunLoop:
             n_items = len(all_items)
             fetching.note(arr_item_noun(arr, n_items))
 
-        # The activity read must run before the prefetches, which warm exactly the dirty subset it marks.
+        # Both dirty marks must run before the prefetches, which warm exactly the dirty subset they mark. The
+        # strategy's start-of-run work runs on every run: no setting turns it off.
+        self._services.mark_dirty(strategy.start_of_run(all_items))
+
         activity: ArrActivityReader | None = None
         if self._config.advanced.detect_arr_activity and not self._config.seadex.ignore_seadex_update_times:
             with boot.step(f"Checking {arr.capitalize()} activity") as step:
@@ -166,7 +169,7 @@ class ArrRunLoop:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
                 step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
-            # Like the episode step, after the SeaDex warm and the activity read's dirty marks: both choose their
+            # Like the episode step, after the SeaDex warm and the dirty marks: both choose their
             # series through `title_needs_check`, which reads them.
             with boot.step("Fetching TVDB orders") as step:
                 fetched = strategy.prefetch_orders(all_items, progress=step)

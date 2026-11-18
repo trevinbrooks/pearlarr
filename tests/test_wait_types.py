@@ -2,7 +2,6 @@
 """Direct tests of the wait types: pending import states, the attempt result, poll classification, download progress."""
 
 from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
@@ -62,16 +61,6 @@ class TestPendingImportStateAndAttemptResult:
         assert NO_ATTEMPT.attempted is False
         assert NO_ATTEMPT.all_done is False
         assert NO_ATTEMPT.command_issued is False
-
-    def test_an_attempt_results_placements_are_detached_and_read_only(self) -> None:
-        placed: dict[str, tuple[int, ...]] = {"show - 01.mkv": (101,)}
-        result = AttemptResult(all_done=False, command_issued=True, placements=placed)
-        placed["show - 02.mkv"] = (102,)
-        mutable = cast("dict[str, tuple[int, ...]]", result.placements)
-
-        with pytest.raises(TypeError):
-            mutable["show - 02.mkv"] = (102,)
-        assert dict(result.placements) == {"show - 01.mkv": (101,)}
 
     @pytest.mark.parametrize(
         ("left", "explained"),
