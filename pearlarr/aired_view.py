@@ -119,7 +119,7 @@ def aired_series(
     held = {ep.tvdb_id for ep in in_sonarr}
     return AiredSeries(
         in_sonarr=tuple(in_sonarr),
-        # Every aired row was stored with its details, from one reply.
+        # A stored answer has details for every aired row (`CachedOrders`).
         stand_ins=tuple(
             stand_in(row, aired.details[tvdb_id]) for tvdb_id, row in by_tvdb.items() if tvdb_id not in held
         ),

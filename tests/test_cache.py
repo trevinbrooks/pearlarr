@@ -1341,6 +1341,9 @@ class TestTvdbOrders:
                 {**_ORDERS.to_json(), "details": {"101": ["First", "2020-01-05"]}}, id="details-row-too-short"
             ),
             pytest.param({**_ORDERS.to_json(), "details": {"101": ["First", "soon", 24]}}, id="details-day-unreadable"),
+            pytest.param(
+                {**_ORDERS.to_json(), "details": {"101": ["First", "2020-01-05", 24]}}, id="aired-row-without-details"
+            ),
         ],
     )
     def test_an_answer_of_another_shape_reads_as_none(self, tmp_path: Path, record: dict[str, object]) -> None:

@@ -99,8 +99,8 @@ class CachedOrders:
     when Sonarr listed no orders (always on v4)."""
 
     details: Mapping[int, EpisodeDetails] | None
-    """TVDB episode id -> the episode's details, for every row of the official order. None on an answer stored
-    before details were kept."""
+    """TVDB episode id -> the episode's details, for every row of the official order: an answer built with a row
+    that has none raises `ValueError`. None on an answer stored before details were kept."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
@@ -108,6 +108,11 @@ class CachedOrders:
             object.__setattr__(self, "sonarr_counts", MappingProxyType(dict(self.sonarr_counts)))
         if self.details is not None:
             object.__setattr__(self, "details", MappingProxyType(dict(self.details)))
+            # The aired view reads each aired row's details by its TVDB episode id (`aired_view.aired_series`), so an
+            # answer that lacks one is refused.
+            without = [row.tvdb_id for row in self.orders.get(AIRED_ORDER, ()) if row.tvdb_id not in self.details]
+            if without:
+                raise ValueError(f"the aired order's TVDB episodes {without} have no details")
 
     @property
     def aired(self) -> AiredOrder | None:
@@ -140,7 +145,8 @@ class CachedOrders:
     def from_json(cls, raw: dict[str, Any]) -> Self | None:
         """Rebuild a stored answer, or None when it doesn't have the stored shape (the series then refetches).
 
-        An answer stored before details were kept has no `details` key and rebuilds with `details` None.
+        An answer that keeps details and has none for a row of its official order doesn't have it. An answer stored
+        before details were kept has no `details` key and rebuilds with `details` None.
         """
 
         try:
