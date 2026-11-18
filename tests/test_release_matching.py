@@ -8,9 +8,9 @@ from pearlarr.planner import (
     episode_coverage,
     get_same_files_groups,
 )
-from pearlarr.releases import EpisodeKey, GroupReleases, PlacedEpisode, Release, normalize_group
+from pearlarr.releases import EpisodeKey, GroupReleases, Release, normalize_group
 
-from .builders import sonarr_ep
+from .builders import placed_episode, sonarr_ep
 
 
 class TestNormalizeGroup:
@@ -63,15 +63,15 @@ class TestGetSameFilesGroups:
 
     def test_identical_coverage_grouped(self) -> None:
         seadex = {
-            "A": GroupReleases(episodes=[PlacedEpisode(season=1, episode=1, size=0)]),
-            "B": GroupReleases(episodes=[PlacedEpisode(season=1, episode=1, size=0)]),
+            "A": GroupReleases(episodes=[placed_episode(season=1, episode=1, size=0)]),
+            "B": GroupReleases(episodes=[placed_episode(season=1, episode=1, size=0)]),
         }
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_different_coverage_separate(self) -> None:
         seadex = {
-            "A": GroupReleases(episodes=[PlacedEpisode(season=1, episode=1, size=0)]),
-            "B": GroupReleases(episodes=[PlacedEpisode(season=1, episode=2, size=0)]),
+            "A": GroupReleases(episodes=[placed_episode(season=1, episode=1, size=0)]),
+            "B": GroupReleases(episodes=[placed_episode(season=1, episode=2, size=0)]),
         }
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
@@ -88,7 +88,7 @@ class TestEpisodeCoverage:
         # No sibling to excuse a mismatch, but a skipped torrent of the group reads its placed episodes here.
         seadex = {
             "A": GroupReleases(
-                releases={"u": Release(episodes=[PlacedEpisode(season=1, episode=1, size=0)])},
+                releases={"u": Release(episodes=[placed_episode(season=1, episode=1, size=0)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
@@ -98,7 +98,7 @@ class TestEpisodeCoverage:
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {
             "Era-Raws": GroupReleases(
-                releases={"u": Release(episodes=[PlacedEpisode(season=1, episode=1, size=0)])},
+                releases={"u": Release(episodes=[placed_episode(season=1, episode=1, size=0)])},
             ),
             "Other": GroupReleases(releases={"u2": Release(episodes=[])}),
         }
@@ -113,10 +113,10 @@ class TestEpisodeCoverage:
         # episodes never blankets: a placed episode is proof of what the release covers.
         seadex = {
             "A": GroupReleases(
-                releases={"u": Release(episodes=[PlacedEpisode(season=1, episode=99, size=0)])},
+                releases={"u": Release(episodes=[placed_episode(season=1, episode=99, size=0)])},
             ),
             "B": GroupReleases(
-                releases={"u2": Release(episodes=[PlacedEpisode(season=1, episode=1, size=0)])},
+                releases={"u2": Release(episodes=[placed_episode(season=1, episode=1, size=0)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})
@@ -131,10 +131,10 @@ class TestEpisodeCoverage:
         # no-group file as covered and silently suppress its grabs.
         seadex = {
             "": GroupReleases(
-                releases={"u": Release(episodes=[]), "u2": Release(episodes=[PlacedEpisode(1, 1, 0)])},
+                releases={"u": Release(episodes=[]), "u2": Release(episodes=[placed_episode(1, 1, 0)])},
             ),
             "B": GroupReleases(
-                releases={"u3": Release(episodes=[PlacedEpisode(season=1, episode=1, size=0)])},
+                releases={"u3": Release(episodes=[placed_episode(season=1, episode=1, size=0)])},
             ),
         }
         result = episode_coverage(seadex, {EpisodeKey(1, 1): sonarr_ep(1, 1)})

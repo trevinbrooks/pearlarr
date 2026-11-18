@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import Self
 
 from .arr_models import SonarrEpisode, episode_sort_key
-from .releases import EpisodeKey, season_episode_key
+from .releases import EpisodeKey, PrintedKey, season_episode_key
 from .scene_numbers import SceneNumbers
 from .tvdb_orders import CachedOrders, EpisodeDetails, OrderRow, SonarrSeriesOrders
 
@@ -87,6 +87,20 @@ def stand_in_tvdb_id(episode_id: int) -> int:
     return -episode_id
 
 
+def printed_key(episode: SonarrEpisode) -> PrintedKey:
+    """The number a line a person reads prints the episode by: the one Sonarr lists it under.
+
+    A renumbered row prints the number it remembers (`SonarrEpisode.listed_as`), and a row as Sonarr sent it its
+    own. A stand-in has no number in Sonarr, so it prints its aired one, marked as that. A missing number prints as
+    `SONARR_MISSING_KEY`.
+    """
+
+    listed_as = episode.listed_as
+    if listed_as is None:
+        listed_as = season_episode_key(episode.season_number, episode.episode_number)
+    return PrintedKey(listed_as, aired=is_stand_in(episode.id))
+
+
 def stand_in(row: OrderRow, details: EpisodeDetails) -> SonarrEpisode:
     """An aired episode Sonarr's order of the series leaves out, as a Sonarr row with no file.
 
@@ -117,7 +131,8 @@ def aired_series(
     (`AiredSeries.own_only`).
 
     A renumbered row loses its scene numbers: they were given to the row under another number, so they may be
-    another episode's.
+    another episode's. It keeps the number Sonarr lists it under (`SonarrEpisode.listed_as`), which lines print it
+    by (`printed_key`).
     """
 
     if not facts.in_another_order:
@@ -135,6 +150,7 @@ def aired_series(
                     "scene_season_number": None,
                     "scene_episode_number": None,
                     "scene_absolute_episode_number": None,
+                    "listed_as": season_episode_key(ep.season_number, ep.episode_number),
                 }
             )
             for ep in rows

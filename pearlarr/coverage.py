@@ -2,8 +2,9 @@
 
 from collections.abc import Iterable
 
+from .aired_view import printed_key
 from .arr_models import SonarrEpisode
-from .releases import EpisodeKey
+from .releases import EpisodeKey, PrintedKey, aired_label
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
@@ -48,11 +49,26 @@ def coverage_string(keys: Iterable[EpisodeKey]) -> str:
     )
 
 
-def coverage_of_episodes(episodes: Iterable[SonarrEpisode]) -> str:
-    """The `coverage_string` of Sonarr episodes, leaving out any Sonarr sent without its numbers."""
+def printed_coverage(keys: Iterable[PrintedKey]) -> str:
+    """One-line coverage of episodes as lines print them, as "S01 E01-E12, aired S02 E13".
 
-    return coverage_string(
-        EpisodeKey(ep.season_number, ep.episode_number)
-        for ep in episodes
-        if ep.season_number is not None and ep.episode_number is not None
+    The numbers Sonarr lists come first, as `coverage_string` gives them. The aired numbers of episodes Sonarr has
+    no row for follow, as their own `coverage_string` behind the one word "aired". "" when there are no keys.
+    """
+
+    listed: list[EpisodeKey] = []
+    aired: list[EpisodeKey] = []
+    for printed in keys:
+        (aired if printed.aired else listed).append(printed.key)
+    parts = [coverage_string(listed)]
+    if aired:
+        parts.append(aired_label(coverage_string(aired)))
+    return ", ".join(part for part in parts if part)
+
+
+def coverage_of_episodes(episodes: Iterable[SonarrEpisode]) -> str:
+    """The `printed_coverage` of Sonarr episodes (`printed_key`), leaving out any with no season or episode number."""
+
+    return printed_coverage(
+        printed_key(ep) for ep in episodes if ep.season_number is not None and ep.episode_number is not None
     )

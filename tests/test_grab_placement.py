@@ -56,8 +56,8 @@ from pearlarr.releases import (
     AnotherTitlesCounts,
     EpisodeKey,
     OrderOnlyKey,
-    PlacedEpisode,
     PlannedGrab,
+    PrintedKey,
     SeadexDict,
     SkipReason,
 )
@@ -74,6 +74,7 @@ from .builders import (
     parsed_info,
     pending_import,
     pending_import_update,
+    placed_episode,
     rg_group,
     sonarr_ep,
     stand_in_ep,
@@ -179,7 +180,7 @@ class TestPlaceRelease:
 
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
-        assert placement.episodes == tuple(PlacedEpisode(1, n, 10 * n) for n in range(1, 5))
+        assert placement.episodes == tuple(placed_episode(1, n, 10 * n) for n in range(1, 5))
         assert placement.placements.placed == {normalize_file_name(name): (100 + n,) for n, name in enumerate(_RUN, 1)}
         assert placement.covered_ids == {101, 102, 103, 104}
         assert placement.inputs_read
@@ -199,7 +200,7 @@ class TestPlaceRelease:
 
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
-        assert placement.episodes == tuple(PlacedEpisode(1, n, 1) for n in range(1, 5))
+        assert placement.episodes == tuple(placed_episode(1, n, 1) for n in range(1, 5))
         assert {p.name for p in placement.placements.excluded} == {"show - s02e01.mkv", "show - s02e02.mkv"}
 
     def test_a_file_placed_nowhere_records_nothing(self) -> None:
@@ -229,7 +230,7 @@ class TestPlaceRelease:
 
         placement = place_release(files, _grabbing_title([_SPECIAL, *_SEASON]), _NEW)
 
-        assert placement.episodes == (PlacedEpisode(0, 1, 5),)
+        assert placement.episodes == (placed_episode(0, 1, 5),)
         assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
         assert not placement.inputs_read
 
@@ -242,7 +243,7 @@ class TestPlaceRelease:
 
         placement = place_release(files, _grabbing_title(_SEASON), _NEW)
 
-        assert placement.episodes == (PlacedEpisode(1, 1, 10), PlacedEpisode(1, 1, 20))
+        assert placement.episodes == (placed_episode(1, 1, 10), placed_episode(1, 1, 20))
         assert placement.placements.placed == {"show - s01e01.mkv": (101,)}
 
     def test_an_episode_two_listed_sizes_share_intends_no_size(self) -> None:
@@ -336,8 +337,32 @@ class TestPlaceSizeMatches:
         placement = place_release([self._LOST, _season_files(1)[0], matched], _grabbing_title(_SEASON), torrent)
 
         assert size_over_name_files(placement, episode_index(_SERIES)) == (
-            SizeOverName("show - s01e01.mkv", "S01E01", EpisodeKey(1, 2)),
-            SizeOverName("show - second half.mkv", "S01E02", EpisodeKey(1, 1)),
+            SizeOverName("show - s01e01.mkv", "S01E01", PrintedKey(EpisodeKey(1, 2))),
+            SizeOverName("show - second half.mkv", "S01E02", PrintedKey(EpisodeKey(1, 1))),
+        )
+
+    def test_a_matched_episode_shows_by_the_number_sonarr_lists_it_under(self) -> None:
+        # Sonarr lists the aired S01E01 and S01E02 as S02E01 and S02E02. Sonarr matched the name to the second,
+        # and its size puts it on the first.
+        rows = [
+            sonarr_ep(1, n, ep_id=100 + n, episode_file_id=0).model_copy(update={"listed_as": EpisodeKey(2, n)})
+            for n in (1, 2)
+        ]
+        series = episode_index(rows)
+        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(episode_by_size={20: 101, 30: 102}))
+        files = [
+            ListedFile(
+                "Show - Second Half.mkv",
+                20,
+                ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=1, episode_number=2, id=102),)),
+            ),
+            ListedFile("Show - Lost Tape.mkv", 30, ParsedFileInfo()),
+        ]
+
+        placement = place_release(files, make_grabbing_title(series, series), torrent)
+
+        assert size_over_name_files(placement, series) == (
+            SizeOverName("show - second half.mkv", "S02E02", PrintedKey(EpisodeKey(2, 1))),
         )
 
 
@@ -351,7 +376,7 @@ class TestPlaceOntoResident:
 
         # The file map's two names are not re-placed, and the episodes and claim read the full file map.
         assert placement.placements.placed == {"show - s01e03.mkv": (103,), "show - s01e04.mkv": (104,)}
-        assert placement.episodes == tuple(PlacedEpisode(1, n, 10 * n) for n in range(1, 5))
+        assert placement.episodes == tuple(placed_episode(1, n, 10 * n) for n in range(1, 5))
         assert placement.covered_ids == {101, 102, 103, 104}
         assert placement.inputs_read
         assert placement.pending_import is pending
@@ -464,7 +489,7 @@ class TestPlaceOntoResident:
         assert placement.placements.placements == ()
         assert not placement.inputs_read
         assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert placement.episodes == (PlacedEpisode(1, 1, 10), PlacedEpisode(1, 2, 20))
+        assert placement.episodes == (placed_episode(1, 1, 10), placed_episode(1, 2, 20))
         assert placement.covered_ids == {101, 102}
 
 
@@ -630,9 +655,9 @@ class TestPlaceSkipped:
 
         assert (for_season.skip_reason, for_special.skip_reason) == (None, None)
         assert for_season.covered_ids == {101, 102, 103}
-        assert for_season.episodes[-1] == PlacedEpisode(season=1, episode=3, size=40)
+        assert for_season.episodes[-1] == placed_episode(season=1, episode=3, size=40)
         assert for_special.covered_ids == {501}
-        assert for_special.episodes == (PlacedEpisode(season=0, episode=1, size=30),)
+        assert for_special.episodes == (placed_episode(season=0, episode=1, size=30),)
 
     def test_a_torrent_the_order_places_onto_episodes_no_title_holds_is_left_for_a_hand_import(self) -> None:
         # The torrent's two files are numbered from the special's position on. This DVD order reads the first as the
@@ -805,7 +830,7 @@ class TestPlaceSkipped:
 
         assert PlacementVerdict.MISNUMBERED in verdicts_of(placement.placements)
         assert placement.skip_reason is None
-        assert placement.episodes == (PlacedEpisode(2, 1, 20), PlacedEpisode(2, 2, 30))
+        assert placement.episodes == (placed_episode(2, 1, 20), placed_episode(2, 2, 30))
 
     def test_an_unread_listing_skips_the_release_and_places_nothing(self) -> None:
         placement = place_release(self._specials(), self._specials_grabbing_title(1, 2), self._listing(None))
@@ -1249,7 +1274,7 @@ class TestPlaceWhereEveryNumberingAgrees:
             normalize_file_name(_MHA_OVA): ((9254,), PlacementVerdict.NUMBERINGS_AGREE)
         }
         assert placement.covered_ids == {9254}
-        assert placement.episodes == (PlacedEpisode(0, 8, 1_400_000_000),)
+        assert placement.episodes == (placed_episode(0, 8, 1_400_000_000),)
         assert placement.skip_reason is None
 
     def test_a_release_the_file_map_covers_places_nothing_and_records_the_file_map(self) -> None:
@@ -1269,7 +1294,7 @@ class TestPlaceWhereEveryNumberingAgrees:
         assert placement == PlacedRelease(
             files=_MHA_FILES,
             placements=BatchPlacements(()),
-            episodes=(PlacedEpisode(0, 8, 1_400_000_000),),
+            episodes=(placed_episode(0, 8, 1_400_000_000),),
             covered_ids=frozenset({9254}),
             inputs_read=True,
             skip_reason=None,
@@ -1477,7 +1502,7 @@ class TestEntryPlacements:
 
         placed.attach_placements(seadex_dict)
 
-        sequence_episodes = [PlacedEpisode(1, n, 10 * n) for n in range(1, 5)]
+        sequence_episodes = [placed_episode(1, n, 10 * n) for n in range(1, 5)]
         assert seadex_dict["RG"].releases["u1"].episodes == sequence_episodes
         assert seadex_dict["RG"].episodes == sequence_episodes
         assert seadex_dict["Held"].releases["u2"].episodes == []
@@ -2228,8 +2253,8 @@ class TestPlaceOnARowTheAiredOrderLacks:
         named = own_only_files(self._place(series), [series])
 
         assert named == (
-            OwnOnlyFile(self._PACK[0], (EpisodeKey(13, 20),)),
-            OwnOnlyFile(self._PACK[1], (EpisodeKey(13, 21),)),
+            OwnOnlyFile(self._PACK[0], (PrintedKey(EpisodeKey(13, 20)),)),
+            OwnOnlyFile(self._PACK[1], (PrintedKey(EpisodeKey(13, 21)),)),
         )
 
     def test_a_release_with_no_file_on_such_a_row_names_none(self) -> None:

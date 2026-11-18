@@ -706,11 +706,9 @@ class ArrRunServices:
         """Log an unmonitored item (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._state, item_title)
 
-    def log_numbered_as_aired(self, order: str) -> None:
-        """Log that the open title's episodes are numbered as aired, for a series Sonarr numbers by another `order`."""
-        self._reporter.detail(
-            "numbers", StyledValue(f"as aired, not by Sonarr's {order_display_name(order)} order", Accent.DIM)
-        )
+    def log_numbers_order(self, order: str) -> None:
+        """Log that the open title's lines print Sonarr's numbers, for a series Sonarr numbers by another `order`."""
+        self._reporter.detail("numbers", StyledValue(f"by Sonarr's {order_display_name(order)} order", Accent.DIM))
 
     def log_missing_episodes(self, missing: str) -> None:
         """Log the open title's episodes that have no file (delegates to RunReporter)."""

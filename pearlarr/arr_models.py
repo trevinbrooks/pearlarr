@@ -207,6 +207,9 @@ class SonarrEpisode(ApiModel):
         validation_alias="episodeFile",
     )
     """An empty/null `episodeFile` reduces to `None`."""
+    listed_as: EpisodeKey | None = None
+    """The number Sonarr lists the episode under, on a row `aired_view` renumbered as aired. None on a row as Sonarr
+    sent it and on a stand-in. Only `aired_view` sets it."""
 
 
 def episode_sort_key(episode: SonarrEpisode) -> tuple[int, int]:

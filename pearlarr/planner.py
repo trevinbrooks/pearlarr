@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from itertools import compress
 from typing import NamedTuple
 
+from .aired_view import printed_key
 from .arr_models import ArrFiles, SonarrEpisode, index_episodes_by_key
 from .config import Arr
 from .output import Severity
@@ -146,7 +147,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
             # never drop content we couldn't verify
             key = ("__nothing_placed__", rg)
         else:
-            key = frozenset(ep.key for ep in episodes)
+            key = frozenset(ep.aired_key for ep in episodes)
 
         # Insertion-ordered dict preserves first-seen group order for us
         grouped.setdefault(key, []).append(rg)
@@ -260,8 +261,8 @@ def episode_coverage(
                 blanket.add(seadex_rg_normalized)
 
             for placed_ep in release.episodes:
-                if placed_ep.key in sonarr_by_key:
-                    by_key.setdefault(placed_ep.key, set()).add(seadex_rg_normalized)
+                if placed_ep.aired_key in sonarr_by_key:
+                    by_key.setdefault(placed_ep.aired_key, set()).add(seadex_rg_normalized)
 
     return EpisodeCoverage(frozenset(blanket), {key: frozenset(groups) for key, groups in by_key.items()})
 
@@ -342,7 +343,7 @@ def _file_release_groups(
                         identities[key] = _FileReleaseGroup(normalized, by_size=True, size=size)
                 continue
             for placed_ep in release.episodes:
-                key = placed_ep.key
+                key = placed_ep.aired_key
                 if key in identities or placed_ep.size <= 0 or untagged.get(key) != placed_ep.size:
                     continue
                 identities[key] = _FileReleaseGroup(normalized, by_size=True, size=placed_ep.size)
@@ -528,10 +529,11 @@ class GrabPlanner:
         # normal INFO run instead of formatting them only to discard them.
         debug_on = self.logger.isEnabledFor(logging.DEBUG)
         if debug_on:
-            for (season, episode), identity in identities.items():
+            for key, identity in identities.items():
                 if identity.by_size:
+                    label = printed_key(sonarr_by_key[key]).label
                     self.logger.debug(
-                        f"{self.arr.capitalize()} file for S{season:02d}E{episode:02d} has no release group "
+                        f"{self.arr.capitalize()} file for {label} has no release group "
                         f"but matches {identity.group}'s listed size exactly - reading it as that release",
                     )
 
@@ -721,7 +723,7 @@ class GrabPlanner:
         arr_size_by_key: dict[EpisodeKey, int] = {}
 
         for placed_idx, placed_ep in enumerate(release.episodes):
-            episode_key = placed_ep.key
+            episode_key = placed_ep.aired_key
             sonarr_ep = ctx.sonarr_by_key.get(episode_key)
             if sonarr_ep is None:
                 continue
@@ -735,7 +737,7 @@ class GrabPlanner:
             # when neither side actually has a size.
             size_match = sonarr_ep_size is not None and sonarr_ep_size == placed_ep.size
 
-            season_ep_str = episode_key.label
+            season_ep_str = placed_ep.printed.label
 
             # The file's effective identity, resolved once per entry: its own
             # tag, or - where a rename stripped it - the group whose listed size
@@ -1086,14 +1088,14 @@ class GrabPlanner:
         # What the set will actually obtain: surviving releases to grab the add-time
         # gate accepts (private releases are skipped there, so they never count).
         survivor_keys = {
-            ep.key
+            ep.aired_key
             for rg in same_files.names
             for u in seadex_dict[rg].releases.values()
             if u.to_grab and u.is_public
             for ep in u.episodes
         }
         for u in rescuable:
-            release_keys = {ep.key for ep in u.episodes}
+            release_keys = {ep.aired_key for ep in u.episodes}
             if release_keys <= survivor_keys:
                 continue
             self.logger.debug(f"Marking {u.url} to grab again: no surviving release covers its episodes")

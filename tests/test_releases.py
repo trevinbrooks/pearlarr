@@ -1,9 +1,9 @@
 # pyright: strict
-"""Direct tests for the release helpers: the infohash spelling and the order-only episode key."""
+"""Direct tests for the release helpers: the infohash spelling, the order-only episode key and a placed episode."""
 
 import pytest
 
-from pearlarr.releases import EpisodeKey, OrderOnlyKey, normalized_infohash
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, PlacedEpisode, PrintedKey, normalized_infohash
 
 # --- normalized_infohash ------------------------------------------------------
 
@@ -43,3 +43,10 @@ def test_an_order_only_key_survives_its_json_form() -> None:
 
     assert key.to_json() == {"order": "dvd", "season": 7, "episode": 1}
     assert OrderOnlyKey.from_json(key.to_json()) == key
+
+
+def test_two_placed_episodes_that_differ_only_in_the_number_they_print_by_are_equal() -> None:
+    as_aired = PlacedEpisode(2, 1, 10, printed=PrintedKey(EpisodeKey(2, 1)))
+    as_listed = PlacedEpisode(2, 1, 10, printed=PrintedKey(EpisodeKey(1, 4)))
+
+    assert {as_aired, as_listed} == {as_aired}

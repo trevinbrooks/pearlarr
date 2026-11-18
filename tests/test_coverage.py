@@ -4,8 +4,8 @@
 These helpers live in `coverage.py`.
 """
 
-from pearlarr.coverage import coverage_of_episodes, coverage_string
-from pearlarr.releases import EpisodeKey
+from pearlarr.coverage import coverage_of_episodes, coverage_string, printed_coverage
+from pearlarr.releases import EpisodeKey, PrintedKey
 
 from .builders import sonarr_ep
 
@@ -25,6 +25,19 @@ class TestCoverageString:
 
     def test_a_key_given_twice_counts_once(self) -> None:
         assert coverage_string([EpisodeKey(1, 1), EpisodeKey(1, 1)]) == "S01 E01"
+
+
+class TestPrintedCoverage:
+    """`printed_coverage` renders Sonarr's numbers, then the aired numbers of episodes Sonarr has no row for."""
+
+    def test_the_aired_numbers_follow_sonarrs_behind_one_label(self) -> None:
+        keys = [
+            PrintedKey(EpisodeKey(2, 13), aired=True),
+            PrintedKey(EpisodeKey(1, 1)),
+            PrintedKey(EpisodeKey(2, 14), aired=True),
+            PrintedKey(EpisodeKey(1, 2)),
+        ]
+        assert printed_coverage(keys) == "S01 E01-E02, aired S02 E13-E14"
 
 
 class TestCoverageOfEpisodes:
