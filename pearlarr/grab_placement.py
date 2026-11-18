@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
+from .aired_view import is_stand_in
 from .arr_models import ParsedFileInfo
 from .coverage import coverage_of_episodes
 from .episode_state import EpisodeFileStatus, EpisodeSnapshot, GrabbedGroups
@@ -260,7 +261,8 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
 
     Nothing is placed when the listing or a window's series wasn't read. After the windows merge, an absolute-only
     file that they left is placed where every numbering agrees (`NumberingStep`, `WindowedPlacements.with_proposals`),
-    the window holding its ids judging it. A file another title's window placed, or left for a hand import without
+    the window holding its ids judging it. A file placed on an aired episode Sonarr has no row for is set aside
+    (`PlacementVerdict.AIRED_ONLY`). A file another title's window placed, or left for a hand import without
     involving a window the pending import imports, is set aside as that title's. The release is skipped (`SkipReason`)
     when a file of the grabbing title's window is misnumbered, when a read the placement needs failed, or when nothing
     of it lands on the title and either the title's window left a file for a hand import or some of it is another
@@ -285,7 +287,11 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
         proposals = NumberingStep.of(grabbing_title, order.windows).propose(
             batch, windowed.facts[order.grabbing_window_at].names
         )
-        view = windowed.with_proposals(batch, proposals).seen_by(order.grabbing_window_at, order.imports)
+        view = (
+            windowed.with_proposals(batch, proposals)
+            .aired_only_set_aside()
+            .seen_by(order.grabbing_window_at, order.imports)
+        )
 
     # 2. What the whole file map puts on the title.
     whole_file_map = joined_file_map(batch.file_map, view.placements.placed)
@@ -692,8 +698,10 @@ def build_title_claim(release: PlacedGrab, grabbing_title: GrabbingTitle, facts:
     claimed = release.placed.covered_ids
     index = grabbing_title.title_index
     # This claim's part of the title, so sibling titles' claims label distinctly: the episodes its files cover,
-    # else every episode it is checked against.
-    claimed_episodes = [ep for ep in index.by_id.values() if not claimed or ep.id in claimed]
+    # else every episode it is checked against. A stand-in is neither: no file is imported onto one.
+    claimed_episodes = [
+        ep for ep in index.by_id.values() if not is_stand_in(ep.id) and (not claimed or ep.id in claimed)
+    ]
     # Episodes that already have a trusted file at grab time were never this torrent's to import: classify them
     # against the claim's trusted groups (no siblings' groups yet) so the wait pass's counts of trusted files start
     # at 0. A replaced claim keeps its first preowned ids (`PendingImport.with_claim`).

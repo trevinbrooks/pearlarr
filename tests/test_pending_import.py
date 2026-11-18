@@ -42,6 +42,12 @@ class TestPendingImportBuild:
 
         assert dict(pending.file_episode_map) == {"show - 01.mkv": (101,), "show - 03.mkv": (103,)}
 
+    def test_the_map_drops_a_stand_ins_id(self) -> None:
+        # A stand-in is an aired episode Sonarr has no row for, under a negative id: no file imports onto one.
+        pending = pending_import(file_episode_map={"Show - 01.mkv": [-901], "Show - 02.mkv": [-902, 102]})
+
+        assert dict(pending.file_episode_map) == {"show - 02.mkv": (102,)}
+
     def test_two_spellings_of_one_name_keep_the_first(self) -> None:
         pending = pending_import(file_episode_map={"Show - 01.mkv": [101], "show - 01.mkv": [111]})
 
@@ -353,6 +359,19 @@ class TestPendingImportClaims:
         )
 
         assert pending.window_episode_ids() == [3, 1, 2]
+
+    def test_window_episode_ids_leave_a_windows_stand_ins_out(self) -> None:
+        # Sonarr has no episode for a stand-in, so a hand import can never make one done.
+        pending = pending_import(claims=(title_claim(anilist_id=1, ordered_episode_ids=[3, -902, 1]),))
+
+        assert pending.window_episode_ids() == [3, 1]
+
+    def test_window_episode_ids_fall_back_to_the_file_map_when_the_windows_hold_stand_ins_only(self) -> None:
+        pending = pending_import(
+            file_episode_map={"a.mkv": [7]}, claims=(title_claim(anilist_id=1, ordered_episode_ids=[-902]),)
+        )
+
+        assert pending.window_episode_ids() == [7]
 
     def test_window_episode_ids_fall_back_to_the_file_map_episodes_sorted_when_every_claim_has_no_window(self) -> None:
         # The file map's ids alone, a zero id dropped: the specials shape with no window to check against.

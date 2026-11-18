@@ -17,6 +17,7 @@ import qbittorrentapi
 from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
+from pearlarr.aired_view import stand_in
 from pearlarr.anibridge import NO_ALIASES, SpecialAliases
 from pearlarr.anilist_client import MAX_RETRIES, AniListAnswers, AniListBody, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
@@ -1182,6 +1183,12 @@ UNREAD_EVIDENCE = FetchedSeadex(None, None)
 
 _NO_NAMES = TitleNames()
 """A title with no series or AniList names."""
+
+
+def stand_in_ep(season: int, episode: int, *, tvdb_id: int) -> SonarrEpisode:
+    """The stand-in for an aired episode Sonarr has no row for (`aired_view.stand_in`). Its id is `-tvdb_id`."""
+
+    return stand_in(OrderRow(season, episode, tvdb_id, None), EpisodeDetails(title="", air_date=None, runtime=None))
 
 
 def title_window(

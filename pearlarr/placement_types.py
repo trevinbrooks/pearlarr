@@ -130,8 +130,8 @@ def all_specials(series: EpisodeIndex, ids: Iterable[int]) -> bool:
 class PlacementVerdict(StrEnum):
     """How one file was judged: placed by which pass, excluded, or unplaced.
 
-    `place_batch` gives every verdict but two, which are given once the windows merge: `NUMBERINGS_AGREE`
-    and `ANOTHER_TITLES`.
+    `place_batch` gives every verdict but three, which are given once the windows merge: `NUMBERINGS_AGREE`,
+    `AIRED_ONLY` and `ANOTHER_TITLES`.
     """
 
     EXACT = "exact"
@@ -179,6 +179,11 @@ class PlacementVerdict(StrEnum):
     in it: not this pending import's to import or hand-import under its current claims. That title's own grab
     claims the torrent and places or reports the file, unless the title is in `ignore_anilist_ids`, which is never
     grabbed for."""
+    AIRED_ONLY = "aired episode not in Sonarr's order"
+    """On an aired episode Sonarr has no row for: it numbers the series by another TVDB order, which leaves the
+    episode out. Sonarr can't hold the file, so no pending import imports it. Given after the windows merge
+    (`WindowedPlacements.aired_only_set_aside`), never by a pass. `Placement.aired_only` names the
+    episodes."""
     DUPLICATE = "duplicate"
     """Parses inside the window onto episodes other files are provably placed on, or carries the title of an
     episode a version of the same file is placed on."""
@@ -214,9 +219,10 @@ class PlacementVerdict(StrEnum):
 
     @property
     def excluded(self) -> bool:
-        """Whether the file isn't this pending import's to import under its current claims.
+        """Whether the pending import doesn't import the file.
 
-        A later claim's window can still place a file outside the window, or another title's.
+        It isn't the pending import's under its current claims, or its episode has no row in Sonarr. A later
+        claim's window can still place a file outside the window, or another title's.
         """
 
         row = _KIND[self]
@@ -291,7 +297,8 @@ class _Leaves(Enum):
     """What a verdict that carries no ids means for the pending import."""
 
     EXCLUDED = auto()
-    """The file isn't this pending import's to import under its current claims."""
+    """The pending import doesn't import the file: it isn't its own under its current claims, or its episode has
+    no row in Sonarr."""
     HAND_IMPORT = auto()
     """The file is left for a hand import."""
     STAYS = auto()
@@ -371,6 +378,7 @@ _KIND: Mapping[PlacementVerdict, _Kind] = MappingProxyType(
         PlacementVerdict.EPISODE_TITLES_CONTRADICT: _Provisional(
             leaves=_Leaves.HAND_IMPORT, rank=7, other_order_may_place=True
         ),
+        PlacementVerdict.AIRED_ONLY: _AfterMerge(_Leaves.EXCLUDED),
         PlacementVerdict.ANOTHER_TITLES: _AfterMerge(_Leaves.EXCLUDED),
     }
 )
@@ -391,6 +399,8 @@ class Placement:
     """The order and key that read the file, when the verdict is `ORDER_ONLY`."""
     other_order_episodes: tuple[int, ...] = ()
     """The episodes the order reads the file onto, when the verdict is `OTHER_ORDER_OUTSIDE_WINDOW`."""
+    aired_only: tuple[EpisodeKey, ...] = ()
+    """The aired episodes Sonarr has no row for, by their aired numbers, when the verdict is `AIRED_ONLY`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,7 +424,7 @@ class BatchPlacements:
 
     @property
     def excluded(self) -> tuple[Placement, ...]:
-        """The files not this pending import's under its current claims, and how (`PlacementVerdict.excluded`)."""
+        """The files this pending import doesn't import, and how (`PlacementVerdict.excluded`)."""
 
         return tuple(p for p in self.placements if p.verdict.excluded)
 
@@ -602,13 +612,15 @@ class PlacementTarget:
     episode_count: int | None = None
     """AniList's episode count for the title, None when the window carries none (`TitleWindow.episode_count`)."""
 
-    real_ids: frozenset[int] = field(init=False, repr=False, compare=False)
-    """The resolved ids that can be placed. A zero id keeps the window real but is never one."""
+    window_ids: frozenset[int] = field(init=False, repr=False, compare=False)
+    """The resolved ids a file can be placed on. A zero id keeps the window real but is never one. A stand-in's id
+    (`aired_view.stand_in`) is one: the passes place on it as on any episode, and the file is set aside after the
+    windows merge (`PlacementVerdict.AIRED_ONLY`)."""
 
     def __post_init__(self) -> None:
-        # Detached from the caller's list: `real_ids` is derived from the list once.
+        # Detached from the caller's list: `window_ids` is derived from the list once.
         object.__setattr__(self, "episode_ids", tuple(self.episode_ids))
-        object.__setattr__(self, "real_ids", frozenset(i for i in self.episode_ids if i))
+        object.__setattr__(self, "window_ids", frozenset(i for i in self.episode_ids if i))
         object.__setattr__(self, "earlier", MappingProxyType(dict(self.earlier)))
 
     @property
@@ -626,7 +638,7 @@ class PlacementTarget:
     def admits(self, ep_id: int) -> bool:
         """Whether a file may be placed on the episode: one of the resolved set, or any with no window."""
 
-        return self.no_window or ep_id in self.real_ids
+        return self.no_window or ep_id in self.window_ids
 
     def using(self, ids: Iterable[int]) -> Self:
         """The target with `ids` used too: the ones it admits (every one with no window)."""
@@ -642,13 +654,13 @@ class PlacementTarget:
     def specials_window(self) -> bool:
         """A window of specials only, the one shape a listing judges."""
 
-        return not self.no_window and all_specials(self.index, self.real_ids)
+        return not self.no_window and all_specials(self.index, self.window_ids)
 
     def specials_listing(self) -> frozenset[int] | None:
         """The listing a numbered batch of specials is judged by: read, all specials, covering the window. Else None."""
 
         listed = self.seadex.ids
-        if not (self.specials_window and listed and self.real_ids <= listed):
+        if not (self.specials_window and listed and self.window_ids <= listed):
             return None
         return listed if all_specials(self.index, listed) else None
 

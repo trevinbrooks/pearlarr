@@ -207,7 +207,7 @@ class TestPlacementTarget:
 
         assert target.episode_ids == (11, 12, 0)
         assert narrowed.used == {11, 12}
-        assert (narrowed.episode_ids, narrowed.real_ids) == (target.episode_ids, target.real_ids)
+        assert (narrowed.episode_ids, narrowed.window_ids) == (target.episode_ids, target.window_ids)
 
     def test_a_target_with_no_window_uses_every_id(self) -> None:
         assert PlacementTarget([], self._SERIES).using([12, 21]).used == {12, 21}
@@ -313,6 +313,15 @@ class TestPlacementVerdict:
         assert not verdict.placed
         assert not verdict.left_for_hand_import
 
+    def test_a_file_of_an_aired_episode_sonarr_has_no_row_for_is_excluded_and_no_hand_import(self) -> None:
+        # Sonarr can't hold it, so the pending import leaves it out and doesn't wait on it.
+        verdict = PlacementVerdict.AIRED_ONLY
+
+        assert verdict.excluded
+        assert not verdict.placed
+        assert not verdict.left_for_hand_import
+        assert not verdict.involves
+
     def test_a_size_match_or_a_special_alias_places(self) -> None:
         # A file placed by size, or through the aliases of a batch of specials, carries ids like any other placement.
         for verdict in (PlacementVerdict.SIZE_MATCH, PlacementVerdict.SIZE_OVER_NAME, PlacementVerdict.SPECIAL_ALIAS):
@@ -343,12 +352,12 @@ class TestPlacementVerdict:
     )
     """The verdicts a window gives that aren't final."""
 
-    def test_every_verdict_is_final_or_provisional_but_another_listed_titles(self) -> None:
-        # Every property reads the verdict's kind, so a verdict with none raises here. No window gives
-        # ANOTHER_TITLES: it is set once the windows merge.
+    def test_every_verdict_is_final_or_provisional_but_the_two_that_set_a_file_aside_after_the_merge(self) -> None:
+        # Every property reads the verdict's kind, so a verdict with none raises here. No window gives AIRED_ONLY
+        # or ANOTHER_TITLES: they are set once the windows merge.
         undecided = {v for v in PlacementVerdict if not v.final}
 
-        assert undecided == {*self._CLAIMS, PlacementVerdict.ANOTHER_TITLES}
+        assert undecided == {*self._CLAIMS, PlacementVerdict.AIRED_ONLY, PlacementVerdict.ANOTHER_TITLES}
 
     def test_no_two_provisional_verdicts_share_a_rank(self) -> None:
         assert len({v.rank for v in self._CLAIMS}) == len(self._CLAIMS)

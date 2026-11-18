@@ -64,6 +64,7 @@ from .builders import (
     pending_import_update,
     rg_group,
     sonarr_ep,
+    stand_in_ep,
     title_claim,
     title_facts,
     title_window,
@@ -1962,3 +1963,106 @@ class TestTitleClaim:
         claim = build_title_claim(self._release(files, placed), _grabbing_title(window_episodes), title_facts())
 
         assert claim.preowned_episode_ids == ()
+
+
+_SWITCHED_SEASON = [
+    sonarr_ep(1, 1, ep_id=101, episode_file_id=0),
+    sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
+    stand_in_ep(1, 3, tvdb_id=903),
+    sonarr_ep(1, 4, ep_id=104, episode_file_id=0),
+]
+"""The season of a series Sonarr numbers by another TVDB order, which has no row for the third episode: a stand-in."""
+_SWITCHED_INDEX = episode_index(_SWITCHED_SEASON)
+
+
+def _switched_title(window_episodes: list[SonarrEpisode]) -> GrabbingTitle:
+    return make_grabbing_title(episode_index(window_episodes), _SWITCHED_INDEX)
+
+
+def _switched_torrent(*listed: TitleWindow) -> KnownTorrent:
+    return known_torrent(indexes={7: _SWITCHED_INDEX}, evidence=torrent_evidence(*listed))
+
+
+class TestPlaceOnAnEpisodeSonarrHasNoRowFor:
+    """A file of an aired episode Sonarr has no row for is set aside, and the rest of its release is grabbed."""
+
+    def test_the_file_is_set_aside_and_the_rest_of_the_release_places(self) -> None:
+        placement = place_release(_season_files(), _switched_title(_SWITCHED_SEASON), _switched_torrent())
+
+        assert by_name(placement.placements) == {
+            "show - s01e01.mkv": ((101,), PlacementVerdict.EXACT),
+            "show - s01e02.mkv": ((102,), PlacementVerdict.EXACT),
+            "show - s01e03.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "show - s01e04.mkv": ((104,), PlacementVerdict.EXACT),
+        }
+        assert placement.covered_ids == {101, 102, 104}
+        assert [(ep.season, ep.episode) for ep in placement.episodes] == [(1, 1), (1, 2), (1, 4)]
+        assert (placement.skip_reason, placement.inputs_read) == (None, True)
+
+    def test_the_update_excludes_the_file_and_the_claim_keeps_the_stand_in_in_its_window(self) -> None:
+        title = _switched_title(_SWITCHED_SEASON)
+        placement = place_release(_season_files(), title, _switched_torrent())
+        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
+
+        update = build_pending_import_update(release, title, title_facts())
+
+        assert dict(update.file_map) == {
+            "show - s01e01.mkv": (101,),
+            "show - s01e02.mkv": (102,),
+            "show - s01e04.mkv": (104,),
+        }
+        assert (update.excluded, update.hand_import_files) == (("show - s01e03.mkv",), ())
+        assert update.claim.ordered_episode_ids == (101, 102, -903, 104)
+        assert update.claim.claimed_coverage == "S01 E01-E02, E04"
+
+    def test_a_file_a_siblings_window_placed_on_the_episode_is_set_aside_and_not_the_siblings(self) -> None:
+        torrent = _switched_torrent(title_window(1, (101, 102)), title_window(2, (-903, 104)))
+
+        placement = place_release(_season_files(), _switched_title(_SWITCHED_SEASON[:2]), torrent)
+
+        assert by_name(placement.placements) == {
+            "show - s01e01.mkv": ((101,), PlacementVerdict.EXACT),
+            "show - s01e02.mkv": ((102,), PlacementVerdict.EXACT),
+            "show - s01e03.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "show - s01e04.mkv": ((), PlacementVerdict.ANOTHER_TITLES),
+        }
+        assert placement.skip_reason is None
+
+    def test_a_file_the_numberings_place_on_such_an_episode_is_set_aside(self) -> None:
+        # A two-special title whose first special Sonarr has no row for, and a single numbered 01 that the windows
+        # leave and every numbering puts on that special.
+        series = episode_index(
+            [
+                stand_in_ep(0, 8, tvdb_id=9254),
+                sonarr_ep(0, 9, ep_id=9255, episode_file_id=0),
+                *(sonarr_ep(1, n, ep_id=9270 + n, episode_file_id=0, absolute=n) for n in range(1, 4)),
+            ]
+        )
+        grabbing_title = make_grabbing_title(
+            episode_index([series.by_id[-9254], series.by_id[9255]]),
+            series,
+            anilist_id=122349,
+            names=_MHA_NAMES,
+            episode_count=2,
+            alternate_titles=("Boku no Hero Academia",),
+        )
+        window = title_window(122349, (-9254, 9255), names=_MHA_NAMES, episode_count=2)
+        torrent = known_torrent(indexes={7: series}, evidence=torrent_evidence(window))
+
+        placement = place_release(_MHA_FILES, grabbing_title, torrent)
+
+        assert by_name(placement.placements) == {normalize_file_name(_MHA_OVA): ((), PlacementVerdict.AIRED_ONLY)}
+
+    def test_a_claim_no_file_landed_under_labels_itself_without_the_stand_in(self) -> None:
+        # With nothing placed the label is every episode the title is checked against, and Sonarr can't hold E03.
+        title = _switched_title(_SWITCHED_SEASON)
+        files = [ListedFile("Show - Extra.mkv", 10, ParsedFileInfo())]
+        release = PlacedGrab(
+            "grp", make_release(url="u", infohash="h1"), "h1", place_release(files, title, _switched_torrent())
+        )
+
+        claim = build_title_claim(release, title, title_facts())
+
+        assert release.placed.covered_ids == frozenset()
+        assert claim.claimed_coverage == "S01 E01-E02, E04"
+        assert claim.ordered_episode_ids == (101, 102, -903, 104)

@@ -27,6 +27,10 @@ After the merge, the numbering step (`numberings`) places files in the gaps the 
 every way the group could have numbered them agrees. The numbering step never moves a file a window gave a final
 verdict, and a file it places counts as placed by the earliest window holding its ids.
 
+Last, a file placed on an aired episode Sonarr has no row for is set aside as `AIRED_ONLY`
+(`WindowedPlacements.aired_only_set_aside`). The windows hold such an episode under a stand-in's id
+(`aired_view`), so the passes place on it as on any other, and nothing a pass reads changes.
+
 A pending import imports only what its own titles' windows place, and takes on a hand import only when one of them
 was involved in it (`TitleView.placements`).
 """
@@ -36,6 +40,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Self
 
+from .aired_view import is_stand_in
 from .numberings import NumberingProposals
 from .pending_import import TitleClaim, TitleWindow
 from .placement_types import (
@@ -50,6 +55,7 @@ from .placement_types import (
     all_specials,
 )
 from .placer import NameFacts, place_batch
+from .releases import season_episode_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,13 +161,15 @@ class WindowedFile:
     """One file of the torrent over its windows."""
 
     merged: Placement
-    """The file's verdict over every window, or the numbering step's: `NUMBERINGS_AGREE`, a verdict no window gives."""
+    """The file's verdict over every window, or one no window gives: the numbering step's `NUMBERINGS_AGREE`, or
+    `AIRED_ONLY` for a file set aside off a stand-in."""
     per_window: tuple[Placement, ...]
     """What the placer gave the file under each window, in window order. The numbering step changes none of them."""
     final_window_at: int | None
     """The position of the window that gave the file a final verdict, or, for a file the numbering step placed, of
     the window that holds its ids. A file whose aliases and numbers disagree keeps the window that gave its final
-    verdict. None when no window gave a final verdict and the numbering step placed nothing."""
+    verdict, and so does a file set aside as `AIRED_ONLY`. None when no window gave a final verdict and the
+    numbering step placed nothing."""
 
     @property
     def name(self) -> str:
@@ -248,7 +256,7 @@ class WindowedPlacements:
             if ids is None or not self._gap(file) or not used.isdisjoint(ids):
                 continue
             position = next(
-                (at for at, window in enumerate(self.facts) if window.target.real_ids.issuperset(ids)), None
+                (at for at, window in enumerate(self.facts) if window.target.window_ids.issuperset(ids)), None
             )
             if position is None:
                 continue
@@ -259,6 +267,38 @@ class WindowedPlacements:
             files[index] = replace(file, merged=agreed, final_window_at=position)
             used.update(ids)
         return replace(self, files=tuple(files))
+
+    def aired_only_set_aside(self) -> Self:
+        """The placements with each file placed on a stand-in set aside as `AIRED_ONLY`, with no ids.
+
+        A stand-in is an aired episode Sonarr has no row for (`aired_view.stand_in`), so Sonarr can't import a
+        file onto it. A file placed on a stand-in and a Sonarr episode both is set aside whole.
+
+        Call it after `with_proposals`, which can place a file on a stand-in, and before `seen_by`: a file
+        another title's window placed on a stand-in is then `AIRED_ONLY` for every title, never that title's
+        to import.
+        """
+
+        return replace(self, files=tuple(self._off_stand_ins(file) for file in self.files))
+
+    def _off_stand_ins(self, file: WindowedFile) -> WindowedFile:
+        """The file set aside as `AIRED_ONLY` when its merged placement holds a stand-in, else the file as it is.
+
+        The episodes it names are read off the index of the window that placed it. A stored window can hold a
+        stand-in the series has since lost, and that one is left unnamed.
+        """
+
+        stand_ins = [ep_id for ep_id in file.merged.ids if is_stand_in(ep_id)]
+        if not stand_ins:
+            return file
+        assert file.final_window_at is not None
+        episodes = self.facts[file.final_window_at].target.index.by_id
+        aired_only = tuple(
+            season_episode_key(episode.season_number, episode.episode_number)
+            for ep_id in stand_ins
+            if (episode := episodes.get(ep_id)) is not None
+        )
+        return replace(file, merged=Placement(file.name, (), PlacementVerdict.AIRED_ONLY, aired_only=aired_only))
 
     def _gap(self, file: WindowedFile) -> bool:
         """Whether the windows left the file a gap (`with_proposals`).
