@@ -56,6 +56,7 @@ from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounter, emit_to_hub
 from pearlarr.parse_cache import ParseCacheRows
+from pearlarr.pending_follow import PendingFollower
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     NO_SIZES_BY_NAME,
@@ -100,7 +101,7 @@ from pearlarr.reporter import RunReporter
 from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
 from pearlarr.seadex_filter import SeadexReleaseFilter
 from pearlarr.seadex_gateway import SeaDexNoEntry, SeaDexSource
-from pearlarr.series_reads import SeriesReads
+from pearlarr.series_reads import SeriesReads, SeriesRows
 from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
@@ -122,7 +123,14 @@ from pearlarr.window_placement import WindowedPlacements
 from pearlarr.xem_client import AbstractXemClient
 from pearlarr.xem_gateway import XemGateway
 
-from .fakes import FakeClock, FakeRadarrClient, FakeSkyHookClient, FakeSonarrClient, FakeXemClient
+from .fakes import (
+    FakeClock,
+    FakeRadarrClient,
+    FakeSkyHookClient,
+    FakeSonarrClient,
+    FakeXemClient,
+    ScriptedEpisodes,
+)
 
 # The display separator the wait region, boot step lines and report rows join parts with. Assertions build expected
 # strings from this so a separator change is one edit.
@@ -1627,6 +1635,27 @@ def make_series_reads(
     if library is not None:
         reads.begin_run(LibraryRead.of(library, sonarr_series_hash(series.id for series in library)))
     return reads
+
+
+def make_pending_follower(cache_store: AbstractCacheStore, rows: SeriesRows) -> PendingFollower:
+    """A real `PendingFollower` of the Sonarr pending imports `cache_store` holds, over `rows`."""
+
+    pending_imports = PendingImportStore(cache_store)
+    pending_imports.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
+    return PendingFollower(pending_imports, rows, make_logger())
+
+
+def scripted_roles(episodes: ScriptedEpisodes, pending_imports: PendingImportStore) -> dict[str, object]:
+    """The bare-strategy attributes one `ScriptedEpisodes` fills.
+
+    It is the episode collaborator and the run's reads, and the rows the follower of `pending_imports` reads.
+    """
+
+    return {
+        "_episodes": episodes,
+        "_reads": episodes,
+        "_follower": PendingFollower(pending_imports, episodes, make_logger()),
+    }
 
 
 def make_sonarr_episodes(

@@ -4,10 +4,19 @@
 import pytest
 
 from pearlarr.arr_models import SonarrEpisode
+from pearlarr.config import Arr
 from pearlarr.pending_follow import Followed, follow
 from pearlarr.pending_import import NO_TVDB_IDS, PendingImport, TvdbIds
 
-from .builders import pending_import, sonarr_ep, title_claim, two_claim_pending_import
+from .builders import (
+    FakeCacheStore,
+    make_pending_follower,
+    pending_import,
+    sonarr_ep,
+    title_claim,
+    two_claim_pending_import,
+)
+from .fakes import FakeSonarrClient, ScriptedEpisodes
 
 
 def _rows(*pairs: tuple[int, int | None]) -> list[SonarrEpisode]:
@@ -205,3 +214,42 @@ class TestFollow:
         followed = _follow(pending, (101, 9001), (103, 9003))
 
         assert followed.set_aside == {"show - 02-03.mkv": (9002,)}
+
+
+def _stored(*pending_imports: PendingImport) -> FakeCacheStore:
+    """A store holding the Sonarr pending imports given."""
+
+    return FakeCacheStore(
+        pending={str(Arr.SONARR): {pending.infohash: pending.to_json() for pending in pending_imports}}
+    )
+
+
+class TestRunStart:
+    """The series the follower notes of the stored pending imports as a run starts."""
+
+    def test_the_series_of_every_stored_pending_import_is_noted_once(self) -> None:
+        both = two_claim_pending_import(series_ids=(7, 8), infohash="a")
+        second = pending_import(series_id=8, infohash="b")
+        follower = make_pending_follower(_stored(both, second), ScriptedEpisodes())
+
+        follower.begin_run(waits_on_imports=True)
+
+        assert follower.claimed_series == (7, 8)
+
+    def test_no_series_is_noted_while_imports_are_not_waited_on(self) -> None:
+        follower = make_pending_follower(_stored(pending_import()), ScriptedEpisodes())
+
+        follower.begin_run(waits_on_imports=False)
+
+        assert follower.claimed_series == ()
+
+    def test_the_series_of_a_pending_import_dropped_as_the_run_starts_is_not_noted(self) -> None:
+        # Stored without TVDB ids on a series Sonarr numbers by another order, so its ids can't be trusted.
+        rows = ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1, ep_id=101, tvdb_id=9001)]), order="dvd")
+        cache = _stored(pending_import(tvdb_ids=None))
+        follower = make_pending_follower(cache, rows)
+
+        follower.begin_run(waits_on_imports=True)
+
+        assert cache.get_pending_import_rows(Arr.SONARR) == {}
+        assert follower.claimed_series == ()
