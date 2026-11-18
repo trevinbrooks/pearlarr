@@ -16,7 +16,7 @@ from ..placement_types import PlacementVerdict, TvdbOrder
 from ..releases import EpisodeKey, OrderOnlyKey
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _OffAired:
     """How one order reads a file with a key off aired."""
 
@@ -34,7 +34,11 @@ class _OffAired:
         own_only = order.own_only_by_key
         rows = tuple(own_only[key] for key in keys if key in own_only)
         order_only = [key for key in keys if key not in order.id_by_key and key not in own_only]
-        return cls(rows, len(rows) == len(keys), OrderOnlyKey(name, order_only[0]) if order_only else None)
+        return cls(
+            rows=rows,
+            every_key=len(rows) == len(keys),
+            order_only=OrderOnlyKey(name, order_only[0]) if order_only else None,
+        )
 
     @property
     def whole_rows(self) -> tuple[int, ...] | None:

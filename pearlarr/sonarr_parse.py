@@ -13,9 +13,12 @@ Sonarr's own answer, never that one.
 
 import concurrent.futures
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 from typing import assert_never
 
 from .aired_view import NoView
+from .arr_http import fetch_workers
 from .arr_models import ParsedFileInfo
 from .arr_run_services import ArrRunDeps
 from .grab_placement import ListedFile
@@ -24,7 +27,6 @@ from .parse_cache import ParseFreshness
 from .releases import SeadexDict
 from .series_reads import AiredParseSource
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_episodes import fetch_workers
 from .sonarr_matching import NoAnswer
 from .video_files import indexed_video_files
 
@@ -46,6 +48,16 @@ def parse_without_answer(info: ParsedFileInfo, reason: NoAnswer | NoView) -> Par
             # another series' may never be stored, and leaving its files unread would hold their release on every run.
             return info.with_matched(())
     assert_never(reason)
+
+
+@dataclass(frozen=True, slots=True)
+class _AiredParse:
+    """One file's parse as the placement reads it (`SonarrParseCache._aired_parse_for`)."""
+
+    parse: ParsedFileInfo | None
+    """The parse, None when it is left unread."""
+    unread_series: int | None = None
+    """The file's series when its episodes couldn't be read, else None."""
 
 
 class SonarrParseCache:
@@ -87,27 +99,26 @@ class SonarrParseCache:
             self.logger.debug(f"Sonarr matched {f} to {matched}")
         return info
 
-    def _aired_parse_for(self, f: str, *, window: ParseFreshness, unread: set[int]) -> ParsedFileInfo | None:
+    def _aired_parse_for(self, f: str, *, window: ParseFreshness, unread: AbstractSet[int]) -> _AiredParse:
         """One file's parse as the placement reads it: `_parse_for`'s, matched as an aired Sonarr matches it.
 
-        Only a parse of a series Sonarr numbers by another order differs from the cached one. None is a parse left
-        unread: Sonarr gave none, or an aired Sonarr's answer can't be known and `parse_without_answer` leaves it so.
+        Only a parse of a series Sonarr numbers by another order differs from the cached one. A parse is left unread
+        when Sonarr gave none, or when an aired Sonarr's answer can't be known and `parse_without_answer` leaves it
+        so.
 
-        `unread` collects the series whose episodes couldn't be read. A failed read isn't kept, so without it every
-        other file of such a series would try the read again, and warn again.
+        `unread` are the series whose episodes couldn't be read for an earlier file. A failed read isn't kept, so
+        without them every other file of such a series would try the read again, and warn again.
         """
 
         info = self._parse_for(f, window=window)
         if info is None:
-            return None
+            return _AiredParse(None)
         aired = NoView.READ_FAILED if info.series_id in unread else self._reads.aired_parse(info)
         if isinstance(aired, ParsedFileInfo):
-            return aired
+            return _AiredParse(aired)
         if aired is NoAnswer.SONARR_FAILS:
             self.logger.debug(f"No parse for {f}: two aired episodes of its series share a number it is matched by")
-        elif aired is NoView.READ_FAILED and info.series_id is not None:
-            unread.add(info.series_id)
-        return parse_without_answer(info, aired)
+        return _AiredParse(parse_without_answer(info, aired), info.series_id if aired is NoView.READ_FAILED else None)
 
     def _warm_parse_cache(self, names: Sequence[str], *, window: ParseFreshness) -> None:
         """Concurrently parse the distinct `names` not yet cached, so the gather reads them as hits.
@@ -170,7 +181,13 @@ class SonarrParseCache:
         }
         self._warm_parse_cache(list(dict.fromkeys(f for files in listed.values() for f, _ in files)), window=window)
         unread: set[int] = set()
-        return {
-            url: tuple(ListedFile(f, size, self._aired_parse_for(f, window=window, unread=unread)) for f, size in files)
-            for url, files in listed.items()
-        }
+        parsed: dict[str, tuple[ListedFile, ...]] = {}
+        for url, files in listed.items():
+            release_files: list[ListedFile] = []
+            for f, size in files:
+                aired = self._aired_parse_for(f, window=window, unread=unread)
+                if aired.unread_series is not None:
+                    unread.add(aired.unread_series)
+                release_files.append(ListedFile(f, size, aired.parse))
+            parsed[url] = tuple(release_files)
+        return parsed
