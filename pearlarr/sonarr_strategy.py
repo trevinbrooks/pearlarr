@@ -601,9 +601,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
     def _log_placements(self, placed: PlacedEntry, indexes: Iterable[EpisodeIndex]) -> None:
         """One debug line per release with video files: the title's coverage, then the files it doesn't count.
 
-        Those are each file on an own-only row (`own_only_files`, read off `indexes`, the series
-        indexes the releases were placed with), each file excluded, and each left for a hand import. The coverage
-        and those rows print by the numbers Sonarr lists them under (`PrintedKey`).
+        Those are each file on an own-only row (`own_only_files`, read off `indexes`, the series indexes the releases
+        were placed with), each file excluded, and each left for a hand import. The coverage and those rows print by the
+        numbers Sonarr lists them under (`PrintedKey`).
         """
 
         series_indexes = tuple(indexes)

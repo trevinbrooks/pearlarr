@@ -22,8 +22,8 @@ orders read (`skyhook_gateway.ACTIVE_FRESH_DAYS`), which keeps its mappings no s
 class XemGateway:
     """The scene mapping cache over the TheXEM client: reads due series again, serves stored mappings at any age.
 
-    Only a series Sonarr numbers by another TVDB order is ever asked for: Sonarr holds the scene numbers of the
-    rest.
+    Only a series Sonarr numbers by another TVDB order is ever asked for. The rest are read with the scene numbers
+    on Sonarr's rows.
     """
 
     def __init__(self, *, client: AbstractXemClient, cache_store: AbstractCacheStore) -> None:

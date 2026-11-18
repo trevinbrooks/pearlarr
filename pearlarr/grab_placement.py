@@ -430,17 +430,10 @@ def _skip_reason_of(
 ) -> SkipReason | None:
     """Why the release isn't grabbed: the first of these that holds, in this order.
 
-    Five inputs, since their order is the rule. `misnumbered`: a file of the grabbing title's window is misnumbered
-    (`TitleView.misnumbered`). `unread`: a read the placement needs failed. `hand_import_verdict`: the hand-import
-    verdict the grabbing title's window gave a file no window placed (`TitleView.hand_import_verdict`), when nothing
-    of the whole file map lands on the title. A file episode titles contradict skips the release as `EPISODE_TITLES_CONTRADICT`,
-    and a file another TVDB order reads outside every listed title as `MISNUMBERED`. It outranks `another_titles`,
-    since a file the grabbing title's window left for a hand import is that title's hand import, and saying it's
-    another title's would be wrong. `another_titles`: nothing of the whole file map lands on the title, and some file
-    is another title's. `aired_only`: nothing of the whole file map lands on the title, some file is on an aired
-    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`), and none is left unplaced
-    (`BatchPlacements.unplaced`). With one left unplaced the release is judged by group and size, as any release
-    with nothing placed is.
+    Five inputs, since their order is the rule. A hand-import verdict outranks `another_titles`: a file the grabbing
+    title's window left for a hand import is that title's, not another title's. The caller sets the last three only
+    when nothing of the whole file map lands on the title, and `aired_only` only when no file is left unplaced. A
+    release with a file left unplaced is judged by group and size, as any release with nothing placed is.
     """
 
     if misnumbered:

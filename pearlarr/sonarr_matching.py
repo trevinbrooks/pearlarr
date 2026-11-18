@@ -88,8 +88,8 @@ _SWAP: Final = 10
 _MOST_COMMENTED: Final = 4
 """The most aliases with a comment under one title key that `matches` tries every reading of.
 
-No series measured has more than 2 under one key, and a cap of 1 would leave 60 of their names with no answer.
-Each one more doubles the readings, so 4 leaves room and stays cheap.
+Each one more doubles the readings, so a key past the cap has no answer rather than a slow one. A cap of 1 would
+leave a name with no answer wherever two such aliases share its key, and 4 leaves room above that.
 """
 
 

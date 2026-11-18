@@ -66,9 +66,9 @@ class EpisodeIndex:
     """The series' other TVDB orders, by name, each read onto these episodes. Never the aired order."""
 
     own_only: Mapping[int, SonarrEpisode] = field(default_factory=dict[int, SonarrEpisode])
-    """Row id -> Sonarr's row, as sent, for each own-only row (`AiredSeries.own_only`). They are in no
-    other facet: no key, absolute number, title or season count reads them, and no window holds one. Only another
-    order reads onto them (`TvdbOrder.own_only_by_key`). Empty on a title's own index and on the import side."""
+    """Row id -> Sonarr's row, as sent, for each own-only row (`AiredSeries.own_only`). They are in no other facet: no
+    key, absolute number, title or season count reads them, and no window holds one. Only another order reads onto them
+    (`TvdbOrder.own_only_by_key`). Empty on a title's own index and on the import side."""
 
     key_by_id: Mapping[int, EpisodeKey] = field(init=False, repr=False, compare=False)
     """Episode id -> `(season, episode)`."""
@@ -137,8 +137,8 @@ def episode_index(
 ) -> EpisodeIndex:
     """Convert one series' or title's episodes into the `EpisodeIndex` facets, with `other_orders` read onto them.
 
-    `own_only` are the own-only rows (`AiredSeries.own_only`). They get a facet of their own, and
-    `other_orders` read onto them apart from the episodes.
+    `own_only` are the own-only rows (`AiredSeries.own_only`). They get a facet of their own, and `other_orders` read
+    onto them apart from the episodes.
     """
 
     with_ids = [ep for ep in episodes if ep.id]
@@ -159,8 +159,8 @@ def _read_order(
     """The order read onto the episodes `id_by_tvdb` holds and the rows `own_only_by_tvdb` holds.
 
     The first row of a repeated key wins in each map. A key reads onto an own-only row only when it reads onto no
-    episode: a key the order lists twice, once for an episode only it has and once for an aired one, keeps
-    the aired one, whichever row comes first. So adding those rows never changes what a key read onto before.
+    episode: a key the order lists twice, once for an episode only it has and once for an aired one, keeps the aired
+    one, whichever row comes first. So adding those rows never changes what a key read onto before.
     """
 
     id_by_key: dict[EpisodeKey, int] = {}
