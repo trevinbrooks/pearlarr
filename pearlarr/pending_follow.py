@@ -3,14 +3,22 @@
 A pending import stores the TVDB episode id of every Sonarr row id it holds (`TvdbIds`). Sonarr can give an episode
 another row, so a stored id is followed before it is read: put on the row that holds its TVDB episode among the rows
 read. `follow` is the one place an id moves.
+
+`PendingFollower` follows the stored pending imports a title's check reads, and gives one stored before pearlarr
+kept TVDB ids its own at the start of a run. The import follows the one it is importing itself
+(`ImportReconciler`), under the rows it reads then.
 """
 
+import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from .arr_models import SonarrEpisode
 from .episode_ids import is_stand_in, stand_in_id, stand_in_tvdb_id, without_stand_ins
+from .output import hub_warn
 from .pending_import import FileEpisodeMap, PendingImport, TitleClaim, TvdbIds, tvdb_id_of
+from .pending_import_store import PendingImportStore
+from .series_reads import SeriesRows
 
 type _IdMoves = Mapping[int, int]
 """An episode id a pending import holds -> the id it is now, for each one that moved: the row that holds its TVDB
@@ -153,3 +161,110 @@ def _set_aside(file_map: FileEpisodeMap, tvdb_ids: TvdbIds, row_by_tvdb: _RowByT
         for name, ids in file_map.items()
     }
     return {name: no_row for name, no_row in without_row.items() if no_row}
+
+
+class PendingFollower:
+    """Follows a run's stored pending imports for the title checks, and stores the TVDB ids of one that has none.
+
+    Built once in `SonarrStrategy`, over the run's pending import store and its series rows.
+    """
+
+    def __init__(self, pending_imports: PendingImportStore, rows: SeriesRows, logger: logging.Logger) -> None:
+        """Bind the run's pending import store, its series rows and the logger. No run has started."""
+
+        self._pending_imports = pending_imports
+        self._rows = rows
+        self.logger = logger
+
+        # The series of every pending import stored once the run has started (`begin_run`).
+        self._claimed_series: tuple[int, ...] = ()
+
+    def begin_run(self, *, waits_on_imports: bool) -> None:
+        """Start a run: give each pending import stored with no TVDB ids its own, and note every stored one's series.
+
+        The stored pending imports are loaded once, here. While imports aren't waited on none is loaded, as at
+        every other read of the stored ones.
+        """
+
+        claimed: dict[int, None] = {}
+        if waits_on_imports:
+            for pending in self._pending_imports.load(self._pending_imports.rows()).values():
+                if pending.tvdb_ids is None and not self._store_tvdb_ids(pending):
+                    continue
+                claimed.update(dict.fromkeys(pending.series_ids))
+        self._claimed_series = tuple(claimed)
+
+    @property
+    def claimed_series(self) -> tuple[int, ...]:
+        """The series of every pending import stored as the run started, each once.
+
+        A pending import's series is read at grab and import whether or not its own item needs a check, and
+        whether or not the series has an AniList mapping. None while imports aren't waited on.
+        """
+
+        return self._claimed_series
+
+    def followed(self, stored: Mapping[str, PendingImport]) -> dict[str, PendingImport]:
+        """The stored pending imports by hash, each followed under the rows the run holds of the series it claims.
+
+        Those are the rows the series indexes were built from, so every id a placement joins names the episode
+        the index has it on. One whose ids moved is saved, and its titles are checked again next run. One that
+        can't be followed under them (`follow`) is left out: its ids may name other episodes.
+        """
+
+        followed: dict[str, PendingImport] = {}
+        for infohash, pending in stored.items():
+            result = follow(pending, {sid: self._rows.last_known_episodes(sid) for sid in pending.series_ids})
+            if result is None:
+                self.logger.debug(
+                    f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent - "
+                    "not placing its torrent's files this run"
+                )
+                continue
+            followed[infohash] = result.pending
+            if result.pending is not pending:
+                self._pending_imports.save_followed(result.pending)
+        return followed
+
+    def _store_tvdb_ids(self, pending: PendingImport) -> bool:
+        """Store the TVDB episode of every row id a pending import written without them holds, or drop it.
+
+        They are read off the rows of its series only when every one is read and in aired order. Its ids were
+        matched as though each series were aired, so on a series Sonarr numbers by another order they may name
+        other episodes: it is dropped and its titles are checked again, as is one holding an id Sonarr sends no row
+        for. One awaiting cleanup is never dropped, since its files are imported and its cleanup ends it by the ids
+        it stores. One with a series that couldn't be read is left for the next run.
+
+        Returns whether it is still stored.
+        """
+
+        viewed = {series_id: self._rows.viewed_episodes(series_id) for series_id in pending.series_ids}
+        if any(rows is not None and self._rows.in_another_order(series_id) for series_id, rows in viewed.items()):
+            return not self._drop_unless_imported(
+                pending,
+                "its episodes were matched before pearlarr could read the order Sonarr numbers its series by - "
+                "checking its titles again (episodes it already imported may be on the wrong episodes)",
+            )
+        sent: list[SonarrEpisode] = []
+        for rows in viewed.values():
+            if not rows:
+                return True
+            sent.extend(rows)
+        if not pending.row_ids() <= {row.id for row in sent}:
+            return not self._drop_unless_imported(
+                pending, "Sonarr no longer has an episode it was matched to - checking its titles again"
+            )
+        self._pending_imports.save(replace(pending, tvdb_ids=TvdbIds.of(sent)))
+        return True
+
+    def _drop_unless_imported(self, pending: PendingImport, why: str) -> bool:
+        """Drop a pending import whose ids can't be trusted with one warning, unless it is awaiting cleanup.
+
+        Returns whether it was dropped.
+        """
+
+        if pending.awaiting_cleanup:
+            return False
+        self._pending_imports.drop_unimported(pending)
+        hub_warn(f"Pending import {pending.display_label} dropped: {why}")
+        return True

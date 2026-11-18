@@ -13,7 +13,7 @@ import or a whole run builds the strategy (`_sync`).
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import date, timedelta
-from typing import override
+from typing import Any, override
 
 import pytest
 from seadex import EntryRecord
@@ -38,6 +38,7 @@ from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
 from pearlarr.output import BootStepFinished, Severity, TitleHeader, TitleRow
 from pearlarr.output.events import TitleState
 from pearlarr.parse_cache import parse_to_json
+from pearlarr.pending_follow import PendingFollower
 from pearlarr.pending_import import PendingImport, TvdbIds
 from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
@@ -59,6 +60,7 @@ from .builders import (
     known_torrent,
     make_config,
     make_entry_record,
+    make_pending_follower,
     make_release,
     make_run_deps,
     make_series_reads,
@@ -563,6 +565,7 @@ def test_the_orders_of_a_pending_imports_series_with_no_anilist_mapping_are_fetc
     # Nothing in the scan needs a series, so the pending import's is the only one asked for.
     strat, _ = _with_an_unmapped_series(cache, FakeSonarrClient(episodes=list(_DVD_ROWS)))
     strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
+    strat.start_of_run([])
 
     fetched = strat.prefetch_orders([])
 
@@ -576,6 +579,7 @@ def test_the_scene_mappings_of_a_pending_imports_series_are_read_for_the_one_in_
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     strat, _ = _with_an_unmapped_series(cache, FakeSonarrClient(episodes=list(_DVD_ROWS)))
     strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
+    strat.start_of_run([])
 
     read = strat.prefetch_scene_numbers([])
 
@@ -889,8 +893,36 @@ def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     strat = _sync(monkeypatch, [_series(2, 60)], cache)
     strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=mode))
+    strat.start_of_run([])
 
     assert strat.prefetch_orders([]) == fetched
+
+
+class _CountingPendingReads(FakeCacheStore):
+    """A store counting the reads of every stored pending import."""
+
+    pending_reads = 0
+
+    @override
+    def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]:
+        self.pending_reads += 1
+        return super().get_pending_import_rows(arr)
+
+
+def test_the_stored_pending_imports_are_loaded_once_for_the_start_of_a_run_and_its_prefetches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = pending_import(infohash="h", series_id=2)
+    cache = _CountingPendingReads(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
+    strat = _sync(monkeypatch, [_series(2, 60, season_type="dvd")], cache)
+    strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
+    cache.pending_reads = 0
+
+    strat.start_of_run([])
+    strat.prefetch_orders([])
+    strat.prefetch_scene_numbers([])
+
+    assert cache.pending_reads == 1
 
 
 def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the_stored_ones(
@@ -1343,12 +1375,9 @@ class _SeriesTwoUnread(FakeSonarrClient):
 
 
 def _at_run_start(
-    monkeypatch: pytest.MonkeyPatch,
-    series: list[SonarrItem],
-    pending: PendingImport,
-    sonarr: FakeSonarrClient | None = None,
-) -> tuple[SonarrStrategy, FakeCacheStore]:
-    """The strategy after the library read of a run that waits on imports, `pending` stored and its title cached.
+    series: list[SonarrItem], pending: PendingImport, sonarr: FakeSonarrClient | None = None
+) -> tuple[PendingFollower, FakeCacheStore]:
+    """The follower of a run after its library read of `series`, `pending` stored and its title cached.
 
     TVDB series 50 has `_ORDERS` stored, and TheXEM was read for it and maps none of its episodes.
     """
@@ -1357,9 +1386,7 @@ def _at_run_start(
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     cache.put_scene_mappings(50, stored_scene_mappings())
     cache.update_cached_title(Arr.SONARR, PENDING_IMPORT_ANILIST_ID, {"updated_at": PENDING_IMPORT_STAMP})
-    strat = _sync(monkeypatch, series, cache, sonarr=sonarr)
-    strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
-    return strat, cache
+    return make_pending_follower(cache, _reads(series, cache, sonarr=sonarr)), cache
 
 
 def _title_cached(cache: FakeCacheStore) -> bool:
@@ -1369,14 +1396,12 @@ def _title_cached(cache: FakeCacheStore) -> bool:
     return cached is not None and cached.updated_at is not None
 
 
-def test_a_pending_import_stored_without_tvdb_ids_on_a_series_in_another_order_is_dropped_with_one_warning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_on_a_series_in_another_order_is_dropped_with_one_warning() -> None:
     recording = install_recording_hub()
     series: list[SonarrItem] = [_series(1, 50, season_type="dvd")]
-    strat, cache = _at_run_start(monkeypatch, series, _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS)))
+    follower, cache = _at_run_start(series, _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS)))
 
-    assert strat.start_of_run(series) == set()
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {}
     assert not _title_cached(cache)
@@ -1389,29 +1414,25 @@ def test_a_pending_import_stored_without_tvdb_ids_on_a_series_in_another_order_i
     ]
 
 
-def test_a_pending_import_stored_without_tvdb_ids_that_awaits_cleanup_is_left_alone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_that_awaits_cleanup_is_left_alone() -> None:
     recording = install_recording_hub()
     pending = replace(_WITHOUT_TVDB_IDS, awaiting_cleanup=True)
     series: list[SonarrItem] = [_series(1, 50, season_type="dvd")]
-    strat, cache = _at_run_start(monkeypatch, series, pending, FakeSonarrClient(episodes=list(_DVD_ROWS)))
+    follower, cache = _at_run_start(series, pending, FakeSonarrClient(episodes=list(_DVD_ROWS)))
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": pending.to_json()}
     assert _title_cached(cache)
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
-def test_a_pending_import_stored_without_tvdb_ids_takes_them_from_the_rows_of_its_aired_series(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_takes_them_from_the_rows_of_its_aired_series() -> None:
     recording = install_recording_hub()
     series: list[SonarrItem] = [_series(1, 50)]
-    strat, cache = _at_run_start(monkeypatch, series, _WITHOUT_TVDB_IDS)
+    follower, cache = _at_run_start(series, _WITHOUT_TVDB_IDS)
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {
         "h": replace(_WITHOUT_TVDB_IDS, tvdb_ids=TvdbIds({11: 9001})).to_json()
@@ -1429,35 +1450,33 @@ def test_a_pending_import_stored_without_tvdb_ids_takes_them_from_the_rows_of_it
     ],
 )
 def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_when_its_series_has_no_aired_rows_to_read(
-    series: SonarrSeries, rows: list[SonarrEpisode] | None, monkeypatch: pytest.MonkeyPatch
+    series: SonarrSeries, rows: list[SonarrEpisode] | None
 ) -> None:
     sonarr = FakeSonarrClient()
     sonarr.episodes_return = rows
-    strat, cache = _at_run_start(monkeypatch, [series], _WITHOUT_TVDB_IDS, sonarr)
+    follower, cache = _at_run_start([series], _WITHOUT_TVDB_IDS, sonarr)
 
-    strat.start_of_run([series])
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
     assert _title_cached(cache)
 
 
-def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_its_series_scene_mappings_are_unread(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_its_series_scene_mappings_are_unread() -> (
+    None
+):
     # TVDB series 60 has its orders stored, and TheXEM was never read for it.
     series: list[SonarrItem] = [_series(1, 60, season_type="dvd")]
-    strat, cache = _at_run_start(monkeypatch, series, _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS)))
+    follower, cache = _at_run_start(series, _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS)))
     cache.put_tvdb_orders(60, stored_orders(_ORDERS))
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
     assert _title_cached(cache)
 
 
-def test_a_two_series_pending_import_stored_without_tvdb_ids_waits_for_a_read_of_both_series(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_two_series_pending_import_stored_without_tvdb_ids_waits_for_a_read_of_both_series() -> None:
     pending = two_claim_pending_import(
         series_ids=(1, 2),
         windows=((11,), (12,)),
@@ -1466,22 +1485,22 @@ def test_a_two_series_pending_import_stored_without_tvdb_ids_waits_for_a_read_of
         tvdb_ids=None,
     )
     series: list[SonarrItem] = [_series(1, 50), _series(2, 60)]
-    strat, cache = _at_run_start(monkeypatch, series, pending, _SeriesTwoUnread(episodes=list(_ROWS)))
+    follower, cache = _at_run_start(series, pending, _SeriesTwoUnread(episodes=list(_ROWS)))
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": pending.to_json()}
 
 
-def test_a_pending_import_stored_without_tvdb_ids_holding_an_id_sonarr_sends_no_row_for_is_dropped_with_one_warning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_holding_an_id_sonarr_sends_no_row_for_is_dropped_with_one_warning() -> (
+    None
+):
     recording = install_recording_hub()
     pending = replace(_WITHOUT_TVDB_IDS, file_episode_map={"show - 01 [1080p].mkv": (13,)})
     series: list[SonarrItem] = [_series(1, 50)]
-    strat, cache = _at_run_start(monkeypatch, series, pending)
+    follower, cache = _at_run_start(series, pending)
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=True)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {}
     assert not _title_cached(cache)
@@ -1493,14 +1512,11 @@ def test_a_pending_import_stored_without_tvdb_ids_holding_an_id_sonarr_sends_no_
     ]
 
 
-def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_imports_are_not_waited_on(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_imports_are_not_waited_on() -> None:
     series: list[SonarrItem] = [_series(1, 50)]
-    strat, cache = _at_run_start(monkeypatch, series, _WITHOUT_TVDB_IDS)
-    strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.OFF))
+    follower, cache = _at_run_start(series, _WITHOUT_TVDB_IDS)
 
-    strat.start_of_run(series)
+    follower.begin_run(waits_on_imports=False)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
 

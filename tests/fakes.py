@@ -831,10 +831,24 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         return None if isinstance(episodes, NoView) else episodes
 
     @override
+    def viewed_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The whole-series list off the client, None for a series with no view."""
+
+        episodes = self._series_episodes(series_id)
+        return None if isinstance(episodes, NoView) else episodes
+
+    @override
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
         """The series list as last read off the client, none for a series never read."""
 
         return self._last_known.get(series_id, [])
+
+    @override
+    def in_another_order(self, series_id: int) -> bool:
+        """Whether the scripted order, which every series is numbered by, is other than the aired one."""
+
+        del series_id
+        return is_another_order(self._order)
 
     def library_orders(self, series_id: int) -> SonarrSeriesOrders:
         """Every series is numbered by the scripted order, with no count."""
@@ -870,12 +884,6 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         """Whether any of the titles is one of the `unread_anilist_ids`, or any of the series one of the `unread_series`."""
 
         return not (self._unread_anilist_ids.isdisjoint(anilist_ids) and self._unread_series.isdisjoint(series_ids))
-
-
-def both_roles(episodes: ScriptedEpisodes) -> dict[str, ScriptedEpisodes]:
-    """The bare-strategy attributes one `ScriptedEpisodes` fills: the episode collaborator and the run's reads."""
-
-    return {"_episodes": episodes, "_reads": episodes}
 
 
 class CaptureHandler(logging.Handler):

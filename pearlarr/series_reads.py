@@ -66,7 +66,7 @@ class AiredParseSource(ABC):
 
 
 class SeriesRows(ABC):
-    """A series' rows as Sonarr numbers them, which an import reads its files off and follows a pending import by.
+    """A series' rows as Sonarr numbers them, which an import reads its files off and a pending import is followed by.
 
     `SeriesReads` is the real one.
     """
@@ -75,7 +75,13 @@ class SeriesRows(ABC):
     def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None: ...
 
     @abstractmethod
+    def viewed_episodes(self, series_id: int) -> list[SonarrEpisode] | None: ...
+
+    @abstractmethod
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]: ...
+
+    @abstractmethod
+    def in_another_order(self, series_id: int) -> bool: ...
 
 
 class SeriesReads(AiredParseSource, SeriesRows):
@@ -280,8 +286,25 @@ class SeriesReads(AiredParseSource, SeriesRows):
         return fetched
 
     @override
+    def viewed_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+        """The rows the series' aired view is built from (`aired_series`), as Sonarr numbers them.
+
+        None when the series has no view.
+        """
+
+        if isinstance(self.aired_series(series_id), NoView):
+            return None
+        return self._series[series_id].rows
+
+    @override
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]:
         """The series' last successfully read episodes this run, as Sonarr numbers them, or empty."""
 
         read = self._series.get(series_id)
         return [] if read is None else read.rows
+
+    @override
+    def in_another_order(self, series_id: int) -> bool:
+        """Whether this run's library read has the series in an order other than the aired one."""
+
+        return self.library_orders(series_id).in_another_order
