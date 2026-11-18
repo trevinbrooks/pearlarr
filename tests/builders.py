@@ -50,6 +50,7 @@ from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeSt
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
+from pearlarr.library_read import LibraryRead
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounter, emit_to_hub
@@ -102,7 +103,7 @@ from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.sonarr_episodes import SonarrEpisodes
+from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
@@ -1605,20 +1606,26 @@ def make_series_reads(
     sonarr: AbstractSonarrClient | None = None,
     cache_store: AbstractCacheStore | None = None,
     *,
+    library: Sequence[SonarrItem] | None = None,
     skyhook_client: AbstractSkyHookClient | None = None,
     xem_client: AbstractXemClient | None = None,
 ) -> SeriesReads:
-    """A real `SeriesReads` over typed fakes, before any library read: no series is known, and no order was sent.
+    """A real `SeriesReads` over typed fakes, with no strategy around it.
 
-    Its TVDB orders and scene mappings are the ones `cache_store` holds, fetched through the two clients.
+    With `library` the run has read those series as its library, each with an AniList mapping. Without it no
+    library was read: no series is known, and no order was sent. Its TVDB orders and scene mappings are the ones
+    `cache_store` holds, fetched through the two clients.
     """
 
     cache_store = cache_store or FakeCacheStore()
-    return SeriesReads(
+    reads = SeriesReads(
         sonarr or FakeSonarrClient(),
         SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
         XemGateway(client=xem_client or FakeXemClient(), cache_store=cache_store),
     )
+    if library is not None:
+        reads.begin_run(LibraryRead.of(library, sonarr_series_hash(series.id for series in library)))
+    return reads
 
 
 def make_sonarr_episodes(

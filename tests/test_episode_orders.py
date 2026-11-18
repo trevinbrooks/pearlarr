@@ -1,10 +1,13 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The tests read the strategy's private collaborators (_episodes / _reconciler),
+# The tests read the strategy's private collaborators (_episodes / _parse / _reads / _reconciler),
 # which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Each series' TVDB orders through the Sonarr strategy: what it fetches, and what grab and import are served.
+"""Each series' TVDB orders through a run's reads and the Sonarr strategy: what is fetched, what grab and import get.
 
 The grab is served a file's parse too, matched as an aired Sonarr matches it.
+
+A test of the reads alone builds them alone (`_reads`). One that asks for a title's episodes, the parse cache, the
+import or a whole run builds the strategy (`_sync`).
 """
 
 from collections.abc import Iterable, Mapping
@@ -38,6 +41,7 @@ from pearlarr.parse_cache import parse_to_json
 from pearlarr.pending_import import PendingImport, TvdbIds
 from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
+from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.sonarr_episodes import TitleEpisodes, _dated, sonarr_series_hash
 from pearlarr.sonarr_matching import AiredMatcher
@@ -57,6 +61,7 @@ from .builders import (
     make_entry_record,
     make_release,
     make_run_deps,
+    make_series_reads,
     make_sonarr_sync,
     pending_import,
     rg_group,
@@ -114,6 +119,24 @@ def _series(
     return SonarrSeries.model_validate(raw)
 
 
+def _reads(
+    series: list[SonarrItem],
+    cache: FakeCacheStore,
+    client: FakeSkyHookClient | None = None,
+    *,
+    sonarr: FakeSonarrClient | None = None,
+) -> SeriesReads:
+    """A run's reads after its library read of `series`, with no strategy around them.
+
+    The series, their rows and what Sonarr answers of one alone are as `_sync` has them. TVDB orders are fetched
+    through `client`, and a series has the scene mappings `cache` holds.
+    """
+
+    sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
+    sonarr.all_series_return = series
+    return make_series_reads(sonarr, cache, library=series, skyhook_client=client)
+
+
 def _sync(
     monkeypatch: pytest.MonkeyPatch,
     series: list[SonarrItem],
@@ -155,32 +178,30 @@ def _numbered(episodes: tuple[SonarrEpisode, ...]) -> list[tuple[int, EpisodeKey
     ],
 )
 def test_a_series_not_numbered_by_another_order_is_served_sonarrs_rows_as_sent(
-    series_id: int, season_type: str | None, order: str, other_orders: set[str], monkeypatch: pytest.MonkeyPatch
+    series_id: int, season_type: str | None, order: str, other_orders: set[str]
 ) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type=season_type)], cache)
+    reads = _reads([_series(1, 50, season_type=season_type)], cache)
 
-    view = strat._reads.aired_series(series_id)
-    index = strat._reads.series_index(series_id)
+    view = reads.aired_series(series_id)
+    index = reads.series_index(series_id)
 
     assert isinstance(view, AiredSeries)
-    assert (strat._reads.library_orders(series_id).season_type, view.aired) == (order, tuple(_ROWS))
+    assert (reads.library_orders(series_id).season_type, view.aired) == (order, tuple(_ROWS))
     assert index is not None
     assert (set(index.by_id), set(index.orders)) == ({11, 12}, other_orders)
 
 
-def test_a_series_numbered_by_another_order_is_served_as_aired_with_its_stored_orders_read_onto_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_numbered_by_another_order_is_served_as_aired_with_its_stored_orders_read_onto_it() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(50, stored_scene_mappings())
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
 
-    view = strat._reads.aired_series(1)
-    index = strat._reads.series_index(1)
+    view = reads.aired_series(1)
+    index = reads.series_index(1)
 
     assert isinstance(view, AiredSeries)
     assert _numbered(view.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
@@ -253,71 +274,65 @@ def test_a_series_numbered_by_another_order_whose_scene_mappings_were_never_read
     assert strat._episodes.title_episodes(1, 500, _SEASON_ONE) is NoView.SCENE_UNREAD
 
 
-def test_a_series_numbered_by_another_order_that_thexem_has_no_mappings_for_has_a_view_without_scene_numbers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_numbered_by_another_order_that_thexem_has_no_mappings_for_has_a_view_without_scene_numbers() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(50, stored_scene_mappings())
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert isinstance(view, AiredSeries)
     assert _scene(view.aired) == [(12, (None, None, None)), (11, (None, None, None)), (-9003, (None, None, None))]
 
 
-def test_a_series_numbered_by_another_order_carries_the_scene_numbers_its_mappings_give_its_aired_episodes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_numbered_by_another_order_carries_the_scene_numbers_its_mappings_give_its_aired_episodes() -> None:
     # TheXEM maps the first aired episode, and the two after it are numbered on from it. The third is a stand-in.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(50, stored_scene_mappings((SceneMapping(1, 1, 2, 1, 13),)))
     sonarr = FakeSonarrClient(episodes=list(_SCENE_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert isinstance(view, AiredSeries)
     assert _scene(view.aired) == [(12, (2, 1, 13)), (11, (2, 2, 14)), (-9003, (2, 3, 15))]
 
 
-def test_a_series_in_aired_order_keeps_the_scene_numbers_sonarr_sent_whatever_thexem_maps(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_in_aired_order_keeps_the_scene_numbers_sonarr_sent_whatever_thexem_maps() -> None:
     rows = [sonarr_ep(1, 1, ep_id=11, tvdb_id=9001, scene_season=9, scene_episode=1, scene_absolute=91)]
     cache = FakeCacheStore()
     cache.put_scene_mappings(50, stored_scene_mappings((SceneMapping(1, 1, 2, 1, 13),)))
-    strat = _sync(monkeypatch, [_series(1, 50)], cache, sonarr=FakeSonarrClient(episodes=rows))
+    reads = _reads([_series(1, 50)], cache, sonarr=FakeSonarrClient(episodes=rows))
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert isinstance(view, AiredSeries)
     assert _scene(view.aired) == [(11, (9, 1, 91))]
 
 
-def test_a_series_index_is_built_once_for_a_read_of_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore())
+def test_a_series_index_is_built_once_for_a_read_of_its_rows() -> None:
+    reads = _reads([_series(1, 50)], FakeCacheStore())
 
-    first = strat._reads.series_index(1)
+    first = reads.series_index(1)
 
     assert first is not None
-    assert strat._reads.series_index(1) is first
+    assert reads.series_index(1) is first
 
 
-def test_a_new_read_of_a_series_replaces_its_view_and_index(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_new_read_of_a_series_replaces_its_view_and_index() -> None:
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-    before = strat._reads.series_index(1)
+    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
+    before = reads.series_index(1)
     third = sonarr_ep(1, 3, ep_id=13, tvdb_id=9003)
     sonarr.episodes_return = [*_ROWS, third]
 
-    strat._reads.read_episodes(1)
+    reads.read_episodes(1)
 
-    view = strat._reads.aired_series(1)
-    index = strat._reads.series_index(1)
+    view = reads.aired_series(1)
+    index = reads.series_index(1)
     assert before is not None
     assert set(before.by_id) == {11, 12}
     assert isinstance(view, AiredSeries)
@@ -326,27 +341,25 @@ def test_a_new_read_of_a_series_replaces_its_view_and_index(monkeypatch: pytest.
     assert set(index.by_id) == {11, 12, 13}
 
 
-def test_a_sonarr_that_sends_no_order_is_never_asked_for_a_series_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_sonarr_that_sends_no_order_is_never_asked_for_a_series_alone() -> None:
     # No series of the library read carries `seasonType`, so each is read as aired, as its rows come.
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
     library: list[SonarrItem] = [_series(1, 50, season_type=None), _series(2, 60, season_type=None)]
-    strat = _sync(monkeypatch, library, FakeCacheStore(), sonarr=sonarr)
+    reads = _reads(library, FakeCacheStore(), sonarr=sonarr)
 
-    views = [strat._reads.aired_series(series_id) for series_id in (1, 2)]
+    views = [reads.aired_series(series_id) for series_id in (1, 2)]
 
     assert views == [AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())] * 2
     assert sonarr.series_calls == []
 
 
-def test_a_series_of_an_all_aired_library_is_read_alone_when_sonarr_sends_its_order(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_of_an_all_aired_library_is_read_alone_when_sonarr_sends_its_order() -> None:
     # Every series says `official`. That the key was sent, whatever its value, is what has each one read again.
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60)], FakeCacheStore(), sonarr=sonarr)
+    reads = _reads([_series(1, 50), _series(2, 60)], FakeCacheStore(), sonarr=sonarr)
 
-    strat._reads.aired_series(1)
-    strat._reads.aired_series(2)
+    reads.aired_series(1)
+    reads.aired_series(2)
 
     assert sonarr.series_calls == [1, 2]
 
@@ -393,18 +406,16 @@ def test_a_series_whose_order_changed_since_the_library_read_has_no_view_for_the
     assert diagnostic_messages(recording, Severity.WARNING) == [_ORDER_CHANGED]
 
 
-def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_sonarr_says_of_it_later(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_sonarr_says_of_it_later() -> None:
     # Sonarr went to the aired order after the library read: its rows and a read of the series alone both say so.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(50, stored_scene_mappings())
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
     sonarr.series_return[1] = _series(1, 50)
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert isinstance(view, AiredSeries)
     assert _numbered(view.aired) == [(11, (1, 1)), (12, (1, 2)), (-9003, (1, 3))]
@@ -420,16 +431,16 @@ def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_s
     ],
 )
 def test_a_failed_read_of_a_series_alone_gives_no_view_and_the_next_call_asks_again(
-    answer: SonarrItem | NoResource, monkeypatch: pytest.MonkeyPatch
+    answer: SonarrItem | NoResource,
 ) -> None:
     recording = install_recording_hub()
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
+    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
     sonarr.series_return[1] = answer
 
-    failed = strat._reads.aired_series(1)
+    failed = reads.aired_series(1)
     del sonarr.series_return[1]
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert failed is NoView.READ_FAILED
     assert view == AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())
@@ -441,15 +452,13 @@ def test_a_failed_read_of_a_series_alone_gives_no_view_and_the_next_call_asks_ag
     "library",
     [pytest.param([_series(1, 50)], id="in-the-library"), pytest.param([_series(2, 60)], id="not-in-the-library")],
 )
-def test_a_series_sonarr_answers_it_does_not_have_has_no_episodes(
-    library: list[SonarrItem], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_series_sonarr_answers_it_does_not_have_has_no_episodes(library: list[SonarrItem]) -> None:
     recording = install_recording_hub()
     sonarr = FakeSonarrClient(episodes=[])
-    strat = _sync(monkeypatch, library, FakeCacheStore(), sonarr=sonarr)
+    reads = _reads(library, FakeCacheStore(), sonarr=sonarr)
     sonarr.series_return[1] = NoResource.GONE
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=(), stand_ins=())
     assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -502,16 +511,14 @@ def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_rele
     assert strat._reads.aired_parse(named_as_series_one) is NoView.READ_FAILED
 
 
-def test_a_view_built_after_the_imports_read_of_a_series_reads_it_alone_once_more(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_view_built_after_the_imports_read_of_a_series_reads_it_alone_once_more() -> None:
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
+    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
 
-    strat._reads.read_episodes(1)
+    reads.read_episodes(1)
     asked_by_the_import = list(sonarr.series_calls)
-    strat._reads.aired_series(1)
-    strat._reads.aired_series(1)
+    reads.aired_series(1)
+    reads.aired_series(1)
 
     assert asked_by_the_import == [1]
     assert sonarr.series_calls == [1, 1]
@@ -625,10 +632,8 @@ def _skyhook(orders: Mapping[str, tuple[OrderRow, ...]]) -> FakeSkyHookClient:
     )
 
 
-def _aired_over_dvd_rows(
-    monkeypatch: pytest.MonkeyPatch, client: FakeSkyHookClient, *, stored: bool = True
-) -> tuple[SonarrStrategy, FakeSonarrClient]:
-    """The strategy after a library read of series 1 as aired, on a Sonarr whose rows of it are `_DVD_ROWS`.
+def _aired_over_dvd_rows(client: FakeSkyHookClient, *, stored: bool = True) -> SeriesReads:
+    """A run's reads after a library read of series 1 as aired, on a Sonarr whose rows of it are `_DVD_ROWS`.
 
     An earlier run stored `_ORDERS` for TVDB series 50, unless `stored` is off. SkyHook is `client`.
     """
@@ -637,7 +642,7 @@ def _aired_over_dvd_rows(
     if stored:
         cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    return _sync(monkeypatch, [_series(1, 50)], cache, client, sonarr=sonarr), sonarr
+    return _reads([_series(1, 50)], cache, client, sonarr=sonarr)
 
 
 @pytest.mark.parametrize(
@@ -653,7 +658,10 @@ def test_a_series_both_reads_say_is_aired_over_rows_numbered_by_another_order_ha
     client: FakeSkyHookClient, warning: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recording = install_recording_hub()
-    strat, sonarr = _aired_over_dvd_rows(monkeypatch, client)
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
+    strat = _sync(monkeypatch, [_series(1, 50)], cache, client, sonarr=sonarr)
 
     views = [
         strat._reads.aired_series(1),
@@ -666,15 +674,13 @@ def test_a_series_both_reads_say_is_aired_over_rows_numbered_by_another_order_ha
     assert diagnostic_messages(recording, Severity.WARNING) == [warning]
 
 
-def test_rows_out_of_step_with_an_answer_from_an_earlier_run_are_tested_again_by_one_fetched_now(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_rows_out_of_step_with_an_answer_from_an_earlier_run_are_tested_again_by_one_fetched_now() -> None:
     # TVDB swapped the two episodes since the answer was stored, and Sonarr's rows already follow it.
     recording = install_recording_hub()
     client = _skyhook(_SWAPPED_SINCE)
-    strat, _ = _aired_over_dvd_rows(monkeypatch, client)
+    reads = _aired_over_dvd_rows(client)
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
     assert client.fetch_calls == [(50, "official")]
@@ -685,7 +691,8 @@ def test_rows_out_of_step_with_an_answer_this_run_wrote_are_not_fetched_for_agai
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _skyhook(_ORDERS)
-    strat, _ = _aired_over_dvd_rows(monkeypatch, client, stored=False)
+    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
+    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), client, sonarr=sonarr)
     strat._episodes.prefetch_orders([1])
     asked_at_the_prefetch = list(client.fetch_calls)
 
@@ -695,19 +702,19 @@ def test_rows_out_of_step_with_an_answer_this_run_wrote_are_not_fetched_for_agai
     assert client.fetch_calls == asked_at_the_prefetch == [(50, "official"), (50, "dvd")]
 
 
-def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come() -> None:
     client = _skyhook(_ORDERS)
-    strat, _ = _aired_over_dvd_rows(monkeypatch, client, stored=False)
+    reads = _aired_over_dvd_rows(client, stored=False)
 
-    view = strat._reads.aired_series(1)
+    view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
     assert client.fetch_calls == []
 
 
-def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer(monkeypatch: pytest.MonkeyPatch) -> None:
-    strat, _ = _aired_over_dvd_rows(monkeypatch, _skyhook(_ORDERS))
-    strat._reads.aired_series(1)
+def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer() -> None:
+    reads = _aired_over_dvd_rows(_skyhook(_ORDERS))
+    reads.aired_series(1)
     info = ParsedFileInfo(
         season_number=1,
         episode_numbers=(2,),
@@ -716,49 +723,45 @@ def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer(monkeypatc
         series_id=1,
     )
 
-    assert strat._reads.aired_parse(info) is NoView.READ_FAILED
+    assert reads.aired_parse(info) is NoView.READ_FAILED
 
 
-def test_the_import_reads_rows_numbered_by_the_order_sonarr_names_once_it_has_sent_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_import_reads_rows_numbered_by_the_order_sonarr_names_once_it_has_sent_them() -> None:
     # Sonarr went to the dvd order after the library read. It names that order only once it has sent the rows,
     # so a read of the series made before them, or the library read's order, would refuse these rows.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     sonarr = HookedSonarrClient(episodes=list(_DVD_ROWS))
     sonarr.on_episodes = lambda: sonarr.series_return.update({1: _series(1, 50, season_type="dvd")})
-    strat = _sync(monkeypatch, [_series(1, 50)], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50)], cache, sonarr=sonarr)
 
-    rows = strat._reads.read_episodes(1)
+    rows = reads.read_episodes(1)
 
     assert rows == _DVD_ROWS
-    assert strat._reads.last_known_episodes(1) == _DVD_ROWS
+    assert reads.last_known_episodes(1) == _DVD_ROWS
     assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
 
 
-def test_the_import_is_not_given_rows_out_of_step_with_the_order_sonarr_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_import_is_not_given_rows_out_of_step_with_the_order_sonarr_names() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], cache, _skyhook(_ORDERS), sonarr=sonarr)
-    before = strat._reads.read_episodes(1)
+    reads = _reads([_series(1, 50)], cache, _skyhook(_ORDERS), sonarr=sonarr)
+    before = reads.read_episodes(1)
     sonarr.episodes_return = list(_DVD_ROWS)
 
-    refused = strat._reads.read_episodes(1)
+    refused = reads.read_episodes(1)
 
     assert before == _ROWS
     assert refused is None
-    assert strat._reads.last_known_episodes(1) == _ROWS
+    assert reads.last_known_episodes(1) == _ROWS
 
 
-def test_rows_out_of_step_are_warned_of_once_for_the_import_and_the_check_together(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_rows_out_of_step_are_warned_of_once_for_the_import_and_the_check_together() -> None:
     recording = install_recording_hub()
-    strat, _ = _aired_over_dvd_rows(monkeypatch, _skyhook(_ORDERS))
+    reads = _aired_over_dvd_rows(_skyhook(_ORDERS))
 
-    answers = [strat._reads.read_episodes(1), strat._reads.read_episodes(1), strat._reads.aired_series(1)]
+    answers = [reads.read_episodes(1), reads.read_episodes(1), reads.aired_series(1)]
 
     assert answers == [None, None, NoView.READ_FAILED]
     assert diagnostic_messages(recording, Severity.WARNING) == [_OUT_OF_STEP]
@@ -772,27 +775,25 @@ def test_rows_out_of_step_are_warned_of_once_for_the_import_and_the_check_togeth
         pytest.param(_series(1, 50, season_type=None), id="no-order-key"),
     ],
 )
-def test_the_import_is_given_no_rows_of_a_series_it_cannot_read_alone(
-    answer: SonarrItem | NoResource, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_import_is_given_no_rows_of_a_series_it_cannot_read_alone(answer: SonarrItem | NoResource) -> None:
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
+    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
     sonarr.series_return[1] = answer
 
-    assert strat._reads.read_episodes(1) is None
-    assert strat._reads.last_known_episodes(1) == []
+    assert reads.read_episodes(1) is None
+    assert reads.last_known_episodes(1) == []
 
 
-def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
     # The stored aired order numbers the two episodes the other way round. Nothing is tested against it.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     client = _skyhook(_ORDERS)
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50, season_type=None)], cache, client, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type=None)], cache, client, sonarr=sonarr)
 
-    rows = strat._reads.read_episodes(1)
-    view = strat._reads.aired_series(1)
+    rows = reads.read_episodes(1)
+    view = reads.aired_series(1)
 
     assert rows == _DVD_ROWS
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
@@ -953,14 +954,21 @@ def _in_one_season(*alternate_titles: AlternateTitle) -> SonarrSeries:
     return _series(1, 50, season_type="dvd").model_copy(update={"alternateTitles": alternate_titles})
 
 
-def _synced_in_one_season(
-    monkeypatch: pytest.MonkeyPatch, sonarr: FakeSonarrClient | None = None, series: SonarrSeries | None = None
-) -> SonarrStrategy:
-    """The strategy after a library read of series 1, numbered by `_AS_ONE_SEASON`, before anything reads its rows.
+def _reads_in_one_season(sonarr: FakeSonarrClient | None = None, series: SonarrSeries | None = None) -> SeriesReads:
+    """A run's reads after a library read of series 1, numbered by `_AS_ONE_SEASON`, before anything reads its rows.
 
     Sonarr's rows are `_ONE_SEASON_ROWS` unless `sonarr` serves others, and the series has no alternate title
     unless `series` has.
     """
+
+    sonarr = sonarr or FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
+    return _reads([series or _in_one_season()], _stored_as_one_season(), sonarr=sonarr)
+
+
+def _synced_in_one_season(
+    monkeypatch: pytest.MonkeyPatch, sonarr: FakeSonarrClient | None = None, series: SonarrSeries | None = None
+) -> SonarrStrategy:
+    """The strategy over the library read, the rows and the stored orders `_reads_in_one_season` has."""
 
     sonarr = sonarr or FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
     return _sync(monkeypatch, [series or _in_one_season()], _stored_as_one_season(), sonarr=sonarr)
@@ -978,11 +986,9 @@ def _listing(*names: str) -> SeadexDict:
     return {"Group": rg_group({_URL: make_release(url=_URL, files=list(names), size=[100] * len(names))})}
 
 
-def test_a_name_with_only_an_absolute_number_is_matched_to_the_aired_episode_with_that_number(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_name_with_only_an_absolute_number_is_matched_to_the_aired_episode_with_that_number() -> None:
     # Sonarr counts the fifth episode as S01E05. As aired it is the second season's second.
-    strat = _synced_in_one_season(monkeypatch)
+    reads = _reads_in_one_season()
     info = ParsedFileInfo(
         season_number=0,
         absolute_episode_numbers=(5,),
@@ -991,22 +997,20 @@ def test_a_name_with_only_an_absolute_number_is_matched_to_the_aired_episode_wit
         series_id=1,
     )
 
-    assert strat._reads.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
+    assert reads.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
 
 
-def test_a_name_with_a_season_and_episode_is_matched_to_the_aired_episode_numbered_so(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_name_with_a_season_and_episode_is_matched_to_the_aired_episode_numbered_so() -> None:
     # Sonarr's order has no second season, so it matched the name to nothing.
-    strat = _synced_in_one_season(monkeypatch)
+    reads = _reads_in_one_season()
     info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
 
-    assert strat._reads.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
+    assert reads.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
 
 
-def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on() -> None:
     # S01E05 is an episode of Sonarr's one season. The aired first season has three.
-    strat = _synced_in_one_season(monkeypatch)
+    reads = _reads_in_one_season()
     info = ParsedFileInfo(
         season_number=1,
         episode_numbers=(5,),
@@ -1015,24 +1019,22 @@ def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on(monkeypatch
         series_id=1,
     )
 
-    assert strat._reads.aired_parse(info) == info.with_matched(())
+    assert reads.aired_parse(info) == info.with_matched(())
 
 
-def test_a_name_is_matched_to_an_aired_episode_sonarrs_order_has_no_row_for(monkeypatch: pytest.MonkeyPatch) -> None:
-    strat = _synced_in_one_season(monkeypatch)
+def test_a_name_is_matched_to_an_aired_episode_sonarrs_order_has_no_row_for() -> None:
+    reads = _reads_in_one_season()
     info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
 
-    assert strat._reads.aired_parse(info) == info.with_matched((_matched(2, 4, -9007),))
+    assert reads.aired_parse(info) == info.with_matched((_matched(2, 4, -9007),))
 
 
-def test_a_name_under_an_alternate_title_of_a_season_is_matched_within_that_season(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_name_under_an_alternate_title_of_a_season_is_matched_within_that_season() -> None:
     # Read by the series' own name, the third episode is S01E03.
-    strat = _synced_in_one_season(monkeypatch, series=_in_one_season(_ZOKU))
+    reads = _reads_in_one_season(series=_in_one_season(_ZOKU))
     info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(3,), series_title="Show Zoku", series_id=1)
 
-    assert strat._reads.aired_parse(info) == info.with_matched((_matched(2, 3, 16),))
+    assert reads.aired_parse(info) == info.with_matched((_matched(2, 3, 16),))
 
 
 @pytest.mark.parametrize(
@@ -1043,10 +1045,8 @@ def test_a_name_under_an_alternate_title_of_a_season_is_matched_within_that_seas
         pytest.param(None, id="no-series"),
     ],
 )
-def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(
-    series_id: int | None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    strat = _sync(monkeypatch, [_in_one_season(), _series(2, 60)], _stored_as_one_season())
+def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(series_id: int | None) -> None:
+    reads = _reads([_in_one_season(), _series(2, 60)], _stored_as_one_season())
     info = ParsedFileInfo(
         season_number=1,
         episode_numbers=(2,),
@@ -1055,7 +1055,7 @@ def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(
         series_id=series_id,
     )
 
-    assert strat._reads.aired_parse(info) is info
+    assert reads.aired_parse(info) is info
 
 
 def test_a_parse_reads_the_same_whatever_the_run_read_of_its_series_before(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1082,27 +1082,27 @@ def test_a_series_matcher_is_built_once_for_a_read_of_its_rows(monkeypatch: pyte
         return build(series, aliases)
 
     monkeypatch.setattr(AiredMatcher, "of", recording)
-    strat = _synced_in_one_season(monkeypatch)
+    reads = _reads_in_one_season()
     info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
 
-    strat._reads.aired_parse(info)
-    strat._reads.aired_parse(info)
+    reads.aired_parse(info)
+    reads.aired_parse(info)
 
-    assert built == [strat._reads.aired_series(1)]
+    assert built == [reads.aired_series(1)]
 
 
-def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows() -> None:
     # An import poll re-reads the series after Sonarr gains a row for the seventh episode, where the stand-in was.
     sonarr = FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
-    strat = _synced_in_one_season(monkeypatch, sonarr)
+    reads = _reads_in_one_season(sonarr)
     info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
-    before = strat._reads.aired_parse(info)
+    before = reads.aired_parse(info)
     sonarr.episodes_return = [*_ONE_SEASON_ROWS, sonarr_ep(1, 7, ep_id=17, tvdb_id=9007)]
 
-    strat._reads.read_episodes(1)
+    reads.read_episodes(1)
 
     assert before == info.with_matched((_matched(2, 4, -9007),))
-    assert strat._reads.aired_parse(info) == info.with_matched((_matched(2, 4, 17),))
+    assert reads.aired_parse(info) == info.with_matched((_matched(2, 4, 17),))
 
 
 _FIFTH = "Show - 05.mkv"
