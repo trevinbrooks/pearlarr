@@ -194,6 +194,25 @@ def test_parsed_file_info_with_numbers_replaces_only_the_numbers() -> None:
     )
 
 
+def test_parsed_file_info_with_matched_replaces_only_the_matched_episodes() -> None:
+    info = ParsedFileInfo(
+        season_number=0,
+        absolute_episode_numbers=(5,),
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=5, id=15),),
+        series_title="Show",
+        series_id=1,
+    )
+    matched = (MatchedEpisode(season_number=2, episode_number=2, id=15),)
+
+    assert info.with_matched(matched) == ParsedFileInfo(
+        season_number=0,
+        absolute_episode_numbers=(5,),
+        matched_episodes=matched,
+        series_title="Show",
+        series_id=1,
+    )
+
+
 def test_history_record_field_name_construction_matches_alias_parse() -> None:
     """Field-name kwargs (the tests/fakes idiom) build the same record the aliased wire parse does.
 

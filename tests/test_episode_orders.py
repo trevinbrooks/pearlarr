@@ -2,34 +2,47 @@
 # pyright: reportPrivateUsage=false
 # The tests read the strategy's private collaborators (_episodes / _reconciler),
 # which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Each series' TVDB orders through the Sonarr strategy: what it fetches, and what grab and import are served."""
+"""Each series' TVDB orders through the Sonarr strategy: what it fetches, and what grab and import are served.
 
-from collections.abc import Mapping
+The grab is served a file's parse too, matched as an aired Sonarr matches it.
+"""
+
+from collections.abc import Iterable, Mapping
 from datetime import timedelta
 
 import pytest
 
 from pearlarr.aired_view import AiredSeries, NoView
-from pearlarr.arr_models import SonarrEpisode, SonarrItem, SonarrSeries
+from pearlarr.arr_models import (
+    AlternateTitle,
+    MatchedEpisode,
+    ParsedFileInfo,
+    SonarrEpisode,
+    SonarrItem,
+    SonarrSeries,
+)
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
+from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import TitleMapping
-from pearlarr.releases import EpisodeKey
+from pearlarr.parse_cache import parse_to_json
+from pearlarr.releases import EpisodeKey, SeadexDict
+from pearlarr.sonarr_matching import AiredMatcher
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import OrderRow
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     FakeCacheStore,
-    ScriptedAniListClient,
-    make_anilist_gateway,
+    make_release,
     make_sonarr_sync,
     pending_import,
+    rg_group,
     sonarr_ep,
     stand_in_ep,
     stored_orders,
 )
-from .fakes import FakeSkyHookClient, FakeSonarrClient
+from .fakes import FakeSkyHookClient, FakeSonarrClient, debug_logger
 
 _DVD = (OrderRow(1, 1, 9002, None), OrderRow(1, 2, 9001, None))
 """The dvd order of a two-episode season that swaps its episodes."""
@@ -76,8 +89,7 @@ def _sync(
 ) -> SonarrStrategy:
     """The Sonarr strategy after the Sonarr run's library fetch of `series`, its orders fetched through `client`.
 
-    Every series' episodes are `_ROWS` unless `sonarr` serves others. Its AniList knows no title and is never
-    reached over the network.
+    Every series' episodes are `_ROWS` unless `sonarr` serves others. Its AniList knows no title.
     """
 
     strat = make_sonarr_sync(
@@ -88,7 +100,6 @@ def _sync(
         return series
 
     monkeypatch.setattr(strat._episodes, "get_all_sonarr_series", _library)
-    monkeypatch.setattr(strat._episodes, "_anilist", make_anilist_gateway(ScriptedAniListClient(title=None)))
     strat.get_items()
     return strat
 
@@ -287,3 +298,353 @@ def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the
     indexes = strat._series_indexes({1, 2})
     assert indexes[1].orders["dvd"].id_by_key == {(1, 1): 12, (1, 2): 11}
     assert indexes[2].orders == {}
+
+
+_TWO_SEASONS = (
+    OrderRow(0, 1, 9100, None),
+    *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
+    *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
+)
+"""The aired order of a series with a special and two seasons, of three and four episodes."""
+
+_AS_ONE_SEASON = (OrderRow(0, 1, 9100, None), *(OrderRow(1, n, 9000 + n, n) for n in range(1, 7)))
+"""Its dvd order: the special, and the first six episodes as one season. It lacks the seventh."""
+
+_ONE_SEASON_ROWS = [
+    sonarr_ep(0, 1, ep_id=20, tvdb_id=9100, title="Recap"),
+    *(sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, absolute=n) for n in range(1, 7)),
+]
+"""Sonarr's rows of that series, numbered by `_AS_ONE_SEASON`."""
+
+_ZOKU = AlternateTitle(title="Show Zoku", scene_season_number=2)
+"""The series' name for its second season."""
+
+_URL = "https://nyaa.si/1"
+
+
+def _matched(season: int, episode: int, ep_id: int) -> MatchedEpisode:
+    return MatchedEpisode(season_number=season, episode_number=episode, id=ep_id)
+
+
+def _stored_as_one_season(aired: tuple[OrderRow, ...] = _TWO_SEASONS) -> FakeCacheStore:
+    """A cache with TVDB series 50's orders stored: `aired`, and `_AS_ONE_SEASON` as its dvd order."""
+
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders({"official": aired, "dvd": _AS_ONE_SEASON}))
+    return cache
+
+
+def _in_one_season(*alternate_titles: AlternateTitle) -> SonarrSeries:
+    """Series 1 of TVDB series 50, numbered by its dvd order, with its other names in Sonarr."""
+
+    return _series(1, 50, season_type="dvd").model_copy(update={"alternateTitles": alternate_titles})
+
+
+def _synced_in_one_season(
+    monkeypatch: pytest.MonkeyPatch, sonarr: FakeSonarrClient | None = None, series: SonarrSeries | None = None
+) -> SonarrStrategy:
+    """The strategy after a library read of series 1, numbered by `_AS_ONE_SEASON`, before anything reads its rows.
+
+    Sonarr's rows are `_ONE_SEASON_ROWS` unless `sonarr` serves others, and the series has no alternate title
+    unless `series` has.
+    """
+
+    sonarr = sonarr or FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
+    return _sync(monkeypatch, [series or _in_one_season()], _stored_as_one_season(), sonarr=sonarr)
+
+
+def _parsing(parses: Mapping[str, ParsedFileInfo]) -> FakeSonarrClient:
+    """A Sonarr with `_ONE_SEASON_ROWS` that answers each file name with its parse."""
+
+    return FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS), parse_fn=parses.get)
+
+
+def _listing(*names: str) -> SeadexDict:
+    """One release listing the files, each of 100 bytes."""
+
+    return {"Group": rg_group({_URL: make_release(url=_URL, files=list(names), size=[100] * len(names))})}
+
+
+def test_a_name_with_only_an_absolute_number_is_matched_to_the_aired_episode_with_that_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sonarr counts the fifth episode as S01E05. As aired it is the second season's second.
+    strat = _synced_in_one_season(monkeypatch)
+    info = ParsedFileInfo(
+        season_number=0,
+        absolute_episode_numbers=(5,),
+        series_title="Show",
+        matched_episodes=(_matched(1, 5, 15),),
+        series_id=1,
+    )
+
+    assert strat._episodes.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
+
+
+def test_a_name_with_a_season_and_episode_is_matched_to_the_aired_episode_numbered_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sonarr's order has no second season, so it matched the name to nothing.
+    strat = _synced_in_one_season(monkeypatch)
+    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
+
+    assert strat._episodes.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
+
+
+def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S01E05 is an episode of Sonarr's one season. The aired first season has three.
+    strat = _synced_in_one_season(monkeypatch)
+    info = ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(5,),
+        series_title="Show",
+        matched_episodes=(_matched(1, 5, 15),),
+        series_id=1,
+    )
+
+    assert strat._episodes.aired_parse(info) == info.with_matched(())
+
+
+def test_a_name_is_matched_to_an_aired_episode_sonarrs_order_has_no_row_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    strat = _synced_in_one_season(monkeypatch)
+    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
+
+    assert strat._episodes.aired_parse(info) == info.with_matched((_matched(2, 4, -9007),))
+
+
+def test_a_name_under_an_alternate_title_of_a_season_is_matched_within_that_season(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Read by the series' own name, the third episode is S01E03.
+    strat = _synced_in_one_season(monkeypatch, series=_in_one_season(_ZOKU))
+    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(3,), series_title="Show Zoku", series_id=1)
+
+    assert strat._episodes.aired_parse(info) == info.with_matched((_matched(2, 3, 16),))
+
+
+@pytest.mark.parametrize(
+    "series_id",
+    [
+        pytest.param(2, id="aired-order"),
+        pytest.param(9, id="not-in-the-library"),
+        pytest.param(None, id="no-series"),
+    ],
+)
+def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(
+    series_id: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    strat = _sync(monkeypatch, [_in_one_season(), _series(2, 60)], _stored_as_one_season())
+    info = ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(2,),
+        series_title="Show 2",
+        matched_episodes=(_matched(1, 2, 12),) if series_id is not None else (),
+        series_id=series_id,
+    )
+
+    assert strat._episodes.aired_parse(info) is info
+
+
+def test_a_parse_reads_the_same_whatever_the_run_read_of_its_series_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One run has read nothing of series 1, one checked a title of it, and one re-read it in an import poll after.
+    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
+    unread = _synced_in_one_season(monkeypatch)
+    checked = _synced_in_one_season(monkeypatch)
+    checked._episodes.title_episodes(1, 500, _SEASON_ONE)
+    polled = _synced_in_one_season(monkeypatch)
+    polled._episodes.title_episodes(1, 500, _SEASON_ONE)
+    polled._episodes.read_episodes(1)
+
+    answers = [strat._episodes.aired_parse(info) for strat in (unread, checked, polled)]
+
+    assert answers == [info.with_matched((_matched(2, 2, 15),))] * 3
+
+
+def test_a_series_matcher_is_built_once_for_a_read_of_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[AiredSeries] = []
+    build = AiredMatcher.of
+
+    def recording(series: AiredSeries, aliases: Iterable[AlternateTitle]) -> AiredMatcher:
+        built.append(series)
+        return build(series, aliases)
+
+    monkeypatch.setattr(AiredMatcher, "of", recording)
+    strat = _synced_in_one_season(monkeypatch)
+    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
+
+    strat._episodes.aired_parse(info)
+    strat._episodes.aired_parse(info)
+
+    assert built == [strat._episodes.aired_series(1)]
+
+
+def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An import poll re-reads the series after Sonarr gains a row for the seventh episode, where the stand-in was.
+    sonarr = FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
+    strat = _synced_in_one_season(monkeypatch, sonarr)
+    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
+    before = strat._episodes.aired_parse(info)
+    sonarr.episodes_return = [*_ONE_SEASON_ROWS, sonarr_ep(1, 7, ep_id=17, tvdb_id=9007)]
+
+    strat._episodes.read_episodes(1)
+
+    assert before == info.with_matched((_matched(2, 4, -9007),))
+    assert strat._episodes.aired_parse(info) == info.with_matched((_matched(2, 4, 17),))
+
+
+_FIFTH = "Show - 05.mkv"
+
+_FIFTH_BY_SONARR = ParsedFileInfo(
+    season_number=0,
+    absolute_episode_numbers=(5,),
+    series_title="Show",
+    matched_episodes=(_matched(1, 5, 15),),
+    series_id=1,
+)
+"""Sonarr's own parse of `_FIFTH`: the fifth episode of its one season."""
+
+
+def test_a_listed_file_of_a_series_in_another_order_carries_its_aired_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Nothing in the run has read the series yet.
+    strat = _synced_in_one_season(monkeypatch, _parsing({_FIFTH: _FIFTH_BY_SONARR}))
+
+    files = strat._parse.parsed_files(_listing(_FIFTH))
+
+    assert files == {_URL: (ListedFile(_FIFTH, 100, _FIFTH_BY_SONARR.with_matched((_matched(2, 2, 15),))),)}
+
+
+def test_the_parse_cache_keeps_sonarrs_own_answer_for_a_series_in_another_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strat = _synced_in_one_season(monkeypatch, _parsing({_FIFTH: _FIFTH_BY_SONARR}))
+
+    strat._parse.parsed_files(_listing(_FIFTH))
+
+    row = strat._parse.cache_store.get_sonarr_parse(_FIFTH)
+    assert row is not None
+    assert row["parse"] == parse_to_json(_FIFTH_BY_SONARR)
+
+
+def test_a_cached_parse_is_matched_as_aired_again_without_asking_sonarr(monkeypatch: pytest.MonkeyPatch) -> None:
+    sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR})
+    strat = _synced_in_one_season(monkeypatch, sonarr)
+    strat._parse.parsed_files(_listing(_FIFTH))
+
+    ((again,),) = strat._parse.parsed_files(_listing(_FIFTH)).values()
+
+    assert again.parse == _FIFTH_BY_SONARR.with_matched((_matched(2, 2, 15),))
+    assert sonarr.parse_calls == [_FIFTH]
+
+
+_SIXTH = "Show - 06.mkv"
+
+
+def _with_two_sixth_episodes(monkeypatch: pytest.MonkeyPatch) -> SonarrStrategy:
+    """`_synced_in_one_season` where TVDB's aired order counts the special as a sixth episode too.
+
+    Two aired episodes carry the number, and Sonarr answers a name it reads by such a number with an error.
+    """
+
+    by_sonarr = ParsedFileInfo(
+        season_number=0,
+        absolute_episode_numbers=(6,),
+        series_title="Show",
+        matched_episodes=(_matched(1, 6, 16),),
+        series_id=1,
+    )
+    cache = _stored_as_one_season((OrderRow(0, 1, 9100, 6), *_TWO_SEASONS[1:]))
+    return _sync(monkeypatch, [_in_one_season()], cache, sonarr=_parsing({_SIXTH: by_sonarr}))
+
+
+def test_a_name_an_aired_sonarr_answers_with_an_error_is_an_unread_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    strat = _with_two_sixth_episodes(monkeypatch)
+
+    files = strat._parse.parsed_files(_listing(_SIXTH))
+
+    assert files == {_URL: (ListedFile(_SIXTH, 100, None),)}
+
+
+def test_the_debug_log_names_a_file_an_aired_sonarr_answers_with_an_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    strat = _with_two_sixth_episodes(monkeypatch)
+    strat._parse.logger = debug_logger("pearlarr-aired-parse")
+
+    with caplog.at_level("DEBUG"):
+        strat._parse.parsed_files(_listing(_SIXTH))
+
+    assert [record.message for record in caplog.records] == [
+        f"No parse for {_SIXTH}: two aired episodes of its series share a number it is matched by"
+    ]
+
+
+def test_a_name_an_alternate_title_may_not_count_for_has_no_matched_episodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sonarr reads only some release names by the alternate title. By it the third episode is S02E03, without it
+    # S01E03.
+    limited = _ZOKU.model_copy(update={"comment": "Some releases only"})
+    name = "Show Zoku - 03.mkv"
+    by_sonarr = ParsedFileInfo(
+        season_number=0,
+        absolute_episode_numbers=(3,),
+        series_title="Show Zoku",
+        matched_episodes=(_matched(1, 3, 13),),
+        series_id=1,
+    )
+    strat = _synced_in_one_season(monkeypatch, _parsing({name: by_sonarr}), _in_one_season(limited))
+
+    files = strat._parse.parsed_files(_listing(name))
+
+    assert files == {_URL: (ListedFile(name, 100, by_sonarr.with_matched(())),)}
+
+
+def test_a_name_sonarr_searches_for_a_specials_title_has_no_matched_episodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sonarr looks for a special's title in the name of an episode 0 of a season, and the parse doesn't keep the name.
+    name = "Show S01E00 Recap.mkv"
+    by_sonarr = ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(0,),
+        series_title="Show",
+        matched_episodes=(_matched(0, 1, 20),),
+        series_id=1,
+    )
+    strat = _synced_in_one_season(monkeypatch, _parsing({name: by_sonarr}))
+
+    files = strat._parse.parsed_files(_listing(name))
+
+    assert files == {_URL: (ListedFile(name, 100, by_sonarr.with_matched(())),)}
+
+
+def test_a_listed_file_of_a_series_whose_aired_order_is_not_stored_has_no_matched_episodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strat = _sync(monkeypatch, [_in_one_season()], FakeCacheStore(), sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+
+    files = strat._parse.parsed_files(_listing(_FIFTH))
+
+    assert files == {_URL: (ListedFile(_FIFTH, 100, _FIFTH_BY_SONARR.with_matched(())),)}
+
+
+def test_a_listed_file_of_a_series_whose_episodes_fail_to_read_is_an_unread_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR})
+    sonarr.episodes_return = None
+    strat = _synced_in_one_season(monkeypatch, sonarr)
+
+    files = strat._parse.parsed_files(_listing(_FIFTH))
+
+    assert files == {_URL: (ListedFile(_FIFTH, 100, None),)}
+
+
+def test_a_series_whose_episodes_fail_to_read_is_asked_for_once_however_many_files_it_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR, _SIXTH: _FIFTH_BY_SONARR})
+    sonarr.episodes_return = None
+    strat = _synced_in_one_season(monkeypatch, sonarr)
+    asked_before = len(sonarr.episodes_calls)
+
+    files = strat._parse.parsed_files(_listing(_FIFTH, _SIXTH))
+
+    assert files == {_URL: (ListedFile(_FIFTH, 100, None), ListedFile(_SIXTH, 100, None))}
+    assert sonarr.episodes_calls[asked_before:] == [1]

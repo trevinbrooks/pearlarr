@@ -85,7 +85,7 @@ def _build(
 
     series = strat._episodes.last_known_episodes(facts.series_id)
     grabbing_title = grabbing_title or _grabbing_title(series, series)
-    files = strat._parse.parsed_files(seadex_dict, series_hash="")
+    files = strat._parse.parsed_files(seadex_dict)
     placed = PlacedEntry.place(grabbing_title, files, dict.fromkeys(files, new_torrent(grabbing_title)))
     return build_pending_import_updates(seadex_dict, placed, facts)
 

@@ -58,6 +58,7 @@ from .builders import (
     rg_group,
     sonarr_ep,
 )
+from .fakes import ScriptedEpisodes
 
 _NOW = datetime(2026, 6, 28, 12, 0, 0)
 _MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
@@ -667,6 +668,7 @@ class TestParsedFilesUnmatchedCache:
         store = FakeCacheStore(sonarr_parse=sonarr_parse or {})
         parse = make_sonarr_parse(
             sonarr=sonarr,
+            _episodes=ScriptedEpisodes(),
             _config=make_config(sleep_time=sleep_time),
             cache_store=store,
             rows=ParseCacheRows(store),
@@ -687,12 +689,12 @@ class TestParsedFilesUnmatchedCache:
 
     def test_genuine_unmatched_is_cached_with_series_hash(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         self._assert_pinned(parse, "[X] Show - 01.mkv")
 
     def test_transient_none_is_not_cached(self) -> None:
         parse, _ = self._parse(parse_result=None)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
     def test_fresh_unmatched_hit_skips_network(self) -> None:
@@ -704,7 +706,7 @@ class TestParsedFilesUnmatchedCache:
             },
         }
         parse, sonarr = self._parse(parse_result=_UNMATCHED, sonarr_parse=file_map)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"), series_hash="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         assert sonarr.calls == []
 
     def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
@@ -741,18 +743,18 @@ class TestParsedFilesUnmatchedCache:
 
     def test_audio_file_never_parsed(self) -> None:
         parse, sonarr = self._parse(parse_result=_UNMATCHED)
-        parse.parsed_files(self._dict("[X] OST - 01.flac"), series_hash="fp")
+        parse.parsed_files(self._dict("[X] OST - 01.flac"))
         assert sonarr.calls == []
 
     def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
         # Every release gets a key, video files only, each with its listed size and its parse.
         parse, _ = self._parse(parse_result=_matched(1, 1))
-        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"), series_hash="fp")
+        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"))
         assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
 
     def test_concurrent_warm_caches_each_file(self) -> None:
         parse, _ = self._parse(parse_result=_UNMATCHED, sleep_time=0)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_hash="fp")
+        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"))
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
             self._assert_pinned(parse, name)
 

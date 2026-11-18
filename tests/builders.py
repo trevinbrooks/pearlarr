@@ -611,20 +611,11 @@ def make_torrent_record(
     )
 
 
-def _real_reporter(
-    logger: logging.Logger,
-    cache_store: AbstractCacheStore,
-    web: httpx.Client,
-) -> RunReporter:
-    """A real `RunReporter` over the given cache store (composite-with-faked-leaf)."""
+def _real_reporter(cache_store: AbstractCacheStore, anilist: AniListGateway) -> RunReporter:
+    """A real `RunReporter` over the given cache store and AniList gateway (composite-with-faked-leaf)."""
 
     counts = SeverityCounter()
-    return RunReporter(
-        emit=emit_to_hub,
-        counts=lambda: counts,
-        cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
-    )
+    return RunReporter(emit=emit_to_hub, counts=lambda: counts, cache_store=cache_store, anilist=anilist)
 
 
 def make_categories(
@@ -743,12 +734,14 @@ def make_run_deps(
 ) -> ArrRunDeps:
     """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (dry run).
 
+    Its AniList client is scripted and knows no title, and the reporter shares its gateway, as a run's does.
     `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
     """
 
     config = config or make_config(url="http://sonarr", api_key="key")
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
+    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=ScriptedAniListClient(title=None))
     # One shared client backs both deps.http and deps.web. conftest's close_leaked_handles closes it at teardown.
     http = httpx.Client()
     # No transport: the config passthrough (no download-client fetch under test). Shared with
@@ -777,12 +770,12 @@ def make_run_deps(
         logger=logger,
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
+        anilist=anilist,
         skyhook=SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
         torrents=_real_torrents(logger, http, categories),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
-        reporter=_real_reporter(logger, cache_store, http),
+        reporter=_real_reporter(cache_store, anilist),
     )
 
 
@@ -930,15 +923,16 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     logger = make_logger()
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     web = httpx.Client()
+    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web))
     defaults: dict[str, Any] = {
         "_config": config,
         "_planner": make_planner(),
         "cache_store": cache_store,
         "_torrents": _real_torrents(logger, web, make_categories(config)),
-        "_anilist": AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
+        "_anilist": anilist,
         # No discord/webhook url: a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),
-        "_reporter": _real_reporter(logger, cache_store, web),
+        "_reporter": _real_reporter(cache_store, anilist),
         "logger": logger,
         "qbit": CLIENT_SENTINEL,
         "_state": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
@@ -982,7 +976,9 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     # The production placeholder before a run binds one. Tests driving the import hook pass their own.
     strategy = overrides.pop("strategy", None)
     state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
-    reporter = overrides.pop("reporter", None) or _real_reporter(logger, cache_store, httpx.Client())
+    reporter = overrides.pop("reporter", None) or _real_reporter(
+        cache_store, AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=httpx.Client()))
+    )
     if overrides:
         msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
         raise TypeError(msg)
@@ -1553,7 +1549,7 @@ def make_sonarr_episodes(
     defaults: dict[str, Any] = {
         "_series": {},
         "_series_hash": "",
-        "_order_facts": {},
+        "_library": {},
         "_picks_logged": set[int](),
     }
     defaults.update(attrs)

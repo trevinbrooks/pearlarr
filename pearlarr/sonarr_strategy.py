@@ -146,8 +146,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         # Episode-domain collaborator: owns the per-run episode cache + series
         # hash and the (series, anilist_id, mapping) -> episodes resolution. Built
         # from the shared deps + this client. The strategy delegates get_items /
-        # prefetch_episodes / prefetch_orders to it, reads its series_hash for the parse
-        # cache, and takes every title's episodes and every series index from it, numbered as aired.
+        # prefetch_episodes / prefetch_orders to it, and takes every title's episodes and every
+        # series index from it, numbered as aired, and a series' alternate titles.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
         # Reads every SeaDex entry of the series once per run, for each title's window and the size
@@ -161,8 +161,8 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared cache_store).
-        # The run's series hash is threaded per call.
-        self._parse = SonarrParseCache(deps, self.sonarr)
+        # It reads the run's series hash and each parse's aired matches off the episode collaborator.
+        self._parse = SonarrParseCache(deps, self.sonarr, self._episodes)
 
         # Import-execution collaborator: builds + POSTs the authoritative auto
         # import from the pending import's file map, owns the per-run quality/language
@@ -363,7 +363,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         # Place every listed file now: the import imports this file map and places nothing, so the grab goes by
         # it. Placed under every listed title's window and every stored claim's, a stored torrent as its pending
-        # import's leftover. The series indexes are the whole-series lists as aired (a per-run cache hit each).
+        # import's leftover. The series indexes are the whole-series lists as aired.
         waits_on_imports = services.import_wait_mode is not ImportWaitMode.OFF
         hashes = entry_hashes(seadex_dict)
         stored: dict[str, PendingImport] = (
@@ -380,11 +380,11 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             series_index=indexes.get(sonarr_series_id, episode_index([])),
             title_names=title.names,
             episode_count=self._episodes.episode_count(anilist_id),
-            alternate_titles=tuple(alt.title for alt in item.alternateTitles),
+            alternate_titles=tuple(alt.title for alt in self._episodes.alternate_titles(sonarr_series_id)),
         )
         placed = PlacedEntry.place(
             grabbing_title,
-            self._parse.parsed_files(seadex_dict, series_hash=self._episodes.series_hash),
+            self._parse.parsed_files(seadex_dict),
             TorrentFetches(stored, indexes, listings).known(seadex_dict),
         )
         placed.attach_placements(seadex_dict)
