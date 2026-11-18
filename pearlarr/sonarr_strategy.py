@@ -259,8 +259,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         (`SeriesNumbering.differs_from`), they may be of other episodes, though SeaDex changed nothing.
 
         Two limits. An AniList id mapped under two series has one cached row, which holds the numbering of the
-        series checked last: while only one of the two is in another order, the title is named on every run. And a
-        series renumbered under the same order with the same count names none of its titles.
+        series checked last. While the two series' numberings differ, the title is named on every run: one in
+        another order and one as aired, two different other orders, or one other order with two different counts.
+        And a series renumbered under the same order with the same count names none of its titles.
         """
 
         renumbered: set[int] = set()
