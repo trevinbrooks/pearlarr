@@ -126,9 +126,9 @@ class SkipReason(StrEnum):
     wrong episode for good, or leave one unplaced that the import never places, so the release waits for the next
     run."""
     AIRED_ONLY = "aired episodes not in Sonarr's order"
-    """A release none of whose files land on the title and none are another title's, while some are on an aired
-    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`). It is not grabbed and is no hand import, and its
-    title is cached like one with nothing to grab."""
+    """A release none of whose files land on the title, none are another title's and none is left unplaced, while
+    some are on an aired episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`). It is not grabbed and is no
+    hand import, its title is cached like one with nothing to grab, and it covers none of the title's episodes."""
 
     @property
     def left_for_hand_import(self) -> bool:

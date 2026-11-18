@@ -744,6 +744,35 @@ class TestFilterByReleaseGroup:
         )
         assert result.seadex_dict["RG"].releases["u1"].to_grab is False
 
+    @pytest.mark.parametrize(
+        ("skip_reason", "grabbed"),
+        [
+            pytest.param(None, False, id="nothing-placed"),
+            pytest.param(SkipReason.AIRED_ONLY, True, id="no-row-for-its-episodes"),
+        ],
+    )
+    def test_a_release_sonarr_has_no_row_for_covers_none_of_the_titles_episodes(
+        self, skip_reason: SkipReason | None, grabbed: bool
+    ) -> None:
+        # The arr's E01 file is Left's, from some other release of the group, and its E02 file is Other's. Left's
+        # listed release placed nothing. With no reason it may hold any episode, so Other isn't grabbed over E01.
+        # Skipped because Sonarr has no row for its episodes, it holds none of the title's, and Other is grabbed.
+        planner = make_planner()
+        left = make_release(episodes=[], size=[500], infohash="h1")
+        left.skip_reason = skip_reason
+        placed = [placed_episode(season=1, episode=1, size=200), placed_episode(season=1, episode=2, size=300)]
+        other = make_release(url="https://nyaa.si/view/2", episodes=placed, size=[200, 300], infohash="h2")
+        seadex = {"Left": rg_group({"u1": left}), "Other": rg_group({"u2": other}, episodes=placed)}
+        result = planner.plan(
+            seadex_dict=seadex,
+            arr_files=ArrFiles(by_group={"Left": (100,), "Other": (300,)}),
+            title_episodes=[
+                sonarr_ep(1, 1, size=100, release_group="Left"),
+                sonarr_ep(1, 2, size=300, release_group="Other"),
+            ],
+        )
+        assert result.seadex_dict["Other"].releases["u2"].to_grab is grabbed
+
     def test_one_placed_pending_import_keeps_the_per_episode_comparison(self) -> None:
         # One file placed on the title, so the per-episode comparison decides: the
         # title's copy is this group's at another size, an upgrade the

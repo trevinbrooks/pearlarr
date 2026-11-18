@@ -290,7 +290,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
     aside as that title's. The release is skipped (`SkipReason`) when a file of the grabbing title's window is
     misnumbered, when a read the placement needs failed, or when nothing of it lands on the title and the title's
     window left a file for a hand import, some of it is another title's, or some of it is on an aired episode Sonarr
-    has no row for.
+    has no row for and none of it is left unplaced.
 
     Under a stored pending import, the files in its file map and the files it left for a hand import are not placed
     (`listed_batch`). An earlier check judged them, and a check with fewer files to place could count a file left
@@ -347,7 +347,7 @@ def place_release(files: Sequence[ListedFile], grabbing_title: GrabbingTitle, to
             unread=unread,
             hand_import_verdict=None if placed_on_window else view.hand_import_verdict,
             another_titles=bool(another_titles),
-            aired_only=not placed_on_window and bool(view.placements.aired_only),
+            aired_only=(not placed_on_window and bool(view.placements.aired_only) and not view.placements.unplaced),
         )
     # With every window's series read, a grabbing title that can't place (`GrabbingTitle.can_place`) still places
     # nothing. A new torrent is then judged by group and size. A stored one's claim joins with nothing placed, a
@@ -440,8 +440,10 @@ def _skip_reason_of(
     and a file another TVDB order reads outside every listed title as `MISNUMBERED`. It outranks `another_titles`,
     since a file the grabbing title's window left for a hand import is that title's hand import, and saying it's
     another title's would be wrong. `another_titles`: nothing of the whole file map lands on the title, and some file
-    is another title's. `aired_only`: nothing of the whole file map lands on the title, and some file is on an aired
-    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`).
+    is another title's. `aired_only`: nothing of the whole file map lands on the title, some file is on an aired
+    episode Sonarr has no row for (`PlacementVerdict.AIRED_ONLY`), and none is left unplaced
+    (`BatchPlacements.unplaced`). With one left unplaced the release is judged by group and size, as any release
+    with nothing placed is.
     """
 
     if misnumbered:

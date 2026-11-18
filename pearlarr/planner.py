@@ -26,6 +26,7 @@ from .releases import (
     GroupReleases,
     Release,
     SeadexDict,
+    SkipReason,
     normalize_group,
 )
 
@@ -226,7 +227,8 @@ class EpisodeCoverage(NamedTuple):
 
     blanket: frozenset[str]
     """Groups with a release none of whose files placed here: coverage unprovable, so they cover every
-    episode unconditionally."""
+    episode unconditionally. A release skipped as `SkipReason.AIRED_ONLY` doesn't count: Sonarr has no row for
+    its episodes, so it covers none."""
 
     by_key: Mapping[EpisodeKey, frozenset[str]]
     """The groups with a release placed on each (season, episode) Sonarr actually has."""
@@ -257,7 +259,9 @@ def episode_coverage(
         for release in group_releases.releases.values():
             # A release none of whose files placed on this title proves nothing
             # about coverage, so its group covers everything rather than nothing.
-            if not release.episodes:
+            # One skipped because Sonarr has no row for its episodes holds none of
+            # the title's, so it adds nothing.
+            if not release.episodes and release.skip_reason is not SkipReason.AIRED_ONLY:
                 blanket.add(seadex_rg_normalized)
 
             for placed_ep in release.episodes:

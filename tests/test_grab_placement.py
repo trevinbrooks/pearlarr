@@ -2068,6 +2068,18 @@ class TestPlaceOnAnEpisodeSonarrHasNoRowFor:
         assert not placement.skip_reason.left_for_hand_import
         assert placement.placements.unplaced == ()
 
+    def test_a_release_with_such_a_file_and_one_left_unplaced_is_not_skipped_for_the_order(self) -> None:
+        files = [*_season_files()[2:3], ListedFile("Show - Bonus.mkv", 10, ParsedFileInfo())]
+
+        placement = place_release(files, _switched_title(_SWITCHED_SEASON), _switched_torrent())
+
+        assert by_name(placement.placements) == {
+            "show - s01e03.mkv": ((), PlacementVerdict.AIRED_ONLY),
+            "show - bonus.mkv": ((), PlacementVerdict.NO_EPISODE_FOUND),
+        }
+        assert placement.placements.unplaced == ("show - bonus.mkv",)
+        assert (placement.skip_reason, placement.covered_ids) == (None, set())
+
     def test_a_file_another_titles_outranks_such_a_file_in_the_releases_skip(self) -> None:
         torrent = _switched_torrent(title_window(1, (101, 102)), title_window(2, (-903, 104)))
 

@@ -651,7 +651,9 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         """Report, in one row, the files this run's grabs have on aired episodes Sonarr has no row for.
 
         Each release gives the episodes by their aired numbers and how many of its files they are. `seadex_dict`
-        must be the grab plan's, so a release the run doesn't grab reports nothing.
+        must be the grab plan's, so a release the plan doesn't mark to grab reports nothing. One the plan marks
+        and the add then skips for these files alone (`SkipReason.AIRED_ONLY`) is in the row too: the row names
+        its episodes, and its skip line names the release.
         """
 
         left_out = [
