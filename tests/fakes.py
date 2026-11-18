@@ -65,7 +65,7 @@ from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHo
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import EpisodeSource, SeriesRows, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
-from pearlarr.tvdb_orders import AIRED_ORDER
+from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -691,10 +691,10 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
 
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
-    `orders_unread_views` reads as `NoView.ORDERS_UNREAD`. Every series is numbered by `order`. The `unread_series`
-    have no stored order answer, and the `unread_anilist_ids` no AniList answer. `counts` are AniList's episode
-    counts by AniList id, None for an id left out. No series has an alternate title, and a parse is taken as
-    already matched the way an aired Sonarr matches it.
+    `orders_unread_views` reads as `NoView.ORDERS_UNREAD`. Every series is numbered by `order`, and Sonarr sent no
+    count of its episodes. The `unread_series` have no stored order answer, and the `unread_anilist_ids` no AniList
+    answer. `counts` are AniList's episode counts by AniList id, None for an id left out. No series has an alternate
+    title, and a parse is taken as already matched the way an aired Sonarr matches it.
     """
 
     def __init__(
@@ -776,6 +776,13 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
         """The series list as last read off the client, none for a series never read."""
 
         return self._last_known.get(series_id, [])
+
+    @override
+    def library_orders(self, series_id: int) -> SonarrSeriesOrders:
+        """Every series is numbered by the scripted order, with no count."""
+
+        del series_id
+        return SonarrSeriesOrders(tvdb_id=0, season_type=self._order, counts=None)
 
     @override
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:

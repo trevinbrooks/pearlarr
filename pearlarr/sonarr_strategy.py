@@ -9,6 +9,7 @@ from .aired_view import AiredSeries, NoView
 from .arr_models import HistoryRecord, SonarrEpisode, SonarrItem
 from .arr_run_services import ArrRunDeps, ArrRunServices, bind_arr_http
 from .arr_strategy import ArrStrategy
+from .cache import CachedTitleUpdate
 from .config import Arr
 from .grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
 from .grab_placement import (
@@ -202,9 +203,10 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
     @override
     def start_of_run(self, items: list[SonarrItem]) -> set[int]:
-        """Give each pending import stored with no TVDB ids its own (`_store_tvdb_ids`). Names no title.
+        """Give each pending import stored with no TVDB ids its own, and name the titles of a renumbered series.
 
-        Skipped while the wait is off, as every other read of the stored pending imports is.
+        The pending imports (`_store_tvdb_ids`) are skipped while the wait is off, as every other read of the
+        stored ones is. The titles (`_renumbered_titles`) are named on every run.
         """
 
         if self._services.import_wait_mode is not ImportWaitMode.OFF:
@@ -212,7 +214,28 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             for pending in pending_imports.load(pending_imports.rows()).values():
                 if pending.tvdb_ids is None:
                     self._store_tvdb_ids(pending)
-        return set()
+        return self._renumbered_titles(items)
+
+    def _renumbered_titles(self, items: list[SonarrItem]) -> set[int]:
+        """The cached titles whose series Sonarr numbers another way than when the title was checked.
+
+        A cached title's coverage and placements were read off its series as numbered then. Once the library read
+        names another order for the series, or another episode count under an order other than the aired one
+        (`SeriesNumbering.differs_from`), they may be of other episodes, though SeaDex changed nothing.
+
+        Two limits. An AniList id mapped under two series has one cached row, which holds the numbering of the
+        series checked last: while only one of the two is in another order, the title is named on every run. And a
+        series renumbered under the same order with the same count names none of its titles.
+        """
+
+        renumbered: set[int] = set()
+        for item in items:
+            numbering = self._episodes.library_orders(item.id).numbering
+            for anilist_id in self.item_mappings(item, log_ignored=False):
+                cached = self._services.cached_numbering(anilist_id)
+                if cached is not None and cached.differs_from(numbering):
+                    renumbered.add(anilist_id)
+        return renumbered
 
     def _store_tvdb_ids(self, pending: PendingImport) -> None:
         """Store the TVDB episode of every row id a pending import written without them holds, or drop it.
@@ -362,7 +385,20 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
             # stop, don't mislabel "unmonitored" or grab orphans.
             services.log_no_episodes(title.name)
             if title_episodes.aired:
-                services.log_order_has_no_episodes(title_episodes.order)
+                # Only another numbering of the series or a changed entry can give the title an episode, and
+                # each checks it again. So it is cached, and the warning isn't repeated on every run.
+                hub_warn(
+                    f"Sonarr's {order_display_name(title_episodes.order)} order of the series has none of "
+                    f"{title.name}'s episodes - not checked again until the series' order, its episode count or the "
+                    "title's SeaDex entry changes"
+                )
+                update["coverage"] = ""
+                update["url"] = sd_url
+                self._store_numbering(update, sonarr_series_id, title_episodes)
+                services.cache_nothing_to_grab(
+                    anilist_id, update, metadata_unread=self._episodes.metadata_unread([anilist_id])
+                )
+                return
             if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
                 # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the no-episodes row naming the cause.
@@ -391,6 +427,7 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
         )
         update["coverage"] = coverage
         update["url"] = sd_url
+        self._store_numbering(update, sonarr_series_id, title_episodes)
         if is_another_order(title_episodes.order):
             services.log_numbered_as_aired(title_episodes.order)
 
@@ -504,6 +541,16 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
                 metadata_unread=self._episodes.metadata_unread(resolved.kept_and_ignored, series_ids),
             ),
         )
+
+    def _store_numbering(self, update: CachedTitleUpdate, series_id: int, title_episodes: TitleEpisodes) -> None:
+        """Add to a title's cache update how its series was numbered for this check.
+
+        That is the order its episodes were read under and the library read's episode count, which the next run's
+        start compares with its own (`_renumbered_titles`).
+        """
+
+        update["season_type"] = title_episodes.order
+        update["series_row_count"] = self._episodes.library_orders(series_id).row_count
 
     def _report_missing_episodes(self, title_episodes: Sequence[SonarrEpisode]) -> None:
         """Report the title's episodes in Sonarr that have no file."""

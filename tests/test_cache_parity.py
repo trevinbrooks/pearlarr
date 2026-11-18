@@ -56,6 +56,7 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             updated_at=_CACHED_TITLE_STAMP,
             fallback_satisfied=True,
             season_type="dvd",
+            series_row_count=12,
         ),
     )
     # Partial re-update of the SAME cached title (omits name/url/updated_at/marker): pins the
@@ -65,10 +66,16 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.update_cached_title(Arr.RADARR, 99, CachedTitleUpdate(name="Movie"))
     # A row whose stamp is cleared loses its timestamp and nothing else. Clearing an id with no row adds none, and
     # neither does an empty update.
-    store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(name="Cleared", updated_at=_CACHED_TITLE_STAMP))
+    store.update_cached_title(
+        Arr.SONARR,
+        8,
+        CachedTitleUpdate(name="Cleared", updated_at=_CACHED_TITLE_STAMP, season_type="dvd", series_row_count=12),
+    )
     store.uncache_title(Arr.SONARR, 8)
     store.uncache_title(Arr.SONARR, 4242)
     store.update_cached_title(Arr.SONARR, 4242, CachedTitleUpdate())
+    # A count given as None replaces the stored one, where a key left out keeps it (id 7's above).
+    store.update_cached_title(Arr.SONARR, 8, CachedTitleUpdate(season_type="dvd", series_row_count=None))
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
     store.put_anilist_meta(8, {"fetched_at": _OLD, "data": {"title": "Old"}})

@@ -76,7 +76,7 @@ from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow
+from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SeriesNumbering
 from pearlarr.wait_types import (
     NO_PROGRESS,
     AttemptKind,
@@ -160,6 +160,7 @@ class _Item:
     seasonType: str = AIRED_ORDER
     seasonTypes: tuple[SeasonTypeCount, ...] = ()
     alternateTitles: tuple[AlternateTitle, ...] = ()
+    totalEpisodeCount: int | None = None
     order_sent: bool = False
 
     def __init__(self, **kw: object) -> None:
@@ -207,6 +208,7 @@ class _FakeRunServices(ArrRunServices):
         # The pending import store the strategies read stored pending imports through, bound as an arr run would
         # bind it.
         self.cache_store = cache_store if cache_store is not None else FakeCacheStore()
+        self._arr = arr
         self._pending_imports = PendingImportStore(self.cache_store)
         self._pending_imports.bind_arr_run(ArrRunState(arr=arr, import_wait_mode=import_wait_mode))
         self._anilist_ids = anilist_ids or {}
@@ -222,7 +224,6 @@ class _FakeRunServices(ArrRunServices):
         self.title_mappings_calls: list[TitleMappingsCall] = []
         self.anilist_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
-        self.orders_without_episodes: list[str] = []
         self.unmonitored_titles: list[str] = []
         self.missing_episodes: list[str] = []
         self.numbered_as_aired: list[str] = []
@@ -237,6 +238,8 @@ class _FakeRunServices(ArrRunServices):
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CachedTitleUpdate]] = []
         self.no_releases_unread: list[int] = []
+        self.nothing_to_grab_calls: list[tuple[int, CachedTitleUpdate]] = []
+        self.nothing_to_grab_unread: list[int] = []
         self.invalid_selection_skips = 0
         self.pauses_owed = 0
 
@@ -249,6 +252,11 @@ class _FakeRunServices(ArrRunServices):
     def title_needs_check(self, anilist_id: int) -> bool:
         del anilist_id
         return self._needs_scan
+
+    @override
+    def cached_numbering(self, anilist_id: int) -> SeriesNumbering | None:
+        cached = self.cache_store.get_cached_title(self._arr, anilist_id)
+        return None if cached is None else cached.numbering
 
     @override
     def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
@@ -325,6 +333,14 @@ class _FakeRunServices(ArrRunServices):
             self.no_releases_unread.append(anilist_id)
 
     @override
+    def cache_nothing_to_grab(
+        self, anilist_id: int, update: CachedTitleUpdate, *, metadata_unread: bool = False
+    ) -> None:
+        self.nothing_to_grab_calls.append((anilist_id, update))
+        if metadata_unread:
+            self.nothing_to_grab_unread.append(anilist_id)
+
+    @override
     def report_invalid_selection(self) -> None:
         self.invalid_selection_skips += 1
 
@@ -339,10 +355,6 @@ class _FakeRunServices(ArrRunServices):
     @override
     def log_no_episodes(self, title: str) -> None:
         self.no_episodes_titles.append(title)
-
-    @override
-    def log_order_has_no_episodes(self, order: str) -> None:
-        self.orders_without_episodes.append(order)
 
     @override
     def log_arr_item_unmonitored(self, item_title: str) -> None:
@@ -393,16 +405,6 @@ def test_the_services_log_missing_episodes_as_a_caution_detail() -> None:
     ArrRunServices(make_run_deps(), Arr.SONARR).log_missing_episodes("S01 E02")
 
     assert recording.of_type(TitleDetail) == [TitleDetail("missing", StyledValue("S01 E02", Accent.CAUTION))]
-
-
-def test_the_services_log_an_order_with_none_of_a_titles_episodes_as_a_dim_status_detail() -> None:
-    recording = install_recording_hub()
-
-    ArrRunServices(make_run_deps(), Arr.SONARR).log_order_has_no_episodes("dvd")
-
-    assert recording.of_type(TitleDetail) == [
-        TitleDetail("status", StyledValue("Sonarr's DVD order of the series has none of its episodes", Accent.DIM))
-    ]
 
 
 def test_the_services_log_a_titles_aired_numbering_as_a_dim_detail_naming_sonarrs_order() -> None:
@@ -600,7 +602,7 @@ class TestCheckTitleThreadsServices:
 
         strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.no_episodes_titles == ["Title"]
-        assert run.orders_without_episodes == []
+        assert run.nothing_to_grab_calls == []
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
@@ -3184,11 +3186,15 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     What Sonarr holds is read off the episodes it has a row for, and the title's window keeps every aired episode.
     """
 
-    def test_a_title_sonarrs_order_has_no_episode_of_stops_at_the_no_episodes_row_and_names_the_order(self) -> None:
+    def test_a_title_sonarrs_order_has_no_episode_of_stops_at_the_no_episodes_row_and_is_cached_under_the_order(
+        self,
+    ) -> None:
         run, _ = _check_title_in_another_order([_STAND_IN_E2])
 
-        assert (run.no_episodes_titles, run.orders_without_episodes) == (["Show"], ["dvd"])
-        assert (run.log_al_title_calls, run.grab_requests, run.pauses_owed) == ([], [], 1)
+        assert (run.no_episodes_titles, run.log_al_title_calls, run.grab_requests) == (["Show"], [], [])
+        ((anilist_id, update),) = run.nothing_to_grab_calls
+        assert (anilist_id, update.get("coverage"), update.get("url")) == (5, "", "https://releases.moe/5")
+        assert (update.get("season_type"), update.get("series_row_count")) == ("dvd", None)
 
     def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
         unmonitored = _EP1.model_copy(update={"monitored": False})
@@ -3564,6 +3570,39 @@ class TestSonarrCheckTitleMetadataUnread:
 
         assert [anilist_id for anilist_id, _ in run.no_releases_calls] == [5]
         assert run.no_releases_unread == unread
+
+    @pytest.mark.parametrize(
+        ("unread_anilist_ids", "unread"),
+        [
+            pytest.param(frozenset({5}), [5], id="its-own-entry"),
+            pytest.param(frozenset({4}), [], id="another-entry-of-its-series"),
+        ],
+    )
+    def test_a_title_sonarrs_order_has_no_episode_of_asks_about_itself_alone(
+        self, unread_anilist_ids: frozenset[int], unread: list[int]
+    ) -> None:
+        run = _FakeRunServices(
+            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_title="Show Cour 2",
+            cache_store=FakeCacheStore(),
+        )
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=[_STAND_IN_E2]),
+            windows={5: [_STAND_IN_E2]},
+            order="dvd",
+            unread_anilist_ids=unread_anilist_ids,
+        )
+        strat = make_bare_instance(
+            SonarrStrategy, _services=run, _episodes=episodes, _config=make_config(sleep_time=0), logger=make_logger()
+        )
+
+        strat.check_title(
+            _Item(id=7, title="Show", tvdbId=70, imdbId=None, seasonType="dvd"), 5, TitleMapping(anilist_id=5)
+        )
+
+        assert [anilist_id for anilist_id, _ in run.nothing_to_grab_calls] == [5]
+        assert run.nothing_to_grab_unread == unread
 
 
 class TestRadarrCheckTitlePendingImportUpdates:

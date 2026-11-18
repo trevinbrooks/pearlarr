@@ -121,6 +121,24 @@ def test_sonarr_series_knows_whether_its_order_was_sent(raw: dict[str, object], 
     assert SonarrSeries.model_validate(raw).order_sent is sent
 
 
+@pytest.mark.parametrize(
+    ("statistics", "count"),
+    [
+        pytest.param({"statistics": {"seasonCount": 1, "episodeCount": 12, "totalEpisodeCount": 13}}, 13, id="sent"),
+        pytest.param({"statistics": {"seasonCount": 1, "episodeCount": 12}}, None, id="no-total"),
+        pytest.param({"statistics": {"totalEpisodeCount": "many"}}, None, id="junk-total"),
+        pytest.param({"statistics": None}, None, id="null-statistics"),
+        pytest.param({}, None, id="no-statistics"),
+    ],
+)
+def test_sonarr_series_reads_its_episode_count_off_its_statistics(
+    statistics: dict[str, object], count: int | None
+) -> None:
+    series = SonarrSeries.model_validate({"id": 1, "title": "Show"} | statistics)
+
+    assert series.totalEpisodeCount == count
+
+
 def test_sonarr_series_reads_its_alternate_titles_and_drops_a_junk_one_alone() -> None:
     """A series with no `alternateTitles` has none, and a junk element (a null title among them) drops alone."""
 

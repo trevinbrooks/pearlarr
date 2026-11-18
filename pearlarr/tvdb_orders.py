@@ -161,6 +161,43 @@ class CachedOrders:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesNumbering:
+    """How Sonarr numbered a series at one read: by which order, and over how many episodes.
+
+    A title is cached with the numbering its series had when it was checked, and is checked again once the series
+    is numbered another way (`differs_from`). Build one with `of`.
+    """
+
+    order: str
+    """The order's type name, "" for the aired order."""
+
+    row_count: int | None
+    """Sonarr's count of the series' episodes. None for the aired order, and when Sonarr sent no count."""
+
+    @classmethod
+    def of(cls, order: str | None, row_count: int | None) -> Self:
+        """The numbering under `order` as Sonarr or a cached title names it, None being a title cached with no order.
+
+        Every name of the aired order reads as one numbering with no count. A series numbered as aired gains
+        episodes as they are announced, and a count kept for it would check its titles again each time.
+        """
+
+        if order is None or not is_another_order(order):
+            return cls("", None)
+        return cls(order, row_count)
+
+    def differs_from(self, other: Self) -> bool:
+        """Whether the two are of different orders, or of one order with different counts.
+
+        A count missing on either side tells nothing, so the two then differ only by their orders.
+        """
+
+        if self.order != other.order:
+            return True
+        return self.row_count is not None and other.row_count is not None and self.row_count != other.row_count
+
+
+@dataclass(frozen=True, slots=True)
 class SonarrSeriesOrders:
     """What one Sonarr series row says about its orders."""
 
@@ -171,8 +208,17 @@ class SonarrSeriesOrders:
     counts: Mapping[str, int] | None
     """Sonarr's episode count per listed order. None when Sonarr lists no orders (always on v4)."""
 
+    row_count: int | None = None
+    """Sonarr's count of the series' episodes (`statistics.totalEpisodeCount`). None when Sonarr sent none."""
+
     @property
     def in_another_order(self) -> bool:
         """Whether Sonarr names an order other than the aired one for the series. False when it names none."""
 
         return is_another_order(self.season_type)
+
+    @property
+    def numbering(self) -> SeriesNumbering:
+        """How Sonarr numbers the series as of this row."""
+
+        return SeriesNumbering.of(self.season_type, self.row_count)

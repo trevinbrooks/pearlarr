@@ -36,7 +36,7 @@ from pearlarr.parse_cache import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.sqlite_util import is_corruption
 from pearlarr.stamps import parse_stamp_or_none
-from pearlarr.tvdb_orders import CachedOrders, EpisodeDetails, OrderRow
+from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SeriesNumbering
 
 from .builders import claim_anilist_ids, make_entry_record, pending_import, title_claim, title_is_cached
 from .fakes import RecordingHub
@@ -218,6 +218,17 @@ CREATE TABLE pending_imports (
 CREATE TABLE guard_facts (
     arr TEXT NOT NULL, al_id INTEGER NOT NULL, record BLOB NOT NULL,
     PRIMARY KEY (arr, al_id));
+"""
+
+
+# The v8 shape of the tables `CacheStore.load` needs: `kv` plus `entries` before it held the series' episode count.
+_V8_ENTRIES_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, anilist_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    fallback_satisfied INTEGER NOT NULL DEFAULT 0, season_type TEXT,
+    PRIMARY KEY (arr, anilist_id));
 """
 
 
@@ -820,6 +831,26 @@ class TestSchemaVersionGate:
         for table in ("entries", "anilist_meta", "guard_facts"):
             assert "anilist_id" in _columns(db, table)
             assert "al_id" not in _columns(db, table)
+
+    def test_v8_cached_titles_gain_a_series_row_count_column_left_null(self, tmp_path: Path) -> None:
+        # The v8 -> v9 step: a cached title keeps its columns and reads no count. A v8 row holds no season type
+        # either, so it reads as cached under the aired order.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V8_ENTRIES_SCHEMA)
+        raw.execute("INSERT INTO entries (arr, anilist_id, name, url) VALUES ('sonarr', 2, 'Show', 'u')")
+        raw.execute("PRAGMA user_version=8")
+        raw.commit()
+        raw.close()
+
+        with _open(tmp_path) as store:
+            cached = store.get_cached_title(Arr.SONARR, 2)
+            assert cached is not None
+            assert (cached.name, cached.url) == ("Show", "u")
+            assert (cached.season_type, cached.series_row_count) == (None, None)
+            assert cached.numbering == SeriesNumbering.of(AIRED_ORDER, None)
+        assert _user_version(db) == SCHEMA_VERSION
+        assert "series_row_count" in _columns(db, "entries")
 
     def test_fresh_db_starts_current_without_an_al_id_column(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
