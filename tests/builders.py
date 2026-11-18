@@ -351,6 +351,7 @@ class FakeCacheStore(AbstractCacheStore):
             coverage=cached.get("coverage"),
             fallback_satisfied=bool(cached.get("fallback_satisfied", False)),
             season_type=cached.get("season_type"),
+            series_row_count=cached.get("series_row_count"),
         )
 
     # -- AniList meta (TTL-swept) --

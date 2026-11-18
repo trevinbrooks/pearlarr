@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import override
 
 import pytest
+from seadex import EntryRecord
 
 from pearlarr.aired_view import AiredSeries, NoView
 from pearlarr.arr_http import NoResource
@@ -24,12 +25,15 @@ from pearlarr.arr_models import (
     SonarrItem,
     SonarrSeries,
 )
+from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
+from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
-from pearlarr.output import Severity
+from pearlarr.output import Severity, TitleHeader, TitleRow
+from pearlarr.output.events import TitleState
 from pearlarr.parse_cache import parse_to_json
 from pearlarr.pending_import import PendingImport, TvdbIds
 from pearlarr.releases import EpisodeKey, SeadexDict
@@ -37,15 +41,19 @@ from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.sonarr_episodes import TitleEpisodes, sonarr_series_hash
 from pearlarr.sonarr_matching import AiredMatcher, NoAnswer
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import OrderRow
+from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     PENDING_IMPORT_ANILIST_ID,
     PENDING_IMPORT_STAMP,
     FakeCacheStore,
+    FakeSeaDexSource,
+    anilist_body,
     every_series,
     known_torrent,
+    make_config,
+    make_entry_record,
     make_release,
     make_run_deps,
     make_sonarr_sync,
@@ -62,6 +70,7 @@ from .fakes import (
     FakeSkyHookClient,
     FakeSonarrClient,
     HookedSonarrClient,
+    RecordingHub,
     debug_logger,
     diagnostic_messages,
     install_recording_hub,
@@ -1292,3 +1301,200 @@ def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_import
     strat.start_of_run(series)
 
     assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
+
+
+_SEASON_TWO_AIRED = {"official": (*_ORDERS["official"], OrderRow(2, 1, 9003, 3)), "dvd": _DVD}
+"""A stored answer whose official order has a second season `_DVD` has no episode of."""
+
+_SEASON_TITLES = {500: "First", 600: "Second", 700: "Third"}
+"""The AniList titles of seasons 1, 2 and 3 of TVDB series 50. Neither stored order has a third season."""
+
+_NO_EPISODE_IN_THE_ORDER = (
+    "Sonarr's DVD order of the series has none of Second's episodes - not checked again until the series' order, "
+    "its episode count or the title's SeaDex entry changes"
+)
+
+
+def _entry(anilist_id: int) -> EntryRecord:
+    """The title's SeaDex entry, which lists no release."""
+
+    return make_entry_record(anilist_id=anilist_id, url=f"https://releases.moe/{anilist_id}")
+
+
+def _library_row(season_type: str | None, total: int | None) -> SonarrSeries:
+    """Series 1 of TVDB series 50 as a library read sends it, with `total` episodes by its `statistics`.
+
+    With `season_type=None` the row has no `seasonType` key, and with `total=None` no `statistics`.
+    """
+
+    raw: dict[str, object] = {"id": 1, "title": "Show", "tvdbId": 50}
+    if season_type is not None:
+        raw["seasonType"] = season_type
+    if total is not None:
+        raw["statistics"] = {"seasonCount": 1, "episodeCount": total, "totalEpisodeCount": total}
+    return SonarrSeries.model_validate(raw)
+
+
+def _run(cache: FakeCacheStore, library: SonarrSeries) -> RecordingHub:
+    """One whole Sonarr run over `cache` with activity detection off, and what it printed.
+
+    Sonarr lists `library` alone, with the season's two rows numbered by the order it names. Each of
+    `_SEASON_TITLES` has its SeaDex entry (`_entry`), and TVDB series 50 has `_SEASON_TWO_AIRED` stored.
+    """
+
+    cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED))
+    rows = _DVD_ROWS if library.seasonType == "dvd" else _ROWS
+    sonarr = FakeSonarrClient(all_series=[library], episodes=list(rows))
+    seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in _SEASON_TITLES})
+    config = make_config(url="http://sonarr", api_key="key", sleep_time=0, detect_arr_activity=False)
+    deps = make_run_deps(config=config, cache_store=cache, seadex=seadex)
+    seasons = MappingSources(
+        anime={
+            name: {"anilist_id": anilist_id, "tvdb_id": 50, "tvdb_season": season}
+            for season, (anilist_id, name) in enumerate(_SEASON_TITLES.items(), start=1)
+        },
+        anidb=False,
+        anibridge=False,
+    )
+    deps = replace(
+        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=seasons)
+    )
+    for anilist_id, name in _SEASON_TITLES.items():
+        deps.anilist.answers[anilist_id] = anilist_body(anilist_id, name)
+    services = ArrRunServices(deps, Arr.SONARR)
+    recording = install_recording_hub()
+    ArrRunLoop(deps, services).run_arr(
+        SonarrStrategy(deps, services, sonarr_client=sonarr), item_id=None, dry_run=False, boot=BootFlow()
+    )
+    return recording
+
+
+def _checked(recording: RecordingHub) -> list[int | None]:
+    """The AniList ids of the titles the run opened a block to check, leaving out the ones it found unchanged."""
+
+    return [header.anilist_id for header in recording.of_type(TitleHeader) if header.state is TitleState.CHECKING]
+
+
+def _no_episode_rows(recording: RecordingHub) -> list[str]:
+    """The titles the run printed a no-episodes row for."""
+
+    return [row.label for row in recording.of_type(TitleRow) if row.state is TitleState.NO_EPISODES]
+
+
+@pytest.mark.parametrize(
+    ("library", "cached"),
+    [
+        pytest.param(_library_row("dvd", 2), ("dvd", 2), id="another-order"),
+        pytest.param(_library_row("official", 2), ("official", 2), id="aired"),
+        pytest.param(_library_row(None, None), ("official", None), id="no-order-and-no-count-sent"),
+    ],
+)
+def test_a_checked_title_is_cached_with_the_order_and_episode_count_of_its_series(
+    library: SonarrSeries, cached: tuple[str, int | None]
+) -> None:
+    cache = FakeCacheStore()
+
+    _run(cache, library)
+
+    first = cache.get_cached_title(Arr.SONARR, 500)
+    assert first is not None
+    assert (first.season_type, first.series_row_count) == cached
+
+
+@pytest.mark.parametrize(
+    ("before", "now"),
+    [
+        pytest.param(_library_row("official", 2), _library_row("dvd", 2), id="another-order"),
+        pytest.param(_library_row("dvd", 2), _library_row("official", 2), id="aired-again"),
+        pytest.param(_library_row("dvd", 2), _library_row("dvd", 3), id="another-count-under-another-order"),
+    ],
+)
+def test_a_cached_title_is_checked_again_once_its_series_is_numbered_another_way(
+    before: SonarrSeries, now: SonarrSeries
+) -> None:
+    cache = FakeCacheStore()
+    _run(cache, before)
+
+    recording = _run(cache, now)
+
+    assert _checked(recording) == [500]
+
+
+@pytest.mark.parametrize(
+    ("before", "now"),
+    [
+        pytest.param(_library_row("dvd", 2), _library_row("dvd", 2), id="nothing-changed"),
+        # A Sonarr that sends no order numbers every series as aired, whose count is not compared.
+        pytest.param(_library_row(None, 2), _library_row(None, 3), id="a-sonarr-that-sends-no-order"),
+    ],
+)
+def test_a_cached_title_is_left_unchanged_while_its_series_is_numbered_the_same_way(
+    before: SonarrSeries, now: SonarrSeries
+) -> None:
+    cache = FakeCacheStore()
+    _run(cache, before)
+
+    recording = _run(cache, now)
+
+    assert _checked(recording) == []
+
+
+@pytest.mark.parametrize(
+    ("library", "checked"),
+    [
+        pytest.param(_library_row("official", 2), [], id="aired"),
+        pytest.param(_library_row("dvd", 2), [500], id="another-order"),
+    ],
+)
+def test_a_title_cached_with_no_order_is_checked_again_only_when_its_series_is_in_another_order(
+    library: SonarrSeries, checked: list[int]
+) -> None:
+    cache = FakeCacheStore()
+    entry = _entry(500)
+    cache.update_cached_title(
+        Arr.SONARR, 500, {"updated_at": entry.updated_at, "name": "First", "url": entry.url, "coverage": "S01"}
+    )
+
+    recording = _run(cache, library)
+
+    assert _checked(recording) == checked
+
+
+def test_a_title_sonarrs_order_has_no_episode_of_warns_once_and_is_cached() -> None:
+    cache = FakeCacheStore()
+
+    recording = _run(cache, _library_row("dvd", 2))
+
+    second = cache.get_cached_title(Arr.SONARR, 600)
+    assert diagnostic_messages(recording, Severity.WARNING) == [_NO_EPISODE_IN_THE_ORDER]
+    assert second is not None
+    assert (second.updated_at is not None, second.coverage) == (True, "")
+    assert second.numbering == SeriesNumbering("dvd", 2)
+
+
+def test_a_title_sonarrs_order_has_no_episode_of_is_not_warned_of_again_with_nothing_changed() -> None:
+    cache = FakeCacheStore()
+    _run(cache, _library_row("dvd", 2))
+
+    recording = _run(cache, _library_row("dvd", 2))
+
+    assert diagnostic_messages(recording, Severity.WARNING) == []
+    assert "Second" not in _no_episode_rows(recording)
+
+
+def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_when_the_series_episode_count_changes() -> None:
+    cache = FakeCacheStore()
+    _run(cache, _library_row("dvd", 2))
+
+    recording = _run(cache, _library_row("dvd", 3))
+
+    assert diagnostic_messages(recording, Severity.WARNING) == [_NO_EPISODE_IN_THE_ORDER]
+
+
+def test_a_title_with_no_aired_episode_prints_its_row_on_every_run_and_is_not_cached() -> None:
+    cache = FakeCacheStore()
+
+    printed = [_no_episode_rows(_run(cache, _library_row("dvd", 2))) for _ in range(2)]
+
+    assert ["Third" in rows for rows in printed] == [True, True]
+    assert cache.get_cached_title(Arr.SONARR, 700) is None

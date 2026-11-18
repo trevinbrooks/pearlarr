@@ -25,7 +25,7 @@ from .output import hub_note
 from .pending_import import OwnedAtGrab
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 from .stamps import parse_stamp, parse_stamp_or_none, stamp_of
-from .tvdb_orders import CachedOrders
+from .tvdb_orders import CachedOrders, SeriesNumbering
 
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table: shape changes need a SCHEMA_VERSION bump + migration.
 # anilist_meta / sonarr_parse expose `fetched_at` as a VIRTUAL generated column, indexed for the TTL sweep's DELETE.
@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS entries (
     fallback_satisfied INTEGER NOT NULL DEFAULT 0,
     -- The TVDB order the entry's Sonarr series was numbered by when it was checked, NULL when none was recorded.
     season_type TEXT,
+    -- Sonarr's count of that series' episodes then, NULL when none was recorded.
+    series_row_count INTEGER,
     PRIMARY KEY (arr, anilist_id)
 );
 
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS tvdb_orders (
 """
 
 # Current cache.db schema version, stored in `PRAGMA user_version`.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _LOG = logging.getLogger(f"{LOG_NAME}.cache")
 
@@ -320,6 +322,13 @@ def _migrate_7_to_8(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_8_to_9(conn: sqlite3.Connection) -> None:
+    """Add `entries.series_row_count`."""
+
+    if not _has_column(conn, "entries", "series_row_count"):
+        conn.execute("ALTER TABLE entries ADD COLUMN series_row_count INTEGER")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
@@ -329,6 +338,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_5_to_6,
     6: _migrate_6_to_7,
     7: _migrate_7_to_8,
+    8: _migrate_8_to_9,
 }
 
 
@@ -390,6 +400,8 @@ class CachedTitleUpdate(TypedDict, total=False):
     """Whether a public fallback satisfied the title."""
     season_type: str
     """The TVDB order the title's Sonarr series was numbered by when it was checked."""
+    series_row_count: int | None
+    """Sonarr's count of that series' episodes then. None when Sonarr sent none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,11 +415,18 @@ class CachedTitle:
     coverage: str | None
     fallback_satisfied: bool
     season_type: str | None
+    series_row_count: int | None
 
     def cached_under(self, seadex_updated_at: datetime) -> bool:
         """Whether the title is cached under this SeaDex update time."""
 
         return self.updated_at == stamp_of(seadex_updated_at)
+
+    @property
+    def numbering(self) -> SeriesNumbering:
+        """How Sonarr numbered the title's series when the title was checked, as aired when none was recorded."""
+
+        return SeriesNumbering.of(self.season_type, self.series_row_count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +439,15 @@ class HistoryCheckpoint:
     """The per-arr autoincrement id, for strict `record.id > last_id` dedup across the re-query overlap."""
 
 
-_CACHED_TITLE_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied", "season_type")
+_CACHED_TITLE_COLUMNS = (
+    "name",
+    "url",
+    "coverage",
+    "updated_at",
+    "fallback_satisfied",
+    "season_type",
+    "series_row_count",
+)
 
 
 class _JsonTable(NamedTuple):
@@ -656,11 +683,11 @@ class CacheStore(AbstractCacheStore):
         """A title's row in one query, or None."""
 
         row = self._conn.execute(
-            "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type FROM entries "
+            "SELECT updated_at, name, url, coverage, fallback_satisfied, season_type, series_row_count FROM entries "
             "WHERE arr = ? AND anilist_id = ?",
             (_arr_key(arr), anilist_id),
         ).fetchone()
-        return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5])
+        return None if row is None else CachedTitle(row[0], row[1], row[2], row[3], bool(row[4]), row[5], row[6])
 
     @override
     def update_cached_title(

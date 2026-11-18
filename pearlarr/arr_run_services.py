@@ -40,7 +40,7 @@ from .seadex_gateway import SeaDexGateway, SeaDexNoEntry, SeaDexSource
 from .skyhook_client import SkyHookClient
 from .skyhook_gateway import SkyHookGateway
 from .torrent_service import TorrentService
-from .tvdb_orders import order_display_name
+from .tvdb_orders import SeriesNumbering, order_display_name
 from .wait_types import ImportWaitMode
 
 
@@ -451,6 +451,12 @@ class ArrRunServices:
 
         self._dirty_anilist_ids.update(anilist_ids)
 
+    def cached_numbering(self, anilist_id: int) -> SeriesNumbering | None:
+        """How Sonarr numbered the title's series when the title was cached. None for a title with no cached row."""
+
+        cached = self.cache_store.get_cached_title(self._state.arr, anilist_id)
+        return None if cached is None else cached.numbering
+
     def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict, logging the ignored ones.
 
@@ -563,12 +569,26 @@ class ArrRunServices:
         """Shared no-suitable-releases tail both Arr strategies fall into.
 
         When SeaDex yields no usable releases for a title, every strategy does the same three things: log it,
-        persist what it knows into the cache, and owe the pacing pause. Hoisted here so the two strategies
-        share one definition instead of a byte-for-byte duplicated block. A title whose check read its entry
-        without its AniList answer (`metadata_unread`) is not cached, so the next run checks it again.
+        persist what it knows into the cache, and owe the pacing pause (`cache_nothing_to_grab`). Hoisted here so
+        the two strategies share one definition instead of a byte-for-byte duplicated block.
         """
 
         self._log_no_seadex_releases()
+        self.cache_nothing_to_grab(anilist_id, update, metadata_unread=metadata_unread)
+
+    def cache_nothing_to_grab(
+        self,
+        anilist_id: int,
+        update: CachedTitleUpdate,
+        *,
+        metadata_unread: bool = False,
+    ) -> None:
+        """Cache a title whose check ended with nothing to grab, and owe the pacing pause.
+
+        A title whose check read its entry without its AniList answer (`metadata_unread`) is not cached, so the
+        next run checks it again.
+        """
+
         if not metadata_unread:
             # Never fallback-satisfied: overwrite any True a prior fallback run left.
             update["fallback_satisfied"] = False
@@ -628,8 +648,8 @@ class ArrRunServices:
         """The unchanged gate both strategies pass each title through: True leaves it unchecked, False sends it on.
 
         An unchanged title backfills what an older row lacks and logs the cached block. A title sent on has its row's
-        stamp cleared here, before anything in the check can fail: `grab_and_cache` and `report_no_releases` are the
-        two writes that stamp it again, each only when the result may be cached.
+        stamp cleared here, before anything in the check can fail: `grab_and_cache` and `cache_nothing_to_grab` are
+        the two writes that stamp it again, each only when the result may be cached.
 
         `coverage` stays a callable so the (for Sonarr, episode-fetching) lookup runs only on the
         one-time url backfill, never on the common already-backfilled path.
@@ -679,15 +699,6 @@ class ArrRunServices:
     def log_arr_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored item (delegates to RunReporter)."""
         self._reporter.log_arr_item_unmonitored(self._state, item_title)
-
-    def log_order_has_no_episodes(self, order: str) -> None:
-        """Under a no-episodes row, log that Sonarr's `order` of the series has none of the title's aired episodes."""
-        self._reporter.detail(
-            "status",
-            StyledValue(
-                f"Sonarr's {order_display_name(order)} order of the series has none of its episodes", Accent.DIM
-            ),
-        )
 
     def log_numbered_as_aired(self, order: str) -> None:
         """Log that the open title's episodes are numbered as aired, for a series Sonarr numbers by another `order`."""

@@ -166,6 +166,7 @@ def series_orders(series: SonarrItem) -> SonarrSeriesOrders:
         tvdb_id=series.tvdbId,
         season_type=series.seasonType,
         counts={listed.type: listed.episode_count for listed in series.seasonTypes} if series.seasonTypes else None,
+        row_count=series.totalEpisodeCount,
     )
 
 
@@ -223,6 +224,9 @@ class EpisodeSource(ABC):
 
     @abstractmethod
     def series_index(self, series_id: int) -> EpisodeIndex | None: ...
+
+    @abstractmethod
+    def library_orders(self, series_id: int) -> SonarrSeriesOrders: ...
 
     @abstractmethod
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]: ...
@@ -637,6 +641,15 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         """What the library read says of the series, `_NOT_IN_LIBRARY` for one it doesn't have."""
 
         return self._library.get(series_id, _NOT_IN_LIBRARY)
+
+    @override
+    def library_orders(self, series_id: int) -> SonarrSeriesOrders:
+        """What this run's library read says of the series' orders, the same for the whole run.
+
+        A series the library read doesn't have names no order and has no count.
+        """
+
+        return self._library_series(series_id).orders
 
     @override
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:

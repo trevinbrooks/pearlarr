@@ -95,6 +95,9 @@ class SonarrItem(ArrItem, Protocol):
     def alternateTitles(self) -> tuple[AlternateTitle, ...]: ...
 
     @property
+    def totalEpisodeCount(self) -> int | None: ...
+
+    @property
     def order_sent(self) -> bool: ...
 
 
@@ -124,6 +127,8 @@ class SonarrSeries(ApiModel):
     """The orders TVDB lists for the series, with counts. Sonarr v5 only."""
     alternateTitles: tuple[AlternateTitle, ...] = ()
     """The series' other names, in Sonarr's order. Some name one season."""
+    totalEpisodeCount: LenientInt = Field(default=None, validation_alias=AliasPath("statistics", "totalEpisodeCount"))
+    """Sonarr's count of the series' episodes, off its `statistics`. None when Sonarr sent none."""
 
     @property
     def order_sent(self) -> bool:
