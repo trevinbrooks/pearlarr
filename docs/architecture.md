@@ -47,10 +47,11 @@ flowchart LR
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
 | Grabbing | `grab_pipeline`, `torrent_service` | tracker page parsing, qBittorrent adds, per-release outcomes |
-| Import wait | `pending_import`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, Sonarr queue classification, the never-overwrite check, the series-pinned auto import, the per-file plan and its quality key |
+| Import wait | `pending_import`, `pending_follow`, `wait_types`, `file_paths`, `sonarr_import`, `sonarr_state`, `episode_state`, `import_files`, `import_quality`, `import_wait`, `wait_view` | waiting on downloads, following a pending import's ids onto Sonarr's rows, Sonarr queue classification, the never-overwrite check, the series-pinned auto import, the per-file plan and its quality key |
 | TVDB orders | `tvdb_orders`, `skyhook_client`, `skyhook_gateway` | the TVDB episode orders (aired, DVD, and the others TVDB lists) of the Sonarr series a run reads, fetched from Sonarr's metadata service and kept per series in `cache.db` |
 | Scene numbers | `scene_numbers`, `xem_client`, `xem_gateway` | the numbers releases give the episodes of a Sonarr series set to another TVDB order, worked out as Sonarr does from TheXEM's mappings, which are read per series and kept in `cache.db` |
-| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse` | placing a release's files on episodes at grab time, the series' SeaDex listings and size matches it uses, and the Sonarr `/parse` cache the placement reads |
+| Sonarr as aired | `library_read`, `series_reads`, `row_order_guard`, `aired_view`, `episode_ids`, `sonarr_episodes`, `sonarr_matching`, `sonarr_accents` | each Sonarr series read as TVDB's aired order numbers it: the run's library read and series' rows, the check that rows are in the order Sonarr names, the aired view and its stand-ins, a title's episodes, and Sonarr's matching of a file name copied for a series in another order |
+| Placement | `placement_types`, `parsed_episodes`, `file_names`, `episode_titles`, `placer/*`, `numberings`, `window_placement`, `grab_placement`, `series_listings`, `listing_builder`, `video_files`, `sonarr_parse`, `parse_cache` | placing a release's files on episodes at grab time, the series' SeaDex listings and size matches it uses, and the Sonarr `/parse` cache the placement reads |
 | State | `cache`, `stamps`, `pending_import_store` | the SQLite decision cache, staged writes, backup/restore, the shared timestamp format, the pending import store |
 | Output | `output/*`, `log`, `console_features`, `boot_flow` | the event hub, renderers, the always-on file log |
 | Notifications | `notify`, `discord` | Discord embeds, the generic wait webhook |
@@ -90,6 +91,15 @@ The import places nothing. It imports the map the grab placed, plus the files So
 Sonarr is always given the chance to import first. The auto import only runs for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
 Two kinds of untracked download are never served by id: one Sonarr's history marks imported, failed, or ignored, and a torrent in a category none of Sonarr's qBittorrent clients watch. For those the import reads the download's folder instead and leaves the download id out. Every import from a folder copies under `imports.import_mode: auto`.
 Rejected: reusing Sonarr's manual-import candidates as the mapping source, the exact misparse the feature exists to correct.
+
+### Sonarr as aired: every series read by TVDB episode id
+
+A title's check reads every Sonarr series as TVDB's aired order numbers it, whatever order Sonarr numbers the series by (`aired_view`). A title's episodes, its window and the series index are then numbered one way for every series.
+A series in another order has each row renumbered to the aired episode with the same TVDB episode id, through the TVDB orders stored for it. The import still reads Sonarr's own rows.
+An aired episode Sonarr has no row for is held by a stand-in: a row with no file whose id is its TVDB episode id negated (`episode_ids`). That id is the same on every run, so a pending import can store it, and it is never a Sonarr row's, which are positive. No file is imported onto a stand-in.
+An aired episode is Sonarr's episode model with its numbers rewritten (`SonarrEpisode.renumbered`), so every reader of the model takes it unchanged. It remembers the number Sonarr lists it under, and lines print that one.
+A stored pending import keeps the TVDB episode id of each row it holds. Sonarr can give an episode another row, so each id is followed onto the row that holds its episode before the pending import is read (`pending_follow`).
+The cost: on a Sonarr that sends each series' order, a series in aired order is read once more on its own before its rows are taken as aired, and the import does the same after each read of a series' rows (`row_order_guard`). These reads run one at a time. A Sonarr that sends no order pays none of them.
 
 ## Glossary
 
