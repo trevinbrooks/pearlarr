@@ -27,7 +27,7 @@ from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import ExternalIds, TitleMapping
 from pearlarr.parse_cache import (
     SONARR_PARSE_CACHE_TTL_DAYS,
-    SONARR_PARSE_UNMATCHED_TTL_DAYS,
+    SONARR_PARSE_NO_EPISODES_TTL_DAYS,
     ParseCacheRows,
     ParseFreshness,
     _parse_is_fresh,
@@ -59,15 +59,15 @@ from .builders import (
     rg_group,
     sonarr_ep,
 )
-from .fakes import ScriptedEpisodes
+from .fakes import ScriptedEpisodes, debug_logger
 
 _NOW = datetime(2026, 6, 28, 12, 0, 0)
 _MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
-_UNMATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_UNMATCHED_TTL_DAYS)
+_NO_EPISODES_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_NO_EPISODES_TTL_DAYS)
 
-# The parse Sonarr returns when it matched no series at all: the cacheable
-# unmatched row, pinned to the series hash on write.
-_UNMATCHED = ParsedFileInfo()
+# The parse Sonarr returns when it matched no series at all. It has no matched
+# episodes, so its row is pinned to the series hash on write.
+_NO_SERIES = ParsedFileInfo()
 
 
 def _matched(season: int, episode: int) -> ParsedFileInfo:
@@ -101,7 +101,7 @@ def _window(series_hash: str = "fp", *, orders: Mapping[int, str] | None = None)
     return ParseFreshness(
         now_str=_NOW.strftime(STAMP_FORMAT),
         matched_cutoff=_MATCHED_CUTOFF,
-        unmatched_cutoff=_UNMATCHED_CUTOFF,
+        no_episodes_cutoff=_NO_EPISODES_CUTOFF,
         series_hash=series_hash,
         series_orders=orders or {},
     )
@@ -145,9 +145,9 @@ class TestSeriesHash:
 
 
 class TestParseIsFresh:
-    """`_parse_is_fresh` dispatches on the series hash key: a matched row gets the 30-day TTL.
+    """`_parse_is_fresh` dispatches on the series hash key: a row with matched episodes gets the 30-day TTL.
 
-    An unmatched one (pinned with `series_fp`) is fresh only under the same
+    One with none (pinned with `series_fp`) is fresh only under the same
     series hash and the short backstop. A legacy row carrying no whole parse is
     never fresh.
     """
@@ -158,19 +158,19 @@ class TestParseIsFresh:
     def test_matched_beyond_ttl_is_stale(self) -> None:
         assert not _fresh(_record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1))
 
-    def test_unmatched_fresh_when_series_hash_matches_and_within_backstop(self) -> None:
-        assert _fresh(_record(_UNMATCHED, days_ago=2, series_hash="fp"), series_hash="fp")
+    def test_no_matched_episodes_fresh_when_series_hash_matches_and_within_backstop(self) -> None:
+        assert _fresh(_record(_NO_SERIES, days_ago=2, series_hash="fp"), series_hash="fp")
 
-    def test_unmatched_stale_on_series_hash_mismatch(self) -> None:
-        assert not _fresh(_record(_UNMATCHED, days_ago=2, series_hash="old"), series_hash="fp")
+    def test_no_matched_episodes_stale_on_series_hash_mismatch(self) -> None:
+        assert not _fresh(_record(_NO_SERIES, days_ago=2, series_hash="old"), series_hash="fp")
 
-    def test_unmatched_stale_beyond_backstop_ttl(self) -> None:
-        aged = _record(_UNMATCHED, days_ago=SONARR_PARSE_UNMATCHED_TTL_DAYS + 1, series_hash="fp")
+    def test_no_matched_episodes_stale_beyond_backstop_ttl(self) -> None:
+        aged = _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1, series_hash="fp")
         assert not _fresh(aged, series_hash="fp")
 
-    def test_unmatched_uses_the_backstop_not_the_matched_ttl(self) -> None:
+    def test_no_matched_episodes_uses_the_backstop_not_the_matched_ttl(self) -> None:
         # Inside the 30-day matched TTL, past the 7-day backstop: the pin decides.
-        assert not _fresh(_record(_UNMATCHED, days_ago=10, series_hash="fp"), series_hash="fp")
+        assert not _fresh(_record(_NO_SERIES, days_ago=10, series_hash="fp"), series_hash="fp")
 
     def test_legacy_row_without_a_parse_is_stale_inside_the_ttl(self) -> None:
         # The pre-reshape rows carry an episode list, not a whole parse: they
@@ -203,10 +203,17 @@ class TestParseCacheRows:
 
         assert rows.read("show - 01.mkv", window=_window()) == info
 
-    def test_unmatched_write_is_pinned_to_the_series_hash(self) -> None:
+    @pytest.mark.parametrize(
+        "info",
+        [
+            pytest.param(_NO_SERIES, id="no-series"),
+            pytest.param(_of_series(7).with_matched(()), id="a-series-and-no-episode"),
+        ],
+    )
+    def test_a_write_with_no_matched_episodes_is_pinned_to_the_series_hash(self, info: ParsedFileInfo) -> None:
         rows, store = self._parse_cache_rows()
 
-        rows.write("show - 01.mkv", _UNMATCHED, window=_window("fp"))
+        rows.write("show - 01.mkv", info, window=_window("fp"))
 
         row = store.get_sonarr_parse("show - 01.mkv")
         assert row is not None
@@ -233,7 +240,7 @@ class TestParseCacheRows:
 
     @pytest.mark.parametrize(
         "info",
-        [pytest.param(_of_series(8), id="of-an-aired-series"), pytest.param(_UNMATCHED, id="of-no-series")],
+        [pytest.param(_of_series(8), id="of-an-aired-series"), pytest.param(_NO_SERIES, id="of-no-series")],
     )
     def test_a_parse_of_no_series_in_another_order_is_written_with_no_order(self, info: ParsedFileInfo) -> None:
         rows, store = self._parse_cache_rows()
@@ -696,8 +703,8 @@ class _ParseSonarr:
         return self._result
 
 
-class TestParsedFilesUnmatchedCache:
-    """`parsed_files` caches a genuine unmatched parse with the series hash.
+class TestParsedFilesCache:
+    """`parsed_files` caches a parse with no matched episodes with the series hash.
 
     It skips a fresh hit's network call, never caches a transient `None`, and
     never parses audio files.
@@ -730,28 +737,48 @@ class TestParsedFilesUnmatchedCache:
     def _assert_pinned(parse: SonarrParseCache, name: str) -> None:
         rec = parse.cache_store.get_sonarr_parse(name)
         assert rec is not None
-        assert rec["parse"] == parse_to_json(_UNMATCHED)
+        assert rec["parse"] == parse_to_json(_NO_SERIES)
         assert rec["series_fp"] == "fp"
 
-    def test_genuine_unmatched_is_cached_with_series_hash(self) -> None:
-        parse, _ = self._parse(parse_result=_UNMATCHED)
+    def test_a_parse_with_no_matched_episodes_is_cached_with_series_hash(self) -> None:
+        parse, _ = self._parse(parse_result=_NO_SERIES)
         parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         self._assert_pinned(parse, "[X] Show - 01.mkv")
+
+    @pytest.mark.parametrize(
+        ("by_sonarr", "matched"),
+        [
+            pytest.param(_NO_SERIES, "no series", id="no-series"),
+            pytest.param(
+                _of_series(7).with_matched(()), "a series but to none of its episodes", id="a-series-and-no-episode"
+            ),
+        ],
+    )
+    def test_the_debug_log_says_what_sonarr_matched_a_name_with_no_matched_episodes_to(
+        self, by_sonarr: ParsedFileInfo, matched: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        parse, _ = self._parse(parse_result=by_sonarr)
+        parse.logger = debug_logger("pearlarr-parse-cache")
+
+        with caplog.at_level("DEBUG"):
+            parse.parsed_files(self._dict("[X] Show - 01.mkv"))
+
+        assert [record.message for record in caplog.records] == [f"Sonarr matched [X] Show - 01.mkv to {matched}"]
 
     def test_transient_none_is_not_cached(self) -> None:
         parse, _ = self._parse(parse_result=None)
         parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
-    def test_fresh_unmatched_hit_skips_network(self) -> None:
+    def test_fresh_hit_with_no_matched_episodes_skips_network(self) -> None:
         file_map: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(STAMP_FORMAT),
-                "parse": parse_to_json(_UNMATCHED),
+                "parse": parse_to_json(_NO_SERIES),
                 "series_fp": "fp",
             },
         }
-        parse, sonarr = self._parse(parse_result=_UNMATCHED, sonarr_parse=file_map)
+        parse, sonarr = self._parse(parse_result=_NO_SERIES, sonarr_parse=file_map)
         parse.parsed_files(self._dict("[X] Show - 01.mkv"))
         assert sonarr.calls == []
 
@@ -788,7 +815,7 @@ class TestParsedFilesUnmatchedCache:
         assert rec["parse"] == parse_to_json(_matched(1, 1))
 
     def test_audio_file_never_parsed(self) -> None:
-        parse, sonarr = self._parse(parse_result=_UNMATCHED)
+        parse, sonarr = self._parse(parse_result=_NO_SERIES)
         parse.parsed_files(self._dict("[X] OST - 01.flac"))
         assert sonarr.calls == []
 
@@ -799,7 +826,7 @@ class TestParsedFilesUnmatchedCache:
         assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
 
     def test_concurrent_warm_caches_each_file(self) -> None:
-        parse, _ = self._parse(parse_result=_UNMATCHED, sleep_time=0)
+        parse, _ = self._parse(parse_result=_NO_SERIES, sleep_time=0)
         parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"))
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
             self._assert_pinned(parse, name)

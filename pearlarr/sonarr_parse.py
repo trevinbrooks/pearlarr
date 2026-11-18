@@ -4,11 +4,11 @@
 the durable parse cache: cold-cache warm, TTL eviction, and the gather that
 pairs each video file with its parse for `place_release`. The cache rows
 themselves (`ParseCacheRows`, in `parse_cache`) are bound once on `ArrRunDeps`. The
-episode collaborator is handed in. It has the series hash that pins unmatched rows,
-and the order of each series, since a row is good only while its series stays in the
-order it was stored under. It matches a parse again for a series Sonarr numbers by
-another order (`EpisodeSource.aired_parse`). The cache keeps Sonarr's own answer,
-never that one.
+episode collaborator is handed in. It has the series hash that pins rows with no
+matched episodes, and the order of each series, since a row is good only while its
+series stays in the order it was stored under. It matches a parse again for a series
+Sonarr numbers by another order (`EpisodeSource.aired_parse`). The cache keeps
+Sonarr's own answer, never that one.
 """
 
 import concurrent.futures
@@ -57,11 +57,12 @@ class SonarrParseCache:
         info = self.sonarr.parse(f)
         if info is None:
             return None
-        # Cache the result (unmatched parses are pinned to the series hash so
-        # they aren't re-parsed every run) before acting on it.
+        # Cache the result (a parse with no matched episodes is pinned to the series
+        # hash so it isn't re-parsed every run) before acting on it.
         self.rows.write(f, info, window=window)
         if not info.matched_episodes:
-            self.logger.debug(f"Sonarr could not parse episode for {f}")
+            matched = "no series" if info.series_id is None else "a series but to none of its episodes"
+            self.logger.debug(f"Sonarr matched {f} to {matched}")
         return info
 
     def _aired_parse_for(self, f: str, *, window: ParseFreshness, unread: set[int]) -> ParsedFileInfo | None:
@@ -121,9 +122,9 @@ class SonarrParseCache:
         """Each release's video files with their sizes and Sonarr parses, keyed by url as the groups key their releases.
 
         A name goes to Sonarr once, within a run (the same file across overlapping groups) and across
-        runs through the durable parse cache, its unmatched rows pinned by the run's series hash and each row of
-        a series good only under the order the series was in when the row was stored. A parse of a series Sonarr
-        numbers by another order is handed on with the episodes an aired Sonarr matches it to
+        runs through the durable parse cache, its rows with no matched episodes pinned by the run's series hash
+        and each row of a series good only under the order the series was in when the row was stored. A parse of
+        a series Sonarr numbers by another order is handed on with the episodes an aired Sonarr matches it to
         (`_aired_parse_for`). Every release gets a value, empty when it lists no video file. Never mutates
         `seadex_dict`.
         """

@@ -1116,15 +1116,15 @@ class TestSonarrParse:
             assert store.get_sonarr_parse("missing.mkv") is None
 
     def test_series_hash_key_round_trips(self, tmp_path: Path) -> None:
-        # The unmatched parse's pin: the freshness check dispatches on its presence.
+        # The pin of a parse with no matched episodes: the freshness check dispatches on its presence.
         with _open(tmp_path) as store:
             rec = {
                 "fetched_at": "2026-06-20 12:00:00",
                 "parse": parse_to_json(ParsedFileInfo()),
                 "series_fp": "fp",
             }
-            store.put_sonarr_parse("unmatched.mkv", rec)
-            assert store.get_sonarr_parse("unmatched.mkv") == rec
+            store.put_sonarr_parse("file.mkv", rec)
+            assert store.get_sonarr_parse("file.mkv") == rec
 
     def test_legacy_row_reads_back_unreadable(self, tmp_path: Path) -> None:
         # A pre-existing row carries an episode list, not a whole parse: it reads

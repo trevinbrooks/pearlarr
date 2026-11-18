@@ -1,7 +1,7 @@
 """Sonarr episode-domain collaborator: series enumeration + episode resolution.
 
-`SonarrEpisodes` owns the per-run episode cache (and the series-id hash
-that pins the `/parse` cache rows with no series) and the logic that turns a (series,
+`SonarrEpisodes` owns the per-run episode cache (and the series-id hash that pins
+the `/parse` cache rows with no matched episodes) and the logic that turns a (series,
 AniList id, mapping) into the relevant episode list: season / AniBridge
 filtering, AniDB remaps, offset slicing, the specials chosen by air date, the
 existing files as `ArrFiles`, and the concurrent prefetch warm. It also keeps each
@@ -65,7 +65,7 @@ def fetch_workers(config: AppConfig) -> int:
 def sonarr_series_hash(series_ids: Iterable[int]) -> str:
     """Stable hash of the current Sonarr series-id set.
 
-    Invalidates the `/parse` cache rows with no series: a parse with no series almost always means
+    Invalidates the `/parse` cache rows with no matched episodes: such a parse most often means
     the file's series isn't in Sonarr, so a new series id flips the hash and
     re-parses the affected rows. `hashlib` (not `hash()`) for stability
     across processes.
@@ -300,7 +300,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         self._series: dict[int, _SeriesRead] = {}
 
         # Hash of the current Sonarr series-id set, recomputed each run in
-        # refresh_library. Pins the `/parse` cache rows with no series to the library
+        # refresh_library. Pins the `/parse` cache rows with no matched episodes to the library
         # state so they are parsed again once Sonarr has the series.
         self._series_hash: str = ""
 
@@ -365,7 +365,7 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
         self._sends_order = any(s.order_sent for s in in_sonarr)
         series = self.mapped_series(in_sonarr)
         # Hash the current series-id set once per run to invalidate the parse cache
-        # rows with no series (see sonarr_series_hash).
+        # rows with no matched episodes (see sonarr_series_hash).
         self._series_hash = sonarr_series_hash(s.id for s in series)
         return series
 
