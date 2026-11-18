@@ -27,7 +27,8 @@ from .grab_placement import (
 from .mappings import ExternalIds, MappingSource, TitleMapping
 from .output import hub_warn
 from .output.console_text import count_noun, pluralize
-from .pending_import import ClaimedRows, PendingImport, TvdbIds
+from .pending_follow import follow
+from .pending_import import PendingImport, TvdbIds
 from .placement_types import EpisodeIndex, GrabbingTitle, Placement, episode_index
 from .progress import ProgressCallback
 from .releases import EpisodeKey, SeadexDict, SkipReason, ignore_tag_set, releases_to_grab
@@ -615,21 +616,21 @@ class SonarrStrategy(ArrStrategy[SonarrItem]):
 
         Those are the rows the series indexes were built from, so every id a placement joins names the episode
         the index has it on. One whose ids moved is saved, and its titles are checked again next run. One that
-        can't be followed under them (`ClaimedRows.of`) is left out: its ids may name other episodes.
+        can't be followed under them (`follow`) is left out: its ids may name other episodes.
         """
 
         followed: dict[str, PendingImport] = {}
         for infohash, pending in stored.items():
-            rows = ClaimedRows.of(pending, {sid: self._reads.last_known_episodes(sid) for sid in pending.series_ids})
-            if rows is None:
+            result = follow(pending, {sid: self._reads.last_known_episodes(sid) for sid in pending.series_ids})
+            if result is None:
                 self.logger.debug(
                     f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent - "
                     "not placing its torrent's files this run"
                 )
                 continue
-            followed[infohash] = now = pending.followed(rows)
-            if now is not pending:
-                self._services.pending_imports.save_followed(now)
+            followed[infohash] = result.pending
+            if result.pending is not pending:
+                self._services.pending_imports.save_followed(result.pending)
         return followed
 
     def _warn_overrides(self, placed: PlacedEntry, seadex_dict: SeadexDict) -> None:

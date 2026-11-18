@@ -108,7 +108,7 @@ class KnownTorrent:
 
     stored_unread: bool = False
     """Whether the torrent has a stored pending import that couldn't be followed under this run's rows
-    (`ClaimedRows.of`). Its ids may name other episodes, so nothing is read from it, placed or joined."""
+    (`pending_follow.follow`). Its ids may name other episodes, so nothing is read from it, placed or joined."""
 
     def tvdb_ids(self, episode_ids: Iterable[int]) -> TvdbIds:
         """The TVDB episode id of the row each of `episode_ids` was placed on, read off the series indexes."""

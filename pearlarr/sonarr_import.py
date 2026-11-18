@@ -47,7 +47,8 @@ from .import_quality import (
 )
 from .output import hub_note, hub_warn
 from .output.console_text import count_noun, pluralize
-from .pending_import import ClaimedRows, FileEpisodeMap, PendingImport, joined_file_map
+from .pending_follow import follow
+from .pending_import import FileEpisodeMap, PendingImport, joined_file_map
 from .pending_import_store import PendingImportStore
 from .placement_types import episode_index
 from .releases import EpisodeKey
@@ -873,7 +874,7 @@ class _ImportRead:
     followed: bool = False
     """Whether an id of the pending import moved when it was followed under the rows read."""
     set_aside: Mapping[str, tuple[int, ...]] = field(default_factory=dict[str, tuple[int, ...]])
-    """Each file the follow took out of the file map -> its TVDB episodes with no row (`ClaimedRows.set_aside`)."""
+    """Each file the follow took out of the file map -> its TVDB episodes with no row (`Followed.set_aside`)."""
 
     @property
     def pending(self) -> PendingImport:
@@ -1096,8 +1097,8 @@ class ImportReconciler:
         (`SeriesReads.read_episodes`).
 
         One already imported by the ids it stores is answered as stored. Any other is followed under the rows read
-        (`PendingImport.followed`) and answered by the ids it has then. One that can't be followed under them
-        (`ClaimedRows.of`) reads as a failed read: its ids may name other episodes.
+        (`follow`) and answered by the ids it has then. One that can't be followed under them reads as a failed
+        read: its ids may name other episodes.
         """
 
         lists: dict[int, list[SonarrEpisode]] = {}
@@ -1109,16 +1110,15 @@ class ImportReconciler:
         stored = self._statuses_from(pending, lists)
         if stored.imported:
             return stored
-        rows = ClaimedRows.of(pending, lists)
-        if rows is None:
+        followed = follow(pending, lists)
+        if followed is None:
             self.logger.debug(
                 f"{pending.display_label}: its episode ids can't be matched to the episodes Sonarr sent; not using it"
             )
             return None
-        followed = pending.followed(rows)
-        if followed is pending:
+        if followed.pending is pending:
             return stored
-        return replace(self._statuses_from(followed, lists), followed=True, set_aside=rows.set_aside(pending))
+        return replace(self._statuses_from(followed.pending, lists), followed=True, set_aside=followed.set_aside)
 
     def _last_known_statuses(self, pending: PendingImport) -> _ImportRead:
         """The pending import as stored, under each claimed series' last successfully read episodes."""
