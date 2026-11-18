@@ -214,9 +214,22 @@ class _SeriesRead:
 
 
 class EpisodeSource(ABC):
-    """The episode reads a title's check, a series' listings and the parse cache ask for, every series numbered as aired.
+    """A title's episodes of its series, numbered as aired, and AniList's count of them, as a series' listings ask.
 
     `SonarrEpisodes` is the real one. `title_episodes` raises `ValueError` for a mapping it can't resolve.
+    """
+
+    @abstractmethod
+    def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView: ...
+
+    @abstractmethod
+    def episode_count(self, anilist_id: int) -> int | None: ...
+
+
+class AiredParseSource(ABC):
+    """What the parse cache asks of a run's series: what its rows are good under, and a parse's aired matches.
+
+    `SonarrEpisodes` is the real one.
     """
 
     @property
@@ -228,28 +241,7 @@ class EpisodeSource(ABC):
     def series_in_another_order(self) -> Mapping[int, str]: ...
 
     @abstractmethod
-    def title_episodes(self, series_id: int, anilist_id: int, mapping: TitleMapping) -> TitleEpisodes | NoView: ...
-
-    @abstractmethod
-    def series_index(self, series_id: int) -> EpisodeIndex | None: ...
-
-    @abstractmethod
-    def library_orders(self, series_id: int) -> SonarrSeriesOrders: ...
-
-    @abstractmethod
-    def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]: ...
-
-    @abstractmethod
     def aired_parse(self, info: ParsedFileInfo) -> ParsedFileInfo | NoAnswer | NoView: ...
-
-    @abstractmethod
-    def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles: ...
-
-    @abstractmethod
-    def episode_count(self, anilist_id: int) -> int | None: ...
-
-    @abstractmethod
-    def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool: ...
 
 
 class SeriesRows(ABC):
@@ -265,7 +257,7 @@ class SeriesRows(ABC):
     def last_known_episodes(self, series_id: int) -> list[SonarrEpisode]: ...
 
 
-class SonarrEpisodes(EpisodeSource, SeriesRows):
+class SonarrEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
     """Owns the per-run episode cache + the (series, anilist_id, mapping) -> episodes logic, and each series' orders.
 
     Constructed once per run in `SonarrStrategy` from the shared
@@ -511,7 +503,6 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         return self._anilist.episode_count(anilist_id)
 
-    @override
     def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool:
         """Whether a check that reads these titles and these series' orders is missing one of their answers.
 
@@ -681,7 +672,6 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
             return _Numbering.IN_STEP
         return _Numbering.OUT_OF_STEP
 
-    @override
     def series_index(self, series_id: int) -> EpisodeIndex | None:
         """The whole series' placement index, numbered as aired, with its other TVDB orders read onto it.
 
@@ -708,7 +698,6 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         return self._library.get(series_id, _NOT_IN_LIBRARY)
 
-    @override
     def library_orders(self, series_id: int) -> SonarrSeriesOrders:
         """What this run's library read says of the series' orders, the same for the whole run.
 
@@ -717,7 +706,6 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         return self._library_series(series_id).orders
 
-    @override
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:
         """The series' other names in Sonarr, in Sonarr's order. None for a series the library read doesn't have."""
 
@@ -948,7 +936,6 @@ class SonarrEpisodes(EpisodeSource, SeriesRows):
 
         return season_episodes[ep_offset : episode_count + ep_offset]
 
-    @override
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles:
         """Convert the episodes' existing files into an `ArrFiles`."""
 

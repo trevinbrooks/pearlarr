@@ -685,7 +685,7 @@ class MatchedEpisode(ApiModel):
     episode_number: int = Field(validation_alias="episodeNumber")
     id: int | None = None
     """Sonarr's episode id, checked against the episode index so a match to the wrong series is rejected. A stand-in's
-    id for an aired episode Sonarr has no row for (`EpisodeSource.aired_parse`). None for an episode
+    id for an aired episode Sonarr has no row for (`AiredParseSource.aired_parse`). None for an episode
     `widen_range_key` added."""
 
 
@@ -729,7 +729,7 @@ class ParsedFileInfo(ApiModel):
     matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
     """Sonarr's series-matched episodes. The exact pass's fallback when the name carries no season and episode. For a
     series Sonarr numbers by another order, the placement is handed the ones an aired Sonarr matches
-    (`EpisodeSource.aired_parse`)."""
+    (`AiredParseSource.aired_parse`)."""
     series_id: LenientInt = Field(default=None, validation_alias=AliasPath("series", "id"))
     """Sonarr's id of the series it matched the name to, with or without matched episodes. None when it matched
     none."""

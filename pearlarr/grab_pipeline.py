@@ -94,7 +94,7 @@ class GrabRequest:
     have been left waiting on it: the title is never cached and re-checks next run."""
     metadata_unread: bool = False
     """A title of the series was looked up without its AniList answer, or a series was read without its TVDB orders
-    (`EpisodeSource.metadata_unread`): the title is never cached and re-checks next run."""
+    (`SonarrEpisodes.metadata_unread`): the title is never cached and re-checks next run."""
 
 
 def _reacquire_stamp(added_on: datetime | None) -> str:
