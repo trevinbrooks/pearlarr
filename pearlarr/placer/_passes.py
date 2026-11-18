@@ -27,9 +27,10 @@ The passes run in this order. Each places files only onto the ids that earlier p
 16. Other orders (`_orders.pass_other_orders`): `OTHER_ORDER`, `OTHER_ORDER_OUTSIDE_WINDOW`, `ORDER_ONLY`.
 
 At most one of passes 11 to 13 is tried: pairing in absolute order when its conditions hold, else the single-file
-pass when one id is unused, else pairing in name order. They consider only the unjudged files not wholly outside
-the window. Every pass that pairs in order (passes 8, 11, 13, and 14) places nothing when a file carries the title
-of an episode other than its pair, and that turns the pairing passes off.
+pass when one id is unused, else pairing in name order. Their candidates are the unjudged files and the files left
+for a hand import, less the ones wholly outside the window (`_pass_pairing`). Every pass that pairs in order
+(passes 8, 11, 13, and 14) places nothing when a file carries the title of an episode other than its pair, and that
+turns the pairing passes off.
 """
 
 from collections import defaultdict
@@ -59,8 +60,8 @@ class PlacerResult:
     placements: BatchPlacements
     """One verdict per name in `PlacementBatch.new_names`, batch order."""
     facts: Mapping[str, NameFacts]
-    """Every name of the torrent, the file map's and gone names included, as the names read before the first pass.
-    Read-only (`PlacerState.facts`)."""
+    """Every name of the torrent, the file map's and the ones left for a hand import included, as the names read
+    before the first pass. Read-only (`PlacerState.facts`)."""
 
 
 def place_batch(batch: PlacementBatch, target: PlacementTarget) -> PlacerResult:
@@ -404,19 +405,33 @@ def _outnumbered(state: PlacerState, file: TorrentFile, ep_id: int) -> bool:
 
 
 def _pass_pairing(state: PlacerState) -> None:
-    """Pair in absolute order, else try the single-file pass when one id is unused, else pair in name order."""
+    """Pair in absolute order, else try the single-file pass when one id is unused, else pair in name order.
+
+    The candidate files are the unjudged files and the files left for a hand import
+    (`PlacerState.left_for_hand_import`), less the ones wholly outside the window. A file left for a hand import
+    takes no id. So neither pairing is tried while one is a candidate, and the single-file pass gives the id to
+    nobody when it picks one (`_place_single`).
+    """
 
     # A file whose usable parsed episodes lie wholly outside the window belongs to another window.
     # It takes no unused id and does not spoil the count for the other files.
-    candidate_files = [file for file in state.unjudged_files() if not file.parsed_episodes.wholly_outside]
+    candidate_files = [
+        file
+        for file in (*state.unjudged_files(), *state.left_for_hand_import)
+        if not file.parsed_episodes.wholly_outside
+    ]
     unused_ids = state.unused_ids()
     if not candidate_files or not unused_ids:
         return
-    if (order := _absolute_order(state, candidate_files, unused_ids)) is not None:
+    # An earlier check judged a file left for a hand import and left it for a person. Counted without it, the files
+    # here could give its episode to another file. A pairing gives every candidate file an id, so it is tried only
+    # when each can take one.
+    all_take_an_id = not any(file.left_for_hand_import for file in candidate_files)
+    if all_take_an_id and (order := _absolute_order(state, candidate_files, unused_ids)) is not None:
         state.pair_in_order(order, unused_ids, PlacementVerdict.ABSOLUTE)
     elif len(unused_ids) == 1:
         _place_single(state, candidate_files, unused_ids[0])
-    elif (order := _natural_order(state, candidate_files, unused_ids)) is not None:
+    elif all_take_an_id and (order := _natural_order(state, candidate_files, unused_ids)) is not None:
         state.pair_in_order(order, unused_ids, PlacementVerdict.NAME_ORDER)
 
 
@@ -460,7 +475,8 @@ def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep
     No parsed number here means the file's parse has no usable episode number (`_has_no_parsed_number`). The only
     candidate file takes the id as `SINGLE`, and the file an AniList name of the title points at takes it as
     `TITLE_NAME` (`_named_by_title`), a check that runs only when no parse is unread. A file next in line for the id
-    takes it neither way, and no other file takes it in its place.
+    takes it neither way, and neither does a file left for a hand import (`TorrentFile.left_for_hand_import`). No
+    other file takes it in its place.
     """
 
     if len(candidate_files) == 1 and _has_no_parsed_number(state, candidate_files[0]):
@@ -469,7 +485,7 @@ def _place_single(state: PlacerState, candidate_files: Sequence[TorrentFile], ep
         chosen, verdict = _named_by_title(state, candidate_files), PlacementVerdict.TITLE_NAME
     else:
         return
-    if chosen is not None and not chosen.next_in_line((ep_id,)):
+    if chosen is not None and not chosen.left_for_hand_import and not chosen.next_in_line((ep_id,)):
         state.place(chosen, (ep_id,), verdict)
 
 
@@ -565,10 +581,10 @@ class _DuplicateProof:
 
     proven: frozenset[int]
     """Ids we have a reason to think are used: placed by this call (except by size), or pointed at by the parse or
-    title of a file in the file map or a gone one."""
+    title of a file in the file map."""
     used_by_file: Mapping[FileIdentity, frozenset[int]]
-    """The episodes each file's versions use: placed by this call, or carried as a title by a version in the file map
-    or a gone one."""
+    """The episodes each file's versions use: placed by this call, or carried as a title by a version in the file
+    map."""
 
 
 def _pass_classify(state: PlacerState) -> None:
@@ -610,7 +626,8 @@ def _pass_classify(state: PlacerState) -> None:
 def _duplicate_proof(state: PlacerState) -> _DuplicateProof:
     """Gather the duplicate evidence.
 
-    An id used from the start (by the file map or an earlier window) proves nothing alone.
+    An id used from the start (by the file map or an earlier window) proves nothing alone. Neither does a file left
+    for a hand import: nothing placed it, and its parse may be one a pass rejected.
     """
 
     by_size: set[int] = set()
@@ -622,7 +639,7 @@ def _duplicate_proof(state: PlacerState) -> _DuplicateProof:
             # A file placed by size only proves its own episode. It doesn't make another file on that episode a copy.
             if placed.verdict in _BY_SIZE:
                 by_size.update(placed.ids)
-        elif not file.to_place:
+        elif file.saved_ids is not None:
             evidenced.update(file.parsed_episodes.ids)
             if (titled := file.episode_by_title) is not None:
                 evidenced.add(titled)

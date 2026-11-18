@@ -614,8 +614,9 @@ class TestInterleavedSpecialByOrder:
 
         assert verdicts_of(result) == {PlacementVerdict.OUTSIDE_WINDOW}
 
-    def test_an_unlisted_file_the_batch_does_not_place_still_keeps_the_order_from_explaining(self) -> None:
-        # Only "S02E01" is placed. The order leaves the torrent's "S02E02" on its aired episode, as above.
+    def test_an_unlisted_file_left_for_a_hand_import_still_keeps_the_order_from_explaining(self) -> None:
+        # Only "S02E01" is placed: "S02E02" is left for a hand import. The order leaves it on its aired episode, as
+        # above.
         result = self._place_next(_order((1, 1, 601), (2, 1, 602), (2, 2, 702)), self._NEXT[:1])
 
         assert verdicts_of(result) == {PlacementVerdict.OUTSIDE_WINDOW}
@@ -887,7 +888,7 @@ class TestNameNumberSequenceByOrder:
 
         assert by_name(result) == dict.fromkeys(self._RUN, ((), PlacementVerdict.NO_EPISODE_FOUND))
 
-    def test_a_member_the_batch_does_not_place_is_passed_over(self) -> None:
+    def test_a_member_left_for_a_hand_import_is_passed_over(self) -> None:
         rest = [name for name in self._RUN if name != self._RUN[4]]
 
         result = place(blind(self._RUN), self._target({"dvd": self._DVD}), rest)
@@ -973,7 +974,7 @@ class TestNameNumberSequenceByOrder:
             **dict.fromkeys(self._SECOND, ((), PlacementVerdict.NO_EPISODE_FOUND)),
         }
 
-    def test_a_second_named_sequence_the_batch_does_not_place_is_no_tie(self) -> None:
+    def test_a_second_named_sequence_left_for_a_hand_import_is_no_tie(self) -> None:
         result = place(blind([*self._RUN, *self._SECOND]), self._target({"dvd": self._DVD}), self._RUN)
 
         assert by_name(result) == self._by_order()

@@ -1,15 +1,17 @@
 """A torrent's files placed under each title it's listed under, one window per title.
 
 The windows run season windows first, then specials windows, the kept titles before the ones in `ignore_anilist_ids`
-within each kind, and otherwise in AniList id order (`ordered_windows`), so a torrent places the same whichever title
-sees it first and whether or not a pending import exists. Season windows go first because the sequence-over-parse
-pass lets a specials window take a sequence whose spelled-out seasons and episodes lie outside it: a specials title
-with a lower id than its season title would otherwise take the season's episodes. An ignored title goes after the
-kept ones of the same kind because it never grabs: a file both could place is the kept title's to import, and the
-ignored title gets only what no kept title places.
+within each kind, and otherwise in AniList id order (`ordered_windows`), so a torrent with no pending import places
+the same whichever title sees it first. A torrent with one keeps what the pending import holds: the files in its
+file map and the files it leaves for a hand import are read as evidence and never placed
+(`grab_placement.listed_batch`), so the windows place only the rest. Season windows go first because the
+sequence-over-parse pass lets a specials window take a sequence whose spelled-out seasons and episodes lie outside
+it: a specials title with a lower id than its season title would otherwise take the season's episodes. An ignored
+title goes after the kept ones of the same kind because it never grabs: a file both could place is the kept title's
+to import, and the ignored title gets only what no kept title places.
 
-Every window places every file, not just the ones earlier windows left, because a numbered sequence cut short would
-read as a new sequence and could land wrong. Then the windows merge in order:
+Every window places every file left to place, not just the ones earlier windows left, because a numbered sequence cut
+short would read as a new sequence and could land wrong. Then the windows merge in order:
 
 - A file takes the first final verdict a window gives it, and its ids are used under the later windows. A file a
   window left for another TVDB order's episode (`OTHER_ORDER_OUTSIDE_WINDOW`) is placed by a later one only there.
@@ -141,7 +143,7 @@ class WindowFacts:
 
     target: PlacementTarget
     names: Mapping[str, NameFacts]
-    """Every name of the torrent, file map and gone names included."""
+    """Every name of the torrent, the file map's and the ones left for a hand import included."""
 
     def __post_init__(self) -> None:
         # Detach from the caller's dict, then wrap read-only.

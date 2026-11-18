@@ -35,8 +35,8 @@ class TorrentFile:
     name: str
     """The normalized file name."""
     to_place: bool
-    """Whether the batch places this name. False for a name in the file map or one no longer in the download folder
-    (gone), which is evidence only."""
+    """Whether the batch places this name. False for a name in the file map and for one left for a hand import
+    (`left_for_hand_import`): both are evidence only."""
     in_parsed: bool
     """Whether the batch's parses have an entry for the name, a None entry included."""
     parse: ParsedFileInfo | None
@@ -94,6 +94,17 @@ class TorrentFile:
         """Whether the batch places the file and no pass has judged it yet."""
 
         return self.to_place and not self.judged
+
+    @property
+    def left_for_hand_import(self) -> bool:
+        """Whether the pending import left the file for a hand import (`PendingImport.hand_import_files`).
+
+        The batch reads such a name without placing it, and the file map lacks it. An earlier check judged the file
+        and left it for a person. A later check that counts the files without it could give its episode to another
+        file.
+        """
+
+        return not self.to_place and self.saved_ids is None
 
     @property
     def identity(self) -> FileIdentity:
@@ -249,7 +260,8 @@ class PlacerState:
     episode_titles: EpisodeTitles
     """The episode titles the names were read against."""
     files: tuple[TorrentFile, ...]
-    """Every file of the torrent: the files to place in batch order, then the file map's and gone ones."""
+    """Every file of the torrent: the files to place in batch order, then the file map's and the ones left for a
+    hand import."""
     placing: tuple[TorrentFile, ...]
     """The files to place, batch order."""
     non_extras: tuple[TorrentFile, ...]
@@ -261,6 +273,9 @@ class PlacerState:
     facts: Mapping[str, NameFacts] = field(init=False)
     """What every name of the torrent reads as before the first pass. Passes 2 to 5 reject and re-read parsed
     episodes, so this is set once at the start and never read off the files later."""
+    left_for_hand_import: tuple[TorrentFile, ...] = field(init=False)
+    """The `non_extras` files left for a hand import (`TorrentFile.left_for_hand_import`). Passes 11 to 13 count each
+    among their files (`_passes._pass_pairing`), and no pass gives one an id."""
     used: set[int] = field(default_factory=set[int])
     """Every id placed on so far, the target's used ids included. Only `place` adds to it."""
     pairing_off: bool = False
@@ -273,6 +288,7 @@ class PlacerState:
 
     def __post_init__(self) -> None:
         self.non_extra_sequences = tuple(self.sequences_among(self.non_extras))
+        self.left_for_hand_import = tuple(file for file in self.non_extras if file.left_for_hand_import)
         self.facts = MappingProxyType(
             {
                 file.name: NameFacts(

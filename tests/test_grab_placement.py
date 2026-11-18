@@ -2,8 +2,8 @@
 """Grab-time placement: what `place_release` gives the planner, the pending import a release joins, and the updates."""
 
 from collections.abc import Sequence
-from dataclasses import replace
-from typing import ClassVar
+from dataclasses import dataclass, replace
+from typing import ClassVar, Self
 
 import pytest
 
@@ -137,6 +137,13 @@ def _torrent(pending: PendingImport | None = None, *, listed: Sequence[TitleWind
 
 
 _NEW = _torrent()
+
+
+def _grab_update(placement: PlacedRelease, grabbing_title: GrabbingTitle) -> PendingImportUpdate:
+    """The pending import update `grabbing_title`'s grab of the placed release builds."""
+
+    release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
+    return build_pending_import_update(release, grabbing_title, title_facts(anilist_id=grabbing_title.anilist_id))
 
 
 def _stored_pending_import() -> PendingImport:
@@ -695,9 +702,8 @@ class TestPlaceSkipped:
 
     def test_the_pending_import_update_keeps_the_file_left_for_a_hand_import(self) -> None:
         placement, grabbing_title = self._place_early_keys()
-        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
 
-        update = build_pending_import_update(release, grabbing_title, title_facts())
+        update = _grab_update(placement, grabbing_title)
 
         assert update.hand_import_files == (normalize_file_name(self._EARLY_KEYS[2]),)
 
@@ -1533,15 +1539,219 @@ class TestOrderOnlyUpdate:
         grabbing_title = make_grabbing_title(episode_index(season), series, names=TitleNames("Show", ("Show Ending",)))
         files = [ListedFile(name, 10 * n, parsed_info()) for n, name in enumerate(self._RUN, 1)]
         placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
-        release = PlacedGrab("grp", make_release(url="u", infohash="h1"), "h1", placement)
 
-        update = build_pending_import_update(release, grabbing_title, title_facts())
+        update = _grab_update(placement, grabbing_title)
 
         assert update.order_only == {
             normalize_file_name(self._RUN[0]): OrderOnlyKey("dvd", EpisodeKey(7, 1)),
             normalize_file_name(self._RUN[1]): OrderOnlyKey("dvd", EpisodeKey(7, 2)),
         }
         assert update.pending_import_at(_STAMP, restart=True).order_only == update.order_only
+
+
+@dataclass(frozen=True, slots=True)
+class _SplitOpenerPack:
+    """One torrent numbered `S07E01` on by a DVD order, listed by a season's title and by the title after it.
+
+    The DVD order splits the first title's opener in two, so `S07E01` and `S07E02` are halves Sonarr doesn't list.
+    `S07E03` to `S07E13` are the first title's other eleven episodes, and the files from `S07E14` on are the second
+    title's. The order numbers the whole opener `S07E21`, past the pack's last file. Each name carries its title's
+    AniList name. Sonarr matches `S07E01` alone, to an aired episode of neither title.
+    """
+
+    first: GrabbingTitle
+    second: GrabbingTitle
+    files: tuple[ListedFile, ...]
+
+    @classmethod
+    def of(cls, second_episodes: int = 7) -> Self:
+        """The pack with `second_episodes` episodes of the second title, a file for each."""
+
+        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
+        after = [
+            sonarr_ep(5, n, ep_id=500 + n, episode_file_id=0, tvdb_id=500 + n) for n in range(1, second_episodes + 1)
+        ]
+        matched = sonarr_ep(7, 1, ep_id=701, episode_file_id=0, tvdb_id=701)
+        dvd = (
+            OrderRow(7, 1, 9001, None),
+            OrderRow(7, 2, 9002, None),
+            *(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)),
+            *(OrderRow(7, n + 13, 500 + n, None) for n in range(1, second_episodes + 1)),
+            OrderRow(7, 21, 401, None),
+        )
+        series = episode_index([*season, *after, matched], IndexOrders({"dvd": dvd}, None))
+        titles = ("Lantern Tale", "Lantern Tale Afterglow")
+        first, second = (
+            make_grabbing_title(
+                episode_index(episodes),
+                series,
+                anilist_id=anilist_id,
+                names=TitleNames("Show", (title,)),
+                episode_count=len(episodes),
+            )
+            for anilist_id, (episodes, title) in enumerate(zip((season, after), titles, strict=True), start=1)
+        )
+        files = tuple(
+            ListedFile(
+                f"[grp] Show - S07E{n:02d} - {titles[n > 13]} (BD 1080p) [ABCD{n:04d}].mkv",
+                10 * n,
+                parsed_info(season=7, episodes=(n,), matched=((7, 1),) if n == 1 else ()),
+            )
+            for n in range(1, 14 + second_episodes)
+        )
+        return cls(first, second, files)
+
+    @property
+    def halves(self) -> dict[str, OrderOnlyKey]:
+        """The opener's two halves, each with the DVD key that numbers it."""
+
+        return {self.files[n - 1].name: OrderOnlyKey("dvd", EpisodeKey(7, n)) for n in (1, 2)}
+
+    @property
+    def first_map(self) -> dict[str, tuple[int, ...]]:
+        """The first title's eleven files past the halves, each on its aired episode."""
+
+        return {self.files[n].name: (400 + n,) for n in range(2, 13)}
+
+    @property
+    def second_map(self) -> dict[str, tuple[int, ...]]:
+        """The second title's files, each on its aired episode."""
+
+        return {f.name: (500 + n,) for n, f in enumerate(self.files[13:], start=1)}
+
+    def check(self, title: GrabbingTitle, stored: PendingImport | None = None) -> PlacedRelease:
+        """`title`'s check of the pack against the `stored` pending import, the listing and the series read."""
+
+        evidence = torrent_evidence(self.first.window, self.second.window)
+        return place_release(
+            self.files, title, known_torrent(stored, indexes={7: title.series_index}, evidence=evidence)
+        )
+
+    @staticmethod
+    def saved(title: GrabbingTitle, placement: PlacedRelease) -> PendingImport:
+        """The pending import `title`'s grab saves for its `placement`."""
+
+        return _grab_update(placement, title).pending_import_at(_STAMP, restart=False)
+
+    def stored_after(self, *titles: GrabbingTitle) -> PendingImport:
+        """The pending import once each of `titles` has checked the pack in turn and saved what it placed."""
+
+        stored = None
+        for title in titles:
+            stored = self.saved(title, self.check(title, stored))
+        assert stored is not None
+        return stored
+
+
+class TestStoredTorrentCheckedAgain:
+    """A later check of a stored torrent places no file its pending import left for a hand import."""
+
+    def test_the_first_title_checked_again_keeps_the_halves_and_the_file_map(self) -> None:
+        pack = _SplitOpenerPack.of()
+        stored = pack.stored_after(pack.first)
+
+        again = pack.saved(pack.first, pack.check(pack.first, stored))
+
+        assert set(again.hand_import_files) == set(pack.halves)
+        assert again.order_only == pack.halves
+        assert again.file_episode_map == stored.file_episode_map == pack.first_map
+
+    def test_the_second_title_joining_the_firsts_pending_import_places_its_own_files(self) -> None:
+        # The halves are of the same numbered sequence as the seven files, so the seven alone are not fitted by
+        # position. The DVD order reads them, as on a first check.
+        pack = _SplitOpenerPack.of()
+        stored = pack.stored_after(pack.first)
+
+        placement = pack.check(pack.second, stored)
+
+        assert by_name(placement.placements) == {
+            name: (ids, PlacementVerdict.OTHER_ORDER) for name, ids in pack.second_map.items()
+        }
+        assert placement.skip_reason is None
+        assert pack.saved(pack.second, placement).order_only == pack.halves
+
+    def test_the_pending_import_ends_the_same_whichever_title_checks_first(self) -> None:
+        pack = _SplitOpenerPack.of()
+        first_led = pack.stored_after(pack.first, pack.second)
+
+        second_led = pack.stored_after(pack.second, pack.first)
+
+        # The claims are in the order the titles checked.
+        assert second_led == replace(first_led, claims=first_led.claims[::-1])
+
+    def test_a_lone_file_of_the_second_title_lands_on_its_own_episode(self) -> None:
+        # The second title has one episode and one file. With the first title's eleven stored, that file is the only
+        # one left to place.
+        pack = _SplitOpenerPack.of(second_episodes=1)
+        stored = pack.stored_after(pack.first)
+
+        placement = pack.check(pack.second, stored)
+
+        assert placement.placements.placed == {pack.files[13].name: (501,)}
+
+    def test_a_title_name_pointing_at_a_file_left_for_a_hand_import_gives_the_episode_to_nobody(self) -> None:
+        # On the first title's later check its opener is the one unused episode, and the second title's one file is
+        # the only file left to place. The first title's name points at the second half, left for a hand import.
+        pack = _SplitOpenerPack.of(second_episodes=1)
+        stored = pack.stored_after(pack.first)
+
+        placement = pack.check(pack.first, stored)
+
+        assert by_name(placement.placements) == {pack.files[13].name: ((), PlacementVerdict.ANOTHER_TITLES)}
+
+    def test_a_file_named_for_its_one_episode_title_is_placed_beside_two_files_left_for_a_hand_import(self) -> None:
+        # The group numbers the first title's files `S1 - 01` to `S1 - 13` and names the second title's one file by
+        # its title. Sonarr reads none of the names, so both halves count under the second title's window too.
+        names = [
+            *(f"[grp] Lantern Tale S1 - {n:02d} [ABCD{n:04d}].mkv" for n in range(1, 14)),
+            "[grp] Lantern Tale Afterglow [ABCD0014].mkv",
+        ]
+        files = tuple(ListedFile(name, 10 * n, parsed_info()) for n, name in enumerate(names, start=1))
+        pack = replace(_SplitOpenerPack.of(second_episodes=1), files=files)
+        stored = pack.stored_after(pack.first)
+
+        placement = pack.check(pack.second, stored)
+
+        assert by_name(placement.placements) == {pack.files[13].name: ((501,), PlacementVerdict.TITLE_NAME)}
+
+    def test_a_check_with_only_hand_import_files_left_places_nothing_and_waits_on_no_parse(self) -> None:
+        # Sonarr gives no parse for the halves this run. Nothing is left to place, so no parse is needed.
+        pack = _SplitOpenerPack.of()
+        stored = pack.stored_after(pack.first, pack.second)
+        unparsed = replace(pack, files=(*(replace(f, parse=None) for f in pack.files[:2]), *pack.files[2:]))
+
+        placement = unparsed.check(pack.first, stored)
+
+        assert placement.placements.placements == ()
+        assert (placement.skip_reason, placement.inputs_read) == (None, True)
+
+    def test_a_title_with_nothing_on_its_window_is_skipped_as_another_titles_with_only_hand_import_files_left(
+        self,
+    ) -> None:
+        # The torrent holds the first title's thirteen files alone, and SeaDex lists it under the second title too.
+        pack = _SplitOpenerPack.of()
+        season_only = replace(pack, files=pack.files[:13])
+        stored = season_only.stored_after(pack.first)
+
+        placement = season_only.check(pack.second, stored)
+
+        assert placement.placements.placements == ()
+        assert placement.skip_reason is SkipReason.PLACED_ELSEWHERE
+        assert placement.another_titles_counts == AnotherTitlesCounts(another_titles=11, unplaced=0)
+
+    def test_a_pending_import_stored_without_hand_import_files_keeps_its_unplaced_files_unplaced(self) -> None:
+        # Such a row reads every listed file it neither placed nor excluded as left for a hand import: the halves.
+        pack = _SplitOpenerPack.of()
+        stored = pack.stored_after(pack.first)
+        raw = stored.to_json()
+        del raw["hand_import_files"]
+        del raw["order_only"]
+        old = PendingImport.from_json(raw, guards={})
+
+        again = pack.saved(pack.first, pack.check(pack.first, old))
+
+        assert set(again.hand_import_files) == set(pack.halves)
+        assert again.file_episode_map == pack.first_map
 
 
 class TestPendingImportAt:
