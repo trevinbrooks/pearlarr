@@ -7,7 +7,7 @@ themselves (`ParseCacheRows`, in `parse_cache`) are bound once on `ArrRunDeps`. 
 episode collaborator is handed in. It has the series hash that pins rows with no
 matched episodes, and the order of each series, since a row is good only while its
 series stays in the order it was stored under. It matches a parse again for a series
-Sonarr numbers by another order (`EpisodeSource.aired_parse`). The cache keeps
+Sonarr numbers by another order (`AiredParseSource.aired_parse`). The cache keeps
 Sonarr's own answer, never that one.
 """
 
@@ -23,7 +23,7 @@ from .output.console_text import count_noun
 from .parse_cache import ParseFreshness
 from .releases import SeadexDict
 from .sonarr_client import AbstractSonarrClient
-from .sonarr_episodes import EpisodeSource, fetch_workers
+from .sonarr_episodes import AiredParseSource, fetch_workers
 from .sonarr_matching import NoAnswer
 from .video_files import indexed_video_files
 
@@ -53,7 +53,7 @@ class SonarrParseCache:
     Reads go through `rows`, so a write staged by `parsed_files` is visible to a later same-run read.
     """
 
-    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, episodes: EpisodeSource) -> None:
+    def __init__(self, deps: ArrRunDeps, sonarr: AbstractSonarrClient, episodes: AiredParseSource) -> None:
         """Bind the shared collaborators, the Sonarr client whose `/parse` the cache fills from, and the episode source.
 
         The episode source gives the run's series hash, each series' order, and the aired matches of a parse.

@@ -64,7 +64,7 @@ from pearlarr.radarr_client import AbstractRadarrClient
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.skyhook_client import AbstractSkyHookClient, SkyHookNoReply, SkyHookReply
 from pearlarr.sonarr_client import AbstractSonarrClient
-from pearlarr.sonarr_episodes import EpisodeSource, SeriesRows, TitleEpisodes
+from pearlarr.sonarr_episodes import AiredParseSource, EpisodeSource, SeriesRows, TitleEpisodes
 from pearlarr.sonarr_matching import NoAnswer
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders, is_another_order
 from pearlarr.wait_types import AttemptKind, AttemptResult, ImportProgress
@@ -736,8 +736,8 @@ class FakeXemClient(AbstractXemClient):
         return self._mappings.get(tvdb_id, ())
 
 
-class ScriptedEpisodes(EpisodeSource, SeriesRows):
-    """An `EpisodeSource` scripted by hand: the series list off `sonarr`, one window per AniList id.
+class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
+    """A `SonarrEpisodes` scripted by hand: the series list off `sonarr`, one window per AniList id.
 
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
@@ -816,7 +816,6 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
                 return NoView.READ_FAILED
         return TitleEpisodes(aired=tuple(episodes))
 
-    @override
     def series_index(self, series_id: int) -> EpisodeIndex | None:
         """The whole series' index with no other order read onto it, None for a series with no view."""
 
@@ -836,14 +835,12 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
 
         return self._last_known.get(series_id, [])
 
-    @override
     def library_orders(self, series_id: int) -> SonarrSeriesOrders:
         """Every series is numbered by the scripted order, with no count."""
 
         del series_id
         return SonarrSeriesOrders(tvdb_id=0, season_type=self._order, counts=None)
 
-    @override
     def alternate_titles(self, series_id: int) -> tuple[AlternateTitle, ...]:
         """No series has one."""
 
@@ -856,7 +853,6 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
 
         return info
 
-    @override
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles:
         """The arr has no files. The episodes asked about are recorded."""
 
@@ -869,7 +865,6 @@ class ScriptedEpisodes(EpisodeSource, SeriesRows):
 
         return self._counts.get(anilist_id)
 
-    @override
     def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool:
         """Whether any of the titles is one of the `unread_anilist_ids`, or any of the series one of the `unread_series`."""
 

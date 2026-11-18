@@ -68,7 +68,7 @@ class ListedFile:
 
     parse: ParsedFileInfo | None
     """Sonarr's parse of the name, its matched episodes the ones an aired Sonarr gives it
-    (`EpisodeSource.aired_parse`). None when Sonarr didn't answer, or an aired Sonarr's answer can't be known and
+    (`AiredParseSource.aired_parse`). None when Sonarr didn't answer, or an aired Sonarr's answer can't be known and
     `parse_without_answer` leaves it unread. An unknown parse keeps the name number passes from placing, and skips
     the release while it has a file left to place (`SkipReason.PLACEMENT_INPUT_UNREAD`)."""
 
