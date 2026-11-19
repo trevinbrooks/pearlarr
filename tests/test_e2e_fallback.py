@@ -55,7 +55,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import yaml
 
-import pearlarr.arr_http as arr_http
+import pearlarr.arr_run_services as arr_run_services
 from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.cli import run_single
@@ -68,6 +68,7 @@ from pearlarr.pending_import import PendingImport, TitleClaim, TitleNames
 from pearlarr.stamps import stamp_of
 
 from .builders import make_config, rows_without_tvdb_ids
+from .fakes import FakeClock
 from .http_mock import sonarr_fixture
 
 _COMMAND_ID = re.compile(r"/api/v3/command/(\d+)")
@@ -633,8 +634,8 @@ def _serve(world: _World) -> Generator[tuple[str, str]]:
 
     sonarr = _MockServer(_SonarrHandler, world)
     qbit = _MockServer(_QbitHandler, world)
-    threading.Thread(target=sonarr.serve_forever, daemon=True).start()
-    threading.Thread(target=qbit.serve_forever, daemon=True).start()
+    for server in (sonarr, qbit):  # a shutdown blocks for up to one poll, 0.5s by default
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         yield sonarr.url, qbit.url
     finally:
@@ -712,15 +713,14 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
     """One real `run_single(sonarr=True)` against the scenario's mock servers."""
 
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path))
-    # Keep the in-call GET retries but drop their backoff base (jitter stays),
-    # so a deliberately-failing fetch doesn't stretch each poll by seconds.
-    monkeypatch.setattr(arr_http, "BACKOFF_BASE_S", 0.0)
+    # The wait sleeps on a clock that moves one poll per sleep and never really waits.
+    monkeypatch.setattr(arr_run_services, "SystemClock", lambda: FakeClock(step=1.0))
 
     # Imported unseen: the episode files are already there when the run starts.
     world = _World(scenario, files_imported=scenario.imported_unseen or scenario.imported_by_hand)
     with _serve(world) as (sonarr_url, qbit_url):
         # qBittorrent configured -> a real run (not a dry run) whose blocking
-        # wait pass drives the carried-over pending import. 1s polls keep it quick.
+        # wait pass drives the carried-over pending import.
         config = make_config(
             url=sonarr_url,
             api_key="testkey",
