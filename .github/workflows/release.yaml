@@ -412,7 +412,8 @@ jobs:
           python3 -m venv /tmp/smoke
           # shellcheck disable=SC1091
           . /tmp/smoke/bin/activate
-          for _ in $(seq 1 20); do
+          # pip's index has taken more than five minutes to list a new version, so wait up to ten.
+          for _ in $(seq 1 40); do
             pip install --quiet "pearlarr==$VERSION" && break
             echo "not yet on the index; retrying"; sleep 15
           done
