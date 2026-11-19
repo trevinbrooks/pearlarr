@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-19
+
 ### Upgrade notes
 
 - **Take a cache backup before upgrading if you might go back.** The first run after upgrading, a dry run included, moves `cache.db` to schema v9 by dropping the list of grabbed torrent hashes, renaming its `al_id` columns and keys to `anilist_id`, and adding a column for Sonarr's episode count of each title's series, and an older release won't open a v9 file. The Docker image runs once as the container starts (unless `PEARLARR_RUN_ON_START` is off), so take the backup before pulling the new image. With a `pearlarr cache backup` taken first, going back is: reinstall the older release, run `pearlarr cache restore`, and, if this release rewrote `config.yml`, copy `config.yml.bak` back over it, since the older release won't load the rewritten file either. The restored cache knows nothing this release did, so the older release forgets the pending imports this release saved, and with `seadex.use_torrent_hash_to_filter` on it grabs again what this release grabbed.
