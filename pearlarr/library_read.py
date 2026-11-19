@@ -8,8 +8,8 @@ from .arr_models import AlternateTitle, SonarrItem
 from .tvdb_orders import SonarrSeriesOrders
 
 
-def series_orders(series: SonarrItem) -> SonarrSeriesOrders:
-    """What one Sonarr series resource says about its orders, from the library read or a read of the series alone."""
+def _series_orders(series: SonarrItem) -> SonarrSeriesOrders:
+    """What one Sonarr series resource says about its orders."""
 
     return SonarrSeriesOrders(
         tvdb_id=series.tvdbId,
@@ -29,9 +29,12 @@ class LibrarySeries:
     alternate_titles: tuple[AlternateTitle, ...] = ()
     """Its other names in Sonarr, in Sonarr's order."""
 
+    title: str = ""
+    """Its Sonarr title, blank when Sonarr sent none."""
+
 
 NOT_IN_LIBRARY = LibrarySeries(SonarrSeriesOrders(tvdb_id=0, season_type="", counts=None))
-"""A series this run's library read doesn't have: it names no order and has no other names."""
+"""A series this run's library read doesn't have: it names no order and has no names."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -46,7 +49,7 @@ class LibraryRead:
 
     sends_order: bool
     """Whether Sonarr sent an order with any series of the read (`SonarrItem.order_sent`). One that sends none
-    numbers every series as aired, and no series is read a second time for it."""
+    numbers every series as aired, so its rows are tested against no order."""
 
     series_hash: str
     """The hash of the ids of the series with an AniList mapping (`sonarr_series_hash`). It pins the `/parse` cache
@@ -69,7 +72,10 @@ class LibraryRead:
         """The read of every series Sonarr sent, with the hash of the ones that have an AniList mapping."""
 
         return cls(
-            by_id={series.id: LibrarySeries(series_orders(series), series.alternateTitles) for series in in_sonarr},
+            by_id={
+                series.id: LibrarySeries(_series_orders(series), series.alternateTitles, series.title)
+                for series in in_sonarr
+            },
             sends_order=any(series.order_sent for series in in_sonarr),
             series_hash=series_hash,
         )

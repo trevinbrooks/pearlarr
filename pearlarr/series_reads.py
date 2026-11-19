@@ -4,13 +4,13 @@ A title's check reads every series as aired (`aired_view`), whatever order Sonar
 matched a file name to included (`aired_parse`). The import reads Sonarr's own rows. A series in another order takes
 its scene numbers from TheXEM's mappings (`scene_numbers`), not from Sonarr's rows.
 
-Whether a series' rows can be read at all is asked of `row_order_guard`, which holds every rule for it.
+Whether a series' rows are numbered by its order is asked of `row_order_guard`.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import assert_never, override
+from typing import override
 
 from . import aired_view as _aired_view
 from .aired_view import AiredSeries, NoView
@@ -18,16 +18,13 @@ from .arr_models import AlternateTitle, ParsedFileInfo, SonarrEpisode
 from .library_read import NO_LIBRARY, LibraryRead
 from .placement_types import EpisodeIndex, episode_index
 from .releases import season_episode_key
-from .row_order_guard import AiredRows, RowOrderGuard
+from .row_order_guard import RowOrderGuard
 from .scene_numbers import scene_numbers
 from .skyhook_gateway import SkyHookGateway
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_matching import AiredMatcher, NoAnswer
 from .tvdb_orders import NO_ORDERS, OrdersByName, SonarrSeriesOrders
 from .xem_gateway import XemGateway
-
-_GONE = AiredSeries(in_sonarr=(), stand_ins=())
-"""The view of a series Sonarr answers it doesn't have: no episodes."""
 
 
 @dataclass(slots=True)
@@ -38,7 +35,7 @@ class _SeriesRead:
     """The series' episodes as Sonarr sent them."""
 
     view: AiredSeries | NoView | None = None
-    """The aired view of `rows`. None until one is built, and never `NoView.READ_FAILED`, which is asked for again."""
+    """The aired view of `rows`, or why they have none. None until one is built."""
 
     index: EpisodeIndex | None = None
     """The view's placement index. None until it is first asked for, and for a series with no view."""
@@ -105,7 +102,7 @@ class SeriesReads(AiredParseSource, SeriesRows):
         self._skyhook = skyhook
         self._xem = xem
         self._library = NO_LIBRARY
-        self._guard = RowOrderGuard(sonarr, skyhook, NO_LIBRARY)
+        self._guard = RowOrderGuard(skyhook, NO_LIBRARY)
 
         # Each series' rows and what is built from them, kept for the run so the several AniList ids of a
         # multi-season series share one fetch. Reset at the arr run's start (`begin_run`).
@@ -115,7 +112,7 @@ class SeriesReads(AiredParseSource, SeriesRows):
         """Start a run over its library read. Every series' rows go, and so does every hold on a series."""
 
         self._library = library
-        self._guard = RowOrderGuard(self._sonarr, self._skyhook, library)
+        self._guard = RowOrderGuard(self._skyhook, library)
         self._series = {}
 
     @property
@@ -167,34 +164,25 @@ class SeriesReads(AiredParseSource, SeriesRows):
         if read is None:
             return NoView.READ_FAILED
         if read.view is None:
-            view = self._view_of(series_id, read.rows)
-            if view is NoView.READ_FAILED:
-                # Not kept with the rows, so the next call asks Sonarr again.
-                return view
-            read.view = view
+            read.view = self._view_of(series_id, read.rows)
         return read.view
 
     def _view_of(self, series_id: int, rows: list[SonarrEpisode]) -> AiredSeries | NoView:
         """The aired view of rows just read, under the order the library read gives the series.
 
         A series in another order is renumbered by TVDB episode id, which is right whatever numbers its rows
-        carry, and then given its scene numbers (`_scene_numbered`). Rows taken as already aired are right only if
-        the series is still in aired order, so the guard confirms them first (`RowOrderGuard.aired_rows`).
+        carry, and then given its scene numbers (`_scene_numbered`). Rows taken as already aired must be numbered
+        as aired (`RowOrderGuard.numbered_as_named`). A series whose rows aren't is held for the run.
         """
 
         facts = self._library.series(series_id).orders
         if facts.in_another_order:
             view = _aired_view.aired_series(rows, facts, self._skyhook.cached_orders(facts.tvdb_id))
             return view if isinstance(view, NoView) else self._scene_numbered(view, facts.tvdb_id)
-        confirmed = self._guard.aired_rows(series_id, rows)
-        match confirmed:
-            case AiredRows.CONFIRMED:
-                return _aired_view.aired_series(rows, facts, None)
-            case AiredRows.GONE:
-                return _GONE
-            case AiredRows.UNREAD:
-                return NoView.READ_FAILED
-        assert_never(confirmed)
+        if not self._guard.numbered_as_named(series_id, rows):
+            self._guard.hold(series_id)
+            return NoView.READ_FAILED
+        return _aired_view.aired_series(rows, facts, None)
 
     def _scene_numbered(self, view: AiredSeries, tvdb_id: int) -> AiredSeries | NoView:
         """The view of a series in another order with the scene numbers TheXEM's stored mappings give its episodes.
@@ -246,7 +234,7 @@ class SeriesReads(AiredParseSource, SeriesRows):
         if series_id is None:
             return info
         if self._guard.holds(series_id):
-            # Asked first: Sonarr may have matched the name by an order the library read doesn't know of.
+            # Asked first: Sonarr matched the name on rows the run doesn't read.
             return NoView.READ_FAILED
         series = self._library.series(series_id)
         if not series.orders.in_another_order:
@@ -280,9 +268,9 @@ class SeriesReads(AiredParseSource, SeriesRows):
     def read_episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """The series' episodes as Sonarr numbers them, read now, refreshing the per-run cache.
 
-        None when the read failed. None too when the rows aren't numbered by the order Sonarr names for the series
-        once it has sent them (`RowOrderGuard.numbered_as_named`). Such rows are not kept, so the run goes on
-        holding the ones it had.
+        None when the read failed. None too when the rows aren't numbered by the order the library read names for
+        the series (`RowOrderGuard.numbered_as_named`). Such rows are not kept, so the run goes on holding the ones
+        it had.
         """
 
         fetched = self._sonarr.episodes(series_id)

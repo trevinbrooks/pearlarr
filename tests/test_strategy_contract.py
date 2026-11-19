@@ -158,7 +158,7 @@ class _Item:
     """
 
     id: int
-    title: str
+    title: str = ""
     imdbId: str | None
     monitored: bool
     tvdbId: int

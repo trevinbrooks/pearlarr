@@ -7,7 +7,7 @@ from typing import cast, override
 
 from pydantic import ValidationError
 
-from .arr_http import ArrHttp, DeleteOutcome, NoResource
+from .arr_http import ArrHttp, DeleteOutcome
 from .arr_models import (
     CommandBody,
     CommandResource,
@@ -40,9 +40,6 @@ class AbstractSonarrClient(ABC):
 
     @abstractmethod
     def all_series(self) -> list[SonarrItem]: ...
-
-    @abstractmethod
-    def series(self, series_id: int) -> SonarrItem | NoResource: ...
 
     @abstractmethod
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None: ...
@@ -134,24 +131,6 @@ class SonarrClient(AbstractSonarrClient):
         raw = self._http.get_json_list_strict("/api/v3/series")
         # Strict to match: a non-empty payload with zero valid series raises instead of reading as empty.
         return list[SonarrItem](validate_each(SonarrSeries, raw, strict=True))
-
-    @override
-    def series(self, series_id: int) -> SonarrItem | NoResource:
-        """One series, read alone (`/api/v3/series/{id}`).
-
-        GONE when Sonarr answers that it has no series with the id. FAILED for every other failure, a reply that
-        isn't a series among them, each warned of.
-        """
-
-        warn = f"Could not fetch series {series_id} from Sonarr ({{detail}}) - skipping"
-        payload = self._http.get_resource(f"/api/v3/series/{series_id}", warn=warn)
-        if isinstance(payload, NoResource):
-            return payload
-        try:
-            return SonarrSeries.model_validate(payload)
-        except ValidationError as e:
-            hub_warn(warn.format(detail=f"malformed response: {validation_summary(e)}"))
-            return NoResource.FAILED
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:

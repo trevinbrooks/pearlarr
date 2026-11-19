@@ -99,7 +99,7 @@ A series in another order has each row renumbered to the aired episode with the 
 An aired episode Sonarr has no row for is held by a stand-in: a row with no file whose id is its TVDB episode id negated (`episode_ids`). That id is the same on every run, so a pending import can store it, and it is never a Sonarr row's, which are positive. No file is imported onto a stand-in.
 An aired episode is Sonarr's episode model with its numbers rewritten (`SonarrEpisode.renumbered`), so every reader of the model takes it unchanged. It remembers the number Sonarr lists it under, and lines print that one.
 A stored pending import keeps the TVDB episode id of each row it holds. Sonarr can give an episode another row, so each id is followed onto the row that holds its episode before the pending import is read (`pending_follow`).
-The cost: on a Sonarr that sends each series' order, a series in aired order is read once more on its own before its rows are taken as aired, and the import does the same after each read of a series' rows (`row_order_guard`). These reads run one at a time. A Sonarr that sends no order pays none of them.
+Rows are tested against the TVDB orders stored for their series before a check takes them as aired, and before an import onto them (`row_order_guard`). The order they must follow is the one the run's library read names for the series. The test asks Sonarr nothing, and asks SkyHook only when the rows fail it.
 
 ## Glossary
 

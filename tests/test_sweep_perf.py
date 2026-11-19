@@ -283,7 +283,7 @@ class _Series:
     """A fake Sonarr series satisfying the `SonarrItem` protocol surface."""
 
     id: int
-    title: str
+    title: str = ""
     imdbId: str | None
     monitored: bool
     tvdbId: int
