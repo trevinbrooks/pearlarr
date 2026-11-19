@@ -19,7 +19,6 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr.aired_view import AiredSeries, NoView, stand_in
-from pearlarr.arr_http import NoResource
 from pearlarr.arr_models import (
     AlternateTitle,
     MatchedEpisode,
@@ -44,7 +43,7 @@ from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
-from pearlarr.sonarr_episodes import TitleEpisodes, _dated, sonarr_series_hash
+from pearlarr.sonarr_episodes import _dated, sonarr_series_hash
 from pearlarr.sonarr_matching import AiredMatcher
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import EpisodeDetails, OrderRow, SeriesNumbering
@@ -79,7 +78,6 @@ from .fakes import (
     FakeSkyHookClient,
     FakeSonarrClient,
     FakeXemClient,
-    HookedSonarrClient,
     RecordingHub,
     debug_logger,
     diagnostic_messages,
@@ -130,12 +128,11 @@ def _reads(
 ) -> SeriesReads:
     """A run's reads after its library read of `series`, with no strategy around them.
 
-    The series, their rows and what Sonarr answers of one alone are as `_sync` has them. TVDB orders are fetched
-    through `client`, and a series has the scene mappings `cache` holds.
+    The series and their rows are as `_sync` has them. TVDB orders are fetched through `client`, and a series has
+    the scene mappings `cache` holds.
     """
 
     sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
-    sonarr.all_series_return = series
     return make_series_reads(sonarr, cache, library=series, skyhook_client=client)
 
 
@@ -150,9 +147,9 @@ def _sync(
 ) -> SonarrStrategy:
     """The Sonarr strategy after the Sonarr run's library fetch of `series`, its orders fetched through `client`.
 
-    Every series has an AniList mapping, and Sonarr answers a read of one as the library lists it unless `sonarr`
-    is scripted otherwise. Every series' episodes are `_ROWS` unless `sonarr` serves others. Its AniList knows no
-    title. Scene mappings are read through `xem`, and none is read here: a series has the ones `cache` holds.
+    Every series has an AniList mapping. Every series' episodes are `_ROWS` unless `sonarr` serves others. Its
+    AniList knows no title. Scene mappings are read through `xem`, and none is read here: a series has the ones
+    `cache` holds.
     """
 
     sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
@@ -343,187 +340,31 @@ def test_a_new_read_of_a_series_replaces_its_view_and_index() -> None:
     assert set(index.by_id) == {11, 12, 13}
 
 
-def test_a_sonarr_that_sends_no_order_is_never_asked_for_a_series_alone() -> None:
-    # No series of the library read carries `seasonType`, so each is read as aired, as its rows come.
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    library: list[SonarrItem] = [_series(1, 50, season_type=None), _series(2, 60, season_type=None)]
-    reads = _reads(library, FakeCacheStore(), sonarr=sonarr)
-
-    views = [reads.aired_series(series_id) for series_id in (1, 2)]
-
-    assert views == [AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())] * 2
-    assert sonarr.series_calls == []
-
-
-def test_a_series_of_an_all_aired_library_is_read_alone_when_sonarr_sends_its_order() -> None:
-    # Every series says `official`. That the key was sent, whatever its value, is what has each one read again.
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    reads = _reads([_series(1, 50), _series(2, 60)], FakeCacheStore(), sonarr=sonarr)
-
-    reads.aired_series(1)
-    reads.aired_series(2)
-
-    assert sonarr.series_calls == [1, 2]
-
-
-def test_a_series_both_reads_say_is_aired_is_read_alone_once_for_a_read_of_its_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-
-    first = strat._episodes.title_episodes(1, 500, _SEASON_ONE)
-    second = strat._episodes.title_episodes(1, 501, TitleMapping(anilist_id=501, tvdb_season=1))
-
-    assert first == TitleEpisodes(aired=tuple(_ROWS))
-    assert second == first
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
-
-
-_ORDER_CHANGED = (
-    "Show 1 not checked - the order Sonarr numbers the series by changed during this run - checking its titles "
-    "again next run"
-)
-"""The warning for series 1 once Sonarr names another order for it than this run's library read did."""
-
-
-def test_a_series_whose_order_changed_since_the_library_read_has_no_view_for_the_rest_of_the_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Sonarr names the dvd order only once it has sent the rows, so a read made before them would miss it.
-    recording = install_recording_hub()
-    sonarr = HookedSonarrClient(episodes=list(_DVD_ROWS))
-    sonarr.on_episodes = lambda: sonarr.series_return.update({1: _series(1, 50, season_type="dvd")})
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-
-    views = [
-        strat._reads.aired_series(1),
-        strat._episodes.title_episodes(1, 500, _SEASON_ONE),
-        strat._reads.aired_series(1),
-    ]
-
-    assert views == [NoView.READ_FAILED] * 3
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
-    assert strat._reads.last_known_episodes(1) == _DVD_ROWS
-    assert diagnostic_messages(recording, Severity.WARNING) == [_ORDER_CHANGED]
-
-
-def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_sonarr_says_of_it_later() -> None:
-    # Sonarr went to the aired order after the library read: its rows and a read of the series alone both say so.
+def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_numbers_its_rows_carry() -> None:
+    # Sonarr's rows are numbered as aired, not by the dvd order the library read names.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(50, stored_scene_mappings())
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
-    sonarr.series_return[1] = _series(1, 50)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=FakeSonarrClient(episodes=list(_ROWS)))
 
     view = reads.aired_series(1)
 
     assert isinstance(view, AiredSeries)
     assert _numbered(view.aired) == [(11, (1, 1)), (12, (1, 2)), (-9003, (1, 3))]
-    assert sonarr.series_calls == []
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [
-        pytest.param(NoResource.FAILED, id="failed"),
-        # A reply with no `seasonType`, from a Sonarr that sent one with the library, says nothing of the order.
-        pytest.param(_series(1, 50, season_type=None), id="no-order-key"),
-    ],
-)
-def test_a_failed_read_of_a_series_alone_gives_no_view_and_the_next_call_asks_again(
-    answer: SonarrItem | NoResource,
-) -> None:
-    recording = install_recording_hub()
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-    sonarr.series_return[1] = answer
-
-    failed = reads.aired_series(1)
-    del sonarr.series_return[1]
-    view = reads.aired_series(1)
-
-    assert failed is NoView.READ_FAILED
-    assert view == AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1, 1])
-    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @pytest.mark.parametrize(
     "library",
     [pytest.param([_series(1, 50)], id="in-the-library"), pytest.param([_series(2, 60)], id="not-in-the-library")],
 )
-def test_a_series_sonarr_answers_it_does_not_have_has_no_episodes(library: list[SonarrItem]) -> None:
+def test_a_series_sonarr_sends_no_episodes_of_has_none(library: list[SonarrItem]) -> None:
     recording = install_recording_hub()
-    sonarr = FakeSonarrClient(episodes=[])
-    reads = _reads(library, FakeCacheStore(), sonarr=sonarr)
-    sonarr.series_return[1] = NoResource.GONE
+    reads = _reads(library, FakeCacheStore(), sonarr=FakeSonarrClient(episodes=[]))
 
     view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=(), stand_ins=())
     assert diagnostic_messages(recording, Severity.WARNING) == []
-
-
-def test_a_series_the_library_read_lacks_that_sonarr_has_by_now_has_no_view_for_the_rest_of_the_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Series 2 came to Sonarr after the library read, so the run knows neither its order nor its TVDB series.
-    recording = install_recording_hub()
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-    sonarr.series_return[2] = _series(2, 60)
-
-    views = [strat._reads.aired_series(2), strat._reads.aired_series(2)]
-
-    assert views == [NoView.READ_FAILED] * 2
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([2], [2])
-    # Nothing the read said was kept: the run still has no TVDB series to fetch orders for.
-    assert strat._episodes.prefetch_orders([2]) == 0
-    assert diagnostic_messages(recording, Severity.WARNING) == [
-        (
-            "Show 2 not checked - the series was not in Sonarr when this run read its library - checking its "
-            "titles next run"
-        )
-    ]
-
-
-def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_release_needs_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A torrent SeaDex lists under a title of series 1 too is grabbed by a title of series 2.
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60)], FakeCacheStore(), sonarr=sonarr)
-    sonarr.series_return[1] = _series(1, 50, season_type="dvd")
-    strat._reads.aired_series(1)
-    named_as_series_one = ParsedFileInfo(
-        season_number=1,
-        episode_numbers=(2,),
-        series_title="Show 1",
-        matched_episodes=(_matched(1, 2, 12),),
-        series_id=1,
-    )
-
-    indexes = strat._series_indexes({1, 2})
-    listed = known_torrent(indexes=indexes, evidence=torrent_evidence(title_window(500, (11, 12), series_id=1)))
-
-    assert set(indexes) == {2}
-    assert listed.order(title_window(600, (11, 12), series_id=2)) is None
-    assert strat._reads.aired_parse(named_as_series_one) is NoView.READ_FAILED
-
-
-def test_a_view_built_after_the_imports_read_of_a_series_reads_it_alone_once_more() -> None:
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-
-    reads.read_episodes(1)
-    asked_by_the_import = list(sonarr.series_calls)
-    reads.aired_series(1)
-    reads.aired_series(1)
-
-    assert asked_by_the_import == [1]
-    assert sonarr.series_calls == [1, 1]
 
 
 def _with_an_unmapped_series(
@@ -658,7 +499,7 @@ def _aired_over_dvd_rows(client: FakeSkyHookClient, *, stored: bool = True) -> S
         pytest.param(FakeSkyHookClient(failing=frozenset({(50, "official")})), _UNCONFIRMED, id="skyhook-unreachable"),
     ],
 )
-def test_a_series_both_reads_say_is_aired_over_rows_numbered_by_another_order_has_no_view_for_the_rest_of_the_run(
+def test_an_aired_series_over_rows_numbered_by_another_order_has_no_view_for_the_rest_of_the_run(
     client: FakeSkyHookClient, warning: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recording = install_recording_hub()
@@ -674,7 +515,6 @@ def test_a_series_both_reads_say_is_aired_over_rows_numbered_by_another_order_ha
     ]
 
     assert views == [NoView.READ_FAILED] * 3
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
     assert diagnostic_messages(recording, Severity.WARNING) == [warning]
 
 
@@ -716,10 +556,17 @@ def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come() -> None:
     assert client.fetch_calls == []
 
 
-def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer() -> None:
-    reads = _aired_over_dvd_rows(_skyhook(_ORDERS))
-    reads.aired_series(1)
-    info = ParsedFileInfo(
+def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_release_needs_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A torrent SeaDex lists under a title of series 1 too is grabbed by a title of series 2. Only series 1 has
+    # stored orders, and its rows are out of step with them.
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
+    strat = _sync(monkeypatch, [_series(1, 50), _series(2, 60)], cache, _skyhook(_ORDERS), sonarr=sonarr)
+    strat._reads.aired_series(1)
+    named_as_series_one = ParsedFileInfo(
         season_number=1,
         episode_numbers=(2,),
         series_title="Show 1",
@@ -727,26 +574,15 @@ def test_a_parse_of_a_series_whose_rows_are_out_of_step_has_no_answer() -> None:
         series_id=1,
     )
 
-    assert reads.aired_parse(info) is NoView.READ_FAILED
+    indexes = strat._series_indexes({1, 2})
+    listed = known_torrent(indexes=indexes, evidence=torrent_evidence(title_window(500, (11, 12), series_id=1)))
+
+    assert set(indexes) == {2}
+    assert listed.order(title_window(600, (11, 12), series_id=2)) is None
+    assert strat._reads.aired_parse(named_as_series_one) is NoView.READ_FAILED
 
 
-def test_the_import_reads_rows_numbered_by_the_order_sonarr_names_once_it_has_sent_them() -> None:
-    # Sonarr went to the dvd order after the library read. It names that order only once it has sent the rows,
-    # so a read of the series made before them, or the library read's order, would refuse these rows.
-    cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    sonarr = HookedSonarrClient(episodes=list(_DVD_ROWS))
-    sonarr.on_episodes = lambda: sonarr.series_return.update({1: _series(1, 50, season_type="dvd")})
-    reads = _reads([_series(1, 50)], cache, sonarr=sonarr)
-
-    rows = reads.read_episodes(1)
-
-    assert rows == _DVD_ROWS
-    assert reads.last_known_episodes(1) == _DVD_ROWS
-    assert (sonarr.episodes_calls, sonarr.series_calls) == ([1], [1])
-
-
-def test_the_import_is_not_given_rows_out_of_step_with_the_order_sonarr_names() -> None:
+def test_the_import_is_not_given_rows_out_of_step_with_the_order_the_library_read_names() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
@@ -771,23 +607,6 @@ def test_rows_out_of_step_are_warned_of_once_for_the_import_and_the_check_togeth
     assert diagnostic_messages(recording, Severity.WARNING) == [_OUT_OF_STEP]
 
 
-@pytest.mark.parametrize(
-    "answer",
-    [
-        pytest.param(NoResource.FAILED, id="failed"),
-        pytest.param(NoResource.GONE, id="gone"),
-        pytest.param(_series(1, 50, season_type=None), id="no-order-key"),
-    ],
-)
-def test_the_import_is_given_no_rows_of_a_series_it_cannot_read_alone(answer: SonarrItem | NoResource) -> None:
-    sonarr = FakeSonarrClient(episodes=list(_ROWS))
-    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
-    sonarr.series_return[1] = answer
-
-    assert reads.read_episodes(1) is None
-    assert reads.last_known_episodes(1) == []
-
-
 def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
     # The stored aired order numbers the two episodes the other way round. Nothing is tested against it.
     cache = FakeCacheStore()
@@ -801,7 +620,7 @@ def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
 
     assert rows == _DVD_ROWS
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
-    assert (sonarr.series_calls, client.fetch_calls) == ([], [])
+    assert client.fetch_calls == []
 
 
 @pytest.mark.parametrize(
@@ -1544,8 +1363,9 @@ def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_import
 
 
 def test_a_stored_pending_import_is_not_followed_under_the_rows_of_a_series_the_run_holds() -> None:
-    # Sonarr went to the dvd order after the library read and is part way through renumbering: TVDB episode 9002
-    # is on none of the rows it sent. Followed under them, the file on that episode would leave the file map.
+    # Sonarr is part way through renumbering the series by its dvd order: the one row it sent is out of step with
+    # the aired order, and TVDB episode 9001 is on none. Followed under it, the file on that episode would leave
+    # the file map.
     pending = pending_import(
         infohash="h",
         series_id=1,
@@ -1553,9 +1373,9 @@ def test_a_stored_pending_import_is_not_followed_under_the_rows_of_a_series_the_
         tvdb_ids={11: 9001, 12: 9002},
     )
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
-    sonarr = FakeSonarrClient(episodes=[_ROWS[0]])
-    reads = _reads([_series(1, 50)], cache, sonarr=sonarr)
-    sonarr.series_return[1] = _series(1, 50, season_type="dvd")
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    sonarr = FakeSonarrClient(episodes=[_DVD_ROWS[0]])
+    reads = _reads([_series(1, 50)], cache, _skyhook(_ORDERS), sonarr=sonarr)
     follower = make_pending_follower(cache, reads)
     # A title's check asks for the index of every claimed series first, which is where the run comes to hold this one.
     assert reads.series_index(1) is None

@@ -21,7 +21,7 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome, NoResource
+from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
     CommandResource,
     DownloadClientConfig,
@@ -143,68 +143,6 @@ def test_all_series_all_invalid_payload_raises_contract_error() -> None:
     respx.get(f"{_BASE}/series").respond(json=["junk", 42])
     with pytest.raises(BoundaryContractError):
         _make_client().all_series()
-
-
-# --- series() ----------------------------------------------------------------
-
-# One `/api/v3/series/{id}` resource of a series numbered by its dvd order, as a Sonarr that sends orders has it.
-_ONE_SERIES_BODY: dict[str, object] = {
-    "id": 7,
-    "title": "Show",
-    "monitored": True,
-    "tvdbId": 70,
-    "seasonType": "dvd",
-    "seasonTypes": [{"type": "official", "episodeCount": 12}, {"type": "dvd", "episodeCount": 13}],
-    "alternateTitles": [{"title": "Show Zoku", "sceneSeasonNumber": 2}],
-    "sortTitle": "show",
-}
-
-
-@respx.mock
-def test_series_reads_one_series_by_its_id() -> None:
-    route = respx.get(f"{_BASE}/series/7").respond(json=_ONE_SERIES_BODY)
-
-    series = _make_client().series(7)
-
-    assert not isinstance(series, NoResource)
-    assert (series.id, series.title, series.tvdbId) == (7, "Show", 70)
-    assert (series.seasonType, series.order_sent) == ("dvd", True)
-    assert [(listed.type, listed.episode_count) for listed in series.seasonTypes] == [("official", 12), ("dvd", 13)]
-    assert [alt.title for alt in series.alternateTitles] == ["Show Zoku"]
-    assert route.calls.last.request.headers["X-Api-Key"] == _KEY
-
-
-@respx.mock
-def test_series_sonarr_does_not_have_is_gone_and_quiet() -> None:
-    """Sonarr answers 404 for an id it has no series with: GONE with zero diagnostics, told apart from a failed read."""
-
-    recording = install_recording_hub()
-    respx.get(f"{_BASE}/series/7").respond(status_code=404, json={"message": "NotFound"})
-
-    assert _make_client().series(7) is NoResource.GONE
-    assert diagnostic_messages(recording) == []
-
-
-@pytest.mark.parametrize(
-    ("reply", "detail"),
-    [
-        pytest.param(httpx.Response(500), "status code 500", id="another-status"),
-        pytest.param(httpx.ConnectError("boom"), "request failed (ConnectError)", id="no-reply"),
-        pytest.param(httpx.Response(200, json=[_ONE_SERIES_BODY]), "unexpected payload", id="a-list"),
-        pytest.param(
-            httpx.Response(200, json={"id": "seven", "title": "Show"}), "malformed response: id: int_parsing", id="junk"
-        ),
-    ],
-)
-@respx.mock
-def test_series_read_that_fails_is_failed_with_one_warning(reply: httpx.Response | Exception, detail: str) -> None:
-    respx.get(f"{_BASE}/series/7").mock(side_effect=[reply] * 10)
-    recording = install_recording_hub()
-
-    assert _make_client().series(7) is NoResource.FAILED
-    assert diagnostic_messages(recording, Severity.WARNING) == [
-        f"Could not fetch series 7 from Sonarr ({detail}) - skipping"
-    ]
 
 
 # --- queue() ----------------------------------------------------------------

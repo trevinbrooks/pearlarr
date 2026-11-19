@@ -13,7 +13,7 @@ import httpx
 import qbittorrentapi
 
 from pearlarr.aired_view import NoView
-from pearlarr.arr_http import ArrHttp, DeleteOutcome, NoResource
+from pearlarr.arr_http import ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
     AlternateTitle,
     ArrFiles,
@@ -434,9 +434,6 @@ class FakeSonarrClient(AbstractSonarrClient):
         completed_download_handling: bool = True,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
-        self.series_return: dict[int, SonarrItem | NoResource] = {}
-        """Each series' answer to a read of it alone. One left out answers as `all_series_return` lists it, and
-        GONE when it lists none with the id."""
         # Reassign to None after construction to script a failed queue read.
         self.queue_return: list[QueueRecord] | None = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
@@ -466,7 +463,6 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.parse_calls: list[str] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.all_series_calls: int = 0
-        self.series_calls: list[int] = []
         self.queue_calls: int = 0
         self.queue_delete_calls: list[int] = []
         self.episodes_calls: list[int] = []
@@ -481,13 +477,6 @@ class FakeSonarrClient(AbstractSonarrClient):
     def all_series(self) -> list[SonarrItem]:
         self.all_series_calls += 1
         return self.all_series_return
-
-    @override
-    def series(self, series_id: int) -> SonarrItem | NoResource:
-        self.series_calls.append(series_id)
-        if series_id in self.series_return:
-            return self.series_return[series_id]
-        return next((listed for listed in self.all_series_return if listed.id == series_id), NoResource.GONE)
 
     @override
     def queue(self) -> list[QueueRecord] | None:

@@ -226,22 +226,15 @@ Both are fetched in the boot steps "Fetching TVDB orders" and "Fetching TheXEM s
 holding off on the series until they are - refresh it in Sonarr
 ...: Sonarr's episodes of the series may not be numbered by the order Sonarr names for it,
 and SkyHook could not be reached to make sure - holding off on the series until it can
-... not checked - the order Sonarr numbers the series by changed during this run - checking
-its titles again next run
-... not checked - the series was not in Sonarr when this run read its library - checking its
-titles next run
-Could not fetch series ... from Sonarr (...) - skipping
 ```
 
-Each of these warnings names a series Pearlarr leaves alone for now. They come only from a Sonarr that names an episode order for each series.
+Either warning names a series Pearlarr leaves alone for now. They come only from a Sonarr that names an episode order for each series.
 
 The first means the numbers on Sonarr's episodes of the series don't match the order Sonarr names for it, as TVDB has that order now. That can be the case after a series' episode order is changed in Sonarr, until Sonarr renumbers its episodes. It can also happen when TVDB moved an episode to another number and Sonarr hasn't refreshed the series since. Read or imported onto as they are, those episodes would stand for other episodes than their numbers say. So an import onto the series waits, and its titles are not checked. The exception is a series Sonarr already numbered by another order when the run started: Pearlarr reads it by TVDB episode ID, whatever its numbers, so its titles are still checked. Refresh the series in Sonarr. Once its episodes match the order, the titles are checked again and the import goes ahead.
 
+A run goes by the order Sonarr named for the series when the run started. If you change the order while a run is going, the series can be held for the rest of that run. There is nothing to do: the next run reads the new order.
+
 Pearlarr tells by the TVDB orders it stores for the series, and fetches them again from SkyHook before it warns, since the stored copy can be the side that is behind. The second warning is the same doubt when SkyHook could not be reached to settle it. The series is held the same way, until SkyHook answers.
-
-The third means the series' order changed in Sonarr while the run was going, and the fourth that the series was not in Sonarr when the run read the library. The series' titles are not checked this run and not cached, so the next run checks them. There is nothing to do.
-
-The last is a failed read of one series. The check or import that asked for it is put off and tried again. See [The arr connection fails](#the-arr-connection-fails) when every read fails.
 
 ## A title Sonarr's order has no episode of
 

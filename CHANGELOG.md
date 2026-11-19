@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- On a Sonarr that names an order for each series, a run asks Sonarr for a series' order once, when it reads the library. 1.6.0 asked again for every series whose episodes it read, and at every check of a download it was waiting on. A series whose order you change while a run is going can be held for the rest of that run, and the next run reads the new order.
+
 ## [1.6.0] - 2026-11-19
 
 ### Upgrade notes
