@@ -16,7 +16,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -499,8 +499,8 @@ AMAP: AnimeIdsByName = {
 }
 
 
-def _anime_oracle(amap: AnimeIdsByName, ids: ExternalIds) -> dict[int, TitleMapping]:
-    """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
+def _anime_oracle(amap: AnimeIdsByName) -> Callable[[ExternalIds], dict[int, TitleMapping]]:
+    """Inline twin of the former reverse-index + no-clobber merge (the oracle): one index, then a lookup per call."""
 
     index: dict[str, dict[object, list[AnimeIdsRawMapping]]] = {
         "tvdb_id": {},
@@ -515,21 +515,16 @@ def _anime_oracle(amap: AnimeIdsByName, ids: ExternalIds) -> dict[int, TitleMapp
             if value is not None:
                 bucket.setdefault(value, []).append(rec)
 
-    result: dict[int, TitleMapping] = {}
+    def lookup(ids: ExternalIds) -> dict[int, TitleMapping]:
+        result: dict[int, TitleMapping] = {}
+        for field, value in (("tvdb_id", ids.tvdb), ("tmdb_movie_id", ids.tmdb_movie), ("imdb_id", ids.imdb)):
+            for rec in index[field].get(value, []):  # None is never a key
+                aid = rec["anilist_id"]
+                if aid not in result:
+                    result[aid] = _mapping_from_raw(aid, rec)
+        return result
 
-    def merge(field: str, value: object) -> None:
-        for rec in index[field].get(value, []):
-            aid = rec["anilist_id"]
-            if aid not in result:
-                result[aid] = _mapping_from_raw(aid, rec)
-
-    if ids.tvdb is not None:
-        merge("tvdb_id", ids.tvdb)
-    if ids.tmdb_movie is not None:
-        merge("tmdb_movie_id", ids.tmdb_movie)
-    if ids.imdb is not None:
-        merge("imdb_id", ids.imdb)
-    return result
+    return lookup
 
 
 class TestAnimeIdsParity:
@@ -560,7 +555,7 @@ class TestAnimeIdsParity:
             ),
         )
         try:
-            assert resolver.mappings_from_anime_ids(ids) == _anime_oracle(AMAP, ids)
+            assert resolver.mappings_from_anime_ids(ids) == _anime_oracle(AMAP)(ids)
         finally:
             resolver.close()
 
@@ -1162,10 +1157,9 @@ def real_sources() -> _RealSources:
     return paths
 
 
-def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
-    """Guarded reimplementation of the former anidb_anime_by_id + parse + raise."""
+def _anidb_oracle(items: list[ElementTree.Element], anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
+    """Guarded reimplementation of the former anidb_anime_by_id + parse + raise, over one id's `anime` elements."""
 
-    items = [a for a in root.findall("anime") if a.get("anidbid") == str(anidb_id)]
     if len(items) > 1:
         raise ValueError(f"AniDB id {anidb_id} appears in more than one anime-lists mapping")
     if len(items) != 1:
@@ -1224,21 +1218,18 @@ class TestRealDataParity:
                 anibridge=False,
             ),
         )
+        oracle = _anime_oracle(amap)
         try:
             tvdbs = [
                 r["tvdb_id"] for r in amap.values() if r.get("tvdb_id") is not None and r.get("anilist_id") is not None
             ][:200]
             for tvdb in tvdbs:
-                assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=tvdb)) == _anime_oracle(
-                    amap, ExternalIds(tvdb=tvdb)
-                )
+                assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=tvdb)) == oracle(ExternalIds(tvdb=tvdb))
             imdbs = [
                 r["imdb_id"] for r in amap.values() if r.get("imdb_id") is not None and r.get("anilist_id") is not None
             ][:200]
             for imdb in imdbs:
-                assert resolver.mappings_from_anime_ids(ExternalIds(imdb=imdb)) == _anime_oracle(
-                    amap, ExternalIds(imdb=imdb)
-                )
+                assert resolver.mappings_from_anime_ids(ExternalIds(imdb=imdb)) == oracle(ExternalIds(imdb=imdb))
         finally:
             resolver.close()
 
@@ -1255,17 +1246,13 @@ class TestRealDataParity:
             ),
         )
         try:
-            anidb_ids: list[int] = []
+            by_id: dict[str, list[ElementTree.Element]] = {}
             for a in root.findall("anime"):
-                aid = a.get("anidbid")
-                if aid is not None and aid.isdigit():
-                    anidb_ids.append(int(aid))
-                if len(anidb_ids) >= 300:
-                    break
-            for anidb_id in anidb_ids:
+                by_id.setdefault(a.get("anidbid") or "", []).append(a)
+            for anidb_id in [int(aid) for aid in by_id if aid.isdigit()][:300]:
                 for season in (0, 1, 2):
                     try:
-                        expected = _anidb_oracle(root, anidb_id, season)
+                        expected = _anidb_oracle(by_id.get(str(anidb_id), []), anidb_id, season)
                     except ValueError:
                         with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
                             resolver.anidb_episode_by_tvdb(anidb_id, season)
