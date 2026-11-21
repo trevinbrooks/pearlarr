@@ -64,7 +64,7 @@ dependencies = [
     "seadex == 0.7.3",
     "truststore == 0.10.5",
     # 0.29 prints <bool> beside every flag in --help. Held here until a release drops that.
-    "typer==0.28.0",
+    "typer==0.29.1",
     # Transitive (qbittorrent-api -> requests -> urllib3). Floored for CVE currency.
     "urllib3>=2.8.0",
 ]
