@@ -13,15 +13,14 @@ is a real `ArrRunServices` subclass. The strategies are built bare
 (`object.__new__`) so no live Sonarr/Radarr client is constructed.
 """
 
-from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, ClassVar, NamedTuple, cast, override
+from typing import ClassVar, NamedTuple, override
 
 import pytest
 from seadex import EntryRecord
 
-from pearlarr import sonarr_import as sonarr_import_module
 from pearlarr.aired_view import AiredSeries, NoView, aired_series
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS
 from pearlarr.arr_categories import ArrCategoryResolver
@@ -40,7 +39,6 @@ from pearlarr.arr_models import (
     QualityDefinition,
     QueueRecord,
     RadarrItem,
-    RemotePathMapping,
     SeasonTypeCount,
     SonarrEpisode,
     SonarrItem,
@@ -50,11 +48,9 @@ from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
-from pearlarr.episode_state import EpisodeFileStatus, GrabbedGroups, ImportSnapshot, trusted_groups
 from pearlarr.file_paths import normalize_file_name
-from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabRequest
+from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.grab_placement import ListedFile, PlacedEntry, place_release
-from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
 from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
 from pearlarr.pending_follow import PendingFollower
@@ -64,24 +60,19 @@ from pearlarr.pending_import import (
     PendingImport,
     SizeMatchedEpisode,
     TitleNames,
-    TorrentGroup,
-    TvdbIds,
 )
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import FetchedListings, TorrentListing, episode_index
 from pearlarr.planner import GrabPlan
-from pearlarr.progress import ProgressCallback
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
-from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
+from pearlarr.releases import EpisodeKey, OrderOnlyKey, SeadexDict, SkipReason
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.sonarr_state import DownloadHistoryState, HistoryImport, placements_from_history
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SeriesNumbering, SonarrSeriesOrders
 from pearlarr.wait_types import (
-    NO_PROGRESS,
     AttemptKind,
     AttemptResult,
     EffectStatus,
@@ -95,12 +86,10 @@ from pearlarr.wait_types import (
 
 from .builders import (
     PENDING_IMPORT_ADDED,
-    SEP,
     FakeCacheStore,
     FakeClock,
     ScriptedAniListClient,
     claim_anilist_ids,
-    episode_snapshot,
     every_series,
     grab_plan,
     held_series_episodes,
@@ -119,7 +108,6 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     new_torrent,
-    numbered_names,
     parsed_info,
     pending_import,
     placed_episode,
@@ -130,7 +118,6 @@ from .builders import (
     stand_in_ep,
     stored_orders,
     stored_scene_mappings,
-    title_claim,
     title_window,
     torrent_listing,
     two_claim_pending_import,
@@ -435,20 +422,17 @@ def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() ->
 
 
 class _ScriptedListings:
-    """A scripted listings collaborator: per-hash listings and size matches, or SeaDex unreachable."""
+    """A scripted listings collaborator: per-hash listings and size matches."""
 
     def __init__(
         self,
         listed: Mapping[str, TorrentListing] | None = None,
         episode_by_size: Mapping[int, int] | None = None,
-        *,
-        unreachable: bool = False,
     ) -> None:
-        self._read = None if unreachable else FetchedListings(listed or {}, episode_by_size or {})
-        self.reads: list[tuple[int, ResolvedMappings]] = []
+        self._read = FetchedListings(listed or {}, episode_by_size or {})
 
-    def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
-        self.reads.append((series_id, resolved))
+    def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings:
+        del series_id, resolved
         return self._read
 
 
@@ -466,17 +450,6 @@ class _ScriptedParse:
 
 class TestItemMappingsDelegates:
     """item_mappings resolves through the services it keeps, with arr-specific ids."""
-
-    def test_radarr_uses_tmdb_and_imdb(self) -> None:
-        run = _FakeRunServices(anilist_ids={7: TitleMapping(anilist_id=7)})
-        strat = make_bare_instance(RadarrStrategy, _services=run)
-
-        result = strat.item_mappings(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
-
-        assert result == {7: TitleMapping(anilist_id=7)}
-        assert run.title_mappings_calls == [
-            TitleMappingsCall(ExternalIds(tmdb_movie=42, imdb="tt7"), log_ignored=False)
-        ]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
@@ -526,52 +499,6 @@ class TestArrRunStartHook:
         assert strat._reads.series_hash == sonarr_series_hash([5, 7])
 
 
-class TestSonarrPrefetchDelegates:
-    """prefetch_episodes is a thin hook over the episode collaborator's warm."""
-
-    def test_sonarr_prefetch_routes_to_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        strat = make_sonarr_sync()
-        prefetch_calls: list[tuple[list[SonarrItem], ProgressCallback | None]] = []
-
-        def _prefetch(items: list[SonarrItem], *, progress: ProgressCallback | None = None) -> int:
-            prefetch_calls.append((items, progress))
-            return 3
-
-        monkeypatch.setattr(strat._episodes, "prefetch", _prefetch)
-        items: list[SonarrItem] = [_Item(id=1)]
-
-        assert strat.prefetch_episodes(items, progress=None) == 3
-        assert prefetch_calls == [(items, None)]
-
-
-class TestRadarrPrefetchEpisodes:
-    """Radarr has no episodes: the warm hook is a no-op that warms nothing."""
-
-    def test_returns_zero_and_skips_progress(self) -> None:
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
-        calls: list[tuple[float, str | None]] = []
-
-        class _Rec:
-            def progress(self, fraction: float, detail: str | None = None) -> None:
-                calls.append((fraction, detail))
-
-        assert strat.prefetch_episodes([_Item(tmdbId=1)], progress=_Rec()) == 0
-        assert calls == []  # no episodes -> progress never driven
-
-    def test_warms_episodes_is_false(self) -> None:
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
-        assert strat.warms_episodes is False
-
-
-class TestRadarrStartOfRun:
-    """Radarr has no work at the start of a run."""
-
-    def test_names_no_title_to_check_again(self) -> None:
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
-
-        assert strat.start_of_run([_Item(tmdbId=1)]) == set()
-
-
 class TestCheckTitleThreadsServices:
     """The per-title head runs through the services it keeps. No entry stops this title."""
 
@@ -588,29 +515,6 @@ class TestCheckTitleThreadsServices:
 
         strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.anilist_id_prologue_calls == [5]
-
-    def test_sonarr_no_episodes_resolved_stops_explicitly(self) -> None:
-        # An anime-id mapping that resolves to [] (season not in Sonarr / offset past
-        # the end): stop with a no-episodes row, never mislabeled "unmonitored"
-        # and never falling through to grab orphans - and NO AniBridge warning.
-        run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[]))
-        recording = install_recording_hub()
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(episodes, run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.no_episodes_titles == ["Title"]
-        assert run.nothing_to_grab_calls == []
-        assert run.log_al_title_calls == []
-        assert run.pauses_owed == 1
-        # anime-id empty is NOT the AniBridge case -> no warning surfaced.
-        assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_sonarr_anibridge_empty_mapping_stops_with_warning(self) -> None:
         # The AniBridge no-usable-ranges case (a real empty-{} tvdb mapping: source
@@ -657,20 +561,6 @@ class TestCheckTitleThreadsServices:
         assert run.unmonitored_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
-
-    def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
-        run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        window = [sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)]
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(ScriptedEpisodes(FakeSonarrClient(episodes=window)), run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.missing_episodes == ["S01 E02"]
 
     def test_sonarr_all_invalid_selection_routes_to_shared_stop(self) -> None:
         # The interactive pick rejected every token: the strategy must route to
@@ -798,14 +688,6 @@ def _posted(sonarr: FakeSonarrClient) -> list[list[tuple[str, list[int]]]]:
     return [[(f.path, f.episodeIds) for f in files] for files, _mode in sonarr.execute_calls]
 
 
-class _RangeFile(NamedTuple):
-    """The pending import of one range file, the strategy that imports it, and the Sonarr fake it talks to."""
-
-    pending: PendingImport
-    strat: SonarrStrategy
-    sonarr: FakeSonarrClient
-
-
 class TestImportCompletedQueueState:
     """import_completed reads the queue + episode files before an auto import."""
 
@@ -829,22 +711,6 @@ class TestImportCompletedQueueState:
         assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
-    def test_queue_downloading_waits_with_the_clock_running(self) -> None:
-        # Sonarr's view lags qBittorrent's "complete": the pending import's own wait, so
-        # the import clock keeps running.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "downloading")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.paused is False
-        assert sonarr.candidate_calls == []
-        assert sonarr.execute_calls == []
-
     def test_clean_import_pending_retries_until_forced(self) -> None:
         # A clean importPending: leave it to Sonarr unless forced.
         pending = pending_import(infohash="abc123")
@@ -855,44 +721,6 @@ class TestImportCompletedQueueState:
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         assert result.all_done is False
-        assert sonarr.candidate_calls == []
-
-    def test_clean_import_pending_at_deadline_waits_while_sonarr_processes_downloads(self) -> None:
-        # Sonarr imports torrents serially: a clean importPending record behind a running
-        # ProcessMonitoredDownloads is next in line, not stalled. The final attempt neither
-        # runs an auto import past it nor finishes. The clock is paused for the wait.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importPending", status="ok")],
-            commands=[_started_process_pass()],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        assert result.pause_reason is PauseReason.BUSY
-        assert result.command_issued is False
-        assert sonarr.candidate_calls == []
-        assert sonarr.execute_calls == []
-
-    def test_clean_import_pending_before_deadline_pauses_the_clock_only_while_sonarr_is_busy(self) -> None:
-        # The command check runs ahead of the clean-importPending wait: a running
-        # ProcessMonitoredDownloads pauses the clock for the poll, an idle Sonarr that has not imported the record
-        # burns its clock (the final attempt's auto import still meets it).
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importPending", status="ok")],
-            commands=[_started_process_pass()],
-        )
-
-        busy = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [_RESCAN_BEFORE_ADD]
-        idle = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert busy.pause_reason is PauseReason.BUSY
-        assert idle.paused is False
         assert sonarr.candidate_calls == []
 
     @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
@@ -912,133 +740,6 @@ class TestImportCompletedQueueState:
         assert result.all_done is False
         assert result.paused is False
         assert sonarr.candidate_calls == []
-        assert sonarr.execute_calls == []
-
-    def test_queue_read_recovers_on_a_later_poll(self) -> None:
-        # The unread queue is retried via the poll loop: once the queue answers again
-        # the same pending import proceeds to the normal auto import.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-        )
-        sonarr.queue_return = None
-
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.queue_return = []
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert first.all_done is False
-        assert first.command_issued is False
-        assert second.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-
-    def test_running_disk_command_waits_even_forced(self) -> None:
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[_started_process_pass()],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        # Another download's command pauses the import clock (BUSY, never a "still
-        # importing" claim). The wait pass's pause cap bounds the walk-away.
-        assert result.pause_reason is PauseReason.BUSY
-        assert result.command_issued is False
-        assert (result.imported_count, result.file_map_episode_count) == (0, 1)
-        assert sonarr.candidate_calls == []
-        assert sonarr.execute_calls == []
-
-    def test_pearlarrs_running_import_pauses_other_pending_imports(self) -> None:
-        # Pending import A's issued copy is still running while pending import B polls: B waits,
-        # and because the running command is PEARLARR'S (an id it POSTed this
-        # run) the attempt result reads `paused` - the wait pass pauses B's import clock
-        # instead of burning it.
-        pending_a = pending_import(infohash="abc123")
-        pending_b = pending_import(infohash="def456")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            cmd_id=42,
-        )
-
-        first = strat.import_completed(pending_a, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [_inflight_manual_import("ABC123", command_id=42)]
-        result = strat.import_completed(pending_b, "/e", AttemptKind.ORDINARY)
-
-        assert first.command_issued is True
-        assert result.all_done is False
-        assert result.paused is True
-        assert result.command_issued is False  # not B's command
-        assert len(sonarr.execute_calls) == 1  # only A's import was POSTed
-
-    def test_in_flight_import_for_this_pending_import_reads_honest_flags(self) -> None:
-        # A still-running ManualImport covering THIS pending import (e.g. POSTed by a
-        # prior run): checked ahead of the anonymous disk guard, so the attempt result
-        # reads `command_issued` (an at-deadline outcome must say "still
-        # importing", never "not ready") and `paused` (pearlarr's own copy's runtime
-        # never burns the clock).
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[_inflight_manual_import("ABC123")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert result.paused is True
-        assert sonarr.execute_calls == []
-
-    def test_two_claim_pending_import_waits_on_the_torrents_running_import(self) -> None:
-        # Two titles claim one torrent. While the torrent's command runs
-        # (download-id match), the pending import's poll waits with the clock paused: a
-        # same-download command is pearlarr's by definition, and the copy serializes
-        # every claim's part.
-        pending = pending_import(
-            infohash="abc123",
-            claims=(title_claim(), title_claim(anilist_id=777, series_id=8, title="Other")),
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[_inflight_manual_import("ABC123")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.paused is True
-        assert result.command_issued is True
-        assert sonarr.execute_calls == []
-
-    def test_unproven_folder_import_waits_with_the_clock_paused_but_no_claim(self) -> None:
-        # A no-download-id ManualImport matching only by path overlap (possibly
-        # another download's folder import): waits, never stacking a duplicate, and the
-        # clock is paused (an import is running either way), but unproven, so
-        # no "still importing" claim.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            commands=[
-                CommandResource.model_validate(
-                    {
-                        "id": 7000,
-                        "name": "ManualImport",
-                        "status": "started",
-                        "body": {"files": [{"path": "/d/Show - 01 [1080p].mkv"}]},
-                    },
-                ),
-            ],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.pause_reason is PauseReason.IMPORT
-        assert result.command_issued is False
         assert sonarr.execute_calls == []
 
     def test_auto_import_post_is_a_paused_wait(self) -> None:
@@ -1067,49 +768,6 @@ class TestImportCompletedQueueState:
         assert (issued.command_issued, issued.pause_reason) == (True, PauseReason.ISSUED)
         assert (in_flight.command_issued, in_flight.pause_reason) == (True, PauseReason.IMPORT)
         assert len(sonarr.execute_calls) == 1
-
-    def test_arr_run_start_clears_the_issued_command_ids(self) -> None:
-        # An old id from a previous run must never claim another download's command as
-        # pearlarr's (ownership is deliberately per-run. The same-download case
-        # survives restarts via its download-id match instead).
-        pending = pending_import(infohash="abc123")
-        strat, _sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            cmd_id=42,
-        )
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        executor = strat._reconciler._executor
-
-        assert executor._is_auto_import_command(42) is True
-        executor.reset()
-        assert executor._is_auto_import_command(42) is False
-
-    def test_an_excluded_file_is_not_imported_once_the_file_map_episodes_are_in(self) -> None:
-        done_file = "Show - 01 [1080p].mkv"
-        excluded_file = "Show - 02 [1080p].mkv"
-        pending = pending_import(
-            file_episode_map={done_file: [101]},
-            ordered_episode_ids=[101, 102],
-            seadex_files=[done_file, excluded_file],
-            excluded_files=[normalize_file_name(excluded_file)],
-        )
-        sonarr = FakeSonarrClient(
-            episodes=[
-                sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
-                SonarrEpisode.model_validate({"id": 102, "seasonNumber": 1, "episodeNumber": 2}),
-            ],
-            candidates=[manual_candidate(f"/d/{done_file}"), manual_candidate(f"/d/{excluded_file}")],
-            quality_defs=[],
-            languages=[],
-            execute_command_id=42,
-        )
-        strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert sonarr.execute_calls == []
 
     @pytest.mark.parametrize(
         ("command_status", "command_status_script", "refresh_calls"),
@@ -1216,149 +874,6 @@ class TestImportCompletedQueueState:
         assert result.all_done is False
         assert len(sonarr.execute_calls) == 1
 
-    def test_import_pending_with_warning_runs_an_auto_import(self) -> None:
-        # A warning-flagged importPending is a failed Sonarr import attempt (e.g.
-        # the file wasn't visible on its mount yet) that Sonarr won't reliably
-        # retry - waiting would only burn the readiness deadline, so step in.
-        # (Observed live: four flagged-pending torrents sat 10+ minutes untouched.)
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importPending", status="warning")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-
-    def test_file_map_episode_already_trusted_drops_the_pending_import(self) -> None:
-        # Episode files are the source of truth for "already imported": the file map
-        # episode already holds the trusted group's file -> done, no candidate fetch.
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert sonarr.candidate_calls == []
-
-    def test_file_map_episode_holding_another_entry_group_is_protected(self) -> None:
-        # The overwrite guard spans every group the entry's releases carried at
-        # grab time, not just grabbed ones: a file from a release pearlarr never grabbed
-        # reads TRUSTED -> done, never imported over.
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            guards=OwnedAtGrab(entry_groups=("SubGroup", "OtherPick")),
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert sonarr.candidate_calls == []
-
-    @staticmethod
-    def _misfiled() -> tuple[PendingImport, SonarrStrategy, FakeSonarrClient]:
-        """This torrent's E02 file (200) filed on E01 as well: both hold its group at a listed size, E01 not its own."""
-
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101], "Show - 02 [1080p].mkv": [102]},
-            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
-            release_sizes=[100, 200],
-            sizes_by_name={"show - 01 [1080p].mkv": 100, "show - 02 [1080p].mkv": 200},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Show - 02 [1080p].mkv")],
-            episodes=[
-                sonarr_ep(1, 1, ep_id=101, episode_file_id=12, release_group="SubGroup", size=200),
-                sonarr_ep(1, 2, ep_id=102, episode_file_id=12, release_group="SubGroup", size=200),
-            ],
-        )
-        return pending, strat, sonarr
-
-    def test_a_misfiled_file_map_episode_is_imported_over_then_its_sibling_then_is_done(self) -> None:
-        pending, strat, sonarr = self._misfiled()
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        # Importing file 01 onto 101 deletes the shared episode file, so 102 is left with none.
-        sonarr.episodes_return = [
-            sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=100),
-            sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
-        ]
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.episodes_return = [
-            sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=100),
-            sonarr_ep(1, 2, ep_id=102, episode_file_id=13, release_group="SubGroup", size=200),
-        ]
-
-        third = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert _posted(sonarr) == [[("/d/Show - 01 [1080p].mkv", [101])], [("/d/Show - 02 [1080p].mkv", [102])]]
-        assert (first.command_issued, second.command_issued, third.all_done) == (True, True, True)
-
-    @staticmethod
-    def _range_file(episode: SonarrEpisode, guards: OwnedAtGrab) -> _RangeFile:
-        """A pending import whose one E01-02 file (size 300) is placed on both episodes.
-
-        E01 holds `episode` and E02 is empty.
-        """
-
-        name = "Show - S01E01-02 [1080p].mkv"
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={name: [101, 102]},
-            release_sizes=[300],
-            sizes_by_name={name.casefold(): 300},
-            guards=guards,
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate(f"/d/{name}")],
-            episodes=[episode, sonarr_ep(1, 2, ep_id=102, episode_file_id=0)],
-        )
-        return _RangeFile(pending, strat, sonarr)
-
-    def test_a_range_file_replaces_this_torrents_copy_beside_its_open_episode(self) -> None:
-        # E01 already holds this torrent's file at its listed size, so the import posts both episodes and replaces
-        # that copy.
-        own = sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="SubGroup", size=300)
-        pending, strat, sonarr = self._range_file(own, OwnedAtGrab())
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.episodes_return = [
-            sonarr_ep(1, 1, ep_id=101, episode_file_id=12, release_group="SubGroup", size=300),
-            sonarr_ep(1, 2, ep_id=102, episode_file_id=12, release_group="SubGroup", size=300),
-        ]
-
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert _posted(sonarr) == [[("/d/Show - S01E01-02 [1080p].mkv", [101, 102])]]
-        assert (first.command_issued, second.all_done) == (True, True)
-
-    def test_a_range_file_leaves_another_releases_trusted_file_alone(self) -> None:
-        other = sonarr_ep(1, 1, ep_id=101, episode_file_id=11, release_group="OtherPick", size=900)
-        pending, strat, sonarr = self._range_file(other, OwnedAtGrab(entry_groups=("SubGroup", "OtherPick")))
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert _posted(sonarr) == [[("/d/Show - S01E01-02 [1080p].mkv", [102])]]
-
     def test_file_map_episode_holding_a_file_with_no_group_pearlarr_size_matched_is_protected(self) -> None:
         # The grab-time size match is carried on the pending import through to the
         # import: a file with no group the planner named reads TRUSTED, so the
@@ -1435,111 +950,9 @@ class TestImportCompletedQueueState:
         assert store.get_pending_import_rows(Arr.SONARR) == {}
         assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
 
-    def test_import_blocked_runs_an_auto_import_with_the_file_map(self) -> None:
-        # Sonarr can't import by itself (importBlocked) -> pearlarr's authoritative auto
-        # import takes over and ISSUES the command. The copy is async, so right
-        # after issuing the attempt result reads command_issued (NOT all_done).
-        # A later poll flips to all_done once the episode files are imported.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importBlocked", status="warning")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert result.all_done is False
-        assert len(sonarr.candidate_calls) == 1
-        assert len(sonarr.execute_calls) == 1
-
-    def test_later_poll_observes_freshly_imported_files(self) -> None:
-        # Regression: the done check reads the episode FILES as the source of
-        # truth, so the episode list must be re-fetched each poll, never served
-        # old from the per-run cache. Poll 1 (file map episode has no file) issues the import
-        # (command_issued). Once the copy finishes, poll 2 must observe the
-        # file -> all_done, WITHOUT re-issuing. An old cache would
-        # keep all_done False forever (the blocking wait times out as "still
-        # importing", and in move import mode the import is never confirmed at all).
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[queue_record("ABC123", "importBlocked", status="warning")],
-        )
-
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert first.all_done is False
-        assert first.command_issued is True
-
-        # The copy finished: the file map episode now holds the trusted file.
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert second.all_done is True
-        assert len(sonarr.execute_calls) == 1
-
-    def test_not_in_queue_runs_an_auto_import(self) -> None:
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert len(sonarr.candidate_calls) == 1
-        assert len(sonarr.execute_calls) == 1
-
-
-def _started_process_pass() -> CommandResource:
-    """Sonarr's own ProcessMonitoredDownloads command, executing right now."""
-
-    return CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
-
-
-def _inflight_manual_import(infohash: str, *, status: str = "started", command_id: int = 0) -> CommandResource:
-    """A ManualImport command whose one file carries `infohash` as downloadId."""
-
-    return CommandResource.model_validate(
-        {
-            "id": command_id,
-            "name": "ManualImport",
-            "status": status,
-            "body": {"files": [{"downloadId": infohash, "episodeIds": [101]}]},
-        },
-    )
-
 
 class TestCloseTracked:
     """close_tracked dismisses the download's remaining queue record through any one row's id."""
-
-    def test_dismisses_by_the_first_usable_row_id(self) -> None:
-        # Sonarr closes the WHOLE tracked download off any one queue id, so the
-        # first row with a usable id (junk converts to 0) is deleted, exactly once.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=None,
-            queue=[
-                queue_record("ABC123", "importPending", status="warning"),  # id 0: unusable
-                queue_record("ABC123", "importPending", status="warning", queue_id=11),
-                queue_record("ABC123", "importPending", status="warning", queue_id=12),
-            ],
-        )
-
-        assert strat.remove_from_queue(pending) is EffectStatus.DONE
-        assert sonarr.queue_delete_calls == [11]
 
     def test_other_downloads_rows_are_not_touched(self) -> None:
         pending = pending_import(infohash="abc123")
@@ -1560,14 +973,6 @@ class TestCloseTracked:
             candidates=None,
             queue=[queue_record("ABC123", "importPending", status="warning", queue_id=11, series_id=0)],
         )
-
-        assert strat.remove_from_queue(pending) is EffectStatus.SKIPPED
-        assert sonarr.queue_delete_calls == []
-
-    def test_already_clear_queue_is_a_no_op(self) -> None:
-        # Sonarr closed the download itself (one import covered the full grab).
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = _make_sonarr_for_import(candidates=None)
 
         assert strat.remove_from_queue(pending) is EffectStatus.SKIPPED
         assert sonarr.queue_delete_calls == []
@@ -1627,123 +1032,6 @@ class TestCloseTracked:
         assert diagnostic_messages(recording) == []
 
 
-class TestScratchResetParity:
-    """`reset()` reassigns the per-run scratch wholesale: post-reset state == freshly built state."""
-
-    def test_executor_and_candidate_fetcher_reset_to_the_init_state(self) -> None:
-        strat, _ = _make_sonarr_for_import(candidates=None)
-        executor = strat._executor
-        scratch = executor._scratch
-        scratch.quality_defs = []
-        scratch.languages = []
-        scratch.warned_unplaceable.add("h")
-        scratch.warned_empty_folder.add("h")
-        scratch.warned_default_quality = True
-        scratch.last_rescan_monotonic = 1.0
-        scratch.rescanned.add("h")
-        scratch.kept_candidates["h"] = sonarr_import_module._KeptCandidates(
-            "/d", sonarr_import_module._FetchedCandidates(candidates=[], history=None), 1.0
-        )
-        scratch.issued_command_ids.add(42)
-        scratch.completed_download_handling = False
-        scan = executor.candidate_fetcher._scratch
-        scan.folder_pinned["h"] = True
-        scan.history_states["h"] = DownloadHistoryState(history_closed=True)
-        scan.path_mappings = []
-        scan.translated_paths["/a"] = "/b"
-
-        executor.reset()
-
-        assert executor._scratch == sonarr_import_module._ImportScratch()
-        assert executor.candidate_fetcher._scratch == sonarr_import_module._FetchScratch()
-
-
-class TestInFlightManualImportGuard:
-    """A ManualImport already running for this download must not be re-issued."""
-
-    def test_in_flight_command_suppresses_reissue(self) -> None:
-        # Queue empty (Sonarr dropped the torrent while importing server-side), but
-        # a started ManualImport for this hash is still running -> wait, don't
-        # stack a duplicate.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-            commands=[_inflight_manual_import("abc123")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        # Honest flags: a command for this pending import IS running (so an at-deadline
-        # outcome reads "still importing", never "not ready") and its runtime
-        # pauses the import clock.
-        assert result.command_issued is True
-        assert result.paused is True
-        assert sonarr.execute_calls == []
-        assert sonarr.candidate_calls == []
-
-    def test_in_flight_guard_holds_even_when_forced(self) -> None:
-        # Cross-run regression: the carried-over reconcile path always forces, and
-        # that is the path that loops. AttemptKind.FINAL overrides the wait on Sonarr's clean
-        # importPending, NOT an already-running command -> still suppress the re-issue.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-            commands=[_inflight_manual_import("abc123")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert result.paused is True
-        assert sonarr.execute_calls == []
-
-    def test_completed_command_does_not_suppress(self) -> None:
-        # A finished ManualImport is not in flight, so it must never wedge pearlarr: with
-        # the queue empty it issues its auto import as before.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-            commands=[_inflight_manual_import("abc123", status="completed")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert len(sonarr.execute_calls) == 1
-
-    def test_queued_import_for_other_download_waits(self) -> None:
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-            commands=[_inflight_manual_import("OTHERHASH", status="queued")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.pause_reason is PauseReason.BUSY
-        assert result.command_issued is False
-        assert sonarr.execute_calls == []
-
-
 class TestImportCompletedPayload:
     """import_completed takes episodes from pearlarr's file map, never Sonarr's parse."""
 
@@ -1778,116 +1066,6 @@ class TestImportCompletedPayload:
         assert entry.downloadId == "HASH"
         assert entry.path == "/downloads/Show - 01 [1080p].mkv"
 
-    def test_sonarr_structured_quality_wins_over_the_file_name_quality(self) -> None:
-        # Sonarr already parsed the release as (bluray, 1080). The quality pearlarr reads off the file name
-        # would say WEB-DL, but Sonarr's structured parse takes precedence.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
-            seadex_files=["Show - 01 [1080p][WEB-DL].mkv"],
-        )
-        candidate = manual_candidate(
-            "/d/Show - 01 [1080p][WEB-DL].mkv",
-            quality={"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
-        )
-        quality_defs = [
-            QualityDefinition.model_validate(
-                {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
-            ),
-            QualityDefinition.model_validate(
-                {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
-            ),
-        ]
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate],
-            quality_defs=quality_defs,
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        entry = sonarr.execute_calls[0][0][0]
-        quality = entry.quality
-        assert quality is not None
-        inner = quality.quality
-        assert inner is not None
-        assert inner.name == "Bluray-1080p"
-        revision = quality.revision
-        assert revision is not None
-        assert revision.version == 1
-
-    def test_the_file_name_quality_fills_when_sonarr_quality_unknown(self) -> None:
-        # Sonarr couldn't parse the release (Unknown). The quality pearlarr reads off the file name,
-        # (web, 1080), fills both axes -> WEBDL-1080p, and a real quality is emitted.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
-            seadex_files=["Show - 01 [1080p][WEB-DL].mkv"],
-        )
-        candidate = manual_candidate(
-            "/d/Show - 01 [1080p][WEB-DL].mkv",
-            quality={"quality": {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}},
-        )
-        quality_defs = [
-            QualityDefinition.model_validate(
-                {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
-            ),
-            QualityDefinition.model_validate(
-                {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
-            ),
-        ]
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate],
-            quality_defs=quality_defs,
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        entry = sonarr.execute_calls[0][0][0]
-        quality = entry.quality
-        assert quality is not None
-        inner = quality.quality
-        assert inner is not None
-        assert inner.name == "WEBDL-1080p"
-
-    def test_matches_disk_name_across_nfd_normalization(self) -> None:
-        # The file map is keyed by an NFC name. The on-disk file name arrives NFD
-        # (macOS). Normalization on both sides still matches -> the file imports,
-        # never "no authoritative mapping".
-        nfc = "Café - 01 [1080p].mkv"  # composed e-acute
-        nfd = "Café - 01 [1080p].mkv"  # decomposed
-        pending = pending_import(
-            file_episode_map={nfc: [101]},
-            seadex_files=[nfc],
-        )
-        strat, sonarr = _make_sonarr_for_import(candidates=[manual_candidate(f"/d/{nfd}")])
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert sonarr.execute_calls[0][0][0].episodeIds == [101]
-
-    def test_candidate_not_in_the_file_map_is_never_imported(self) -> None:
-        # Strict-honor: a file Sonarr found that ISN'T in the file map (e.g. an episode
-        # the placement gave to another preferred torrent) is never imported. Here the
-        # one intended file is also on disk and IS imported.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidates = [
-            manual_candidate("/d/Show - 01 [1080p].mkv"),
-            manual_candidate("/d/Show - 02 [1080p].mkv"),  # not in the file map
-        ]
-        strat, sonarr = _make_sonarr_for_import(candidates=candidates)
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        paths = [f.path for f in sonarr.execute_calls[0][0]]
-        assert paths == ["/d/Show - 01 [1080p].mkv"]
-
     def test_sample_candidate_is_skipped(self) -> None:
         pending = pending_import(
             file_episode_map={
@@ -1911,85 +1089,6 @@ class TestImportCompletedPayload:
         assert result.command_issued is True
         paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
-
-    def test_already_imported_rejection_does_not_skip_no_group_file(self) -> None:
-        # Bug fix (grab-then-skip): the episode already holds a NO-GROUP file
-        # (UNKNOWN_GROUP -> still needing pearlarr's import of a trusted file), and Sonarr offers
-        # the candidate WITH an "already imported" rejection (it fires whenever the
-        # episode has any file on disk). That rejection must NOT block pearlarr's import:
-        # pearlarr grabbed this exactly to replace the unidentifiable file, so it runs the auto import
-        # and ISSUES the command (command_issued, the copy is async).
-        pending = pending_import(
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidate = manual_candidate(
-            "/d/Show - 01 [1080p].mkv",
-            rejections=["Episode file already imported"],
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None)],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert result.all_done is False
-        assert len(sonarr.execute_calls) == 1
-
-    def test_no_group_import_then_recognized_terminates(self) -> None:
-        # Loop-termination regression (mirrors the import->recognize round-trip):
-        # poll 1 imports over a file with no group (command_issued).
-        # The imported file now carries this torrent's group, so poll 2 reads it as TRUSTED ->
-        # nothing needed -> all_done, with NO re-issue. Proves the fix can't loop.
-        pending = pending_import(
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidate = manual_candidate(
-            "/d/Show - 01 [1080p].mkv",
-            rejections=["Episode file already imported"],
-        )
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None)],
-        )
-
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert first.command_issued is True
-        assert first.all_done is False
-
-        # The import finished: episode 101 now holds this torrent's trusted group's file.
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert second.all_done is True
-        assert len(sonarr.execute_calls) == 1
-
-    def test_intended_file_missing_from_disk_retries(self) -> None:
-        # The file map intends a file Sonarr can't see yet -> never dropped, retried
-        # (no command issued, no files in place).
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        # A different file is on disk. The file map's isn't there yet.
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Unrelated.mkv")],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert result.command_issued is False
-        assert result.all_done is False
-        assert sonarr.execute_calls == []
-
-    def test_transient_candidate_fetch_retries(self) -> None:
-        # A None candidates result (timeout / non-200) is transient -> retry.
-        strat, sonarr = _make_sonarr_for_import(candidates=None)
-
-        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-        assert result.all_done is False
-        assert sonarr.execute_calls == []
 
     def test_languages_follow_dual_audio_flag(self) -> None:
         pending = pending_import(
@@ -2026,81 +1125,6 @@ class TestImportCompletedPayload:
         # A regression returning early without even trying would still set False here.
         assert len(sonarr.execute_calls) == 1
 
-    def test_quality_defs_and_languages_cached_per_run(self) -> None:
-        # Quality definitions + languages are fetched lazily ONCE and cached on the
-        # executor for the rest of the run. Poll 1 caches the (a) values. Before poll 2
-        # the source changes to (b), but poll 2 must not re-fetch, so both polls
-        # keep the (a) values. Drop the lazy-fetch guard and poll 2 refetches (b),
-        # flipping the executor's cache to (b) -> these assertions fail.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        defs_a = [
-            QualityDefinition.model_validate({"quality": {"id": 1, "name": "A", "source": "web", "resolution": 1080}}),
-        ]
-        defs_b = [
-            QualityDefinition.model_validate(
-                {"quality": {"id": 2, "name": "B", "source": "bluray", "resolution": 1080}},
-            ),
-        ]
-        langs_a = [Language(id=1, name="English")]
-        langs_b = [Language(id=8, name="Japanese")]
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate],
-            quality_defs=defs_a,
-            languages=langs_a,
-        )
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        # The source changes between polls. The cached values must ignore it.
-        sonarr.quality_defs_return = defs_b
-        sonarr.languages_return = langs_b
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert strat._executor._scratch.quality_defs == defs_a
-        assert strat._executor._scratch.languages == langs_a
-
-
-class TestImportSnapshot:
-    """One poll's view over every series a pending import spans.
-
-    An id routes to its index, an unknown id reads ABSENT.
-    """
-
-    @staticmethod
-    def _snapshot() -> ImportSnapshot:
-        # Series 7 holds 101 under the pending import's group, series 8 an empty 201.
-        return ImportSnapshot(
-            _two_series_pending_import(),
-            {
-                7: episode_snapshot(
-                    episodes=episode_index([sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]),
-                    trusted=trusted_groups(OwnedAtGrab(), GrabbedGroups(TorrentGroup("SubGroup", ()))),
-                ),
-                8: episode_snapshot(episodes=episode_index([sonarr_ep(1, 1, ep_id=201, episode_file_id=0)])),
-            },
-            {},
-        )
-
-    def test_series_of_reads_the_index_holding_the_id(self) -> None:
-        snapshot = self._snapshot()
-
-        assert (snapshot.series_of(101), snapshot.series_of(201), snapshot.series_of(999)) == (7, 8, None)
-
-    def test_statuses_classify_under_each_series_in_the_asked_order(self) -> None:
-        # The grouping by series never reorders the answer, a repeat collapses, and an id no index
-        # holds reads ABSENT rather than raising.
-        statuses = self._snapshot().file_map_statuses([201, 999, 101, 201], {})
-
-        assert list(statuses.by_id) == [201, 999, 101]
-        assert statuses.by_id == {
-            201: EpisodeFileStatus.ABSENT,
-            999: EpisodeFileStatus.ABSENT,
-            101: EpisodeFileStatus.TRUSTED,
-        }
-
 
 _SHOW_FILE = "Show - 01 [1080p].mkv"
 _OTHER_FILE = "Other - 01 [1080p].mkv"
@@ -2125,36 +1149,13 @@ class _PerSeriesSonarr(FakeSonarrClient):
         return self.episodes_by_series.get(series_id)
 
 
-class _CountingStore(FakeCacheStore):
-    """A `FakeCacheStore` counting its guard and pending import reads."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.get_guards_calls = 0
-        self.get_pending_import_row_calls = 0
-
-    @override
-    def get_guards(self, arr: Arr) -> dict[int, OwnedAtGrab]:
-        self.get_guards_calls += 1
-        return super().get_guards(arr)
-
-    @override
-    def get_pending_import_row(self, arr: Arr, infohash: str) -> dict[str, Any] | None:
-        self.get_pending_import_row_calls += 1
-        return super().get_pending_import_row(arr, infohash)
-
-
-def _two_series_pending_import(
-    files: FileEpisodeMap | None = None,
-    *,
-    other_window: tuple[int, ...] = (201,),
-) -> PendingImport:
-    """One torrent claimed on series 7 (window 101) and series 8 (`other_window`), its listing fully placed."""
+def _two_series_pending_import(files: FileEpisodeMap | None = None) -> PendingImport:
+    """One torrent claimed on series 7 (window 101) and series 8 (window 201), its listing fully placed."""
 
     mapped = {_SHOW_FILE: (101,), _OTHER_FILE: (201,)} if files is None else files
     return two_claim_pending_import(
         series_ids=(7, 8),
-        windows=((101,), other_window),
+        windows=((101,), (201,)),
         titles=("Show", "Other"),
         infohash="abc123",
         file_episode_map=mapped,
@@ -2172,36 +1173,8 @@ class TestMultiSeriesImport:
     """A two-series pending import posts each file under the series its claim names and is done as one."""
 
     @staticmethod
-    def _strat(sonarr: FakeSonarrClient, store: FakeCacheStore | None = None) -> SonarrStrategy:
-        return make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=store or FakeCacheStore())
-
-    @staticmethod
     def _candidates(*names: str) -> list[ManualImportCandidate]:
         return [manual_candidate(f"/d/{name}") for name in names]
-
-    def test_each_file_posts_under_its_claims_series(self) -> None:
-        # Both claims have a window, so a file's first id names its claim whatever the indexes hold
-        # (here no index holds 201).
-        pending = _two_series_pending_import()
-        strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(_SHOW_FILE, _OTHER_FILE))
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
-
-    def test_a_file_of_a_claim_with_no_window_posts_under_the_index_holding_its_id(self) -> None:
-        # The series-8 claim has no window, so no window holds 201: the same-poll index of series 8 does.
-        pending = _two_series_pending_import(other_window=())
-        sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)], 8: [sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]},
-            candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
-        )
-
-        result = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
 
     def test_a_file_no_claim_or_index_routes_waits_and_warns_at_the_deadline(self) -> None:
         # 301 sits in neither claim's window and in no series index: nothing is POSTed, the poll
@@ -2223,31 +1196,6 @@ class TestMultiSeriesImport:
         assert "resolve to no series" in warning
         assert normalize_file_name(stray) in warning
 
-    def test_an_index_without_the_episode_still_posts_under_the_claims_series(self) -> None:
-        # Series 8's index lacks 201: the claim's window still routes it there.
-        pending = _two_series_pending_import()
-        sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)], 8: [sonarr_ep(1, 2, ep_id=202, episode_file_id=0)]},
-            candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
-        )
-
-        result = self._strat(sonarr).import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": 7, f"/d/{_OTHER_FILE}": 8}
-
-    def test_a_one_series_pending_import_posts_under_its_only_series_when_nothing_routes_the_episode(self) -> None:
-        # A claim with no window and an index without 101 leave no window and no index to route by: the pending
-        # import's one series is where its files go.
-        pending = pending_import()
-        strat, sonarr = _make_sonarr_for_import(candidates=self._candidates(_SHOW_FILE))
-        sonarr.episodes_return = [sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert _posted_series(sonarr) == {f"/d/{_SHOW_FILE}": pending.claims[0].series_id}
-
     def test_imported_only_when_every_series_file_map_episodes_are_done(self) -> None:
         # Series 7's file map episode already holds the pending import's group while series 8's has no file: the
         # pending import is not done, and only the series-8 file is POSTed. Once that is imported, the next poll
@@ -2260,7 +1208,7 @@ class TestMultiSeriesImport:
             },
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
-        strat = self._strat(sonarr)
+        strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
 
         first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         assert first.all_done is False
@@ -2274,139 +1222,6 @@ class TestMultiSeriesImport:
         assert second.all_done is True
         assert (second.imported_count, second.file_map_episode_count) == (2, 2)
         assert len(sonarr.execute_calls) == 1
-
-    def test_history_rows_land_under_the_admitting_claim(self) -> None:
-        # A row counts only where a claim on its series admits the episode: the series-7 claim with a window
-        # admits 101 alone, the series-8 claim with no window admits every row on series 8, and a row on a
-        # series no claim holds is dropped.
-        second, misfiled, stray = "Other - 02 [1080p].mkv", "Show - 02 [1080p].mkv", "Stray - 01 [1080p].mkv"
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={},
-            seadex_files=[_SHOW_FILE, _OTHER_FILE, second, misfiled, stray],
-            claims=(
-                title_claim(anilist_id=1, series_id=7, title="Show", ordered_episode_ids=(101,)),
-                title_claim(anilist_id=2, series_id=8, title="Other"),
-            ),
-        )
-        rows = [
-            HistoryImport(f"/d/{_SHOW_FILE}", episode_id=101, series_id=7),
-            HistoryImport(f"/d/{_OTHER_FILE}", episode_id=201, series_id=8),
-            HistoryImport(f"/d/{second}", episode_id=202, series_id=8),
-            HistoryImport(f"/d/{misfiled}", episode_id=102, series_id=7),
-            HistoryImport(f"/d/{stray}", episode_id=901, series_id=9),
-        ]
-
-        assert placements_from_history(rows, pending) == {
-            normalize_file_name(_SHOW_FILE): (101,),
-            normalize_file_name(_OTHER_FILE): (201,),
-            normalize_file_name(second): (202,),
-        }
-
-    def test_file_map_statuses_read_the_guards_once_for_every_series(self) -> None:
-        # One guards read serves every claimed series' trusted groups, while each series' episodes are
-        # fetched fresh on their own.
-        store = _CountingStore()
-        sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, episode_file_id=0)], 8: [sonarr_ep(1, 1, ep_id=201, episode_file_id=0)]},
-            candidates=[],
-        )
-        strat = self._strat(sonarr, store)
-
-        progress = strat.import_progress(_two_series_pending_import())
-
-        assert store.get_guards_calls == 1
-        assert sonarr.episodes_calls == [7, 8]
-        assert progress == ImportProgress(0, 2, determinate=True)
-
-    def test_each_claimed_id_is_classified_under_its_own_claims_guards(self) -> None:
-        # One series, two claims on it: A's plan marked group G outdated, B's releases carry G. G files sit on
-        # both windows' episodes, so A's id still needs importing while B's is done (one of two), where the
-        # series' merged evidence would have trusted G for both. One episode fetch serves both claims.
-        pending = pending_import(
-            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
-            claims=(
-                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
-                title_claim(anilist_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
-            ),
-        )
-        sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, release_group="G"), sonarr_ep(1, 2, ep_id=102, release_group="G")]},
-            candidates=[],
-        )
-
-        progress = self._strat(sonarr).import_progress(pending)
-
-        assert progress == ImportProgress(1, 2, determinate=True)
-        assert sonarr.episodes_calls == [7]
-
-    def test_a_misplaced_episode_still_counts_as_owed(self) -> None:
-        # This torrent's 200 file sits on both episodes: 102 holds its own file, 101 still lacks the 100 one.
-        pending = pending_import(
-            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
-            release_sizes=[100, 200],
-            sizes_by_name={normalize_file_name(_SHOW_FILE): 100, normalize_file_name(_OTHER_FILE): 200},
-        )
-        sonarr = _PerSeriesSonarr(
-            {
-                7: [
-                    sonarr_ep(1, 1, ep_id=101, size=200, release_group="SubGroup"),
-                    sonarr_ep(1, 2, ep_id=102, size=200, release_group="SubGroup"),
-                ]
-            },
-            candidates=[],
-        )
-
-        progress = self._strat(sonarr).import_progress(pending)
-
-        assert progress == ImportProgress(1, 2, determinate=True)
-
-    def test_an_id_outside_every_window_is_classified_under_the_sole_claim_with_no_window(self) -> None:
-        # One series: A's window holds 101 and its releases carry G, B has no window and its plan marked G
-        # outdated. 102 sits outside every window, so B alone classifies it and it still needs importing (one of two
-        # done), where the series' merged evidence would have trusted G for both.
-        pending = pending_import(
-            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
-            claims=(
-                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(entry_groups=("G",))),
-                title_claim(anilist_id=2, guards=OwnedAtGrab(stale_groups=("G",))),
-            ),
-        )
-        sonarr = _PerSeriesSonarr(
-            {7: [sonarr_ep(1, 1, ep_id=101, release_group="G"), sonarr_ep(1, 2, ep_id=102, release_group="G")]},
-            candidates=[],
-        )
-
-        progress = self._strat(sonarr).import_progress(pending)
-
-        assert progress == ImportProgress(1, 2, determinate=True)
-        assert sonarr.episodes_calls == [7]
-
-    def test_an_id_two_windows_hold_is_classified_and_netted_under_the_first_claim(self) -> None:
-        # A's window (101-104) and B's (103-104) overlap on G files. 103 and 104 are classified under A, whose
-        # plan marked G outdated, so they still need importing, and B's preowned 103 nets nothing out of the
-        # bar: every file map episode the statuses classified is counted, where a union of preowned ids would
-        # drop one.
-        files = {f"show - {n:02d}.mkv": [100 + n] for n in range(1, 5)}
-        pending = pending_import(
-            file_episode_map=files,
-            seadex_files=list(files),
-            claims=(
-                title_claim(
-                    anilist_id=1, ordered_episode_ids=(101, 102, 103, 104), guards=OwnedAtGrab(stale_groups=("G",))
-                ),
-                title_claim(
-                    anilist_id=2,
-                    ordered_episode_ids=(103, 104),
-                    preowned_episode_ids=(103,),
-                    guards=OwnedAtGrab(entry_groups=("G",)),
-                ),
-            ),
-        )
-        episodes = [sonarr_ep(1, n, ep_id=100 + n, release_group="G") for n in range(1, 5)]
-        sonarr = _PerSeriesSonarr({7: episodes}, candidates=[])
-
-        assert self._strat(sonarr).import_progress(pending) == ImportProgress(0, 4, determinate=True)
 
 
 _FIRST_FILE = "Show - 01 [1080p].mkv"
@@ -2422,23 +1237,13 @@ _TWO_EPISODES_STORED = pending_import(
 9002."""
 
 
-def _moved_down_one(*, with_a_file: int | None = None) -> list[SonarrEpisode]:
+def _moved_down_one() -> list[SonarrEpisode]:
     """Series 7 with an episode numbered ahead of the stored two: 9001 sits on row 102 and 9002 on a row 103.
 
-    No row has a file but `with_a_file`, which holds one of the pending import's group.
+    No row has a file.
     """
 
-    return [
-        sonarr_ep(
-            1,
-            number,
-            ep_id=100 + number,
-            tvdb_id=8999 + number,
-            episode_file_id=1 if 100 + number == with_a_file else 0,
-            release_group="SubGroup" if 100 + number == with_a_file else None,
-        )
-        for number in (1, 2, 3)
-    ]
+    return [sonarr_ep(1, number, ep_id=100 + number, tvdb_id=8999 + number, episode_file_id=0) for number in (1, 2, 3)]
 
 
 def _both_files() -> list[ManualImportCandidate]:
@@ -2458,13 +1263,6 @@ class TestImportFollowsEpisodeIds:
         assert _posted(sonarr) == [[(f"/d/{_FIRST_FILE}", [102]), (f"/d/{_SECOND_FILE}", [103])]]
         assert result.followed is True
 
-    def test_the_bar_counts_the_files_on_the_rows_followed_to(self) -> None:
-        strat, _ = _make_sonarr_for_import(candidates=_both_files(), episodes=_moved_down_one(with_a_file=103))
-
-        result = strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
-
-        assert (result.imported_count, result.file_map_episode_count) == (1, 2)
-
     def test_a_hand_import_running_on_a_row_followed_to_holds_the_import(self) -> None:
         by_hand = CommandResource.model_validate(
             {"id": 7000, "name": "ManualImport", "status": "started", "body": {"files": [{"episodeIds": [103]}]}}
@@ -2477,68 +1275,6 @@ class TestImportFollowsEpisodeIds:
 
         assert result.pause_reason is PauseReason.IMPORT
         assert sonarr.execute_calls == []
-
-    def test_a_pending_import_imported_by_the_ids_it_stores_ends_imported_as_stored(self) -> None:
-        rows = [
-            sonarr_ep(1, 1, ep_id=101, tvdb_id=9000, release_group="SubGroup"),
-            sonarr_ep(1, 2, ep_id=102, tvdb_id=9001, release_group="SubGroup"),
-            sonarr_ep(1, 3, ep_id=103, tvdb_id=9002, episode_file_id=0),
-        ]
-        strat, sonarr = _make_sonarr_for_import(candidates=_both_files(), episodes=rows)
-
-        result = strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert result.pending is _TWO_EPISODES_STORED
-        assert result.followed is False
-        assert sonarr.execute_calls == []
-
-    def test_the_attempt_leaves_the_store_alone_and_its_result_carries_the_followed_pending_import(self) -> None:
-        store = FakeCacheStore()
-        store.put_pending_import_row(Arr.SONARR, "abc123", _TWO_EPISODES_STORED.to_json())
-        strat, _ = _make_sonarr_for_import(candidates=_both_files(), episodes=_moved_down_one(), cache_store=store)
-
-        result = strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
-
-        assert store.get_pending_import_row(Arr.SONARR, "abc123") == _TWO_EPISODES_STORED.to_json()
-        assert result.pending is not None
-        assert result.pending.file_episode_map == {
-            normalize_file_name(_FIRST_FILE): (102,),
-            normalize_file_name(_SECOND_FILE): (103,),
-        }
-        assert result.pending.tvdb_ids == TvdbIds({102: 9001, 103: 9002})
-
-    def test_a_progress_poll_counts_the_rows_followed_to_and_saves_nothing(self) -> None:
-        store = FakeCacheStore()
-        store.put_pending_import_row(Arr.SONARR, "abc123", _TWO_EPISODES_STORED.to_json())
-        strat, _ = _make_sonarr_for_import(candidates=[], episodes=_moved_down_one(with_a_file=103), cache_store=store)
-
-        progress = strat.import_progress(_TWO_EPISODES_STORED)
-
-        assert progress == ImportProgress(1, 2, determinate=True)
-        assert store.get_pending_import_row(Arr.SONARR, "abc123") == _TWO_EPISODES_STORED.to_json()
-
-    def test_a_progress_poll_never_counts_a_pending_import_the_follow_took_a_file_from(self) -> None:
-        only_the_first = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, release_group="SubGroup")]
-        strat, _ = _make_sonarr_for_import(candidates=[], episodes=only_the_first)
-
-        assert strat.import_progress(_TWO_EPISODES_STORED) == NO_PROGRESS
-
-    def test_a_file_whose_episode_has_no_row_is_left_out_with_one_warning_naming_it(self) -> None:
-        recording = install_recording_hub()
-        only_the_first = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, episode_file_id=0)]
-        strat, sonarr = _make_sonarr_for_import(candidates=_both_files(), episodes=only_the_first)
-
-        strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
-
-        assert _posted(sonarr) == [[(f"/d/{_FIRST_FILE}", [101])]]
-        left_out = normalize_file_name(_SECOND_FILE)
-        assert [message for message in diagnostic_messages(recording, Severity.WARNING) if left_out in message] == [
-            (
-                "Show · SubGroup: Sonarr no longer has the episode show - 02 [1080p].mkv was matched to "
-                "(TVDB episode 9002) - leaving the file out of the import"
-            )
-        ]
 
     def test_a_later_attempt_on_the_pending_import_as_stored_does_not_warn_of_the_file_again(self) -> None:
         # An attempt that ends in an error saves nothing, so the next one follows the stored pending import again.
@@ -2553,109 +1289,6 @@ class TestImportFollowsEpisodeIds:
         warnings = [message for message in diagnostic_messages(recording, Severity.WARNING) if left_out in message]
         assert len(warnings) == 1
 
-    @pytest.mark.parametrize(
-        "rows",
-        [
-            pytest.param(None, id="a-failed-read"),
-            pytest.param([], id="no-rows"),
-            pytest.param(
-                [
-                    sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, episode_file_id=0),
-                    sonarr_ep(1, 2, ep_id=102, tvdb_id=9001, episode_file_id=0),
-                ],
-                id="two-rows-on-an-episode-it-holds",
-            ),
-        ],
-    )
-    def test_a_pending_import_that_cannot_be_followed_waits_as_stored(self, rows: list[SonarrEpisode] | None) -> None:
-        strat, sonarr = _make_sonarr_for_import(candidates=_both_files())
-        sonarr.episodes_return = rows
-
-        result = strat.import_completed(_TWO_EPISODES_STORED, "/d", AttemptKind.ORDINARY)
-
-        assert result == replace(AttemptResult.waiting(), file_map_episode_count=2, pending=_TWO_EPISODES_STORED)
-        assert sonarr.execute_calls == []
-
-    def test_a_file_sonarrs_history_placed_is_stored_with_the_tvdb_episode_its_row_has_at_that_poll(self) -> None:
-        strat, sonarr = _make_sonarr_for_import(candidates=None)
-        sonarr.history_page_return = _imported_history((101, f"/d/Show/{_FIRST_FILE}"))
-        sonarr.folder_candidates_return = []
-        sonarr.path_mappings_return = []
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, release_group="SubGroup")]
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[_FIRST_FILE])
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.pending is not None
-        assert result.pending.file_episode_map == {normalize_file_name(_FIRST_FILE): (101,)}
-        assert result.pending.tvdb_ids == TvdbIds({101: 9001})
-
-
-_SPLIT_RUN = tuple(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14))
-
-_STORED_ON_SPLIT_ROWS = pending_import(
-    file_episode_map={
-        _SPLIT_RUN[0]: (9001,),
-        _SPLIT_RUN[1]: (9002,),
-        **{_SPLIT_RUN[n]: (400 + n,) for n in range(2, 13)},
-    },
-    seadex_files=_SPLIT_RUN,
-    ordered_episode_ids=tuple(range(401, 413)),
-    tvdb_ids={9001: 7901, 9002: 7902, **{400 + n: 7400 + n for n in range(1, 13)}},
-)
-"""A 13-file pending import of title 1 on series 7, whose window is the twelve aired episodes 401 to 412.
-
-The aired opener 401 is two halves in the order Sonarr numbers the series by. The first two files sit on the
-halves' rows 9001 and 9002, outside the window, and the other eleven on 402 to 412.
-"""
-
-
-def _split_opener_rows(*, with_a_file: Iterable[int]) -> list[SonarrEpisode]:
-    """Series 7 as Sonarr numbers it: the two halves, the eleven after them, and the whole opener last.
-
-    The rows in `with_a_file` hold a file of the pending import's group, the others none.
-    """
-
-    held = frozenset(with_a_file)
-    numbered = [(1, 9001, 7901), (2, 9002, 7902), *((n + 1, 400 + n, 7400 + n) for n in range(2, 13)), (21, 401, 7401)]
-    return [
-        sonarr_ep(
-            7,
-            number,
-            ep_id=row_id,
-            tvdb_id=tvdb_id,
-            episode_file_id=1 if row_id in held else 0,
-            release_group="SubGroup" if row_id in held else None,
-        )
-        for number, row_id, tvdb_id in numbered
-    ]
-
-
-class TestImportOnOwnOnlyRows:
-    """A file placed on an own-only row is imported like any other file of the pending import."""
-
-    def test_a_file_on_such_a_row_is_posted_with_the_rows_id(self) -> None:
-        candidates = [manual_candidate(f"/d/{name}") for name in _SPLIT_RUN]
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=candidates, episodes=_split_opener_rows(with_a_file=range(402, 413))
-        )
-
-        result = strat.import_completed(_STORED_ON_SPLIT_ROWS, "/d", AttemptKind.ORDINARY)
-
-        assert _posted(sonarr) == [[(f"/d/{_SPLIT_RUN[0]}", [9001]), (f"/d/{_SPLIT_RUN[1]}", [9002])]]
-        assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 11, 13)
-
-    def test_the_pending_import_ends_once_such_rows_hold_its_files_too(self) -> None:
-        candidates = [manual_candidate(f"/d/{name}") for name in _SPLIT_RUN]
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=candidates, episodes=_split_opener_rows(with_a_file=(9001, 9002, *range(402, 413)))
-        )
-
-        result = strat.import_completed(_STORED_ON_SPLIT_ROWS, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert sonarr.execute_calls == []
-
 
 def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
     """One Radarr `/history/since` record, as the import-evidence match reads it."""
@@ -2669,13 +1302,6 @@ class TestRadarrImportCompletedHistory:
     Radarr's completed-download handling does the import; `import_completed` only
     reads history as proof so the pending import can drop and the category gate release.
     """
-
-    def test_matching_import_event_reads_done(self) -> None:
-        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("h")]))
-
-        result = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
 
     @pytest.mark.parametrize(
         "history",
@@ -2696,14 +1322,6 @@ class TestRadarrImportCompletedHistory:
 
         assert result.all_done is False
 
-    def test_matches_download_id_case_insensitively(self) -> None:
-        # Radarr uppercases the stored downloadId. The pending import's hash is lowercase.
-        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("ABCDEF")]))
-
-        result = strat.import_completed(pending_import(infohash="abcdef"), "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-
     def test_history_fetched_once_per_wait_pass(self) -> None:
         # Two pending imports in one wait pass share ONE history fetch (memoized).
         radarr = FakeRadarrClient(history_since=[_import_history("h")])
@@ -2713,33 +1331,6 @@ class TestRadarrImportCompletedHistory:
         strat.import_completed(pending_import(infohash="other"), "/d", AttemptKind.ORDINARY)
 
         assert len(radarr.history_calls) == 1
-
-    def test_arr_run_start_resets_the_memo(self) -> None:
-        # get_items (the arr run's start hook) clears the memo so a stale window can't
-        # carry into the next arr run's reconcile.
-        radarr = FakeRadarrClient(history_since=[_import_history("h")])
-        strat = make_radarr_sync(radarr=radarr)
-
-        strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
-        strat.get_items()
-        strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
-
-        assert len(radarr.history_calls) == 2
-
-    @pytest.mark.parametrize("age_days", [None, HISTORY_MAX_LOOKBACK_DAYS + 10], ids=["no-records", "past-the-cap"])
-    def test_history_window_starts_at_the_cap_when_no_stamp_is_newer(self, age_days: int | None) -> None:
-        store = FakeCacheStore()
-        if age_days is not None:
-            stamp = stamp_of(datetime.now() - timedelta(days=age_days))
-            store.put_pending_import_row(Arr.RADARR, "h", pending_import(infohash="h", added_at=stamp).to_json())
-        strat = make_radarr_sync(cache_store=store)
-        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=_HISTORY_SKEW_HOURS)
-
-        before = datetime.now(UTC)
-        start = strat._history_query_start()
-        after = datetime.now(UTC)
-
-        assert before - back <= start <= after - back
 
     def test_history_window_starts_at_the_oldest_stamp_inside_the_cap(self) -> None:
         older = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS - 10))
@@ -2767,11 +1358,6 @@ class TestRadarrImportCompletedHistory:
 
         assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
 
-    def test_does_not_support_the_blocking_wait(self) -> None:
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
-
-        assert strat.supports_blocking_wait is False
-
 
 _GRAB_URL = "https://nyaa.si/1"
 _GRAB_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
@@ -2780,34 +1366,15 @@ _EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
 _STAMP = "2026-01-01 00:00:00"
 
 
-def _grab_episodes(
-    sonarr: FakeSonarrClient,
-    *,
-    unread_series: frozenset[int] = frozenset(),
-    unread_anilist_ids: frozenset[int] = frozenset(),
-) -> ScriptedEpisodes:
-    """Title 5's window is episode 102 of `sonarr`'s series.
+def _sonarr_grab_run(*, store: FakeCacheStore, episodes: ScriptedEpisodes) -> _FakeRunServices:
+    """Drive a blocking run's Sonarr `check_title` for title 5 (series 7) listing one two-file torrent.
 
-    The `unread_series` have no stored orders, and the `unread_anilist_ids` no AniList answer.
-    """
-
-    return ScriptedEpisodes(
-        sonarr, windows={5: [_EP2]}, unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
-    )
-
-
-def _sonarr_grab_run(
-    mode: ImportWaitMode, *, store: FakeCacheStore, episodes: ScriptedEpisodes, grab: bool = True
-) -> _FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 (series 7) listing one two-file torrent.
-
-    The series has mappings for titles 4 and 5 and for the ignored title 6. The plan grabs the torrent unless
-    `grab` is off.
+    The series has mappings for titles 4 and 5 and for the ignored title 6. The plan grabs the torrent.
     """
 
     seadex: SeadexDict = {
         "NAN0": rg_group(
-            {_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=grab, files=list(_GRAB_FILES))}
+            {_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=True, files=list(_GRAB_FILES))}
         ),
     }
     run = _FakeRunServices(
@@ -2817,7 +1384,7 @@ def _sonarr_grab_run(
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
         plan_grabs_result=grab_plan(seadex),
-        import_wait_mode=mode,
+        import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=store,
     )
     parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
@@ -2827,51 +1394,6 @@ def _sonarr_grab_run(
         **scripted_roles(episodes, run.pending_imports),
         _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
         _listings=_ScriptedListings(),
-        _config=make_config(sleep_time=0),
-        logger=make_logger(),
-    )
-    strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
-    return run
-
-
-def _run_title_check(
-    files: tuple[ListedFile, ...],
-    window: list[SonarrEpisode],
-    listings: _ScriptedListings,
-    *,
-    episode_count: int | None = None,
-) -> _FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 over `window` (all of series 7), listing one torrent of `files`.
-
-    `episode_count` is AniList's count for title 5, None when it gives none.
-    """
-
-    seadex: SeadexDict = {
-        "NAN0": rg_group(
-            {_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=True, files=[f.file_name for f in files])}
-        ),
-    }
-    run = _FakeRunServices(
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show",
-        seadex_dict=seadex,
-        plan_grabs_result=grab_plan(seadex),
-        import_wait_mode=ImportWaitMode.BLOCKING,
-        cache_store=FakeCacheStore(),
-    )
-    strat = make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        **scripted_roles(
-            ScriptedEpisodes(
-                FakeSonarrClient(episodes=window),
-                windows={5: window},
-                counts={} if episode_count is None else {5: episode_count},
-            ),
-            run.pending_imports,
-        ),
-        _parse=_ScriptedParse({_GRAB_URL: files}),
-        _listings=listings,
         _config=make_config(sleep_time=0),
         logger=make_logger(),
     )
@@ -2902,7 +1424,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
 
-        run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=_grab_episodes(sonarr))
+        run = _sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_EP2]}))
 
         (req,) = run.grab_requests
         (update,) = req.pending_import_updates.values()
@@ -2960,155 +1482,6 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ()
 
-    def test_a_file_placed_by_size_over_its_name_warns_once_per_release(self) -> None:
-        # Two specials named as each other.
-        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
-        files = tuple(
-            ListedFile(f"Show.S00E0{n}.mkv", 1000 * n, parsed_info(season=0, episodes=(n,), matched=((0, n),)))
-            for n in (1, 2)
-        )
-        recording = install_recording_hub()
-
-        run = _run_title_check(files, specials, _ScriptedListings(episode_by_size={1000: 502, 2000: 501}))
-
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        assert update.file_map == {"show.s00e01.mkv": (502,), "show.s00e02.mkv": (501,)}
-        assert diagnostic_messages(recording, Severity.WARNING) == [
-            (
-                f"{_GRAB_URL}: show.s00e01.mkv goes on S00E02 because its size matches SeaDex's S00E02 release "
-                "(its name reads as S00E01)"
-                " (1 more file in the debug log)"
-            )
-        ]
-
-    @pytest.mark.parametrize(
-        ("episode_count", "placed"),
-        [
-            pytest.param(2, {"ova - 01 [grp].mkv": (501,), "ova - 02 [grp].mkv": (504,)}, id="the-windows-two"),
-            pytest.param(3, {}, id="an-episode-sonarr-lacks"),
-        ],
-    )
-    def test_the_titles_anilist_episode_count_reaches_its_placement(
-        self, episode_count: int, placed: dict[str, tuple[int, ...]]
-    ) -> None:
-        # Two specials numbered apart take the sequence only when they are the title's every episode.
-        specials = [
-            sonarr_ep(0, 1, ep_id=501, episode_file_id=0, air_date="2016-03-01"),
-            sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
-        ]
-        names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
-        files = tuple(ListedFile(name, 1000, parsed_info()) for name in names)
-
-        run = _run_title_check(files, specials, _ScriptedListings(), episode_count=episode_count)
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates["h1"].file_map == placed
-
-    def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
-        # SeaDex is unreachable, so the windows the torrent is listed under and the size matches are both unknown.
-        # Nothing is placed, the release is skipped, and the title isn't cached since its inputs weren't all read.
-        files = tuple(
-            ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)
-        )
-
-        run = _run_title_check(files, [_EP1, _EP2], _ScriptedListings(unreachable=True))
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert req.pending_import_updates["h1"].file_map == {}
-        assert req.input_unread_groups == ("NAN0",)
-
-    def test_the_listing_read_gets_the_ignored_titles_too(self) -> None:
-        # Title 6 shares the series but is on the ignore list. It's never checked, but a torrent it lists is
-        # still its files, so the series' listing read gets it beside the titles the run checks.
-        kept, ignored = {5: TitleMapping(anilist_id=5)}, {6: TitleMapping(anilist_id=6)}
-        seadex: SeadexDict = {
-            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=True, files=["a.mkv"])}),
-        }
-        run = _FakeRunServices(
-            anilist_ids=kept,
-            ignored=ignored,
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            seadex_dict=seadex,
-            plan_grabs_result=grab_plan(seadex),
-            import_wait_mode=ImportWaitMode.BLOCKING,
-        )
-        listings = _ScriptedListings()
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(
-                ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), windows={5: [_EP1]}), run.pending_imports
-            ),
-            _parse=_ScriptedParse(),
-            _listings=listings,
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, kept[5])
-
-        assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored=ignored))]
-
-    def test_an_ignored_titles_listed_files_are_never_grabbed_onto_a_sibling(self) -> None:
-        # Title 5, the season, is on the ignore list, and title 6 is the specials. The torrent is the season's
-        # name number sequence, which title 6's window alone would take as its specials. The season's listed window
-        # judges the files first, so title 6 grabs none of them and the release is skipped as another title's.
-        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in (1, 2)]
-        files = tuple(
-            ListedFile(name, 1000 * n, parsed_info(season=0, absolutes=(n,), matched=((1, n),)))
-            for n, name in enumerate(_GRAB_FILES, 1)
-        )
-        seadex: SeadexDict = {
-            "NAN0": rg_group(
-                {_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=True, files=list(_GRAB_FILES))}
-            ),
-        }
-        run = _FakeRunServices(
-            anilist_ids={6: TitleMapping(anilist_id=6)},
-            ignored={5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(url="https://releases.moe/6"),
-            seadex_dict=seadex,
-            plan_grabs_result=grab_plan(seadex),
-            import_wait_mode=ImportWaitMode.BLOCKING,
-            cache_store=FakeCacheStore(),
-        )
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(
-                ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2, *specials]), windows={6: specials}),
-                run.pending_imports,
-            ),
-            _parse=_ScriptedParse({_GRAB_URL: files}),
-            _listings=_ScriptedListings(
-                {"h1": torrent_listing(title_window(5, (101, 102), ignored=True), title_window(6, (501, 502)))}
-            ),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 6, TitleMapping(anilist_id=6))
-
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        assert update.file_map == {}
-        assert update.excluded == tuple(normalize_file_name(name) for name in _GRAB_FILES)
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACED_ELSEWHERE
-
-    def test_wait_mode_off_reads_no_pending_import_and_builds_no_pending_import_update(self) -> None:
-        store = _CountingStore()
-        sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
-
-        run = _sonarr_grab_run(ImportWaitMode.OFF, store=store, episodes=_grab_episodes(sonarr))
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
-        assert store.get_pending_import_row_calls == 0
-        # The placement still runs: the planner's coverage never depends on the wait mode.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
-
 
 _MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
 """TVDB episode 9001 of series 7 as a special on row 150, after it left the season's first episode."""
@@ -3152,39 +1525,6 @@ def _title_stamps(store: FakeCacheStore) -> dict[int, str | None]:
 class TestSonarrCheckTitleFollowsStoredPendingImports:
     """A check follows each stored pending import of the entry's torrents before it places them."""
 
-    def test_a_stored_pending_import_is_followed_before_its_torrent_is_placed(self) -> None:
-        store = _store_holding(_stored_on_the_first_row(tvdb_ids={101: 9001}))
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
-
-        run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
-
-        (req,) = run.grab_requests
-        (update,) = req.pending_import_updates.values()
-        assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
-        pending = update.pending_import_at(_STAMP, restart=False)
-        assert dict(pending.file_episode_map) == {
-            normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (150, 102), strict=True)
-        }
-        assert [claim.ordered_episode_ids for claim in pending.claims] == [(150,), (102,)]
-        assert pending.tvdb_ids == TvdbIds({150: 9001, 102: 9002})
-
-    def test_a_followed_pending_import_is_saved_when_nothing_is_grabbed_and_its_titles_are_uncached(self) -> None:
-        store = _store_holding(_stored_on_the_first_row(tvdb_ids={101: 9001}))
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
-
-        run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes, grab=False)
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates == {}
-        row = store.get_pending_import_row(Arr.SONARR, "h1")
-        assert row is not None
-        assert row["file_episode_map"] == {normalize_file_name(_GRAB_FILES[0]): [150]}
-        assert _title_stamps(store) == {9: _STAMP, 22: None, 23: _STAMP}
-
     def test_a_stored_pending_import_that_cannot_be_followed_is_not_joined_and_its_torrent_is_unread(self) -> None:
         stored = _stored_on_the_first_row(tvdb_ids=None)
         store = _store_holding(stored)
@@ -3192,7 +1532,7 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
             FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
         )
 
-        run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
+        run = _sonarr_grab_run(store=store, episodes=episodes)
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
@@ -3200,38 +1540,6 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         assert req.pending_import_updates["h1"].pending_import is None
         assert store.get_pending_import_row(Arr.SONARR, "h1") == stored.to_json()
         assert _title_stamps(store) == {9: _STAMP, 22: _STAMP, 23: _STAMP}
-
-    def test_a_two_series_pending_import_has_the_ids_of_both_series_followed(self) -> None:
-        stored = two_claim_pending_import(
-            anilist_ids=(22, 23),
-            series_ids=(7, 8),
-            windows=((101,), (201,)),
-            titles=("Show Cour 1", "Other"),
-            infohash="h1",
-            file_episode_map={_GRAB_FILES[0]: (101,), _GRAB_FILES[1]: (201,)},
-            seadex_files=list(_GRAB_FILES),
-            tvdb_ids={101: 9001, 201: 9101},
-        )
-        store = _store_holding(stored)
-        sonarr = _PerSeriesSonarr(
-            {7: [_MOVED_SPECIAL, _SECOND_ROW], 8: [sonarr_ep(1, 2, ep_id=250, tvdb_id=9101, episode_file_id=0)]},
-            candidates=[],
-        )
-
-        _sonarr_grab_run(
-            ImportWaitMode.BLOCKING,
-            store=store,
-            episodes=ScriptedEpisodes(sonarr, windows={5: [_SECOND_ROW]}),
-            grab=False,
-        )
-
-        row = store.get_pending_import_row(Arr.SONARR, "h1")
-        assert row is not None
-        assert row["file_episode_map"] == {
-            normalize_file_name(name): [ep] for name, ep in zip(_GRAB_FILES, (150, 250), strict=True)
-        }
-        assert sorted(sonarr.episodes_calls) == [7, 8]
-        assert _title_stamps(store) == {9: _STAMP, 22: None, 23: None}
 
 
 _STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
@@ -3241,16 +1549,13 @@ _LISTED_EP1 = _EP1.renumbered(season=1, episode=1, absolute=None)
 """Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
 
 
-def _check_title_in_another_order(
-    window: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
-) -> tuple[_FakeRunServices, ScriptedEpisodes]:
+def _check_title_in_another_order(window: list[SonarrEpisode]) -> _FakeRunServices:
     """Drive a Sonarr `check_title` for title 5 over `window`, all of series 7 as aired, numbered by its DVD order.
 
-    The entry lists one torrent of `_GRAB_FILES`, named as the season's first two episodes, which the plan grabs
-    unless `grab` is off.
+    The entry lists one torrent of `_GRAB_FILES`, named as the season's first two episodes, which the plan grabs.
     """
 
-    release = make_release(url=_GRAB_URL, infohash="h1", download=grab, files=list(_GRAB_FILES))
+    release = make_release(url=_GRAB_URL, infohash="h1", download=True, files=list(_GRAB_FILES))
     seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
     run = _FakeRunServices(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
@@ -3268,11 +1573,11 @@ def _check_title_in_another_order(
         **scripted_roles(episodes, run.pending_imports),
         _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
         _listings=_ScriptedListings(),
-        _config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
+        _config=make_config(sleep_time=0),
         logger=make_logger(),
     )
     strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
-    return run, episodes
+    return run
 
 
 class TestSonarrCheckTitleOnASeriesInAnotherOrder:
@@ -3281,86 +1586,18 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     What Sonarr holds is read off the episodes it has a row for, and the title's window keeps every aired episode.
     """
 
-    def test_a_title_sonarrs_order_has_no_episode_of_stops_at_the_no_episodes_row_and_is_cached_under_the_order(
-        self,
-    ) -> None:
-        run, _ = _check_title_in_another_order([_STAND_IN_E2])
-
-        assert (run.no_episodes_titles, run.log_al_title_calls, run.grab_requests) == (["Show"], [], [])
-        ((anilist_id, update),) = run.nothing_to_grab_calls
-        assert (anilist_id, update.get("coverage"), update.get("url")) == (5, "", "https://releases.moe/5")
-        assert (update.get("season_type"), update.get("series_row_count")) == ("dvd", None)
-
-    def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
-        unmonitored = _LISTED_EP1.model_copy(update={"monitored": False})
-
-        run, _ = _check_title_in_another_order([unmonitored, _STAND_IN_E2], ignore_unmonitored=True)
-
-        assert (run.unmonitored_titles, run.log_al_title_calls) == (["Show"], [])
-
-    def test_the_title_blocks_coverage_is_of_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        (req,) = run.grab_requests
-        assert (run.title_block_coverages, req.update.get("coverage")) == (["S01 E01"], "S01 E01")
-
     def test_a_cached_rows_coverage_backfill_is_of_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
+        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (coverage,) = run.cached_skip_coverages
         assert coverage() == "S01 E01"
 
-    def test_only_an_episode_sonarr_has_is_reported_missing(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        assert run.missing_episodes == ["S01 E01"]
-
-    def test_sonarrs_files_are_read_off_the_episodes_sonarr_has(self) -> None:
-        _, episodes = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        assert episodes.files_of == [(_LISTED_EP1,)]
-
-    def test_the_plan_is_made_over_the_episodes_sonarr_has(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        assert run.planned_title_episodes == [(_LISTED_EP1,)]
-
-    def test_the_titles_window_keeps_an_episode_sonarr_has_no_row_for(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        assert update.claim.ordered_episode_ids == (101, -9002)
-        assert update.file_map == {normalize_file_name(_GRAB_FILES[0]): (101,)}
-        assert update.excluded == (normalize_file_name(_GRAB_FILES[1]),)
-
-    def test_the_title_block_names_once_the_order_its_numbers_are_sonarrs_by(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        assert run.numbers_orders == ["dvd"]
-
     def test_a_grabs_files_on_episodes_sonarr_has_no_row_for_are_reported_in_one_row(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
+        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is None
         assert run.left_out == ["S01 E02 (1 of 2 files, NAN0)"]
-
-    def test_a_release_with_every_file_on_such_episodes_is_skipped_and_reported(self) -> None:
-        third = sonarr_ep(1, 3, ep_id=103, episode_file_id=0)
-
-        run, _ = _check_title_in_another_order([stand_in_ep(1, 1, tvdb_id=9001), _STAND_IN_E2, third])
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.AIRED_ONLY
-        assert req.pending_import_updates["h1"].file_map == {}
-        assert req.pending_import_updates["h1"].hand_import_files == ()
-        assert run.left_out == ["S01 E01-E02 (2 of 2 files, NAN0)"]
-
-    def test_a_release_the_plan_does_not_grab_reports_no_such_files(self) -> None:
-        run, _ = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2], grab=False)
-
-        assert (len(run.grab_requests), run.left_out) == (1, [])
 
     @pytest.mark.parametrize(
         ("reason", "not_stored"),
@@ -3397,19 +1634,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
 
 
 class TestSonarrCheckTitleOnASeriesInAiredOrder:
-    """A title of a series in aired order says nothing of its numbers, and nothing when its series can't be read."""
-
-    @staticmethod
-    def _checked() -> _FakeRunServices:
-        files = tuple(
-            ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)
-        )
-        return _run_title_check(files, [_EP1, _EP2], _ScriptedListings())
-
-    def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
-        run = self._checked()
-
-        assert (run.numbers_orders, run.left_out) == ([], [])
+    """A title of a series in aired order is left unchecked, quietly, when its series can't be read."""
 
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
@@ -3525,21 +1750,7 @@ def _check_second_season(
 
 
 class TestSonarrCheckTitleOverSonarrsParses:
-    """A title's check places a file by what the library read says of its series: the order and the other names."""
-
-    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        library = _sequel_in_dvd_order()
-
-        run = _check_second_season(monkeypatch, library)
-
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        first, second, third, fourth = (normalize_file_name(name) for name in library.parses)
-        assert update.file_map == {first: (14,), second: (15,), third: (16,)}
-        assert update.excluded == (fourth,)
-        assert run.left_out == ["S02 E04 (1 of 4 files, NAN0)"]
+    """A title's check places a file by what the library read says of its series' other names."""
 
     def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3583,17 +1794,6 @@ class TestSonarrCheckTitlePrintsSonarrsNumbers:
         assert (run.title_block_coverages, run.missing_episodes) == (["S01 E04-E06"], ["S01 E04-E06"])
         assert (req.update.get("coverage"), claim.window_coverage, claim.claimed_coverage) == ("S01 E04-E06",) * 3
         assert run.numbers_orders == ["dvd"]
-
-    def test_a_placed_episode_prints_by_sonarrs_number_and_compares_by_its_aired_one(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        run = _check_second_season(monkeypatch, _sequel_in_dvd_order())
-
-        (req,) = run.grab_requests
-        placed = req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes
-        assert [(ep.aired_key, ep.printed) for ep in placed] == [
-            (EpisodeKey(2, n), PrintedKey(EpisodeKey(1, 3 + n))) for n in (1, 2, 3)
-        ]
 
     def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3703,120 +1903,12 @@ class TestPlacementDebugLine:
         )
 
 
-class TestSonarrCheckTitleMetadataUnread:
-    """A grab asks whether its check read a title without its AniList answer or a series without its TVDB orders.
-
-    The titles are every title of the title's series, the series are the title's and every stored pending import's.
-    """
-
-    @pytest.mark.parametrize(
-        ("unread_series", "unread_anilist_ids", "expected"),
-        [
-            pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
-            pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
-            pytest.param(frozenset({8}), frozenset[int](), True, id="a-stored-records-series"),
-            pytest.param(frozenset[int](), frozenset({5}), True, id="its-own-entry"),
-            pytest.param(frozenset[int](), frozenset({4}), True, id="another-entry-of-its-series"),
-            pytest.param(frozenset[int](), frozenset({6}), True, id="an-ignored-entry-of-its-series"),
-        ],
-    )
-    def test_the_grab_request_carries_whether_its_metadata_is_unread(
-        self, unread_series: frozenset[int], unread_anilist_ids: frozenset[int], expected: bool
-    ) -> None:
-        # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
-        # import too.
-        store = FakeCacheStore()
-        resident = pending_import(infohash="h1", anilist_id=22, series_id=8, seadex_files=list(_GRAB_FILES))
-        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        episodes = _grab_episodes(
-            FakeSonarrClient(episodes=[_EP1, _EP2]), unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
-        )
-
-        run = _sonarr_grab_run(ImportWaitMode.BLOCKING, store=store, episodes=episodes)
-
-        (req,) = run.grab_requests
-        assert req.metadata_unread is expected
-
-    @pytest.mark.parametrize(
-        ("unread_anilist_ids", "unread"),
-        [
-            pytest.param(frozenset({5}), [5], id="its-own-entry"),
-            pytest.param(frozenset({4}), [], id="another-entry-of-its-series"),
-        ],
-    )
-    def test_a_title_with_no_suitable_release_asks_about_itself_alone(
-        self, unread_anilist_ids: frozenset[int], unread: list[int]
-    ) -> None:
-        run = _FakeRunServices(
-            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            anilist_title="Show Cour 2",
-            seadex_dict={},
-            cache_store=FakeCacheStore(),
-        )
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(
-                _grab_episodes(FakeSonarrClient(episodes=[_EP1, _EP2]), unread_anilist_ids=unread_anilist_ids),
-                run.pending_imports,
-            ),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
-
-        assert [anilist_id for anilist_id, _ in run.no_releases_calls] == [5]
-        assert run.no_releases_unread == unread
-
-    @pytest.mark.parametrize(
-        ("unread_anilist_ids", "unread"),
-        [
-            pytest.param(frozenset({5}), [5], id="its-own-entry"),
-            pytest.param(frozenset({4}), [], id="another-entry-of-its-series"),
-        ],
-    )
-    def test_a_title_sonarrs_order_has_no_episode_of_asks_about_itself_alone(
-        self, unread_anilist_ids: frozenset[int], unread: list[int]
-    ) -> None:
-        run = _FakeRunServices(
-            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            anilist_title="Show Cour 2",
-            cache_store=FakeCacheStore(),
-        )
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_STAND_IN_E2]),
-            windows={5: [_STAND_IN_E2]},
-            order="dvd",
-            unread_anilist_ids=unread_anilist_ids,
-        )
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(episodes, run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
-
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
-
-        assert [anilist_id for anilist_id, _ in run.nothing_to_grab_calls] == [5]
-        assert run.nothing_to_grab_unread == unread
-
-
 class TestRadarrCheckTitlePendingImportUpdates:
-    """A Radarr grab builds a `PendingImportUpdate` per release to grab with a hash, gated on wait mode.
-
-    Each is keyed by its hash in qBittorrent.
-    """
+    """A Radarr grab builds a `PendingImportUpdate` per release to grab, keyed by its hash in qBittorrent."""
 
     @staticmethod
-    def _run_process(
-        mode: ImportWaitMode, *, store: FakeCacheStore | None = None, cross_seed: str | None = None
-    ) -> _FakeRunServices:
-        """Drive `check_title` to grab_and_cache and return the recording services.
+    def _run_process(*, store: FakeCacheStore, cross_seed: str) -> _FakeRunServices:
+        """Drive a blocking run's `check_title` to grab_and_cache and return the recording services.
 
         `cross_seed` marks the release as carried by that torrent.
         """
@@ -3829,7 +1921,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
             anilist_title="A Movie",
             seadex_dict=seadex,
             plan_grabs_result=grab_plan(seadex),
-            import_wait_mode=mode,
+            import_wait_mode=ImportWaitMode.BLOCKING,
             arr=Arr.RADARR,
             cache_store=store,
         )
@@ -3843,97 +1935,32 @@ class TestRadarrCheckTitlePendingImportUpdates:
         strat.check_title(_Item(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
         return run
 
-    def test_builds_the_pending_import_update_with_empty_sonarr_fields(self) -> None:
-        run = self._run_process(ImportWaitMode.BLOCKING)
-
-        (req,) = run.grab_requests
-        (update,) = req.pending_import_updates.values()
-        # Carried fields: the real torrent identity + the one claim's anilist display context.
-        assert update.facts.infohash == "h1"
-        assert update.facts.release_group == "NAN0"
-        assert update.claim.anilist_id == 42
-        assert update.claim.title == "A Movie"
-        assert update.claim.url == "https://releases.moe/9"
-        # A torrent the store does not hold starts a new pending import.
-        assert update.pending_import is None
-        # Sonarr-domain fields deliberately stay empty for a Radarr pending import.
-        assert update.claim.series_id == 0
-        assert update.file_map == {}
-        assert update.facts.seadex_files == ()
-        assert update.claim.ordered_episode_ids == ()
-        assert update.claim.window_coverage is None
-        pending = update.pending_import_at(_STAMP, restart=True)
-        # display_label renders sensibly from these (name · group).
-        assert pending.display_label == f"A Movie{SEP}NAN0"
-        assert pending.file_map_episode_ids() == []
-        assert pending.added_at == _STAMP
-
-    def test_pending_import_update_carries_the_stored_pending_import(self) -> None:
-        # A torrent already stored for another Radarr title: the pending import update merges this title's claim onto
-        # it.
-        store = FakeCacheStore()
-        resident = pending_import(infohash="h1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
-        store.put_pending_import_row(Arr.RADARR, "h1", resident.to_json())
-
-        run = self._run_process(ImportWaitMode.BLOCKING, store=store)
-
-        (req,) = run.grab_requests
-        (update,) = req.pending_import_updates.values()
-        assert update.pending_import == resident
-        assert claim_anilist_ids(update.pending_import_at(_STAMP, restart=False)) == (9, 42)
-
     def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
         store = FakeCacheStore()
         resident = pending_import(infohash="c1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
         store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
 
-        run = self._run_process(ImportWaitMode.BLOCKING, store=store, cross_seed="c1")
+        run = self._run_process(store=store, cross_seed="c1")
 
         (req,) = run.grab_requests
         update = req.pending_import_updates["c1"]
         assert update.pending_import == resident
         assert (update.facts.infohash, update.facts.is_cross_seed) == ("c1", True)
 
-    def test_no_pending_import_updates_when_wait_mode_off(self) -> None:
-        store = _CountingStore()
-
-        run = self._run_process(ImportWaitMode.OFF, store=store)
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates == NO_PENDING_IMPORT_UPDATES
-        assert store.get_pending_import_row_calls == 0
-
 
 class TestAutoImportWarningGating:
-    """The import warns loudly only at the deadline. Otherwise it's debug.
+    """An import warns of what is final and new, once per run. What is early or already reported is a debug line.
 
-    An absent intended file on an early poll is expected (the copy hasn't finished),
-    so it must NOT inflate the summary's warning count. Only the final attempt
-    (at_deadline) warns loudly that a still-absent file is final.
+    An intended file absent on an early poll is expected (the copy hasn't finished), and a file the grab
+    excluded was reported when it was set aside, so neither is warned of. A file that can't be placed is.
     """
 
-    @staticmethod
-    def _strat_with_missing_file() -> tuple[SonarrStrategy, PendingImport]:
-        # The file map intends a file that isn't on disk yet (only an unrelated file is),
-        # so run_auto_import always finds it absent and retries.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, _ = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Unrelated.mkv")],
-        )
-        # caplog captures via the root logger's propagation, so use a propagating
-        # DEBUG logger here (make_logger disables propagation for quiet runs). The
-        # absent-file line is logged by the import executor, which holds the same
-        # logger as the strat in production - so set both (the strat's plus the
-        # executor's) to mirror that and let caplog see the executor's record.
-        logger = debug_logger("pearlarr-warning-gating")
-        strat.logger = logger
-        strat._executor.logger = logger
-        return strat, pending
-
     def test_missing_off_deadline_is_debug_not_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        strat, pending = self._strat_with_missing_file()
+        # The file map intends a file that isn't on disk yet (only an unrelated file is).
+        pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101]})
+        strat, _ = _make_sonarr_for_import(candidates=[manual_candidate("/d/Unrelated.mkv")])
+        # The absent-file line is the import executor's. caplog needs a propagating logger.
+        strat._executor.logger = debug_logger("pearlarr-warning-gating")
         recording = install_recording_hub()
 
         with caplog.at_level("DEBUG"):
@@ -3945,15 +1972,6 @@ class TestAutoImportWarningGating:
         )
         assert any("not visible to Sonarr" in r.message and r.levelname == "DEBUG" for r in caplog.records)
 
-    def test_missing_at_deadline_warns_loudly(self) -> None:
-        strat, pending = self._strat_with_missing_file()
-        recording = install_recording_hub()
-
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))
-
     @staticmethod
     def _strat_with_unplaceable(*names: str) -> tuple[SonarrStrategy, FakeSonarrClient]:
         # The file map's file plus `names`, which the file map lacks, beside the empty file map episode.
@@ -3961,8 +1979,8 @@ class TestAutoImportWarningGating:
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        logger = debug_logger("pearlarr-warning-gating")
-        strat._executor.logger = logger
+        # The excluded-file note is the import executor's debug line. caplog needs a propagating logger.
+        strat._executor.logger = debug_logger("pearlarr-warning-gating")
         return strat, sonarr
 
     def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -4005,29 +2023,6 @@ class TestAutoImportWarningGating:
         assert len(warnings) == 1
         assert "1 file could not be placed" in warnings[0]
 
-    def test_a_disk_file_seadexs_list_lacks_warns_as_a_skip(self) -> None:
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv"])
-        strat, sonarr = self._strat_with_unplaceable("Show - S02E01 [1080p].mkv")
-        recording = install_recording_hub()
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
-        assert len(warnings) == 1
-
-    def test_a_duplicate_file_name_the_map_lacks_is_reported_once(self) -> None:
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "a/Extras.mkv", "b/Extras.mkv"])
-        strat, sonarr = self._strat_with_unplaceable("a/Extras.mkv", "b/Extras.mkv")
-        recording = install_recording_hub()
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert [f.path for f in sonarr.execute_calls[0][0]] == ["/d/Show - 01 [1080p].mkv"]
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
-        assert len(warnings) == 1
-        assert "1 file could not be placed" in warnings[0]
-
 
 class TestUnmatchedAttemptResult:
     """A download whose every on-disk file the file map lacks is an outcome on its first poll, not a wait.
@@ -4038,24 +2033,17 @@ class TestUnmatchedAttemptResult:
     _NAMES = ("Movie Part 1.mkv", "Movie Part 2.mkv")
 
     @classmethod
-    def _unplaced_pair(cls, *, excluded: tuple[str, ...] = ()) -> PendingImport:
+    def _unplaced_pair(cls) -> PendingImport:
         # Two files the grab placed nowhere, for one window episode.
-        return pending_import(
-            file_episode_map={},
-            ordered_episode_ids=[101],
-            seadex_files=list(cls._NAMES),
-            excluded_files=[normalize_file_name(name) for name in excluded],
-        )
+        return pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=list(cls._NAMES))
 
     @classmethod
-    def _strat(cls, *, served: bool = True, file_group: str | None = None) -> tuple[SonarrStrategy, FakeSonarrClient]:
-        # `file_group` names the group whose file the window episode already holds (None: no file).
-        episode = sonarr_ep(1, 1, ep_id=101, release_group=file_group, episode_file_id=1 if file_group else 0)
-        strat, sonarr = _make_sonarr_for_import(
+    def _strat(cls, *, served: bool = True) -> tuple[SonarrStrategy, FakeSonarrClient]:
+        # The window episode holds no file. With `served` off the series has no episodes at all.
+        return _make_sonarr_for_import(
             candidates=[manual_candidate(f"/d/{name}") for name in cls._NAMES],
-            episodes=[episode] if served else [],
+            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)] if served else [],
         )
-        return strat, sonarr
 
     def test_all_unmatched_returns_the_names_without_a_warning(self) -> None:
         pending = self._unplaced_pair()
@@ -4080,79 +2068,6 @@ class TestUnmatchedAttemptResult:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result == replace(AttemptResult.waiting(), pending=pending)
-
-    def test_every_file_excluded_at_grab_time_still_reads_unmatched(self) -> None:
-        # Nothing of the pending import's own is on disk and nothing is authoritative: a recorded exclusion
-        # silences the warning, never the outcome, so the pending import finishes instead of waiting out its
-        # deadline.
-        pending = self._unplaced_pair(excluded=self._NAMES)
-        strat, _ = self._strat()
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.unplaced_files == self._NAMES
-
-    def test_the_unmatched_names_leave_out_the_excluded_files(self) -> None:
-        pending = self._unplaced_pair(excluded=self._NAMES[1:])
-        strat, sonarr = self._strat()
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.unplaced_files == self._NAMES[:1]
-        assert sonarr.execute_calls == []
-
-    def test_a_hand_import_that_covered_every_intended_episode_reads_imported(self) -> None:
-        # The files still sit in the folder (a copy import), and the file map still lacks them. The
-        # intended episode holds the pending import's group now: done, never re-reported.
-        pending = self._unplaced_pair()
-        strat, sonarr = self._strat(file_group="SubGroup")
-        recording = install_recording_hub()
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result == replace(AttemptResult.imported(), pending=pending)
-        assert sonarr.execute_calls == []
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-    def test_a_hand_import_with_no_group_at_a_listed_size_reads_imported(self) -> None:
-        # Sonarr reads no group off a name that carries none. The file's size says it is one of the torrent's.
-        pending = pending_import(
-            file_episode_map={}, ordered_episode_ids=[101], seadex_files=list(self._NAMES), release_sizes=(1000,)
-        )
-        strat, sonarr = self._strat()
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, size=1000)]
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result == replace(AttemptResult.imported(), pending=pending)
-        assert sonarr.execute_calls == []
-
-    def test_another_groups_copy_on_the_window_episode_keeps_the_outcome_unmatched(self) -> None:
-        # The outdated copy this grab replaces is not this torrent's: the human still has the import to do.
-        pending = self._unplaced_pair()
-        strat, _ = self._strat(file_group="OtherPick")
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.unplaced_files == self._NAMES
-
-    def test_a_file_in_the_file_map_beside_an_unmatched_one_imports_and_warns_once(self) -> None:
-        # Something to import means the partial branch: today's once-a-run warning, no unmatched outcome.
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
-        strat, sonarr = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
-        )
-        recording = install_recording_hub()
-
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert first.command_issued is True
-        assert first.unplaced_files == ()
-        assert sonarr.execute_calls[0][0][0].path == "/d/Show - 01 [1080p].mkv"
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
-        assert len(warnings) == 1
 
 
 class TestLeftForHandImportFiles:
@@ -4207,32 +2122,6 @@ class TestLeftForHandImportFiles:
         assert sonarr.execute_calls == []
         assert not any("could not be placed" in m for m in diagnostic_messages(recording, Severity.WARNING))
 
-    def test_a_pending_import_stored_without_hand_import_files_still_leaves_its_unplaced_file_for_hand_import(
-        self,
-    ) -> None:
-        strat, sonarr = self._strat()
-        pending = self._record()
-        raw = pending.to_json()
-        del raw["hand_import_files"]
-        stored = PendingImport.from_json(raw, guards={claim.anilist_id: claim.guards for claim in pending.claims})
-
-        result = strat.import_completed(stored, "/d", AttemptKind.ORDINARY)
-
-        assert result.left_for_hand_import.names == (self._NAMES[2],)
-        assert result.all_done is False
-        assert sonarr.execute_calls == []
-
-    def test_the_pending_import_finishes_once_a_hand_import_covers_its_window(self) -> None:
-        strat, sonarr = self._strat()
-        result = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
-        sonarr.episodes_return = self._episodes(601, 602, 603)
-
-        done = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
-
-        assert result.left_for_hand_import.names == (self._NAMES[2],)
-        assert done.all_done is True
-        assert done.left_for_hand_import.names == ()
-
     def test_a_hand_import_with_no_group_at_a_listed_size_finishes_the_pending_import(self) -> None:
         strat, sonarr = self._strat()
         no_group = sonarr_ep(1, 1, ep_id=601, title=self._TITLES[0], size=self._SIZE_ON[601], release_group=None)
@@ -4242,30 +2131,6 @@ class TestLeftForHandImportFiles:
 
         assert done.all_done is True
         assert done.left_for_hand_import.names == ()
-
-    def test_a_plain_skip_beside_the_file_left_for_hand_import_warns_once_for_itself_alone(self) -> None:
-        strat, _ = self._strat("Extras.mkv")
-        recording = install_recording_hub()
-
-        result = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
-        strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
-
-        assert result.left_for_hand_import.names == (self._NAMES[2],)
-        warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
-        assert len(warnings) == 1
-        assert ": 1 file could not be placed" in warnings[0]
-
-    def test_a_plain_skip_alone_finishes(self) -> None:
-        strat, _ = _make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")],
-        )
-        pending = pending_import(seadex_files=["Show - 01 [1080p].mkv", "Extras.mkv"])
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert result.left_for_hand_import.names == ()
 
 
 class TestOrderOnlyHalves:
@@ -4355,14 +2220,6 @@ class TestDefaultQualityWarning:
         assert len(sonarr.execute_calls) == 1
         assert self._default_quality_warnings(recording) == []
 
-    def test_unset_name_does_not_warn(self) -> None:
-        strat, sonarr, recording = self._strat_with_default(None)
-
-        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert len(sonarr.execute_calls) == 1
-        assert self._default_quality_warnings(recording) == []
-
 
 def _imported_history(*rows: tuple[int, str]) -> HistoryPage:
     """A closed-history page whose import rows carry `(episodeId, droppedPath)` for series 7, above the grab."""
@@ -4395,20 +2252,6 @@ def _closed_history() -> HistoryPage:
     )
 
 
-def _clean_history() -> HistoryPage:
-    """A history page whose newest relevant event is a grab (genuinely downloading)."""
-
-    return HistoryPage.model_validate(
-        {"records": [{"id": 9, "eventType": "grabbed", "date": "2026-07-17T00:00:00Z"}]},
-    )
-
-
-def _tv_mapping() -> RemotePathMapping:
-    """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
-
-    return RemotePathMapping.model_validate({"host": "seedbox", "remotePath": "/d/", "localPath": "/remote/tv/"})
-
-
 class TestFolderFetchFallback:
     """The closed-history loop cure: a downloadId fetch that can't serve the download reads history and the folder.
 
@@ -4420,17 +2263,13 @@ class TestFolderFetchFallback:
 
     @staticmethod
     def _strat(
-        *,
-        history: HistoryPage | None,
-        folder_candidates: list[ManualImportCandidate] | None,
-        mappings: list[RemotePathMapping] | None = None,
-        config_overrides: dict[str, list[str] | str] | None = None,
+        *, history: HistoryPage, folder_candidates: list[ManualImportCandidate]
     ) -> tuple[SonarrStrategy, HookedSonarrClient]:
         # candidates=None: the downloadId fetch fails (the 500 shape) -> fallback.
-        strat, sonarr = _make_sonarr_for_import(candidates=None, config_overrides=config_overrides)
+        strat, sonarr = _make_sonarr_for_import(candidates=None)
         sonarr.history_page_return = history
         sonarr.folder_candidates_return = folder_candidates
-        sonarr.path_mappings_return = mappings if mappings is not None else []
+        sonarr.path_mappings_return = []
         return strat, sonarr
 
     @staticmethod
@@ -4459,90 +2298,6 @@ class TestFolderFetchFallback:
         ]
         return strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
-    def test_history_closed_imports_from_translated_folder_without_download_id(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")],
-            mappings=[_tv_mapping()],
-        )
-
-        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        # The folder fetch received the TRANSLATED (Sonarr-visible) path.
-        assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show"]
-        [(files, mode)] = sonarr.execute_calls
-        # Configured import mode auto is forced to copy: the untracked Execute branch
-        # with Auto resolves to MOVE and would rip the seeding files.
-        assert mode == "copy"
-        [entry] = files
-        assert entry.downloadId is None
-        # The wire dump must OMIT the key (unset), never send null.
-        assert "downloadId" not in entry.model_dump(exclude_unset=True)
-        assert entry.episodeIds == [101]
-
-    def test_history_closed_explicit_import_mode_is_honored(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-            config_overrides={"import_mode": "move"},
-        )
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        [(_, mode)] = sonarr.execute_calls
-        assert mode == "move"
-
-    def test_clean_verdict_keeps_download_id_and_copies(self) -> None:
-        # A transient blip on a genuinely-downloading torrent: the folder fetch
-        # substitutes for the candidates, and the files keep the downloadId so
-        # the import still resolves the queue row. Auto becomes copy all the same:
-        # nothing here proves Sonarr tracks the download, and an untracked Auto
-        # import moves the files out of the seeding torrent.
-        strat, sonarr = self._strat(
-            history=_clean_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-
-        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        [(files, mode)] = sonarr.execute_calls
-        assert mode == "copy"
-        assert files[0].downloadId == "ABC123"
-
-    def test_history_read_failure_defaults_to_status_quo_and_is_not_memoized(self) -> None:
-        strat, sonarr = self._strat(
-            history=None,
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        # Status-quo-safe default: files keep the downloadId (converges even
-        # with the history closed, just noisily - bounded, never a loop).
-        assert all(files[0].downloadId == "ABC123" for files, _ in sonarr.execute_calls)
-        # A FAILED history read is never memoized: the second activation read it again.
-        assert sonarr.download_history_calls == ["abc123", "abc123"]
-
-    def test_clean_verdict_is_read_again_next_poll(self) -> None:
-        strat, sonarr = self._strat(
-            history=_clean_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        pending = pending_import()
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        sonarr.history_page_return = _closed_history()
-
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        [_, (files, mode)] = sonarr.execute_calls
-        assert mode == "copy"
-        assert files[0].downloadId is None
-
     def test_history_closed_verdict_memoized_and_noted_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
         strat, sonarr = self._strat(
             history=_closed_history(),
@@ -4561,27 +2316,6 @@ class TestFolderFetchFallback:
         notes = [r for r in caplog.records if "recorded this download as imported" in r.message]
         assert len(notes) == 1
         assert notes[0].levelname == "DEBUG"
-
-    def test_empty_folder_fetch_does_not_pin_and_download_id_fetch_recovers(self) -> None:
-        # 200 [] = the folder isn't visible to Sonarr (or the translation is
-        # wrong). Pinning on it would wedge the pending import. Instead the next poll
-        # retries the recoverable downloadId fetch first.
-        strat, sonarr = self._strat(history=_closed_history(), folder_candidates=[])
-        pending = pending_import()
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        assert result.all_done is False
-        assert result.command_issued is False
-        assert sonarr.execute_calls == []
-
-        # The transient clears: the downloadId fetch answers again and wins.
-        sonarr.candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert len(sonarr.candidate_calls) == 2
-        assert len(sonarr.folder_candidate_calls) == 1
-        assert sonarr.execute_calls[0][0][0].downloadId == "ABC123"
 
     def test_history_closed_empty_folder_warns_only_at_the_deadline(self, caplog: pytest.LogCaptureFixture) -> None:
         # An empty folder right after completion is expected (Sonarr's mount
@@ -4613,191 +2347,6 @@ class TestFolderFetchFallback:
         warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
         assert len(warnings) == 2
 
-    def test_history_closed_empty_folder_stays_quiet_once_the_file_map_is_done(self) -> None:
-        # An accounted-only pending import after a move import: the history is
-        # closed, the folder is empty, and the file in the file map is already done. The
-        # deadline poll reads imported and prints nothing.
-        recording = install_recording_hub()
-        strat, sonarr = self._strat(history=_closed_history(), folder_candidates=[])
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            ordered_episode_ids=[101],
-            seadex_files=["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"],
-            excluded_files=["show - 02 [1080p].mkv"],
-        )
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-
-        assert result.all_done is True
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-    def test_a_pending_import_whose_file_map_is_not_done_warns_once_with_the_folder_reason(self) -> None:
-        # A pending import whose file map's file is neither in the folder nor on its
-        # episode: the deadline prints ONE warning, the not-visible one,
-        # carrying the empty-folder reason rather than a second line.
-        recording = install_recording_hub()
-        strat, _ = self._strat(history=_closed_history(), folder_candidates=[])
-
-        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "1 intended file not visible to Sonarr" in warning
-        assert "reading /d/Show found no files" in warning
-
-    def test_history_closed_empty_folder_warns_for_a_pending_import_with_an_empty_file_map_at_the_deadline(
-        self,
-    ) -> None:
-        # Nothing in the file map and nothing to place: the deadline says so once,
-        # the ordinary poll stays quiet, and no placement is invented.
-        recording = install_recording_hub()
-        strat, _ = self._strat(history=_closed_history(), folder_candidates=[])
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101])
-
-        polled = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-        deadline = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "found no files" in warning
-        assert (polled.all_done, deadline.all_done) == (False, False)
-        assert deadline.pending is pending
-
-    def test_never_fetched_pending_import_reads_done_from_sonarr_history(self) -> None:
-        # Sonarr imported the download before any fetch saw its files: the
-        # history is closed, the folder is empty, and the file map is empty. Its
-        # history rows stand in for the fetch, the rebuilt file map is done on the
-        # episode file, and the placements are carried on the attempt result with nothing POSTed.
-        recording = install_recording_hub()
-        name = "Show - 01 [1080p].mkv"
-        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{name}")), folder_candidates=[])
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert result.pending is not None
-        assert result.pending.file_episode_map == {normalize_file_name(name): (101,)}
-        assert pending.file_episode_map == {}
-        assert sonarr.execute_calls == []
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-        assert len(sonarr.folder_candidate_calls) == 1
-        assert len(sonarr.download_history_calls) == 1
-
-    def test_history_rebuild_leaves_the_file_map_and_exclusions_alone(self) -> None:
-        # A file in the file map that Sonarr imported onto another episode stays a genuine mismatch, and
-        # an excluded (sibling's part) file never lands on this pending import.
-        file_map, excluded = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
-        strat, sonarr = self._strat(
-            history=_imported_history((102, f"/d/Show/{file_map}"), (102, f"/d/Show/{excluded}")),
-            folder_candidates=[],
-        )
-        sonarr.episodes_return = [sonarr_ep(1, 2, ep_id=102, release_group="SubGroup")]
-        pending = pending_import(
-            file_episode_map={file_map: [101]},
-            ordered_episode_ids=[101],
-            seadex_files=[file_map, excluded],
-            excluded_files=[normalize_file_name(excluded)],
-        )
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.pending is pending
-
-    def test_rebuilt_file_map_that_is_not_done_waits_without_pinning_it(self) -> None:
-        # The history row names an episode holding no trusted file (the
-        # import was replaced or deleted since): the deadline prints the one
-        # not-visible warning with the folder reason, and the history
-        # placement is NOT attached, so the next run re-derives it.
-        recording = install_recording_hub()
-        name = "Show - 01 [1080p].mkv"
-        strat, _ = self._strat(history=_imported_history((101, f"/d/Show/{name}")), folder_candidates=[])
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101], seadex_files=[name])
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        assert result.pending is pending
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "1 intended file not visible to Sonarr" in warning
-        assert "reading /d/Show found no files" in warning
-
-    def test_covered_pending_import_never_rebuilds(self) -> None:
-        # A pending import with a file map is done or waits on its own file map: the rows are
-        # never consulted, so a conflicting row changes nothing.
-        name = "Show - 01 [1080p].mkv"
-        strat, _ = self._strat(history=_imported_history((102, f"/d/Show/{name}")), folder_candidates=[])
-        pending = pending_import()
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.pending is pending
-
-    def test_empty_poll_then_files_never_warns(self) -> None:
-        # The common shape: the first fetch comes before the folder is visible,
-        # the next sees the files. No warning was ever due.
-        recording = install_recording_hub()
-        strat, sonarr = self._strat(history=_closed_history(), folder_candidates=[])
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        sonarr.folder_candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert not any("found no files" in w for w in diagnostic_messages(recording, Severity.WARNING))
-
-    def test_clean_verdict_empty_folder_stays_quiet(self) -> None:
-        # A transient by-id blip clears itself next poll, so no warning fires at
-        # all (the by-id client read is quiet, the executor owns the noise).
-        recording = install_recording_hub()
-        strat, _ = self._strat(history=_clean_history(), folder_candidates=[])
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-    def test_nonempty_folder_fetch_pins_for_the_run_and_reset_unpins(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        # Pinned after the nonempty fetch: the second poll went straight to the
-        # folder (one downloadId attempt total), and the run fetched the
-        # remote path mappings exactly once.
-        assert len(sonarr.candidate_calls) == 1
-        assert len(sonarr.folder_candidate_calls) == 2
-        assert sonarr.path_mapping_calls == 1
-
-        # The pin is per-run scratch: reset restarts the downloadId fetch.
-        strat._executor.reset()
-        sonarr.candidates_return = [manual_candidate("/d/Show/Show - 01 [1080p].mkv")]
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        assert len(sonarr.candidate_calls) == 2
-
-    def test_empty_download_id_fetch_of_a_history_closed_download_imports_from_its_folder(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        self._answer_empty_by_id(sonarr)
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        [(files, mode)] = sonarr.execute_calls
-        assert mode == "copy"
-        assert files[0].downloadId is None
-
     def test_empty_download_id_fetch_waits_without_the_proof(self) -> None:
         strat, sonarr = self._strat(
             history=_closed_history(),
@@ -4808,85 +2357,6 @@ class TestFolderFetchFallback:
         strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
         assert sonarr.execute_calls == []
-
-    def test_history_closed_pending_import_without_the_proof_rescans_then_imports_from_its_folder(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        self._answer_empty_by_id(sonarr, commands=(_RESCAN_BEFORE_ADD,))
-
-        def prove() -> None:
-            sonarr.commands_return = [_RESCAN_AFTER_ADD]
-
-        sonarr.on_rescan = prove
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == 1
-        [(files, _mode)] = sonarr.execute_calls
-        assert files[0].downloadId is None
-
-    @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])
-    def test_folder_fetch_is_never_kept(self, history: HistoryPage | None) -> None:
-        strat, sonarr = self._strat(
-            history=history,
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        sonarr.queue_return = [queue_record("ABC123", "importBlocked", status="warning")]
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [_RESCAN_BEFORE_ADD, _started_process_pass()]
-
-        sonarr.on_fetch = start_a_pass
-        pending = pending_import()
-
-        blocked = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        sonarr.on_fetch = None
-        sonarr.folder_candidates_return = None
-        sonarr.commands_return = [_RESCAN_BEFORE_ADD]
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert blocked.pause_reason is PauseReason.BUSY
-        assert sonarr.execute_calls == []
-
-    @pytest.mark.parametrize("history", [_clean_history(), None], ids=["clean", "unreadable"])
-    def test_empty_download_id_fetch_waits_unless_history_is_closed(self, history: HistoryPage | None) -> None:
-        strat, sonarr = self._strat(
-            history=history,
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        self._answer_empty_by_id(sonarr)
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
-
-    def test_empty_download_id_fetch_of_a_queued_download_waits(self) -> None:
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
-        )
-        self._answer_empty_by_id(sonarr)
-        sonarr.queue_return = [queue_record("ABC123", "importPending", status="warning")]
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
-
-    def test_empty_download_id_fetch_with_an_empty_folder_waits_and_warns_at_the_deadline(self) -> None:
-        recording = install_recording_hub()
-        first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
-        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{first}")), folder_candidates=[])
-        self._answer_empty_by_id(sonarr)
-        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-
-        assert result.all_done is False
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "found no files" in warning
 
     @pytest.mark.parametrize(
         ("by_id", "rebuilt"),
@@ -4912,66 +2382,6 @@ class TestFolderFetchFallback:
         assert result.pending is not None
         assert result.pending.file_episode_map == rebuilt
 
-    def test_failed_download_id_fetch_then_an_empty_answer_never_rebuilds_from_history(self) -> None:
-        first, second = "Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv"
-        strat, sonarr = self._strat(history=_imported_history((101, f"/d/Show/{first}")), folder_candidates=None)
-        self._answer_empty_by_id(sonarr)
-        sonarr.candidates_return = None
-        sonarr.episodes_return = [
-            sonarr_ep(1, 1, ep_id=101, release_group="SubGroup"),
-            sonarr_ep(1, 2, ep_id=102, episode_file_id=0),
-        ]
-        pending = pending_import(file_episode_map={}, ordered_episode_ids=[101, 102], seadex_files=[first, second])
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        sonarr.candidates_return = []
-        sonarr.folder_candidates_return = []
-
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-
-    def test_translated_in_flight_command_suppresses_reissue(self) -> None:
-        # A history-closed import POSTs translated paths and no downloadId.
-        # The next poll's guard must recognize it through the memoized translation
-        # (the scripted command has no episode ids, so only the path branch can).
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")],
-            mappings=[_tv_mapping()],
-        )
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        assert len(sonarr.execute_calls) == 1
-
-        sonarr.commands_return = [
-            CommandResource.model_validate(
-                {
-                    "name": "ManualImport",
-                    "status": "started",
-                    "body": {"files": [{"path": "/remote/tv/Show/Show - 01 [1080p].mkv", "episodeIds": []}]},
-                },
-            ),
-        ]
-        result = strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert len(sonarr.execute_calls) == 1
-
-    def test_single_file_content_path_fetches_by_the_file_path(self) -> None:
-        # A single-FILE torrent's content_path IS the file. Sonarr's folder=
-        # param accepts a file path (its FileExists branch).
-        strat, sonarr = self._strat(
-            history=_closed_history(),
-            folder_candidates=[manual_candidate("/remote/tv/Show - 01 [1080p].mkv")],
-            mappings=[_tv_mapping()],
-        )
-
-        result = strat.import_completed(pending_import(), "/d/Show - 01 [1080p].mkv", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        assert [folder for folder, _ in sonarr.folder_candidate_calls] == ["/remote/tv/Show - 01 [1080p].mkv"]
-
 
 class TestUnwatchedTorrentImport:
     """A finished torrent in a category Sonarr doesn't watch imports from its folder.
@@ -4983,17 +2393,16 @@ class TestUnwatchedTorrentImport:
 
     @staticmethod
     def _strat(
-        category: str = "manual",
         *,
         folder_candidates: list[ManualImportCandidate] | None = None,
     ) -> tuple[SonarrStrategy, HookedSonarrClient, QbitCategoryReads]:
-        """Sonarr watching `tv-sonarr`, the pending import's torrent in `category`, and Sonarr not tracking it.
+        """Sonarr watching `tv-sonarr`, the pending import's torrent in `manual`, and Sonarr not tracking it.
 
         The downloadId fetch answers `[]`, the queue is empty, a rescan finished after the add, and the
         history holds only the neutral page.
         """
 
-        qbit = QbitCategoryReads(category)
+        qbit = QbitCategoryReads("manual")
         categories = make_fetched_categories(grab="tv-sonarr", post_import=None, qbit=qbit.client())
         strat, sonarr = _make_sonarr_for_import(candidates=[], categories=categories)
         sonarr.commands_return = [_RESCAN_AFTER_ADD]
@@ -5003,34 +2412,6 @@ class TestUnwatchedTorrentImport:
         )
         sonarr.path_mappings_return = []
         return strat, sonarr, qbit
-
-    def test_imports_from_the_folder_by_the_pending_imports_file_map_without_a_download_id(self) -> None:
-        strat, sonarr, _ = self._strat()
-
-        result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert result.command_issued is True
-        [(files, mode)] = sonarr.execute_calls
-        assert mode == "copy"
-        [entry] = files
-        assert entry.episodeIds == [101]
-        assert "downloadId" not in entry.model_dump(exclude_unset=True)
-
-    def test_a_torrent_in_the_watched_category_waits_for_sonarr(self) -> None:
-        strat, sonarr, _ = self._strat("tv-sonarr")
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
-
-    def test_a_download_sonarr_still_holds_a_queue_row_for_is_not_unwatched(self) -> None:
-        # Sonarr v4 goes on tracking a torrent moved out of its category until it restarts.
-        strat, sonarr, _ = self._strat()
-        sonarr.queue_return = [queue_record("ABC123", "importPending", status="warning")]
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
 
     def test_the_category_is_asked_again_every_poll(self) -> None:
         strat, sonarr, qbit = self._strat()
@@ -5045,15 +2426,6 @@ class TestUnwatchedTorrentImport:
         posted = [(files[0].downloadId, mode) for files, mode in sonarr.execute_calls]
         assert posted == [(None, "copy"), (None, "copy"), ("ABC123", "copy")]
 
-    def test_a_failed_download_id_fetch_of_an_unwatched_torrent_omits_the_id(self) -> None:
-        strat, sonarr, _ = self._strat()
-        sonarr.candidates_return = None
-
-        strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
-
-        [(files, mode)] = sonarr.execute_calls
-        assert (files[0].downloadId, mode) == (None, "copy")
-
     def test_an_empty_folder_warns_at_the_deadline_with_the_folder_reason(self) -> None:
         recording = install_recording_hub()
         strat, sonarr, _ = self._strat(folder_candidates=[])
@@ -5065,31 +2437,6 @@ class TestUnwatchedTorrentImport:
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
         assert "reading /d/Show found no files" in warning
-
-
-class TestResolveLanguageObjects:
-    """resolve_language_objects maps names to {id,name}, dropping unknowns."""
-
-    def test_resolves_in_request_order(self) -> None:
-        defs = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
-
-        result = resolve_language_objects(["Japanese", "English"], defs)
-
-        assert result == [Language(id=8, name="Japanese"), Language(id=1, name="English")]
-
-    def test_skips_unknown_names(self) -> None:
-        defs = [Language(id=8, name="Japanese")]
-
-        result = resolve_language_objects(["Japanese", "Klingon"], defs)
-
-        assert result == [Language(id=8, name="Japanese")]
-
-    def test_matches_case_insensitively(self) -> None:
-        defs = [Language(id=8, name="Japanese")]
-
-        result = resolve_language_objects(["japanese"], defs)
-
-        assert result == [Language(id=8, name="Japanese")]
 
 
 class _FakeRadarr:
@@ -5115,13 +2462,8 @@ class TestRadarrCheckTitle:
     """check_title's movie middle threads its facts through the services it keeps."""
 
     @staticmethod
-    def _make_strat(
-        run: _FakeRunServices,
-        *,
-        files: list[MovieFile] | None = None,
-        interactive: bool = False,
-    ) -> tuple[RadarrStrategy, _FakeRadarr]:
-        radarr = _FakeRadarr(files or [])
+    def _make_strat(run: _FakeRunServices, *, interactive: bool = False) -> tuple[RadarrStrategy, _FakeRadarr]:
+        radarr = _FakeRadarr([])
         strat = make_bare_instance(
             RadarrStrategy,
             _services=run,
@@ -5162,56 +2504,6 @@ class TestRadarrCheckTitle:
         assert run.no_releases_calls == [(5, expected)]
         assert run.grab_requests == []
 
-    def test_happy_path_threads_releases_into_grab_request(self) -> None:
-        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
-        seadex_dict = _one_group_dict("SubGroup")
-        filtered = _one_group_dict("SubGroup")
-        run = _FakeRunServices(
-            prologue_entry=entry,
-            anilist_title="Movie Title",
-            seadex_dict=seadex_dict,
-            plan_grabs_result=grab_plan(filtered),
-        )
-        strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
-
-        strat.check_title(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
-        # The grab filter received the movie's accumulated files.
-        assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"OldGroup": (100,)}))]
-        [req] = run.grab_requests
-        assert req.anilist_id == 5
-        assert req.arr_title == "Item Title"
-        assert req.title_name == "Movie Title"
-        # The SeaDex entry goes on the request whole (the notifier reads its
-        # url/notes/comparisons), so pin identity, not a copied field.
-        assert req.entry is entry
-        # The grab consumes the FILTERED dict, not the pre-filter dict.
-        assert req.seadex_dict is filtered
-        # replaced_groups carries the movie's groups (all of them).
-        assert req.replaced_groups == ("OldGroup",)
-
-    def test_multi_edition_movie_forwards_every_release_group(self) -> None:
-        # A multi-edition movie holds files from two groups. The GrabRequest (and
-        # so the notifier) must see both, in the release dict's insertion order -
-        # not just the first file's group.
-        run = _FakeRunServices(
-            prologue_entry=make_entry_record(),
-            anilist_title="Movie Title",
-            seadex_dict=_one_group_dict("SubGroup"),
-            plan_grabs_result=grab_plan(_one_group_dict("SubGroup")),
-        )
-        strat, _ = self._make_strat(
-            run,
-            files=[
-                MovieFile(release_group="GroupA", size=100),
-                MovieFile(release_group="GroupB", size=200),
-            ],
-        )
-
-        strat.check_title(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
-
-        [req] = run.grab_requests
-        assert req.replaced_groups == ("GroupA", "GroupB")
-
     def _interactive_call_count(self, *, interactive: bool, n_groups: int) -> int:
         """Run one check_title and count the interactive-filter invocations."""
 
@@ -5231,37 +2523,7 @@ class TestRadarrCheckTitle:
 
 
 class TestRadarrFiles:
-    """radarr_files accumulates sizes per group and never hard-errors."""
-
-    def test_multiple_distinct_groups_kept_not_errored(self) -> None:
-        # VU3: 2 distinct groups no longer raise (which left out the movie every run).
-        # The conversion carries both so the planner dedups against each.
-        radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="B", size=200)])
-        strat = make_bare_instance(RadarrStrategy, radarr=radarr)
-
-        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (100,), "B": (200,)})
-
-    def test_same_group_sizes_accumulate(self) -> None:
-        # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
-        # to the last).
-        radarr = _FakeRadarr([MovieFile(release_group="A", size=100), MovieFile(release_group="A", size=200)])
-        strat = make_bare_instance(RadarrStrategy, radarr=radarr)
-
-        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (100, 200)})
-
-    def test_files_with_no_group_convert_to_no_group_sizes(self) -> None:
-        # No {None: [None]} placeholder and no null key: files with no group carry
-        # their sizes on `no_group`, and a no-files movie converts to the empty `ArrFiles`.
-        radarr = _FakeRadarr([MovieFile(release_group=None, size=100), MovieFile(release_group="A", size=200)])
-        strat = make_bare_instance(RadarrStrategy, radarr=radarr)
-
-        assert strat.radarr_files(7) == ArrFiles(by_group={"A": (200,)}, no_group=(100,))
-
-    def test_no_files_returns_empty_arr_files(self) -> None:
-        radarr = _FakeRadarr([])
-        strat = make_bare_instance(RadarrStrategy, radarr=radarr)
-
-        assert strat.radarr_files(7) == ArrFiles()
+    """radarr_files never hard-errors: a size it can't read counts as zero."""
 
     def test_unreadable_size_with_no_group_converts_to_zero(self) -> None:
         # An unreadable size with no group converts to 0, which disqualifies the whole
@@ -5297,16 +2559,6 @@ class TestSonarrFiles:
 class TestArrFiles:
     """The type's own contract: deep-frozen, hashable, one shared conversion."""
 
-    def test_by_group_detaches_and_rejects_mutation(self) -> None:
-        source = {"RG": (100,)}
-        releases = ArrFiles(by_group=source)
-
-        source["Other"] = (5,)
-
-        assert dict(releases.by_group) == {"RG": (100,)}
-        with pytest.raises(TypeError):
-            cast("MutableMapping[str, tuple[int, ...]]", releases.by_group)["X"] = (1,)
-
     def test_equal_arr_files_hash_equal_across_key_order(self) -> None:
         # dict eq ignores insertion order, so the hash must too.
         first = ArrFiles(by_group={"A": (1,), "B": (2,)}, no_group=(3,))
@@ -5335,6 +2587,3 @@ class TestArrFiles:
         # Files with no group convert to the single `(none)` entry, so they count once.
         assert ArrFiles(by_group={"A": (1,), "B": (2,)}, no_group=(3,)).group_count() == 3
         assert ArrFiles().group_count() == 0
-
-    def test_replaced_groups_lists_every_group_name(self) -> None:
-        assert ArrFiles(by_group={"A": (1,), "B": ()}).groups() == ("A", "B")

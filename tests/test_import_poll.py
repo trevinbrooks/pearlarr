@@ -5,21 +5,13 @@
 
 import pytest
 
-from pearlarr.arr_models import CommandResource, QueueRecord, SonarrEpisode
+from pearlarr.arr_models import CommandResource, QueueRecord, RemotePathMapping, SonarrEpisode
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
 from .fakes import FakeClock, HookedSonarrClient
-from .test_strategy_contract import (
-    _RESCAN_AFTER_ADD,
-    _RESCAN_BEFORE_ADD,
-    _closed_history,
-    _inflight_manual_import,
-    _make_sonarr_for_import,
-    _started_process_pass,
-    _tv_mapping,
-)
+from .test_strategy_contract import _RESCAN_AFTER_ADD, _RESCAN_BEFORE_ADD, _closed_history, _make_sonarr_for_import
 
 
 def _strategy(queue: list[QueueRecord], clock: FakeClock | None = None) -> tuple[SonarrStrategy, HookedSonarrClient]:
@@ -32,6 +24,31 @@ def _blocked_row() -> QueueRecord:
     """The pending import's queue record in a state Sonarr won't progress."""
 
     return queue_record("ABC123", "importBlocked", status="warning")
+
+
+def _started_process_pass() -> CommandResource:
+    """Sonarr's own ProcessMonitoredDownloads command, executing right now."""
+
+    return CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
+
+
+def _inflight_manual_import(infohash: str, *, command_id: int) -> CommandResource:
+    """A started ManualImport command whose one file carries `infohash` as downloadId."""
+
+    return CommandResource.model_validate(
+        {
+            "id": command_id,
+            "name": "ManualImport",
+            "status": "started",
+            "body": {"files": [{"downloadId": infohash, "episodeIds": [101]}]},
+        },
+    )
+
+
+def _tv_mapping() -> RemotePathMapping:
+    """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
+
+    return RemotePathMapping.model_validate({"host": "seedbox", "remotePath": "/d/", "localPath": "/remote/tv/"})
 
 
 def _process_pass(command_id: int, status: str) -> CommandResource:
