@@ -867,9 +867,10 @@ class FakeTorrents:
         return scripted if isinstance(scripted, AddResult) else AddResult(*scripted)
 
 
-def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
+def one_release_dict(*, srg: str, infohash: str) -> SeadexDict:
     """A one-release `SeadexDict` marked to grab, its tracker pinned to `NYAA`."""
 
+    url = "https://nyaa.si/view/1"
     item = make_release(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.NYAA
     return {srg: rg_group({url: item})}
@@ -900,7 +901,6 @@ def pending_import_update(
     infohash: str,
     *,
     stored: PendingImport | None = None,
-    placements: FileEpisodeMap | None = None,
     hand_import_files: tuple[str, ...] = (),
     order_only: Mapping[str, OrderOnlyKey] = NO_ORDER_ONLY,
     **claim: Any,
@@ -910,7 +910,7 @@ def pending_import_update(
     Its rows have no TVDB id (`rows_without_tvdb_ids`).
     """
 
-    file_map = placements or {}
+    file_map: FileEpisodeMap = {}
     built = title_claim(**claim)
     return PendingImportUpdate(
         facts=torrent_facts(infohash=infohash, release_group="NAN0"),
