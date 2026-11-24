@@ -23,6 +23,8 @@ jobs:
   checks:
     name: Checks (py ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # A run takes about two minutes. A hung test fails the job here, not at GitHub's six hours.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +90,7 @@ jobs:
   checks_windows:
     name: Checks (windows, py 3.13)
     runs-on: windows-latest
+    timeout-minutes: 15
     env:
       # Holds every uv step on the floor, as in the ubuntu matrix above.
       UV_PYTHON: "3.13"

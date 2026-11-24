@@ -319,7 +319,7 @@ def test_queue_record_reduces_junk_per_field_without_dropping_the_record() -> No
     The record itself (and its healthy siblings) always survives.
     """
 
-    respx.get(f"{_BASE}/queue").respond(
+    respx.get(f"{_BASE}/queue", params={"page": "1"}).respond(
         json={
             "records": [
                 {
@@ -355,7 +355,7 @@ def test_import_pending_classifies_by_tracked_status() -> None:
     form defers to Sonarr's imminent import.
     """
 
-    respx.get(f"{_BASE}/queue").respond(
+    respx.get(f"{_BASE}/queue", params={"page": "1"}).respond(
         json={
             "records": [
                 {

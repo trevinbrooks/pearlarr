@@ -161,7 +161,7 @@ class _LockProbeRenderer(Renderer):
             else:
                 acquired.append(False)
 
-        helper = threading.Thread(target=probe)
+        helper = threading.Thread(target=probe, daemon=True)
         helper.start()
         helper.join(timeout=30.0)
         self.lock_was_free.extend(acquired)
@@ -619,13 +619,20 @@ def test_handle_runs_without_the_hub_lock_held() -> None:
     assert probe.lock_was_free == [True]
 
 
+def _emit_held_at(hub: OutputHub, entered: threading.Event) -> threading.Thread:
+    """Emit on a daemon thread and return it once a gated renderer holds the event mid-handle."""
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
+    drainer.start()
+    assert entered.wait(timeout=30.0)
+    return drainer
+
+
 def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     gated = _GatedRenderer()
     hub = OutputHub([gated])
 
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
+    drainer = _emit_held_at(hub, gated.entered)
 
     # B's emit returns immediately without dispatching: A still owns the drain lock.
     hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
@@ -718,11 +725,9 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     gated = _GatedRenderer()
     hub = OutputHub([gated])
 
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
+    drainer = _emit_held_at(hub, gated.entered)
 
-    lifecycle = threading.Thread(target=lambda: hub.begin_run(console_format="plain", level=logging.INFO))
+    lifecycle = threading.Thread(target=lambda: hub.begin_run(console_format="plain", level=logging.INFO), daemon=True)
     lifecycle.start()
     # A bounded chance for a broken (non-waiting) begin_run to interleave.
     lifecycle.join(timeout=0.2)
@@ -740,9 +745,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     hub = OutputHub([gated, observer])
     mark = hub.counts.mark()
 
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
+    drainer = _emit_held_at(hub, gated.entered)
 
     # Fill the stalled queue to the cap, then two more that must be shed.
     for i in range(QUEUE_CAP):
@@ -775,9 +778,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
 
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
+    drainer = _emit_held_at(hub, gated.entered)
 
     # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
     for i in range(cap):
@@ -810,9 +811,7 @@ def test_overflow_sheds_diagnostics_and_restarts_the_note_per_episode(
 
     def run_overflow_episode() -> None:
         gate.arm()
-        drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-        drainer.start()
-        assert gate.entered.wait(timeout=30.0)
+        drainer = _emit_held_at(hub, gate.entered)
         for i in range(cap):  # fill to the cap
             hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
         hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
@@ -1178,9 +1177,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
     mark = hub.counts.mark()
     keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
+    drainer = _emit_held_at(hub, gated.entered)
     for i in range(QUEUE_CAP):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
     hub.emit(keyed)  # at the cap: shed whole - key unregistered, uncounted
@@ -1237,7 +1234,11 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order()
     hub = OutputHub([caller, recorder])
     caller.hub = hub
 
-    hub.emit(_EVENT)
+    # On a thread of its own: without the escape, set_level waits on its own drain for good.
+    emitter = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
+    emitter.start()
+    emitter.join(timeout=30.0)
+    assert not emitter.is_alive(), "set_level inside handle waited on its own drain"
 
     # Order preserved: the in-flight PearlarrStarted completes its fan-out before the
     # re-entrant diagnostic dispatches. Nothing double-dispatches. Drain lock released.
