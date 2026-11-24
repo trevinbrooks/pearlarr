@@ -342,18 +342,19 @@ def test_concurrent_failures_keep_an_exact_streak_count() -> None:
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     http, recording = _bind()
     workers, per_worker = 8, 25
-    barrier = threading.Barrier(workers)
+    barrier = threading.Barrier(workers, timeout=30.0)
 
     def hammer() -> None:
         barrier.wait()
         for _ in range(per_worker):
             assert http.get_json("/api/v3/thing", warn="down ({detail})") is None
 
-    threads = [threading.Thread(target=hammer) for _ in range(workers)]
+    threads = [threading.Thread(target=hammer, daemon=True) for _ in range(workers)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=30.0)
+        assert not thread.is_alive(), "a worker never finished its reads"
 
     assert http.streaks.active[("down ({detail})", "status code 404")].count == workers * per_worker
     # Exactly ONE first-failure warning. Every repeat coalesced away.

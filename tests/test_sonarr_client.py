@@ -152,7 +152,7 @@ def test_all_series_all_invalid_payload_raises_contract_error() -> None:
 def test_queue_decodes_records_and_builds_request() -> None:
     """`queue()` pulls the whole queue in one paged request and narrows each record to a `QueueRecord` view."""
 
-    route = respx.get(f"{_BASE}/queue").respond(json=sonarr_fixture("queue.json"))
+    route = respx.get(f"{_BASE}/queue", params={"page": "1"}).respond(json=sonarr_fixture("queue.json"))
     client = _make_client()
     records = client.queue()
 

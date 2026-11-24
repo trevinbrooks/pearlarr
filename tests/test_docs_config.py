@@ -42,6 +42,7 @@ def test_generated_docs_are_current() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30.0,
     )
     assert result.returncode == 0, f"generated docs stale or invalid:\n{result.stdout}{result.stderr}"
 

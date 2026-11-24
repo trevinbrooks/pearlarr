@@ -192,6 +192,9 @@ markers = [
 # leaks first. Add a targeted `ignore::Category:module` here only for a
 # third-party warning we cannot fix - never to silence our own.
 filterwarnings = ["error"]
+# A test still running after a minute gets every thread's stack dumped to stderr,
+# so a hang names its test and loop. The dump doesn't stop or fail the test.
+faulthandler_timeout = 60
 
 # Branch coverage with a ratcheting floor pinned just under the current total
 # (~78.8%). Raise it as the untested I/O adapters / composition root get covered.

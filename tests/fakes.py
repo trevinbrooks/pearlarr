@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import cast, final, override
 
 import httpx
+import pytest
 import qbittorrentapi
 
 from pearlarr.aired_view import NoView
@@ -260,25 +261,40 @@ class AsciiStringIO(io.StringIO):
     encoding = "ascii"
 
 
+_CLOCK_USE_LIMIT = 10_000
+"""Reads plus sleeps one `FakeClock` allows, far past the hundred or so the busiest test takes."""
+
+
 class FakeClock(Clock):
-    """A hand-driven `Clock`: `sleep` records and advances by `step`, `tick` by hand, callable as `now`."""
+    """A hand-driven `Clock`: `sleep` records and advances by `step`, `tick` by hand, callable as `now`.
+
+    Past `_CLOCK_USE_LIMIT` reads and sleeps it fails the test, since only a loop that never ends gets there.
+    """
 
     def __init__(self, step: float = 0.0) -> None:
         self.t = 0.0
         self._step = step
+        self._uses = 0
         self.sleeps: list[float] = []
         """The requested duration of each `sleep` call, in call order."""
 
     @override
     def monotonic(self) -> float:
+        self._count_use()
         return self.t
 
     @override
     def sleep(self, seconds: float) -> None:
         # Ignore the requested duration: advancing by the fixed step exercises the
         # deadline arithmetic without ever really sleeping.
+        self._count_use()
         self.sleeps.append(seconds)
         self.t += self._step
+
+    def _count_use(self) -> None:
+        self._uses += 1
+        if self._uses > _CLOCK_USE_LIMIT:
+            pytest.fail(f"a FakeClock was used {_CLOCK_USE_LIMIT} times: the loop calling it never ends")
 
     def __call__(self) -> float:
         return self.monotonic()

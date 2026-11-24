@@ -8,6 +8,7 @@ isolated logger that replaces the single process-global `builders.make_logger`.
 
 import logging
 import signal
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import FrameType
@@ -109,6 +110,23 @@ def keep_sigterm_disposition(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_signal(signalnum, handler)
 
     monkeypatch.setattr(signal, "signal", register)
+
+
+@pytest.fixture(autouse=True)
+def refuse_long_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any real `time.sleep` of a second or more, so a wait a test forgot to stub fails instead of hanging.
+
+    Shorter sleeps pass through. A test that patches `time.sleep` itself patches over this.
+    """
+
+    real_sleep = time.sleep
+
+    def sleep(seconds: float) -> None:
+        if seconds >= 1:
+            pytest.fail(f"a real {seconds:g}s sleep: the test reached a wait it didn't stub")
+        real_sleep(seconds)
+
+    monkeypatch.setattr(time, "sleep", sleep)
 
 
 @pytest.fixture(autouse=True)

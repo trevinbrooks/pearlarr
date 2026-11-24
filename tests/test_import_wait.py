@@ -298,7 +298,7 @@ class _AutoTickClock(FakeClock):
 
     @override
     def monotonic(self) -> float:
-        t = self.t
+        t = super().monotonic()
         self.t += self._step
         return t
 
