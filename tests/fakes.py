@@ -732,9 +732,9 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
     `title_episodes` records its calls, raises for an `ambiguous` id, and serves `windows[anilist_id]` when windows are
     given, else the whole series list. Without a client every read is `NoView.READ_FAILED`, and a series among the
     `no_views` has no view for the reason given. Every series is numbered by `order`, and Sonarr sent no
-    count of its episodes. Every series has its stored order answer and every title its AniList answer. `counts` are
-    AniList's episode counts by AniList id, None for an id left out. No series has an alternate title, and a parse is
-    taken as already matched the way an aired Sonarr matches it.
+    count of its episodes. The `unread_series` have no stored order answer, and the `unread_anilist_ids` no AniList
+    answer. `counts` are AniList's episode counts by AniList id, None for an id left out. No series has an alternate
+    title, and a parse is taken as already matched the way an aired Sonarr matches it.
     """
 
     def __init__(
@@ -746,6 +746,8 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         order: str = AIRED_ORDER,
         no_views: Mapping[int, NoView] | None = None,
         counts: Mapping[int, int] | None = None,
+        unread_series: frozenset[int] = frozenset(),
+        unread_anilist_ids: frozenset[int] = frozenset(),
     ) -> None:
         self._sonarr = sonarr
         self._windows = windows
@@ -753,11 +755,11 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         self._order = order
         self._no_views: Mapping[int, NoView] = no_views or {}
         self._counts: Mapping[int, int] = counts or {}
+        self._unread_series = unread_series
+        self._unread_anilist_ids = unread_anilist_ids
         self._last_known: dict[int, list[SonarrEpisode]] = {}
         self.calls: list[tuple[int, int]] = []
         """Each `title_episodes` call's (series id, AniList id), in call order."""
-        self.files_of: list[tuple[SonarrEpisode, ...]] = []
-        """The episodes each `sonarr_files` call was handed, in call order."""
 
     @property
     @override
@@ -856,9 +858,9 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         return info
 
     def sonarr_files(self, episodes: Iterable[SonarrEpisode]) -> ArrFiles:
-        """The arr has no files. The episodes asked about are recorded."""
+        """The arr has no files."""
 
-        self.files_of.append(tuple(episodes))
+        del episodes
         return ArrFiles()
 
     @override
@@ -868,16 +870,14 @@ class ScriptedEpisodes(EpisodeSource, AiredParseSource, SeriesRows):
         return self._counts.get(anilist_id)
 
     def metadata_unread(self, anilist_ids: Iterable[int], series_ids: Iterable[int] = ()) -> bool:
-        """Never: every title has its AniList answer and every series its stored orders."""
+        """Whether any of the titles is one of the `unread_anilist_ids`, or any of the series one of the `unread_series`."""
 
-        del anilist_ids, series_ids
-        return False
+        return not (self._unread_anilist_ids.isdisjoint(anilist_ids) and self._unread_series.isdisjoint(series_ids))
 
     def title_unread(self, anilist_id: int, series_id: int) -> bool:
-        """Never: every title has its AniList answer, and no series' orders are behind."""
+        """Whether the title is one of the `unread_anilist_ids`. No series' orders are ever behind here."""
 
-        del anilist_id, series_id
-        return False
+        return anilist_id in self._unread_anilist_ids
 
 
 class CaptureHandler(logging.Handler):
