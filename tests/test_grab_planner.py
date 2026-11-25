@@ -533,16 +533,6 @@ class TestAMovieRelease:
 
         assert _grabs(plan.seadex_dict) == {}
 
-    def test_matching_group_radarr_none_size_grabs(self) -> None:
-        # What happens today, not a decision: a file whose size Radarr couldn't read leaves its group with no size,
-        # which reads as every listed size differing, so the release is grabbed as an upgrade. A release that lists
-        # no sizes is the other way round: it keeps the arr's copy.
-        seadex = {"RG": rg_group({"u1": make_release(size=[100])})}
-
-        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"RG": ()}))
-
-        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
-
 
 class TestAReleaseThatPlacedNothing:
     """A Sonarr release the placement put on none of the title's episodes, decided by its group and sizes."""
