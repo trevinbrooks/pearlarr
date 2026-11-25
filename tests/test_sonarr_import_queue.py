@@ -51,9 +51,9 @@ def _blocked_row() -> QueueRecord:
 
 
 def _completed_pass() -> CommandResource:
-    """Sonarr's own ProcessMonitoredDownloads command, finished, under a command id of its own."""
+    """Sonarr's own ProcessMonitoredDownloads command, finished."""
 
-    return CommandResource.model_validate({"id": 9, "name": "ProcessMonitoredDownloads", "status": "completed"})
+    return CommandResource(name="ProcessMonitoredDownloads", status="completed")
 
 
 def _then_lists(sonarr: HookedSonarrClient, *commands: CommandResource) -> Callable[[], None]:
@@ -406,7 +406,6 @@ class TestImportInFlight:
         ]
         folder_import = CommandResource.model_validate(
             {
-                "id": 7000,
                 "name": "ManualImport",
                 "status": "started",
                 "body": {"files": [{"path": "/remote/tv/Show/Show - 01 [1080p].mkv", "episodeIds": [202]}]},
