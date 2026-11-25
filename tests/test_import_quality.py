@@ -1,13 +1,16 @@
 # pyright: strict
 """The filename quality parse and the layered quality/language selection."""
 
-from pearlarr.arr_models import Quality, QualityDefinition, QualityModel, QualitySource, Revision
+import pytest
+
+from pearlarr.arr_models import Language, Quality, QualityDefinition, QualityModel, QualitySource, Revision
 from pearlarr.import_quality import (
     QualityParts,
     derive_languages,
     parse_quality_from_filename,
     quality_parts_from_model,
     quality_parts_from_name,
+    resolve_language_objects,
     resolve_quality,
 )
 
@@ -216,3 +219,19 @@ class TestDeriveLanguages:
 
     def test_single_audio_returns_single(self) -> None:
         assert derive_languages(False, ["Japanese", "English"], ["Japanese"]) == ["Japanese"]
+
+
+class TestResolveLanguageObjects:
+    """A configured language name matches Sonarr's whatever its case, and one Sonarr doesn't define is dropped."""
+
+    @pytest.mark.parametrize(
+        ("names", "resolved"),
+        [
+            pytest.param(["JAPANESE"], ["Japanese"], id="another-case"),
+            pytest.param(["Klingon", "English"], ["English"], id="an-unknown-name"),
+        ],
+    )
+    def test_a_name_resolves_to_sonarrs_language_of_that_name(self, names: list[str], resolved: list[str]) -> None:
+        defs = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
+
+        assert [language.name for language in resolve_language_objects(names, defs)] == resolved
