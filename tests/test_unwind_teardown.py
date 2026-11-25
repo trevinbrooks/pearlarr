@@ -68,7 +68,7 @@ def _memory_resolver(
     )
 
 
-def _failing_build(exc: Exception) -> object:
+def _failing_build(exc: BaseException) -> object:
     """A `ArrRunDeps.build` replacement that raises `exc` with the real signature.
 
     Patched onto the class, so it is reached as a plain function (no `cls`). The
@@ -105,12 +105,8 @@ def _write_config() -> None:
     config.chmod(0o600)
 
 
-def _run_failing_arr(
-    monkeypatch: pytest.MonkeyPatch,
-    app_logger: logging.Logger,
-    exc: Exception,
-) -> tuple[bool, RecordingHub]:
-    """Drive one Sonarr run whose `ArrRunDeps.build` raises `exc`. Record the stream.
+def _arm_failing_arr(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> RecordingHub:
+    """Set up one Sonarr run whose `ArrRunDeps.build` raises `exc`, and record its stream.
 
     The real hub AND the real logging bridge are installed (production parity), so
     the composition root's `hub_note` ERROR lands in the same event stream as the
@@ -124,12 +120,27 @@ def _run_failing_arr(
     recording = RecordingHub()
     install_hub(recording.hub)
     install_bridge()
+    return recording
+
+
+def _run_sonarr(app_logger: logging.Logger) -> bool:
+    """Run Sonarr through the composition root, as the CLI does. True when the run completed."""
 
     paths = resolve_paths()
-    completed = run_arrs(
+    return run_arrs(
         [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_log_renderer=FileLogRenderer(paths.log_dir)
     )
-    return completed, recording
+
+
+def _run_failing_arr(
+    monkeypatch: pytest.MonkeyPatch,
+    app_logger: logging.Logger,
+    exc: Exception,
+) -> tuple[bool, RecordingHub]:
+    """Drive one Sonarr run whose `ArrRunDeps.build` raises `exc`. Record the stream."""
+
+    recording = _arm_failing_arr(monkeypatch, exc)
+    return _run_sonarr(app_logger), recording
 
 
 def _arr_run_fatal_error(recording: RecordingHub) -> tuple[int, Diagnostic]:
@@ -143,7 +154,7 @@ def _arr_run_fatal_error(recording: RecordingHub) -> tuple[int, Diagnostic]:
 
 
 class TestUnwindEmitsArrRunFinished:
-    """Every arr-run-fatal path closes the run before its error is reported."""
+    """Every arr-run-fatal path closes the run before its error is reported, and a stop closes it on its way out."""
 
     def test_clean_branch_closes_the_run_before_logging(
         self,
@@ -178,6 +189,22 @@ class TestUnwindEmitsArrRunFinished:
         assert recording.events.index(ArrRunFinished(arr=Arr.SONARR)) < error_at
         assert "Unexpected error during Sonarr run" in error.message
         assert error.trace is not None  # the exc_info handler carries its traceback
+
+    @pytest.mark.parametrize("stop", [SystemExit(0), KeyboardInterrupt()], ids=["sigterm", "ctrl-c"])
+    def test_a_stop_closes_the_run_once_on_its_way_out(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        app_logger: logging.Logger,
+        stop: BaseException,
+    ) -> None:
+        # The exit a SIGTERM raises and Ctrl-C's, landing while the run's deps are built. Neither is an error, so no
+        # handler logs it and it leaves the process, but the run still shows closed as it goes.
+        recording = _arm_failing_arr(monkeypatch, stop)
+
+        with pytest.raises(type(stop)):
+            _run_sonarr(app_logger)
+
+        assert recording.of_type(ArrRunFinished) == [ArrRunFinished(arr=Arr.SONARR)]
 
 
 class _StubDeps:
@@ -260,12 +287,7 @@ def _run_completing_arr(
     recording = RecordingHub()
     install_hub(recording.hub)
     install_bridge()
-
-    paths = resolve_paths()
-    completed = run_arrs(
-        [ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_log_renderer=FileLogRenderer(paths.log_dir)
-    )
-    return completed, recording
+    return _run_sonarr(app_logger), recording
 
 
 class TestCompletedArrRunSingleClose:
