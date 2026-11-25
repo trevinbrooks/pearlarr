@@ -70,7 +70,7 @@ def _then_lists(sonarr: HookedSonarrClient, *commands: CommandResource) -> Calla
     return change
 
 
-def _then_fails(sonarr: HookedSonarrClient) -> Callable[[], None]:
+def _then_command_list_fails(sonarr: HookedSonarrClient) -> Callable[[], None]:
     """A hook after which Sonarr's command list can't be read."""
 
     def fail() -> None:
@@ -201,7 +201,7 @@ class TestRescan:
 
         assert sonarr.refresh_calls == 1
 
-    def test_a_rescan_counts_once_sonarr_reports_it_completed(self) -> None:
+    def test_a_rescan_that_completes_is_not_asked_for_again(self) -> None:
         clock = FakeClock()
         strat, sonarr = make_sonarr_for_import(
             candidates=[manual_candidate(_FILE)],
@@ -481,7 +481,7 @@ class TestUnreadableSonarr:
     def test_a_command_list_unreadable_after_the_fetch_waits(self) -> None:
         # The list reads fine again just before the post, so only the failed read after the fetch holds it.
         strat, sonarr = _strategy([_blocked_row()])
-        sonarr.on_fetch = _then_fails(sonarr)
+        sonarr.on_fetch = _then_command_list_fails(sonarr)
         sonarr.on_languages = _then_lists(sonarr)
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
@@ -491,7 +491,7 @@ class TestUnreadableSonarr:
 
     def test_a_command_list_unreadable_just_before_the_post_waits(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
-        sonarr.on_languages = _then_fails(sonarr)
+        sonarr.on_languages = _then_command_list_fails(sonarr)
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
