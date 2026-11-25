@@ -1704,7 +1704,8 @@ class TestImportCompletedQueueState:
     def test_file_map_episode_holding_a_file_with_no_group_pearlarr_size_matched_is_protected(self) -> None:
         # The grab-time size match is carried on the pending import through to the
         # import: a file with no group the planner named reads TRUSTED, so the
-        # torrent pearlarr grabbed for the REST of the season never copies over it.
+        # torrent pearlarr grabbed for the REST of the season never copies over it. A download already in gets no
+        # command at all, not even a rescan.
         pending = pending_import(
             infohash="abc123",
             release_group="SubGroup",
@@ -1719,7 +1720,7 @@ class TestImportCompletedQueueState:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.all_done is True
-        assert sonarr.execute_calls == []
+        assert (sonarr.execute_calls, sonarr.refresh_calls) == ([], 0)
 
     def test_a_pending_import_awaiting_cleanup_with_files_gone_demotes_through_the_reconciler(self) -> None:
         # The cleanup's demote reads the POST's ISSUED reason off the real attempt result:
