@@ -9,7 +9,6 @@ Console at LOGGER-parity gating. Plus the generalized TITLE-indent position
 rule for diagnostics.
 """
 
-import io
 import logging
 
 from pearlarr.config import Arr
@@ -49,7 +48,7 @@ from pearlarr.output.scan_lines import (
     title_row_lines,
 )
 
-from .fakes import feed_renderer, rich_renderer, strip_ansi
+from .fakes import feed_renderer, plain_lines, rich_renderer
 from .scan_goldens import (
     ACTION_DOWNLOADING_NO_WAIT,
     ACTION_DOWNLOADING_NO_WAIT_LINES,
@@ -256,10 +255,6 @@ class TestBuilders:
 _WIDTH = 100
 
 
-def _plain_lines(stream: io.StringIO) -> list[str]:
-    return strip_ansi(stream.getvalue()).replace("\r", "").splitlines()
-
-
 def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> list[str]:
     """The console text the golden lines should render as, derived independently of the renderer.
 
@@ -289,7 +284,7 @@ class TestRichRendererScanBranch:
     def test_renders_a_scan_sequence_in_order(self) -> None:
         renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, CAP_REACHED)
-        assert _plain_lines(stream) == _expected_console(
+        assert plain_lines(stream) == _expected_console(
             SCAN_STARTED_SONARR_LINES,
             ITEM_STARTED_SONARR_LINES,
             CHECKING_FULL_LINES,
@@ -300,7 +295,7 @@ class TestRichRendererScanBranch:
     def test_renders_the_summary_with_the_console_only_dry_note(self) -> None:
         renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SUMMARY_DRY_HAS_CLIENT)
-        lines = _plain_lines(stream)
+        lines = plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
         # The DRY RUN note the file log drops shows in the console title.
         assert "Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)" in lines
@@ -308,7 +303,7 @@ class TestRichRendererScanBranch:
     def test_renders_the_rich_summary(self) -> None:
         renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SUMMARY_RICH)
-        assert _plain_lines(stream) == _expected_console(SUMMARY_RICH_LINES)
+        assert plain_lines(stream) == _expected_console(SUMMARY_RICH_LINES)
 
     def test_warning_level_suppresses_info_scan_lines(self) -> None:
         # LOGGER parity: at configured WARNING the INFO scan lines vanish from
@@ -316,7 +311,7 @@ class TestRichRendererScanBranch:
         renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
         feed_renderer(renderer, SCAN_STARTED_SONARR, CHECKING_FULL, SUMMARY_RICH)
-        assert _plain_lines(stream) == []
+        assert plain_lines(stream) == []
 
     def test_warning_detail_renders_at_warning_level(self) -> None:
         renderer, stream = rich_renderer()
@@ -325,7 +320,7 @@ class TestRichRendererScanBranch:
             label="status", value=StyledValue("size mismatch", Accent.CAUTION), severity=Severity.WARNING
         )
         feed_renderer(renderer, detail)
-        assert _plain_lines(stream) == ["    status    size mismatch"]
+        assert plain_lines(stream) == ["    status    size mismatch"]
 
     def test_without_a_console_scan_events_no_op(self) -> None:
         renderer = RichRenderer(lambda: None)
@@ -355,7 +350,7 @@ class TestTitleIndentedDiagnostics:
             ScopeOpened(scope=self._TITLE_SCOPE, label="entry"),
             Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME),
         )
-        assert "  ⚠ tracker down" in _plain_lines(stream)
+        assert "  ⚠ tracker down" in plain_lines(stream)
 
     def test_diagnostic_indents_under_an_open_item_between_titles(self) -> None:
         # Import-flow lines fire between a series' title blocks: they indent
@@ -363,7 +358,7 @@ class TestTitleIndentedDiagnostics:
         renderer, stream = rich_renderer()
         self._open_item(renderer)
         feed_renderer(renderer, Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
-        assert "  ⚠ tracker down" in _plain_lines(stream)
+        assert "  ⚠ tracker down" in plain_lines(stream)
 
     def test_scan_finished_returns_diagnostics_to_column_zero(self) -> None:
         # ScanFinished evicts the item (and any title under it): a diagnostic
@@ -377,5 +372,5 @@ class TestTitleIndentedDiagnostics:
             ScanFinished(arr=Arr.SONARR),
             Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME),
         )
-        assert "⚠ tracker down" in _plain_lines(stream)
-        assert "  ⚠ tracker down" not in _plain_lines(stream)
+        assert "⚠ tracker down" in plain_lines(stream)
+        assert "  ⚠ tracker down" not in plain_lines(stream)

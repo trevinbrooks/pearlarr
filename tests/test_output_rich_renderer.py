@@ -12,7 +12,6 @@ ReleaseSkipped/GrabFailed scan routing). The TITLE-indent case is pinned in
 `test_output_scan_render`.
 """
 
-import io
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -41,15 +40,11 @@ from pearlarr.output import (
 from pearlarr.output.console_text import INDENT
 from pearlarr.releases import SkipReason
 
-from .fakes import AsciiStringIO, feed_renderer, rich_renderer, strip_ansi
+from .fakes import AsciiStringIO, feed_renderer, plain_lines, plain_text, rich_renderer
 
 _BOOT = ScopeId(ScopeKind.BOOT, 1)
 _WAIT = ScopeId(ScopeKind.WAIT, 2)
 _TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 3)
-
-
-def _lines(stream: io.StringIO) -> list[str]:
-    return strip_ansi(stream.getvalue()).splitlines()
 
 
 def _warning(message: str, origin: str = LOG_NAME) -> Diagnostic:
@@ -64,21 +59,21 @@ class TestPosition:
 
         feed_renderer(renderer, ScopeOpened(scope=_BOOT, label="boot"), _warning("perms loose"))
 
-        assert _lines(stream) == [f"{INDENT}⚠ perms loose"]
+        assert plain_lines(stream) == [f"{INDENT}⚠ perms loose"]
 
     def test_closed_boot_scope_renders_at_column_zero(self) -> None:
         renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_BOOT, label="boot"), ScopeClosed(scope=_BOOT), _warning("late"))
 
-        assert _lines(stream) == ["⚠ late"]
+        assert plain_lines(stream) == ["⚠ late"]
 
     def test_open_wait_region_indents(self) -> None:
         renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_WAIT, label="wait"), _warning("webhook flaked"))
 
-        assert _lines(stream) == [f"{INDENT}⚠ webhook flaked"]
+        assert plain_lines(stream) == [f"{INDENT}⚠ webhook flaked"]
 
     def test_mid_scan_indents_under_an_open_item(self) -> None:
         """ITEM is an indented context: import-flow diagnostics join the listing.
@@ -96,7 +91,7 @@ class TestPosition:
             _warning("mid-scan"),
         )
 
-        assert _lines(stream)[-1] == f"{INDENT}⚠ mid-scan"
+        assert plain_lines(stream)[-1] == f"{INDENT}⚠ mid-scan"
 
     def test_before_the_first_item_stays_at_column_zero_under_run_alone(self) -> None:
         """ARR_RUN alone is structural: before any item opens, the run margin holds."""
@@ -109,7 +104,7 @@ class TestPosition:
             _warning("before the first item"),
         )
 
-        assert _lines(stream)[-1] == "⚠ before the first item"
+        assert plain_lines(stream)[-1] == "⚠ before the first item"
 
     def test_begin_run_resets_the_open_scopes(self) -> None:
         renderer, stream = rich_renderer()
@@ -118,7 +113,7 @@ class TestPosition:
         renderer.begin_run()
         feed_renderer(renderer, _warning("fresh cycle"))
 
-        assert _lines(stream) == ["⚠ fresh cycle"]
+        assert plain_lines(stream) == ["⚠ fresh cycle"]
 
 
 class TestUnwindPosition:
@@ -143,7 +138,7 @@ class TestUnwindPosition:
         )
 
         # ArrRunFinished renders nothing itself. It just empties the open scopes.
-        assert _lines(stream)[-1] == "⚠ Sonarr run failed"
+        assert plain_lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_title(self) -> None:
         # The negative control: what the unwind's ArrRunFinished prevents.
@@ -157,7 +152,7 @@ class TestUnwindPosition:
             _warning("Sonarr run failed"),
         )
 
-        assert _lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
+        assert plain_lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
 
     def test_arr_run_finished_also_clears_an_open_boot_scope(self) -> None:
         # An arr run that dies inside ArrRunDeps.build never opens a scan: the boot scope
@@ -171,7 +166,7 @@ class TestUnwindPosition:
             _warning("cache.db was written by a newer Pearlarr"),
         )
 
-        assert _lines(stream) == ["⚠ cache.db was written by a newer Pearlarr"]
+        assert plain_lines(stream) == ["⚠ cache.db was written by a newer Pearlarr"]
 
     def test_a_repeat_arr_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty scope path (defense in
@@ -186,7 +181,7 @@ class TestUnwindPosition:
             _warning("after the leg"),
         )
 
-        assert _lines(stream)[-1] == "⚠ after the leg"
+        assert plain_lines(stream)[-1] == "⚠ after the leg"
 
 
 class TestFloors:
@@ -204,7 +199,7 @@ class TestFloors:
 
         feed_renderer(renderer, _warning("flaky pool", origin="httpx"))
 
-        assert _lines(stream) == ["⚠ httpx: flaky pool"]
+        assert plain_lines(stream) == ["⚠ httpx: flaky pool"]
 
     def test_debug_level_admits_third_party_chatter(self) -> None:
         renderer, stream = rich_renderer()
@@ -212,14 +207,14 @@ class TestFloors:
 
         feed_renderer(renderer, Diagnostic(severity=Severity.INFO, message="handshake ok", origin="httpx"))
 
-        assert _lines(stream) == ["httpx: handshake ok"]
+        assert plain_lines(stream) == ["httpx: handshake ok"]
 
     def test_first_party_info_renders_dim_without_a_badge(self) -> None:
         renderer, stream = rich_renderer()
 
         feed_renderer(renderer, Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME))
 
-        assert _lines(stream) == ["Radarr not configured"]
+        assert plain_lines(stream) == ["Radarr not configured"]
         text = diagnostic_text(
             Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME),
             indented=False,
@@ -271,7 +266,7 @@ class TestDurableLoopLines:
 
         feed_renderer(renderer, NextRunScheduled(at=self._AT))
 
-        assert _lines(stream) == ["Next scheduled run at Thu 23:05"]
+        assert plain_lines(stream) == ["Next scheduled run at Thu 23:05"]
 
     def test_next_run_scheduled_is_hidden_by_a_raised_level(self) -> None:
         # Matches the old raw INFO record's behavior at a configured WARNING.
@@ -293,7 +288,7 @@ class TestDurableLoopLines:
             GrabFailed(group="GroupA", url="https://x/1", error="tracker down"),
         )
 
-        assert _lines(stream) == [
+        assert plain_lines(stream) == [
             "    skipped   GroupA on Nyaa (private-only)",
             "    failed    could not grab https://x/1: tracker down; will retry next run",
         ]
@@ -317,7 +312,7 @@ class TestRendering:
             renderer, Diagnostic(severity=Severity.ERROR, message="sync failed", origin=LOG_NAME, trace=trace)
         )
 
-        out = strip_ansi(stream.getvalue())
+        out = plain_text(stream)
         assert out.splitlines()[0] == "✖ sync failed"
         assert "Traceback" in out
         assert "ValueError" in out
@@ -329,7 +324,7 @@ class TestRendering:
 
         feed_renderer(renderer, _warning("[1/182] Frieren [MARKED INCOMPLETE]"))
 
-        assert _lines(stream) == ["⚠ [1/182] Frieren [MARKED INCOMPLETE]"]
+        assert plain_lines(stream) == ["⚠ [1/182] Frieren [MARKED INCOMPLETE]"]
 
     def test_badge_glyphs_per_severity(self) -> None:
         renderer, stream = rich_renderer()
@@ -340,7 +335,7 @@ class TestRendering:
             Diagnostic(severity=Severity.CRITICAL, message="dead", origin=LOG_NAME),
         )
 
-        assert _lines(stream) == ["✖ broke", "‼ dead"]
+        assert plain_lines(stream) == ["✖ broke", "‼ dead"]
 
     def test_an_ascii_console_falls_back_to_the_badge_words(self) -> None:
         """The feature detection drives the badge: no unicode -> the legacy padded words."""
@@ -357,4 +352,4 @@ class TestRendering:
             Diagnostic(severity=Severity.CRITICAL, message="dead", origin=LOG_NAME),
         )
 
-        assert _lines(stream) == ["WARNING  perms loose", "ERROR    broke", "CRITICAL dead"]
+        assert plain_lines(stream) == ["WARNING  perms loose", "ERROR    broke", "CRITICAL dead"]
