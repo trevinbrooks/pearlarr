@@ -1,34 +1,19 @@
 # pyright: strict
-"""Characterization tests for the grab planner.
+"""Tests for the grab planner: which SeaDex releases a check marks to grab.
 
-This is the core domain logic extracted into `GrabPlanner` in Phase 4:
-`any_to_grab`, `reduce_overlapping_grabs` and
-`plan`. The tests assert on each release's resulting
-`to_grab` and the private-only skip outcome surfaced on the
-`GrabPlan` / `PrivateOnlyNotices` (rather than mutated run state, as before
-Phase 4).
+`plan` decides each release against what the arr has: nothing to grab where the arr has the group's copy at a listed
+size, an upgrade where it has the group's files at other sizes, and a plain grab where it lacks them. Where several
+groups cover the same files, one is grabbed, a public one over a private one, and a set with only private releases
+is skipped with a notice.
 
-The `reduce_overlapping_grabs` branch matrix these tests pin:
-
-    interactive ............................ early return, nothing touched
-    per same-files set (none to grab: skip set), public_to_grab == 0:
-      upgrade_pending + promotion found .... INFO "private-only; grabbing public release X instead"
-      upgrade_pending + none + fallback .... WARNING outdated reason, outdated, skipped
-      otherwise ............................ WARNING "not supported", skipped
-    public_to_grab >= 1:
-      first fully-addable group ............ keeper, losers drop their grabs (debug only)
-      none addable + mismatch + promotion .. INFO "remaining files private-only; grabbing ..."
-      no promotion + fallback in set ....... outdated set SILENTLY, degrade to first
-      otherwise ............................ degrade to public_to_grab[0]
-      fallback keeper over private drops ... INFO "private-only; falling back to X"
-    then per set: rescue marks to grab again the just-dropped public releases no survivor covers.
-    finally per group: identical non-empty filesets dedup to the first.
-
-Skip state (warned/groups/notices/outdated) accumulates
-across sets onto ONE result - the multi-set tests pin that accumulation.
+The same-files tests call `reduce_overlapping_grabs` on marks already set: the marks, and which of them are upgrades,
+are that step's whole input, and building each from the arr's files would bury it. A group built with `rg_group` and
+no episodes is a movie's, as Radarr sends it. The planner reads a release's sizes and placed episodes, never its file
+names.
 """
 
 import logging
+from typing import Literal
 
 import pytest
 
@@ -36,13 +21,14 @@ from pearlarr.aired_view import AiredSeries, aired_series
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
-from pearlarr.planner import GrabPlan, GrabPlanner
+from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotice, PrivateOnlyNotices
 from pearlarr.releases import (
     GroupReleases,
     PlacedEpisode,
     PlannedGrab,
     PrintedKey,
     Release,
+    SeadexDict,
     SkipReason,
     releases_to_grab,
 )
@@ -50,6 +36,41 @@ from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SonarrSeriesOrders
 
 from .builders import arr_files, make_planner, make_release, placed_episode, rg_group, sonarr_ep, stored_orders
 from .fakes import debug_logger
+
+type Mark = Literal["grab", "upgrade"]
+"""How a release is marked to grab: a plain grab, or an upgrade that replaces the arr's files."""
+
+_PRIVATE_ONLY = "private-only (private releases not supported)"
+_OUTDATED = (
+    "private-only; your copy is outdated (its file size no longer matches the release) and only a fallback covers it"
+)
+
+_S1E1 = placed_episode(season=1, episode=1, size=100)
+_S1E2 = placed_episode(season=1, episode=2, size=200)
+_S2E1 = placed_episode(season=2, episode=1, size=300)
+
+
+def _grabs(seadex: SeadexDict) -> dict[str, Mark]:
+    """Each release still marked to grab, by its key, and how."""
+
+    return {
+        key: "upgrade" if release.is_upgrade else "grab"
+        for group_releases in seadex.values()
+        for key, release in group_releases.releases.items()
+        if release.to_grab
+    }
+
+
+def _reduce(seadex: SeadexDict) -> PrivateOnlyNotices:
+    """The skips of reducing `seadex` to one group per set of the same files, outside interactive mode."""
+
+    return make_planner().reduce_overlapping_grabs(seadex)
+
+
+def _sonarr_group(**releases: Release) -> GroupReleases:
+    """A group of `releases` by key, with every release's placed episodes, as the placement leaves a Sonarr group."""
+
+    return rg_group(releases, episodes=[ep for release in releases.values() for ep in release.episodes])
 
 
 class TestAnyToGrab:
@@ -77,437 +98,264 @@ class TestReleasesToGrab:
         assert releases_to_grab(seadex) == [PlannedGrab("A", "u1", grabbed, "h1")]
 
 
-class TestReduceOverlappingGrabs:
-    """`reduce_overlapping_grabs` chooses one keeper per same-files set per the module's branch matrix, accumulating skip state across sets."""
+class TestGroupsCoveringTheSameFiles:
+    """Of the groups marked to grab that cover the same files, one is kept, and a set with only private ones is skipped."""
 
     def test_interactive_is_noop(self) -> None:
-        planner = make_planner(interactive=True)
+        # A hand-picked run already chose what to grab.
         seadex = {
             "A": rg_group({"u1": make_release(download=True)}),
             "B": rg_group({"u2": make_release(download=True)}),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["B"].releases["u2"].to_grab is True
+
+        make_planner(interactive=True).reduce_overlapping_grabs(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
 
     def test_keeps_first_of_same_files(self) -> None:
-        # No episodes -> all treated as the same files -> keep the first marked to grab
-        planner = make_planner()
+        # Two groups of one movie cover the same files.
         seadex = {
             "A": rg_group({"u1": make_release(download=True)}),
             "B": rg_group({"u2": make_release(download=True)}),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["B"].releases["u2"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab"}
 
     def test_prefers_public_keeper(self) -> None:
-        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
-            "Pub": rg_group({"u2": make_release(download=True, is_public=True)}),
+            "Pub": rg_group({"u2": make_release(download=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Pub"].releases["u2"].to_grab is True
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        # A preferred public keeper over a preferred private release is unremarkable
-        # (only a fallback keeper gets an INFO notice).
-        assert skips.notices == []
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u2": "grab"}
+        # A public group kept over a private one says nothing: only a fallback kept over one gets a notice.
+        assert skips == PrivateOnlyNotices()
 
     def test_private_only_skips_and_warns(self) -> None:
-        planner = make_planner()
         seadex = {"Priv": rg_group({"u1": make_release(download=True, is_public=False)})}
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert skips.warned is True
-        assert skips.groups == ["Priv"]
-        # Plain-reason mutant killer: no fallback in the set, so no outdated skip.
-        assert skips.outdated is False
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].reason == "private-only (private releases not supported)"
-        assert skips.notices[0].severity is Severity.WARNING
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {}
+        assert skips == PrivateOnlyNotices(
+            warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
+        )
 
     def test_private_only_set_with_unrelated_fallback_still_warns(self) -> None:
-        # The fallback covers DIFFERENT files (a separate same-files set): it doesn't
-        # excuse dropping this set, so the private set still warns and keeps
-        # the title uncached while the fallback proceeds.
-        planner = make_planner()
+        # The fallback covers another episode, so it excuses nothing: the private set warns and keeps the title
+        # uncached while the fallback is grabbed.
         seadex = {
-            "Priv": rg_group(
-                {"u1": make_release(download=True, is_public=False)},
-                episodes=[placed_episode(season=1, episode=1, size=0)],
-            ),
-            "Fall": rg_group(
-                {"u2": make_release(download=True, is_public=True, is_fallback=True)},
-                episodes=[placed_episode(season=1, episode=2, size=0)],
-            ),
+            "Priv": _sonarr_group(u1=make_release(download=True, is_public=False, episodes=[_S1E1])),
+            "Fall": _sonarr_group(u2=make_release(download=True, is_fallback=True, episodes=[_S1E2])),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert seadex["Fall"].releases["u2"].to_grab is True
-        assert skips.warned is True
-        assert skips.groups == ["Priv"]
-        assert len(skips.notices) == 1
-        assert skips.notices[0].severity is Severity.WARNING
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u2": "grab"}
+        assert skips == PrivateOnlyNotices(
+            warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
+        )
 
     def test_private_only_set_with_a_fallback_not_to_grab_warns_plainly(self) -> None:
-        # Same files, a public fallback not marked to grab, and the private grab is no
-        # upgrade: nothing says the Arr has an outdated copy, so the set gets the
-        # plain warning and the title stays uncached.
-        planner = make_planner()
+        # The private grab is no upgrade, so nothing says the arr has an outdated copy: the plain warning.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
-            "Fall": rg_group({"u2": make_release(download=False, is_public=True, is_fallback=True)}),
+            "Fall": rg_group({"u2": make_release(is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert seadex["Fall"].releases["u2"].to_grab is False
-        assert skips.warned is True
-        assert skips.groups == ["Priv"]
-        assert skips.outdated is False
-        assert [(n.reason, n.severity) for n in skips.notices] == [
-            ("private-only (private releases not supported)", Severity.WARNING),
-        ]
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {}
+        assert skips == PrivateOnlyNotices(
+            warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
+        )
 
     def test_keeper_prefers_fully_addable_group(self) -> None:
-        # A mixed group (public + private release to grab) is first, but its private
-        # release would be skipped at add time, losing the coverage only it carries:
-        # the fully-public group wins keeper regardless of order.
-        planner = make_planner()
+        # The mixed group comes first, but its private release would be skipped when added, losing what only it
+        # covers: the fully public group is kept.
         seadex = {
-            "Mixed": rg_group(
-                {
-                    "u1": make_release(download=True, is_public=True),
-                    "u2": make_release(download=True, is_public=False),
-                },
-            ),
-            "Pub": rg_group({"u3": make_release(download=True, is_public=True)}),
+            "Mixed": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
+            "Pub": rg_group({"u3": make_release(download=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Pub"].releases["u3"].to_grab is True
-        assert seadex["Mixed"].releases["u1"].to_grab is False
-        assert seadex["Mixed"].releases["u2"].to_grab is False
-        assert skips.warned is False
-        assert skips.notices == []
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u3": "grab"}
+        assert skips == PrivateOnlyNotices()
 
     def test_keeper_degrades_to_first_when_all_mixed(self) -> None:
-        # No fully-addable group in the set: keep the first public group (its
-        # private release then hits the add-time WARNING), matching the old order.
-        planner = make_planner()
+        # With no fully public group the first is kept whole, and the add skips its private release with a warning.
         seadex = {
-            "MixedA": rg_group(
-                {
-                    "u1": make_release(download=True, is_public=True),
-                    "u2": make_release(download=True, is_public=False),
-                },
-            ),
-            "MixedB": rg_group(
-                {
-                    "u3": make_release(download=True, is_public=True),
-                    "u4": make_release(download=True, is_public=False),
-                },
-            ),
+            "MixedA": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
+            "MixedB": rg_group({"u3": make_release(download=True), "u4": make_release(download=True, is_public=False)}),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["MixedA"].releases["u1"].to_grab is True
-        assert seadex["MixedA"].releases["u2"].to_grab is True
-        assert seadex["MixedB"].releases["u3"].to_grab is False
-        assert seadex["MixedB"].releases["u4"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
 
     def test_private_only_set_with_fallback_skips_on_size_mismatch(self) -> None:
-        # The private release was marked to grab again for a SIZE mismatch: the Arr's
-        # copy of the preferred release is outdated, and a fallback (a cascade loser)
-        # never replaces the Arr's copy - warn and skip instead of promoting.
-        planner = make_planner()
+        # The private grab is an upgrade, so the arr's copy of the preferred release is outdated, and a fallback never
+        # replaces that copy: the set warns and is skipped rather than grabbing the fallback.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
-            "Fall": rg_group({"u2": make_release(download=False, is_public=True, is_fallback=True)}),
+            "Fall": rg_group({"u2": make_release(is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Fall"].releases["u2"].to_grab is False
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert skips.warned is True
-        assert skips.groups == ["Priv"]
-        assert skips.outdated is True
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].severity is Severity.WARNING
-        outdated_reason = (
-            "private-only; your copy is outdated (its file size no longer matches the release) "
-            "and only a fallback covers it"
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {}
+        assert skips == PrivateOnlyNotices(
+            warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _OUTDATED)], outdated=True
         )
-        assert skips.notices[0].reason == outdated_reason
 
     def test_promotion_prefers_fully_public_group(self) -> None:
-        # Promotion only flips public releases, so a mixed group (a public release
-        # sharing its release group with a private release) would leave its private
-        # release's coverage ungrabbed: the fully-public group wins.
-        planner = make_planner()
+        # Only public releases are grabbed in a private upgrade's place, so a mixed group would leave its private
+        # release's files ungrabbed: the fully public group stands in.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
-            "MixedPub": rg_group(
-                {
-                    "u2": make_release(download=False, is_public=False),
-                    "u3": make_release(download=False, is_public=True),
-                },
-            ),
-            "Pub": rg_group({"u4": make_release(download=False, is_public=True)}),
+            "MixedPub": rg_group({"u2": make_release(is_public=False), "u3": make_release()}),
+            "Pub": rg_group({"u4": make_release()}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Pub"].releases["u4"].to_grab is True
-        assert seadex["MixedPub"].releases["u2"].to_grab is False
-        assert seadex["MixedPub"].releases["u3"].to_grab is False
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert len(skips.notices) == 1
-        assert "grabbing public release Pub instead" in skips.notices[0].reason
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u4": "grab"}
+        assert skips == PrivateOnlyNotices(
+            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+        )
 
     def test_promotion_considers_preferred_public_group(self) -> None:
-        # The size-mismatch promotion pool is any public group in the set not marked
-        # to grab, not just fallbacks: a PREFERRED public release with the same coverage
-        # is promoted instead of the old warn and skip.
-        planner = make_planner()
+        # A public group of the set not marked to grab stands in for a private upgrade, named as a public release.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
-            "Pub": rg_group({"u2": make_release(download=False, is_public=True)}),
+            "Pub": rg_group({"u2": make_release()}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Pub"].releases["u2"].to_grab is True
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert skips.warned is False
-        assert skips.groups == []
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].severity is Severity.INFO
-        # A preferred group is not a fallback, so the notice must not say so.
-        assert skips.notices[0].reason == "private-only; grabbing public release Pub instead"
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u2": "grab"}
+        assert skips == PrivateOnlyNotices(
+            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+        )
 
     def test_degraded_keeper_skips_when_only_a_fallback_could_stand_in(self) -> None:
-        # A mixed group's public release, owned and not marked to grab, makes it public_to_grab
-        # and no group is fully addable. The only public group not marked to grab
-        # is a FALLBACK, which never replaces M's outdated copy: the keeper
-        # degrades to M (the add-time gate then skips its private release) and the
-        # outdated bit is set - deliberately with no planner notice.
-        planner = make_planner()
+        # M's public release, owned and not marked, makes M a public group, and no group is fully addable. The only
+        # public group not marked to grab is a fallback, which never replaces M's outdated copy: M is kept, and the
+        # outdated mark is set with no notice, since the add warns for the private release.
         seadex = {
-            "M": rg_group(
-                {
-                    "u1": make_release(download=False, is_public=True),
-                    "u2": make_release(download=True, is_public=False, upgrade=True),
-                },
-            ),
-            "F": rg_group({"u3": make_release(download=False, is_public=True, is_fallback=True)}),
+            "M": rg_group({"u1": make_release(), "u2": make_release(download=True, is_public=False, upgrade=True)}),
+            "F": rg_group({"u3": make_release(is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["F"].releases["u3"].to_grab is False
-        assert seadex["M"].releases["u1"].to_grab is False
-        assert seadex["M"].releases["u2"].to_grab is True
-        assert skips.warned is False
-        assert skips.outdated is True
-        assert skips.notices == []
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u2": "upgrade"}
+        assert skips == PrivateOnlyNotices(outdated=True)
 
     def test_degraded_keeper_promotes_preferred_public_on_size_mismatch(self) -> None:
-        # Same degraded-keeper shape, but the group not marked to grab is a
-        # PREFERRED public group: equal rank still supersedes, so it's promoted.
-        planner = make_planner()
+        # The same mixed group, beside a public group that is no fallback: that group stands in.
         seadex = {
-            "M": rg_group(
-                {
-                    "u1": make_release(download=False, is_public=True),
-                    "u2": make_release(download=True, is_public=False, upgrade=True),
-                },
-            ),
-            "P": rg_group({"u3": make_release(download=False, is_public=True)}),
+            "M": rg_group({"u1": make_release(), "u2": make_release(download=True, is_public=False, upgrade=True)}),
+            "P": rg_group({"u3": make_release()}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["P"].releases["u3"].to_grab is True
-        assert seadex["M"].releases["u1"].to_grab is False
-        assert seadex["M"].releases["u2"].to_grab is False
-        assert skips.warned is False
-        assert skips.outdated is False
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["M"]
-        assert skips.notices[0].severity is Severity.INFO
-        assert skips.notices[0].reason == "remaining files private-only; grabbing public release P instead"
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u3": "grab"}
+        reason = "remaining files private-only; grabbing public release P instead"
+        assert skips == PrivateOnlyNotices(notices=[PrivateOnlyNotice(["M"], reason, Severity.INFO)])
 
     def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
-        # No size mismatch means the grabs may be plain missing-content grabs.
-        # the public group not marked to grab could be genuinely owned, so the keeper
-        # degrades as before and nothing is promoted.
-        planner = make_planner()
+        # With no upgrade the grabs may be of files the arr lacks, and the public group not marked may be owned, so
+        # nothing stands in and the mixed group is kept.
         seadex = {
-            "Mixed": rg_group(
-                {
-                    "u1": make_release(download=True, is_public=True),
-                    "u2": make_release(download=True, is_public=False),
-                },
-            ),
-            "P": rg_group({"u3": make_release(download=False, is_public=True)}),
+            "Mixed": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
+            "P": rg_group({"u3": make_release()}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Mixed"].releases["u1"].to_grab is True
-        assert seadex["Mixed"].releases["u2"].to_grab is True
-        assert seadex["P"].releases["u3"].to_grab is False
-        assert skips.notices == []
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
+        assert skips == PrivateOnlyNotices()
 
     def test_fallback_keeper_over_private_notices(self) -> None:
-        # Same files: the public fallback is kept over the private preferred release,
-        # with an INFO notice naming the keeper (and no skipped flag).
-        planner = make_planner()
+        # A fallback kept over a private preferred release gets a notice naming it, and nothing is skipped.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
-            "Fall": rg_group({"u2": make_release(download=True, is_public=True, is_fallback=True)}),
+            "Fall": rg_group({"u2": make_release(download=True, is_fallback=True)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Fall"].releases["u2"].to_grab is True
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert skips.warned is False
-        assert len(skips.notices) == 1
-        assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].severity is Severity.INFO
-        # The keeper flow is now the sole producer of this wording. Pin it exactly.
-        assert skips.notices[0].reason == "private-only; falling back to Fall"
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u2": "grab"}
+        assert skips == PrivateOnlyNotices(
+            notices=[PrivateOnlyNotice(["Priv"], "private-only; falling back to Fall", Severity.INFO)]
+        )
 
     def test_mixed_group_to_grab_never_promotes_itself(self) -> None:
-        # MUTATION PIN (_promote_public_alternative): the candidate filter's
-        # `not to_grab AND public` flipped to `or` admits the mixed group to grab
-        # itself, which then "promotes" over itself and drops every grab. With
-        # no public group not marked to grab the keeper must degrade to the mixed group,
-        # both its releases staying marked to grab, with no notice.
-        planner = make_planner()
+        # Alone in its set with a private upgrade, the mixed group has no other public group to stand in: it is kept
+        # whole, with no notice.
         seadex = {
             "M": rg_group(
                 {
-                    "u_pub": make_release(download=True, is_public=True),
+                    "u_pub": make_release(download=True),
                     "u_priv": make_release(download=True, is_public=False, upgrade=True),
-                },
+                }
             ),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["M"].releases["u_pub"].to_grab is True
-        assert seadex["M"].releases["u_priv"].to_grab is True
-        assert skips.warned is False
-        assert skips.notices == []
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"u_pub": "grab", "u_priv": "upgrade"}
+        assert skips == PrivateOnlyNotices()
 
     def test_promotes_mixed_group_not_to_grab_flipping_only_public_releases(self) -> None:
-        # MUTATION PIN (_promote_public_alternative): the `next(..., candidates[0])`
-        # default-to-first mutated away would return None and fall to the
-        # warn and skip. An upgrade-pending set whose ONLY public group not marked to grab
-        # is MIXED must still promote it, flipping just its public release.
-        planner = make_planner()
+        # A mixed group is the only one that can stand in for the private upgrade: its public release is grabbed.
         seadex = {
-            "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True, infohash=None)}),
-            "M": rg_group(
-                {
-                    "m_pub": make_release(download=False, is_public=True, infohash="m1"),
-                    "m_priv": make_release(download=False, is_public=False, infohash=None),
-                },
-            ),
+            "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True)}),
+            "M": rg_group({"m_pub": make_release(), "m_priv": make_release(is_public=False)}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["M"].releases["m_pub"].to_grab is True
-        assert seadex["M"].releases["m_priv"].to_grab is False  # promotion is public-only
-        assert seadex["P"].releases["p"].to_grab is False
-        assert skips.warned is False
-        assert len(skips.notices) == 1
-        assert skips.notices[0].severity is Severity.INFO
-        # M is a preferred group, not a fallback, so the verb must say so.
-        assert skips.notices[0].reason == "private-only; grabbing public release M instead"
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {"m_pub": "grab"}
+        assert skips == PrivateOnlyNotices(
+            notices=[PrivateOnlyNotice(["P"], "private-only; grabbing public release M instead", Severity.INFO)]
+        )
 
     def test_different_files_both_kept(self) -> None:
-        planner = make_planner()
         seadex = {
-            "A": rg_group(
-                {"u1": make_release(download=True)},
-                episodes=[placed_episode(season=1, episode=1, size=0)],
-            ),
-            "B": rg_group(
-                {"u2": make_release(download=True)},
-                episodes=[placed_episode(season=1, episode=2, size=0)],
-            ),
+            "A": _sonarr_group(u1=make_release(download=True, episodes=[_S1E1])),
+            "B": _sonarr_group(u2=make_release(download=True, episodes=[_S1E2])),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["B"].releases["u2"].to_grab is True
 
-    def test_two_private_only_sets_accumulate_groups_and_notices(self) -> None:
-        # Two disjoint private-only sets in ONE entry: the skip state must
-        # accumulate onto one result - both group names, one WARNING notice per
-        # set (in set order) - not overwrite or collapse to the last set.
-        planner = make_planner()
-        seadex = {
-            "P1": rg_group(
-                {"u1": make_release(download=True, is_public=False)},
-                episodes=[placed_episode(season=1, episode=1, size=0)],
-            ),
-            "P2": rg_group(
-                {"u2": make_release(download=True, is_public=False)},
-                episodes=[placed_episode(season=2, episode=1, size=0)],
-            ),
-        }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["P1"].releases["u1"].to_grab is False
-        assert seadex["P2"].releases["u2"].to_grab is False
-        assert skips.warned is True
-        assert skips.groups == ["P1", "P2"]
-        assert [n.groups for n in skips.notices] == [["P1"], ["P2"]]
-        assert [n.severity for n in skips.notices] == [Severity.WARNING, Severity.WARNING]
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
 
     def test_an_outdated_skip_survives_a_later_plain_skip(self) -> None:
-        # One entry, two sets: an outdated skip (set 1), then a plain private-only
-        # skip (set 2). The later set doesn't clear the outdated skip, and each set keeps
-        # its own reason.
-        planner = make_planner()
-        e1 = [placed_episode(season=1, episode=1, size=0)]
-        e2 = [placed_episode(season=2, episode=1, size=0)]
+        # Two sets in one title: an outdated skip, then a plain one. Each adds its groups and its notice, and the
+        # second leaves the first's outdated mark.
         seadex = {
-            "Priv1": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}, episodes=e1),
-            "Fall1": rg_group({"u2": make_release(download=False, is_public=True, is_fallback=True)}, episodes=e1),
-            "Priv2": rg_group({"u3": make_release(download=True, is_public=False)}, episodes=e2),
+            "Priv1": _sonarr_group(u1=make_release(download=True, is_public=False, upgrade=True, episodes=[_S1E1])),
+            "Fall1": _sonarr_group(u2=make_release(is_fallback=True, episodes=[_S1E1])),
+            "Priv2": _sonarr_group(u3=make_release(download=True, is_public=False, episodes=[_S2E1])),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        outdated_reason = (
-            "private-only; your copy is outdated (its file size no longer matches the release) "
-            "and only a fallback covers it"
-        )
-        assert skips.outdated is True
-        assert skips.groups == ["Priv1", "Priv2"]
-        assert [n.reason for n in skips.notices] == [outdated_reason, "private-only (private releases not supported)"]
 
-    def test_both_promotion_prefixes_in_one_title(self) -> None:
-        # The two promotion notices are DISTINCT: the no-public-to-grab branch
-        # says "private-only" (the whole set was private), the degraded-keeper
-        # branch says "remaining files private-only" (the set had a public release).
-        # One entry exercising both must surface both wordings, nothing skipped.
-        planner = make_planner()
-        e1 = [placed_episode(season=1, episode=1, size=0)]
-        e2 = [placed_episode(season=2, episode=1, size=0)]
-        seadex = {
-            "PrivA": rg_group(
-                {"u1": make_release(download=True, is_public=False, upgrade=True)},
-                episodes=e1,
-            ),
-            "PubA": rg_group({"u2": make_release(download=False, is_public=True)}, episodes=e1),
-            "MixedB": rg_group(
-                {
-                    "u3": make_release(download=False, is_public=True),
-                    "u4": make_release(download=True, is_public=False, upgrade=True),
-                },
-                episodes=e2,
-            ),
-            "PubB": rg_group({"u5": make_release(download=False, is_public=True)}, episodes=e2),
-        }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["PubA"].releases["u2"].to_grab is True
-        assert seadex["PubB"].releases["u5"].to_grab is True
-        assert seadex["PrivA"].releases["u1"].to_grab is False
-        assert seadex["MixedB"].releases["u3"].to_grab is False
-        assert seadex["MixedB"].releases["u4"].to_grab is False
-        assert skips.warned is False
-        assert [n.reason for n in skips.notices] == [
-            "private-only; grabbing public release PubA instead",
-            "remaining files private-only; grabbing public release PubB instead",
-        ]
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {}
+        assert skips == PrivateOnlyNotices(
+            warned=True,
+            groups=["Priv1", "Priv2"],
+            notices=[PrivateOnlyNotice(["Priv1"], _OUTDATED), PrivateOnlyNotice(["Priv2"], _PRIVATE_ONLY)],
+            outdated=True,
+        )
 
 
 class TestSameGroupDuplicateDedup:
