@@ -16,7 +16,6 @@ from typing import cast
 import pytest
 from typer.testing import CliRunner
 
-from pearlarr.cache import CacheStore
 from pearlarr.cli import (
     cache_backup,
     cache_check,
@@ -30,21 +29,13 @@ from pearlarr.cli import (
     pearlarr_cli,
     show_paths,
 )
-from pearlarr.config import Arr
 from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.output import Diagnostic, Severity, emit_to_hub
 from pearlarr.output.process_hub import current_hub
 
+from .builders import write_cache_db
+
 _ENVELOPE = ["schema_version", "time", "event", "level", "message"]
-
-
-def _build_cache(tmp_path: Path) -> None:
-    """Write a real on-disk cache.db under tmp_path holding one cached title."""
-
-    store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
-    store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
-    store.save(dry_run=False)
-    store.close()
 
 
 def _write_config(tmp_path: Path, body: str) -> None:
@@ -148,7 +139,7 @@ class TestJsonSuccessCases:
         assert captured.err == ""
 
     def test_cache_backup(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_backup(json_output=True) is True
         captured = capsys.readouterr()
         (obj,) = _envelope_lines(captured.out)
@@ -156,7 +147,7 @@ class TestJsonSuccessCases:
         assert captured.err == ""
 
     def test_cache_restore(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_backup(json_output=True) is True
         capsys.readouterr()
         assert cache_restore(json_output=True) is True
@@ -166,7 +157,7 @@ class TestJsonSuccessCases:
         assert captured.err == ""
 
     def test_cache_remove(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_remove(json_output=True) is True
         captured = capsys.readouterr()
         (obj,) = _envelope_lines(captured.out)
@@ -174,7 +165,7 @@ class TestJsonSuccessCases:
         assert captured.err == ""
 
     def test_cache_stats(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_stats(json_output=True) is True
         captured = capsys.readouterr()
         (obj,) = _envelope_lines(captured.out)
@@ -183,7 +174,7 @@ class TestJsonSuccessCases:
         assert captured.err == ""
 
     def test_cache_check(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_check(json_output=True) is True
         captured = capsys.readouterr()
         (obj,) = _envelope_lines(captured.out)
@@ -269,7 +260,7 @@ class TestCliRunnerJsonArrRun:
     """End-to-end through typer: exit code + stream separation with `--json`."""
 
     def test_cache_stats_json_exit_and_streams(self, tmp_path: Path) -> None:
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         result = CliRunner().invoke(pearlarr_cli, ["cache", "stats", "--json"])
         assert result.exit_code == 0
         (obj,) = _envelope_lines(result.stdout)

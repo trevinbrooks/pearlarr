@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, override
 
@@ -45,6 +46,7 @@ from pearlarr.cache import (
     CachedTitle,
     CachedTitleUpdate,
     CacheStats,
+    CacheStore,
     HistoryCheckpoint,
     selection_hash_key,
 )
@@ -519,6 +521,18 @@ class FakeCacheStore(AbstractCacheStore):
     @override
     def integrity_check(self) -> str:
         return "ok"
+
+
+def write_cache_db(data_dir: Path, *, series_id: int = 7, name: str = "X") -> None:
+    """Write the `cache.db` a real run leaves in `data_dir`, holding one cached Sonarr title: `series_id` named `name`.
+
+    It goes through the normal load, stage and `save(dry_run=False)`, which moves the in-memory db to the file.
+    """
+
+    store = CacheStore.load(str(data_dir / "cache.db"), config_hash="x")
+    store.update_cached_title(Arr.SONARR, series_id, {"name": name})
+    store.save(dry_run=False)
+    store.close()
 
 
 class FakeSeaDexSource(SeaDexSource):

@@ -105,7 +105,7 @@ from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
-from .builders import make_logger
+from .builders import make_logger, write_cache_db
 from .fakes import RecordingHub, TtyStringIO, diagnostic_messages, install_recording_hub
 from .scan_goldens import SUMMARY_MINIMAL
 
@@ -115,20 +115,6 @@ def _starter_text() -> str:
 
     template = Path(template_path()).read_text(encoding="utf-8")
     return "".join(line for line in template.splitlines(keepends=True) if not line.startswith("# GENERATED"))
-
-
-def _build_cache(tmp_path: Path) -> None:
-    """Write a real on-disk `cache.db` under `tmp_path` holding one cached title.
-
-    Uses the normal load -> stage -> `save(dry_run=False)` path, which promotes
-    the in-memory db to the file, so the fixture matches a cache a real run leaves
-    behind (cached title `(SONARR, 7)` with `name="X"`).
-    """
-
-    store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="x")
-    store.update_cached_title(Arr.SONARR, 7, {"name": "X"})
-    store.save(dry_run=False)
-    store.close()
 
 
 class TestCacheRoundTrip:
@@ -144,7 +130,7 @@ class TestCacheRoundTrip:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path, series_id=7, name="X")
 
         assert cache_backup() is True
         assert (tmp_path / "cache.backup.db").exists()
@@ -183,7 +169,7 @@ class TestCacheRoundTrip:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         (tmp_path / "cache.db-wal").write_text("stale")
         (tmp_path / "cache.db-shm").write_text("stale")
 
@@ -204,7 +190,7 @@ class TestHealthyDiagnostics:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
 
         assert cache_stats() is True
         assert cache_check() is True
@@ -265,7 +251,7 @@ class TestActiveRunGuard:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
 
         # Holding the single-instance lock on the data dir simulates an active run.
         # remove must refuse and leave the live db untouched.
@@ -283,7 +269,7 @@ class TestActiveRunGuard:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         assert cache_backup() is True
 
         with single_instance_lock(str(tmp_path)):
@@ -302,7 +288,7 @@ class TestActiveRunGuard:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
 
         # A mid-run snapshot would capture half-committed run state. Backup
         # refuses like restore/remove and writes nothing.
@@ -365,7 +351,7 @@ class TestMissingFilesAreReportedNotRaised:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path, series_id=7, name="X")
         assert cache_backup() is True
 
         # The live db going corrupt is the very scenario backups exist for. The
@@ -2029,7 +2015,7 @@ class TestExitCodes:
         assert "No cache database at" in result.stderr
         assert result.stdout == ""
 
-        _build_cache(tmp_path)
+        write_cache_db(tmp_path)
         result = runner.invoke(pearlarr_cli, ["cache", "stats"])
         assert result.exit_code == 0
         assert "entries:" in result.stdout
@@ -2039,7 +2025,7 @@ def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: p
     # The renderer reproduces the pre-hub typer.echo block byte-for-byte:
     # 17-column padded labels and a two-decimal MiB size.
     monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-    _build_cache(tmp_path)
+    write_cache_db(tmp_path)
 
     result = CliRunner().invoke(pearlarr_cli, ["cache", "stats"])
 
