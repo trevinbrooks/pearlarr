@@ -181,6 +181,7 @@ class _FakeRunServices(ArrRunServices):
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         interactive_result: SeadexDict | None = None,
+        plan_marks: frozenset[str] = frozenset(),
         plan_grabs_result: GrabPlan | None = None,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
         arr: Arr = Arr.SONARR,
@@ -200,6 +201,7 @@ class _FakeRunServices(ArrRunServices):
         self._needs_scan = needs_scan
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
         self._interactive_result = interactive_result
+        self._plan_marks = plan_marks
         self._plan_grabs_result = plan_grabs_result
         self._import_wait_mode = import_wait_mode
         self.title_mappings_calls: list[TitleMappingsCall] = []
@@ -298,6 +300,11 @@ class _FakeRunServices(ArrRunServices):
     ) -> GrabPlan:
         self.plan_grabs_calls.append((seadex_dict, arr_files))
         self.planned_title_episodes.append(title_episodes)
+        # The planner marks the releases it grabs on the dict it was handed.
+        for group_releases in seadex_dict.values():
+            for url, release in group_releases.releases.items():
+                if url in self._plan_marks:
+                    release.plan_grab()
         if self._plan_grabs_result is not None:
             return self._plan_grabs_result
         return grab_plan(seadex_dict)
@@ -1673,7 +1680,7 @@ def _sonarr_grab_run(
     if files is None:
         parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
         files = tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)
-    release = make_release(url=_GRAB_URL, infohash="h1", download=grab, files=[f.file_name for f in files])
+    release = make_release(url=_GRAB_URL, infohash="h1", files=[f.file_name for f in files])
     seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
     run = _FakeRunServices(
         anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
@@ -1681,7 +1688,7 @@ def _sonarr_grab_run(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Cour 2",
         seadex_dict=seadex,
-        plan_grabs_result=grab_plan(seadex),
+        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
         import_wait_mode=mode,
         cache_store=store,
     )
@@ -1739,13 +1746,13 @@ class TestSonarrCheckTitlePendingImportUpdates:
         specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
         files = tuple(f"Show.S00E{n:02d}.mkv" for n in range(1, 4))
         seadex: SeadexDict = {
-            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", download=True, files=list(files))}),
+            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", files=list(files))}),
         }
         run = _FakeRunServices(
             prologue_entry=make_entry_record(url="https://releases.moe/5"),
             anilist_title="Show Specials",
             seadex_dict=seadex,
-            plan_grabs_result=grab_plan(seadex),
+            plan_marks=frozenset({_GRAB_URL}),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
@@ -1813,14 +1820,26 @@ class TestSonarrCheckTitlePendingImportUpdates:
         kept = {4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)}
         assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored={6: TitleMapping(anilist_id=6)}))]
 
-    def test_with_the_wait_off_the_torrent_is_placed_and_no_pending_import_update_is_built(self) -> None:
+    def test_with_the_wait_off_a_stored_torrent_is_placed_and_no_pending_import_update_is_built(self) -> None:
+        # A run that waits on no import reads no stored pending import. This one was stored without TVDB ids, so a
+        # check that read it could not follow it and would leave its torrent unread.
+        store = FakeCacheStore()
+        resident = pending_import(
+            infohash="h1",
+            series_id=7,
+            file_episode_map={_GRAB_FILES[0]: [101]},
+            seadex_files=list(_GRAB_FILES),
+            tvdb_ids=None,
+        )
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
 
-        run = _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, mode=ImportWaitMode.OFF)
+        run = _sonarr_grab_run(store=store, episodes=episodes, mode=ImportWaitMode.OFF)
 
         (req,) = run.grab_requests
         assert req.pending_import_updates == {}
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
+        assert req.input_unread_groups == ()
 
 
 _MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
@@ -1958,13 +1977,13 @@ def _check_title_in_another_order(
     unless `grab` is off.
     """
 
-    release = make_release(url=_GRAB_URL, infohash="h1", download=grab, files=list(_GRAB_FILES))
+    release = make_release(url=_GRAB_URL, infohash="h1", files=list(_GRAB_FILES))
     seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
     run = _FakeRunServices(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show",
         seadex_dict=seadex,
-        plan_grabs_result=grab_plan(seadex),
+        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=FakeCacheStore(),
     )
@@ -2136,7 +2155,7 @@ def _check_second_season(
 
     names = list(library.parses)
     sizes = [1000 * n for n in range(1, len(names) + 1)]
-    release = make_release(url=_GRAB_URL, infohash="h1", download=True, files=names, size=sizes)
+    release = make_release(url=_GRAB_URL, infohash="h1", files=names, size=sizes)
     seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
     cache = FakeCacheStore()
     if library.orders is not None:
@@ -2146,7 +2165,7 @@ def _check_second_season(
         prologue_entry=make_entry_record(url="https://releases.moe/5"),
         anilist_title="Show Second Season",
         seadex_dict=seadex,
-        plan_grabs_result=grab_plan(seadex),
+        plan_marks=frozenset({_GRAB_URL}),
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=cache,
     )
@@ -2425,14 +2444,14 @@ class TestRadarrCheckTitlePendingImportUpdates:
         `cross_seed` marks the release as carried by that torrent.
         """
 
-        item = make_release(url="https://nyaa.si/1", infohash="h1", download=True)
+        item = make_release(url="https://nyaa.si/1", infohash="h1")
         item.cross_seed_hash = cross_seed
         seadex: SeadexDict = {"NAN0": rg_group({"https://nyaa.si/1": item})}
         run = _FakeRunServices(
             prologue_entry=make_entry_record(url="https://releases.moe/9"),
             anilist_title="A Movie",
             seadex_dict=seadex,
-            plan_grabs_result=grab_plan(seadex),
+            plan_marks=frozenset({"https://nyaa.si/1"}),
             import_wait_mode=mode,
             arr=Arr.RADARR,
             cache_store=store,
