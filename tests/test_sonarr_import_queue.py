@@ -3,6 +3,11 @@
 
 An attempt waits for Sonarr, asks it to rescan its downloads, or posts the import itself. It runs over a scripted
 Sonarr and is judged by its result and by what it posted.
+
+A pass is Sonarr's own ProcessMonitoredDownloads command, the run in which it imports its finished downloads. A
+hook on the language read changes Sonarr just before the post: the languages are the last read the fake can hook
+before the command list is read again, and a run reads them once, so only its first post meets the hook. Pending
+imports are polled every 30 seconds by default, so a 30 second tick is the next poll.
 """
 
 from collections.abc import Callable
