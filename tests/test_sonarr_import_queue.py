@@ -16,7 +16,7 @@ import pytest
 
 from pearlarr.arr_models import CommandResource, QueueRecord, RemotePathMapping, SonarrEpisode
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
+from pearlarr.wait_types import AttemptKind, PauseReason
 
 from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
 from .fakes import NEUTRAL_RESCAN, FakeClock, HookedSonarrClient
@@ -550,12 +550,6 @@ class TestEpisodeReads:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert (result.imported_count, result.file_map_episode_count) == (1, 2)
-
-    def test_the_progress_on_a_failed_episode_read_is_indeterminate(self) -> None:
-        strat, sonarr = _strategy([])
-        sonarr.episodes_return = None
-
-        assert strat.import_progress(pending_import()) == NO_PROGRESS
 
 
 def _strategy_whose_first_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:

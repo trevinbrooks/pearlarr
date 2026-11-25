@@ -215,6 +215,12 @@ class TestImportFollowsEpisodeIds:
 
         assert strat.import_progress(_TWO_EPISODES_STORED) == NO_PROGRESS
 
+    def test_the_progress_on_a_failed_episode_read_is_indeterminate(self) -> None:
+        strat, sonarr = make_sonarr_for_import(candidates=[])
+        sonarr.episodes_return = None
+
+        assert strat.import_progress(pending_import()) == NO_PROGRESS
+
     def test_a_file_sonarrs_history_placed_is_stored_with_the_tvdb_episode_its_row_has_at_that_poll(self) -> None:
         strat, sonarr = make_sonarr_for_import(candidates=None)
         sonarr.history_page_return = imported_history((101, f"/d/Show/{FIRST_FILE}"))
