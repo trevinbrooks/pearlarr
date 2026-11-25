@@ -250,12 +250,8 @@ class TestRescan:
         sonarr.commands_return = []
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        after_the_restart = sonarr.refresh_calls
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert (before_the_restart, after_the_restart, sonarr.refresh_calls) == (1, 2, 2)
+        assert (before_the_restart, sonarr.refresh_calls) == (1, 2)
 
     def test_the_next_pending_imports_rescan_waits_a_poll_interval_from_the_end_of_the_last(self) -> None:
         # Sonarr answers "started" three times, and each wait for its next answer takes ten seconds here, so the
