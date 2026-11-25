@@ -107,7 +107,7 @@ from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import make_logger
 from .fakes import RecordingHub, TtyStringIO, diagnostic_messages, install_recording_hub
-from .test_scan_parity import SUMMARY_MINIMAL
+from .scan_goldens import SUMMARY_MINIMAL
 
 
 def _starter_text() -> str:
