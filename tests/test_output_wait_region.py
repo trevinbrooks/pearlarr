@@ -42,7 +42,7 @@ from pearlarr.output.wait_lines import live_model
 from pearlarr.output.wait_region import WaitRegion, _LiveFrame
 from pearlarr.wait_types import Outcome
 
-from .fakes import CaptureHandler, feed_renderer, install_recording_hub, plain_text, strip_ansi
+from .fakes import CaptureHandler, feed_renderer, install_recording_hub, plain_text, rich_renderer, strip_ansi
 
 
 def _render_group(group: Group) -> str:
@@ -59,13 +59,6 @@ _WAIT = ScopeId(ScopeKind.WAIT, 700)
 _WAIT_TWO = ScopeId(ScopeKind.WAIT, 701)
 
 
-def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
-    stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
-    # A frozen clock: the wait region's between-poll ticking stays deterministic.
-    return RichRenderer(lambda: console, time_source=lambda: 0.0), stream
-
-
 def _dl(label: str) -> TorrentView:
     return TorrentView(key=label, label=label, phase=Phase.DOWNLOADING, fraction=0.5)
 
@@ -78,7 +71,7 @@ class TestWaitLiveRegionLifecycle:
     """The wait region's Live opens on the first WaitProgress and stops before the closing tally prints."""
 
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
-        renderer, _stream = _live_renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         assert renderer._wait._live is None  # WaitStarted alone never opens the live region
@@ -91,7 +84,7 @@ class TestWaitLiveRegionLifecycle:
         assert renderer._wait._live is None and not live.is_started
 
     def test_row_finish_prints_above_the_active_live_region(self) -> None:
-        renderer, stream = _live_renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -112,7 +105,7 @@ class TestWaitLiveRegionLifecycle:
     def test_wait_finished_stops_the_live_then_prints_the_tally(self) -> None:
         # Old teardown-then-summary order: the tally lands to clean scrollback, so
         # the observable guarantee is a stopped Live WITH the tally present.
-        renderer, stream = _live_renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -129,7 +122,7 @@ class TestWaitLiveRegionLifecycle:
         assert "wait complete · 1 imported · 2m 30s" in plain_text(stream)
 
     def test_a_finish_with_no_rows_prints_no_tally(self) -> None:
-        renderer, stream = _live_renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -141,7 +134,7 @@ class TestWaitLiveRegionLifecycle:
         assert "wait complete" not in plain_text(stream)
 
     def test_begin_run_stops_the_live(self) -> None:
-        renderer, _stream = _live_renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -161,7 +154,7 @@ class TestNonLiveProgressLine:
     """On a non-live console it degrades to a start line plus throttled progress lines, still honoring level gating."""
 
     def test_prints_start_and_throttled_progress_lines_without_a_live(self) -> None:
-        renderer, stream = _live_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
+        renderer, stream = rich_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
 
         feed_renderer(
             renderer,
@@ -177,7 +170,7 @@ class TestNonLiveProgressLine:
         assert "5m 00s" in out
 
     def test_raised_level_suppresses_every_durable_line(self) -> None:
-        renderer, stream = _live_renderer(width=20)
+        renderer, stream = rich_renderer(width=20)
         renderer.set_level(logging.WARNING)
 
         feed_renderer(
@@ -195,7 +188,7 @@ class TestNonLiveProgressLine:
         # The outcome line carries severity_of's category-based level,
         # so a FAILED outcome renders at ERROR through render_console_lines'
         # WARNING gate while the INFO wait lines around it vanish.
-        renderer, stream = _live_renderer(width=40)
+        renderer, stream = rich_renderer(width=40)
         renderer.set_level(logging.WARNING)
 
         feed_renderer(
@@ -212,7 +205,7 @@ class TestOpenScopesTeardown:
     """The wait Live slot tears down whenever the wait region leaves the open scopes, always starting fresh."""
 
     def test_scope_closed_tears_down_the_wait_live(self) -> None:
-        renderer, _stream = _live_renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -227,7 +220,7 @@ class TestOpenScopesTeardown:
         assert renderer._wait._live is None and not live.is_started
 
     def test_arr_run_finished_unwind_tears_down_the_wait_live(self) -> None:
-        renderer, _stream = _live_renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -244,7 +237,7 @@ class TestOpenScopesTeardown:
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:
         # Negative control against reusing a leftover slot: the evicted slot is never repainted.
         # A second pass mints a fresh Live (a leaked slot would be reused, nested).
-        renderer, _stream = _live_renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -272,7 +265,7 @@ class TestOpenScopesTeardown:
         assert renderer._wait._live is None and not second.is_started
 
     def test_raised_level_keeps_the_live_region_but_drops_the_durable_lines(self) -> None:
-        renderer, stream = _live_renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
 
         feed_renderer(
