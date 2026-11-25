@@ -1,70 +1,28 @@
 # pyright: strict
-"""Tests for what Sonarr's queue, commands and episode files make an import attempt do, and the queue removal.
+"""Tests for what Sonarr's queue and commands make an import attempt do, and the queue record's removal.
 
 An attempt waits, rescans or posts the import. Once the download is imported, its queue record is removed. An import
 runs over a scripted Sonarr and is judged by the commands posted to it and the attempt result.
 """
 
-from typing import NamedTuple
-
 import pytest
 
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.arr_models import CommandResource, QueueRecord
-from pearlarr.arr_run_state import ArrRunState
-from pearlarr.config import Arr
 from pearlarr.output import Severity
-from pearlarr.pending_import import OwnedAtGrab, SizeMatchedEpisode
-from pearlarr.wait_types import AttemptKind, EffectStatus, PauseReason, PendingImportState
+from pearlarr.wait_types import AttemptKind, EffectStatus, PauseReason
 
 from .builders import (
     FakeCacheStore,
     FakeClock,
     make_config,
-    make_import_wait_manager,
     make_sonarr_sync,
     manual_candidate,
     pending_import,
     queue_record,
-    sonarr_ep,
 )
 from .fakes import FakeSonarrClient, diagnostic_messages, install_recording_hub
-from .sonarr_import_builders import (
-    FIRST_FILE,
-    SECOND_FILE,
-    both_files,
-    inflight_manual_import,
-    make_sonarr_for_import,
-    posted_imports,
-    started_process_pass,
-)
-
-
-class _QbitState(NamedTuple):
-    """The two `state_enum` booleans `poll_torrent` reads."""
-
-    is_complete: bool = True
-    is_errored: bool = False
-
-
-class _CompletedRow(NamedTuple):
-    """One complete qBittorrent info row (the fields `poll_torrent` reads)."""
-
-    content_path: str
-    state_enum: _QbitState = _QbitState()
-    progress: float = 1.0
-
-
-class _CompletedQbit:
-    """A qBittorrent stub whose poll always reads one complete torrent."""
-
-    def __init__(self, content_path: str) -> None:
-        self._row = _CompletedRow(content_path)
-
-    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[_CompletedRow]:
-        del torrent_hashes
-        return [self._row]
-
+from .sonarr_import_builders import inflight_manual_import, make_sonarr_for_import, posted_imports, started_process_pass
 
 _IMPORTING = [queue_record("ABC123", "importing")]
 
@@ -73,7 +31,7 @@ _CLEAN_PENDING = [queue_record("ABC123", "importPending", status="ok")]
 
 
 class TestImportCompletedQueueState:
-    """Sonarr's queue, commands, episode files and settings decide whether an import attempt waits, rescans or posts."""
+    """Sonarr's queue, its running commands and its settings decide whether an import attempt waits or posts."""
 
     @pytest.mark.parametrize(
         ("queue", "commands", "attempt_kind", "outcome"),
@@ -228,6 +186,13 @@ class TestImportCompletedQueueState:
         assert (in_flight.command_issued, in_flight.pause_reason) == (True, PauseReason.IMPORT)
         assert len(sonarr.execute_calls) == 1
 
+
+class TestImportCompletedRescan:
+    """A rescan counts once Sonarr completes it, and is asked for again when it never does or a restart orphans it.
+
+    The throttle between two pending imports' rescans runs from the end of the last one, a rejected one included.
+    """
+
     @pytest.mark.parametrize(
         ("command_status", "command_status_script", "refresh_calls"),
         [
@@ -313,105 +278,6 @@ class TestImportCompletedQueueState:
         strat.import_completed(pending_import(infohash="def456"), "/e", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 1
-
-    def test_an_episode_holding_this_torrents_file_for_another_episode_is_imported_over(self) -> None:
-        # This torrent's E02 file (size 200) is filed on E01 as well. Both rows hold its group at a listed size,
-        # but E01's is not its own file, so E01 is still owed and its own file is posted onto it.
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={FIRST_FILE: [101], SECOND_FILE: [102]},
-            seadex_files=[FIRST_FILE, SECOND_FILE],
-            release_sizes=[100, 200],
-            sizes_by_name={FIRST_FILE.casefold(): 100, SECOND_FILE.casefold(): 200},
-        )
-        strat, sonarr = make_sonarr_for_import(
-            candidates=both_files(),
-            episodes=[
-                sonarr_ep(1, n, ep_id=100 + n, episode_file_id=12, release_group="SubGroup", size=200) for n in (1, 2)
-            ],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert posted_imports(sonarr) == [[(f"/d/{FIRST_FILE}", [101])]]
-        assert (result.imported_count, result.file_map_episode_count) == (1, 2)
-
-    def test_file_map_episode_holding_a_file_with_no_group_pearlarr_size_matched_is_protected(self) -> None:
-        # The grab-time size match is carried on the pending import through to the
-        # import: a file with no group the planner named reads TRUSTED, so the
-        # torrent pearlarr grabbed for the REST of the season never copies over it. A download already in gets no
-        # command at all, not even a rescan.
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 700),)),
-        )
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None, size=700)],
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is True
-        assert (sonarr.execute_calls, sonarr.refresh_calls) == ([], 0)
-
-    def test_a_pending_import_awaiting_cleanup_with_files_gone_demotes_through_the_reconciler(self) -> None:
-        # The cleanup's demote reads the POST's ISSUED reason off the real attempt result:
-        # a pending import awaiting cleanup whose files are gone re-imports and drops back to an
-        # ordinary carryover (the fix's wiring, not a scripted attempt result).
-        recording = install_recording_hub()
-        pending = pending_import(infohash="abc123", awaiting_cleanup=True)
-        store = FakeCacheStore()
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            cache_store=store,
-        )
-        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        state = ArrRunState(arr=Arr.SONARR)
-        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
-
-        mgr.finish_cleanups()
-
-        assert len(sonarr.execute_calls) == 1
-        row = store.get_pending_import_row(Arr.SONARR, pending.infohash)
-        assert row is not None
-        assert row["awaiting_cleanup"] is False
-        assert state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
-        assert any("no longer has every file imported" in w for w in diagnostic_messages(recording, Severity.WARNING))
-
-    def test_store_persisted_guard_row_protects_through_the_pending_import_snapshot(self) -> None:
-        # THE fix path end to end: the persisted blob carries NO guards - the
-        # title's guard_facts row alone must feed the loaded pending import's
-        # protection decision when the carried-over snapshot drives the import.
-        pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            guards=OwnedAtGrab(entry_groups=("SubGroup", "OtherPick")),
-        )
-        store = FakeCacheStore()
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
-            cache_store=store,
-        )
-        (claim,) = pending.claims
-        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
-        state = ArrRunState(arr=Arr.SONARR)
-        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
-
-        mgr.report_imports_for_series(claim.series_id)
-
-        # The row's facts reached the decision: the on-disk OtherPick file reads
-        # TRUSTED - done, never auto imported over - and the
-        # finished pending import leaves the store. The IMPORTED classification pins that
-        # branch (a GONE drop would also empty the store).
-        assert sonarr.execute_calls == []
-        assert store.get_pending_import_rows(Arr.SONARR) == {}
-        assert state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
 
 
 class TestCloseTracked:

@@ -114,11 +114,21 @@ def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None
 
 
 class TestPerItemSnapshotHook:
-    """The arr run reports a series' carried-over pending imports under the id this hook names."""
+    """The arr run reports a series' carried-over pending imports under the id this hook names.
+
+    A movie names none, as Radarr's pending imports are reconciled in the wait pass.
+    """
 
     def test_sonarr_names_the_series_by_its_sonarr_id(self) -> None:
         # Pending imports belong to a series by its Sonarr id, not its TVDB id.
         assert make_sonarr_sync().pending_import_series_id(SonarrSeries(id=7, tvdbId=70)) == 7
+
+    def test_pending_import_series_id_is_none(self) -> None:
+        # Radarr pending imports carry series_id=0, so the per-item snapshot hook key is
+        # None (short-circuits the per-item snapshot - reconcile runs in the wait pass).
+        strat = make_radarr_sync()
+
+        assert strat.pending_import_series_id(RadarrMovie(id=5)) is None
 
 
 class TestArrRunStartHook:
