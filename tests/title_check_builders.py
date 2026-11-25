@@ -1,5 +1,8 @@
 # pyright: strict
-"""Builders for the strategies' title check tests: a recording run services, a scripted parse and listings."""
+"""Builders for the strategies' title check tests: a recording run services, a scripted parse and listings.
+
+The Sonarr checks share series 7 and the one torrent its title lists, and `sonarr_grab_run` drives a check of it.
+"""
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -7,7 +10,7 @@ from typing import override
 
 from seadex import EntryRecord
 
-from pearlarr.arr_models import ArrFiles, SonarrEpisode
+from pearlarr.arr_models import ArrFiles, SonarrEpisode, SonarrSeries
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
@@ -37,13 +40,35 @@ from .builders import (
     grab_plan,
     make_bare_instance,
     make_config,
+    make_entry_record,
     make_logger,
     make_release,
     make_run_deps,
+    parsed_info,
     rg_group,
     scripted_roles,
+    sonarr_ep,
+    stand_in_ep,
 )
 from .fakes import FakeRadarrClient, ScriptedEpisodes
+
+GRAB_URL = "https://nyaa.si/1"
+"""The URL of the one torrent a Sonarr title check of series 7 lists."""
+
+GRAB_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
+"""The torrent's two files, named as the season's first two episodes."""
+
+EP1 = sonarr_ep(1, 1, ep_id=101, episode_file_id=0)
+"""Series 7's first episode, on row 101 with no file."""
+
+EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
+"""Series 7's second episode, on row 102 with no file."""
+
+SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
+"""Series 7 as Sonarr lists it."""
+
+STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
+"""The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
 
 
 class FakeRunServices(ArrRunServices):
@@ -299,6 +324,41 @@ def sonarr_checking(
         _config=config or make_config(sleep_time=0),
         logger=make_logger(),
     )
+
+
+def sonarr_grab_run(
+    *,
+    store: FakeCacheStore,
+    episodes: ScriptedEpisodes,
+    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
+    grab: bool = True,
+    files: tuple[ListedFile, ...] | None = None,
+    listings: ScriptedListings | None = None,
+) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5 (series 7) listing one torrent, in a blocking run unless `mode` says.
+
+    The series has mappings for titles 4 and 5 and for the ignored title 6. The torrent is `files`, or `GRAB_FILES`
+    named as the season's first two episodes. The plan grabs it unless `grab` is off.
+    """
+
+    if files is None:
+        parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
+        files = tuple(ListedFile(name, 1000, parses[name]) for name in GRAB_FILES)
+    release = make_release(url=GRAB_URL, infohash="h1", files=[f.file_name for f in files])
+    seadex: SeadexDict = {"NAN0": rg_group({GRAB_URL: release})}
+    run = FakeRunServices(
+        anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
+        ignored={6: TitleMapping(anilist_id=6)},
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show Cour 2",
+        seadex_dict=seadex,
+        plan_marks=frozenset({GRAB_URL}) if grab else frozenset(),
+        import_wait_mode=mode,
+        cache_store=store,
+    )
+    strat = sonarr_checking(run, episodes, parse=ScriptedParse({GRAB_URL: files}), listings=listings)
+    strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
+    return run
 
 
 def radarr_checking(
