@@ -977,145 +977,87 @@ class TestGroupGuardFacts:
         assert plan.guards.owned_episodes == owned_episodes
 
 
-class TestReduceDropRescue:
-    """Group-atomic drops must not lose episode coverage (the rescue pass)."""
+class TestDroppingAGroupNeverLosesAnEpisode:
+    """A dropped group's public release is still grabbed when it brings an episode no kept release does."""
 
-    E11 = placed_episode(season=1, episode=1, size=100)
-    E21 = placed_episode(season=2, episode=1, size=100)
+    @staticmethod
+    def _mixed(name: str, placed: PlacedEpisode) -> GroupReleases:
+        """Group `name`'s public release `{name}_pub` on `placed` and private `{name}_priv` on both, each to grab.
 
-    def _equal_union_pair(self, *, b_first: bool) -> dict[str, GroupReleases]:
-        # Two mixed groups whose unions match (the private releases inflate both
-        # keys to {S1E1, S2E1}), so they land in ONE same-files set.
-        a = rg_group(
-            {
-                "a_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="a1"),
-                "a_priv": make_release(download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None),
-            },
-            episodes=[self.E11, self.E21],
+        The private release makes every such group cover S01E01 and S02E01, so they land in one set.
+        """
+
+        return _sonarr_group(
+            **{
+                f"{name}_pub": make_release(download=True, size=[placed.size], episodes=[placed]),
+                f"{name}_priv": make_release(
+                    download=True, is_public=False, size=[_S1E1.size, _S2E1.size], episodes=[_S1E1, _S2E1]
+                ),
+            }
         )
-        b = rg_group(
-            {
-                "b_pub": make_release(download=True, is_public=True, episodes=[self.E21], infohash="b1"),
-                "b_priv": make_release(download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None),
-            },
-            episodes=[self.E11, self.E21],
-        )
-        return {"B": b, "A": a} if b_first else {"A": a, "B": b}
 
-    def test_losers_uncovered_public_release_is_rescued(self) -> None:
-        # Neither mixed group is fully addable, so the keeper degrades to the
-        # first. The loser's public release carries the set's only addable S2 (or S1)
-        # coverage and must be marked to grab again, whichever group wins.
-        for b_first in (False, True):
-            planner = make_planner()
-            seadex = self._equal_union_pair(b_first=b_first)
-            planner.reduce_overlapping_grabs(seadex)
-            assert seadex["A"].releases["a_pub"].to_grab is True, f"b_first={b_first}"
-            assert seadex["B"].releases["b_pub"].to_grab is True, f"b_first={b_first}"
-            # Exactly one private release survives (the keeper's). The loser's is dropped.
-            priv_flags = [seadex["A"].releases["a_priv"].to_grab, seadex["B"].releases["b_priv"].to_grab]
-            assert sorted(priv_flags) == [False, True], f"b_first={b_first}"
+    @pytest.mark.parametrize(
+        ("order", "grabs"),
+        [
+            pytest.param("AB", {"a_pub": "grab", "a_priv": "grab", "b_pub": "grab"}, id="a-kept"),
+            pytest.param("BA", {"b_pub": "grab", "b_priv": "grab", "a_pub": "grab"}, id="b-kept"),
+        ],
+    )
+    def test_losers_uncovered_public_release_is_rescued(self, order: str, grabs: dict[str, Mark]) -> None:
+        # Neither group is fully addable, so the first is kept, and the other's public release still brings the one
+        # episode it alone has.
+        groups = {"A": self._mixed("a", _S1E1), "B": self._mixed("b", _S2E1)}
+        seadex = {name: groups[name] for name in order}
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == grabs
 
     def test_covered_drop_stays_dropped(self) -> None:
-        # The loser's public release adds nothing over the keeper's surviving public
-        # coverage: it stays dropped (no duplicate grab).
-        planner = make_planner()
+        # The dropped group's public release brings nothing the kept group doesn't: grabbing it would be a duplicate.
         seadex = {
-            "A": rg_group(
-                {"a_pub": make_release(download=True, is_public=True, episodes=[self.E11, self.E21], infohash="a1")},
-                episodes=[self.E11, self.E21],
-            ),
-            "B": rg_group(
-                {"b_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="b1")},
-                # The union is inflated to match A's key (the R1 mechanic).
-                episodes=[self.E11, self.E21],
-            ),
+            "A": _sonarr_group(a_pub=make_release(download=True, size=[100, 300], episodes=[_S1E1, _S2E1])),
+            "B": self._mixed("b", _S1E1),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["a_pub"].to_grab is True
-        assert seadex["B"].releases["b_pub"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"a_pub": "grab"}
 
     def test_equal_coverage_drop_stays_dropped(self) -> None:
-        # MUTATION PIN (_rescue_dropped_coverage): `release_keys <= survivor_keys`
-        # flipped to `<` marks to grab again a dropped release whose coverage EQUALS the
-        # survivors' - a pure duplicate grab. Equal single-episode coverage on
-        # both public groups: the loser must stay dropped.
-        planner = make_planner()
+        # The same when it brings exactly what the kept group does.
         seadex = {
-            "A": rg_group(
-                {"a_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
-                episodes=[self.E11],
-            ),
-            "B": rg_group(
-                {"b_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="b1")},
-                episodes=[self.E11],
-            ),
+            "A": _sonarr_group(a_pub=make_release(download=True, size=[100], episodes=[_S1E1])),
+            "B": _sonarr_group(b_pub=make_release(download=True, size=[100], episodes=[_S1E1])),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["a_pub"].to_grab is True
-        assert seadex["B"].releases["b_pub"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"a_pub": "grab"}
 
     def test_rescue_accumulates_survivor_coverage(self) -> None:
-        # MUTATION PIN (_rescue_dropped_coverage): `survivor_keys |= release_keys`
-        # degraded to `=` forgets the ORIGINAL survivors after the first rescue.
-        # Keeper A covers S1. Dropped B (S2) is rescued. Dropped C (S1) is already
-        # covered by A and must stay dropped - under `=` it would be marked to grab again.
-        planner = make_planner()
-        shared = [self.E11, self.E21]
-        seadex = {
-            "A": rg_group(
-                {"a_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
-                episodes=shared,
-            ),
-            "B": rg_group(
-                {"b_pub": make_release(download=True, is_public=True, episodes=[self.E21], infohash="b1")},
-                episodes=shared,
-            ),
-            "C": rg_group(
-                {"c_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="c1")},
-                episodes=shared,
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["a_pub"].to_grab is True
-        assert seadex["B"].releases["b_pub"].to_grab is True  # rescued: only S2 carrier
-        assert seadex["C"].releases["c_pub"].to_grab is False  # covered by keeper A
+        # A is kept with S01E01. B's public release alone brings S02E01, so it is grabbed. C's brings S01E01, which
+        # A already does, and stays dropped.
+        seadex = {"A": self._mixed("a", _S1E1), "B": self._mixed("b", _S2E1), "C": self._mixed("c", _S1E1)}
 
-    def test_movie_releases_never_rescued(self) -> None:
-        # Movie/no-parse releases have no episode vocabulary, so the rescue can't
-        # (and mustn't) reason about their coverage.
-        planner = make_planner()
-        seadex = {
-            "A": rg_group({"a_pub": make_release(download=True, is_public=True, infohash="a1")}),
-            "B": rg_group({"b_pub": make_release(download=True, is_public=True, infohash="b1")}),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["a_pub"].to_grab is True
-        assert seadex["B"].releases["b_pub"].to_grab is False
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"a_pub": "grab", "a_priv": "grab", "b_pub": "grab"}
 
     def test_owned_public_release_never_resurrected(self) -> None:
-        # A release the matcher left not to grab (owned) is not part of this pass's drops, so
-        # the rescue never touches it - even when its coverage leaves the set.
-        planner = make_planner()
+        # B's public release is the arr's already, so it was never marked to grab, and dropping B leaves it that way
+        # though no kept public release covers its episode.
         seadex = {
-            "A": rg_group(
-                {"a_pub": make_release(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
-                episodes=[self.E11, self.E21],
-            ),
-            "B": rg_group(
-                {
-                    "b_owned": make_release(download=False, is_public=True, episodes=[self.E21], infohash="b2"),
-                    "b_priv": make_release(
-                        download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None
-                    ),
-                },
-                episodes=[self.E11, self.E21],
+            "A": self._mixed("a", _S1E1),
+            "B": _sonarr_group(
+                b_owned=make_release(size=[300], episodes=[_S2E1]),
+                b_priv=make_release(download=True, is_public=False, size=[100, 300], episodes=[_S1E1, _S2E1]),
             ),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["a_pub"].to_grab is True
-        assert seadex["B"].releases["b_owned"].to_grab is False
-        assert seadex["B"].releases["b_priv"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"a_pub": "grab", "a_priv": "grab"}
 
 
 class TestTorrentLeftForAHandImport:
