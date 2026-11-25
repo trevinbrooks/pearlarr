@@ -21,6 +21,7 @@ from .builders import (
     make_import_wait_manager,
     make_radarr_sync,
     pending_import,
+    radarr_history_record,
 )
 from .fakes import FakeRadarrClient
 from .wait_fakes import (
@@ -31,12 +32,6 @@ from .wait_fakes import (
     RecordingWaitView,
     make_orchestration_manager,
 )
-
-
-def _movie_import(download_id: str) -> HistoryRecord:
-    """One Radarr `/history/since` import record keyed by the torrent's downloadId."""
-
-    return HistoryRecord.model_validate({"eventType": "movieFolderImported", "downloadId": download_id, "movieId": 5})
 
 
 def _radarr_reconcile_manager(
@@ -93,7 +88,7 @@ class TestCrossArrCategoryGate:
         # Radarr run: the movie import is confirmed -> no claim remains -> the move fires.
         radarr_mgr = _radarr_reconcile_manager(
             qbit=qbit,
-            history=[_movie_import("h")],
+            history=[radarr_history_record("h", event="movieFolderImported")],
             store=store,
             post_import_category="pearlarr-done",
         )
@@ -148,7 +143,13 @@ class TestRadarrReconcile:
             pytest.param([], False, [], [False], id="no-event-yet"),
             pytest.param(None, False, [], [False], id="history-outage"),
             pytest.param(None, True, [], [True], id="history-outage-while-awaiting-cleanup"),
-            pytest.param([_movie_import("h")], True, [("pearlarr-done", "h")], [], id="event-finishes-the-cleanup"),
+            pytest.param(
+                [radarr_history_record("h", event="movieFolderImported")],
+                True,
+                [("pearlarr-done", "h")],
+                [],
+                id="event-finishes-the-cleanup",
+            ),
         ],
     )
     def test_only_an_import_event_in_radarrs_history_moves_the_torrent_and_drops_the_pending_import(

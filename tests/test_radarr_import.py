@@ -14,14 +14,8 @@ from pearlarr.config import Arr
 from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.wait_types import AttemptKind, ImportProgress
 
-from .builders import FakeCacheStore, make_radarr_sync, pending_import
+from .builders import FakeCacheStore, make_radarr_sync, pending_import, radarr_history_record
 from .fakes import FakeRadarrClient
-
-
-def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
-    """One Radarr `/history/since` record, as the import-evidence match reads it."""
-
-    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
 
 
 class TestRadarrImportCompletedHistory:
@@ -34,13 +28,15 @@ class TestRadarrImportCompletedHistory:
     @pytest.mark.parametrize(
         ("history", "done"),
         [
-            pytest.param([_import_history("h")], True, id="import-event"),
+            pytest.param([radarr_history_record("h", event="movieFolderImported")], True, id="import-event"),
             # Radarr stores the download id uppercased.
-            pytest.param([_import_history("H")], True, id="import-event-id-uppercased"),
+            pytest.param(
+                [radarr_history_record("H", event="movieFolderImported")], True, id="import-event-id-uppercased"
+            ),
             # No import proof (none yet, a non-import event, or Radarr unreachable): fail
             # closed: waiting keeps the pending import waiting, never done on an unread history.
             pytest.param([], False, id="no-event-yet"),
-            pytest.param([_import_history("h", event="grabbed")], False, id="non-import-event"),
+            pytest.param([radarr_history_record("h", event="grabbed")], False, id="non-import-event"),
             pytest.param(None, False, id="history-outage"),
         ],
     )
@@ -57,7 +53,7 @@ class TestRadarrImportCompletedHistory:
 
     def test_history_fetched_once_per_wait_pass(self) -> None:
         # Two pending imports in one wait pass share ONE history fetch (memoized).
-        radarr = FakeRadarrClient(history_since=[_import_history("h")])
+        radarr = FakeRadarrClient(history_since=[radarr_history_record("h", event="movieFolderImported")])
         strat = make_radarr_sync(radarr=radarr)
 
         strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
@@ -72,7 +68,7 @@ class TestRadarrImportCompletedHistory:
         pending = pending_import(infohash="h")
 
         earlier = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        radarr.history_since_return = [_import_history("h")]
+        radarr.history_since_return = [radarr_history_record("h", event="movieFolderImported")]
         strat.get_items()
         later = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 

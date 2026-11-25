@@ -28,6 +28,7 @@ from pearlarr.arr_models import (
     ArrFiles,
     ArrItem,
     DownloadClientRecord,
+    HistoryRecord,
     ManualImportCandidate,
     MatchedEpisode,
     ParsedFileInfo,
@@ -1696,6 +1697,12 @@ def queue_record(
             "trackedDownloadStatus": status,
         },
     )
+
+
+def radarr_history_record(download_id: str, *, event: str) -> HistoryRecord:
+    """One Radarr `/history/since` record of `event`, keyed by the torrent's downloadId."""
+
+    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
 
 
 def make_series_reads(
