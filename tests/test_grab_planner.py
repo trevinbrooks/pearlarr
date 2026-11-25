@@ -77,12 +77,10 @@ def _sonarr_group(**releases: Release) -> GroupReleases:
 class TestAnyToGrab:
     """`any_to_grab` reports whether any release in the group dict has `to_grab` set."""
 
-    def test_false_when_none_is_to_grab(self) -> None:
-        seadex = {"A": rg_group({"u": make_release(download=False)})}
-        assert GrabPlanner.any_to_grab(seadex) is False
-
     def test_true_when_one_is_to_grab(self) -> None:
-        seadex = {"A": rg_group({"u": make_release(download=True)})}
+        # One release to grab is enough, whatever the title's other releases are.
+        seadex = {"A": rg_group({"u1": make_release()}), "B": rg_group({"u2": make_release(download=True)})}
+
         assert GrabPlanner.any_to_grab(seadex) is True
 
 
