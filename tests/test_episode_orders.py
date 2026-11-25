@@ -31,7 +31,7 @@ from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
-from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
+from pearlarr.mappings import AnimeIdsByName, TitleMapping
 from pearlarr.output import BootStepFinished, Severity, TitleHeader, TitleRow
 from pearlarr.output.events import TitleState
 from pearlarr.parse_cache import parse_to_json
@@ -375,10 +375,7 @@ def _with_an_unmapped_series(
     """
 
     sonarr.all_series_return = [_series(1, 50), _series(2, 60, season_type="dvd")]
-    mapped = MappingSources(anime={"Show 1": {"anilist_id": 500, "tvdb_id": 50}}, anidb=False, anibridge=False)
-    deps = make_run_deps(cache_store=cache)
-    resolver = MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
-    deps = replace(deps, resolver=resolver)
+    deps = make_run_deps(cache_store=cache, anime_ids={"Show 1": {"anilist_id": 500, "tvdb_id": 50}})
     strat = SonarrStrategy(deps, ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
     return strat, strat.get_items()
 
@@ -1460,20 +1457,16 @@ def _run_deps(
 
     seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in _SEASON_TITLES})
     config = make_config(url="http://sonarr", api_key="key", sleep_time=0, detect_arr_activity=False)
-    deps = make_run_deps(config=config, cache_store=cache, seadex=seadex, xem_client=xem, skyhook_client=skyhook)
-    seasons = MappingSources(
-        anime={
-            name: {"anilist_id": anilist_id, "tvdb_id": 50, "tvdb_season": season}
-            for season, (anilist_id, name) in enumerate(_SEASON_TITLES.items(), start=1)
-        },
-        anidb=False,
-        anibridge=False,
+    seasons: AnimeIdsByName = {
+        name: {"anilist_id": anilist_id, "tvdb_id": 50, "tvdb_season": season}
+        for season, (anilist_id, name) in enumerate(_SEASON_TITLES.items(), start=1)
+    }
+    deps = make_run_deps(
+        config=config, cache_store=cache, seadex=seadex, xem_client=xem, skyhook_client=skyhook, anime_ids=seasons
     )
     for anilist_id, name in _SEASON_TITLES.items():
         deps.anilist.answers[anilist_id] = anilist_body(anilist_id, name)
-    return replace(
-        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=seasons)
-    )
+    return deps
 
 
 def _run_over(sonarr: FakeSonarrClient, deps: ArrRunDeps) -> RecordingHub:
