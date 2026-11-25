@@ -2750,7 +2750,7 @@ class TestFolderFetchFallback:
             pytest.param(None, (RESCAN_AFTER_ADD,), id="unreadable-history"),
         ],
     )
-    def test_empty_download_id_fetch_waits_without_the_proof_or_aclosed_history(
+    def test_empty_download_id_fetch_waits_without_the_proof_or_a_closed_history(
         self, history: HistoryPage | None, commands: tuple[CommandResource, ...]
     ) -> None:
         strat, sonarr = self._strat(
