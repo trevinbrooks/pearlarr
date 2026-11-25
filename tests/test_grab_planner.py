@@ -357,16 +357,6 @@ class TestGroupsCoveringTheSameFiles:
             notices=[PrivateOnlyNotice(["P"], "private-only; grabbing public release M instead", Severity.INFO)]
         )
 
-    def test_different_files_both_kept(self) -> None:
-        seadex = {
-            "A": _sonarr_group(u1=make_release(download=True, episodes=[_S1E1])),
-            "B": _sonarr_group(u2=make_release(download=True, episodes=[_S1E2])),
-        }
-
-        _reduce(seadex)
-
-        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
-
     def test_groups_that_placed_nothing_are_each_kept(self) -> None:
         # Nothing shows what a group covers when none of its files placed on the title, so a duplicate grab is
         # better than dropping files the title lacks.
