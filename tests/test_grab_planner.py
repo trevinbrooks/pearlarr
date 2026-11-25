@@ -704,9 +704,10 @@ class TestDebugLines:
         with caplog.at_level("DEBUG"):
             planner.plan(seadex_dict=seadex, arr_files=ArrFiles(), title_episodes=[row])
 
-        named = [r.message for r in caplog.records if "S0" in r.message]
-        assert named
-        assert all("S01E04" in message and "S02E01" not in message for message in named)
+        # Two lines name the episode: the one that says whose file it is, and the one that compares it.
+        messages = [r.message for r in caplog.records]
+        assert sum("S01E04" in message for message in messages) == 2
+        assert not any("S02E01" in message for message in messages)
 
 
 class TestListedSizeOnTooManyEpisodes:
