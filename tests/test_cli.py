@@ -127,6 +127,13 @@ def _write_data_dir_config(body: str) -> Path:
     return config
 
 
+@pytest.fixture
+def recording() -> RecordingHub:
+    """A recording hub in place of the default for the test."""
+
+    return install_recording_hub()
+
+
 class TestCacheRoundTrip:
     """`cache_backup`/`cache_restore`/`cache_remove` round-trip and clean up the cache db.
 
@@ -510,10 +517,6 @@ def _config_with(*, sonarr: bool = False, radarr: bool = False) -> AppConfig:
 
 class TestConfiguredArrs:
     """Unconfigured arrs: implicit selections skip them, explicit ones refuse."""
-
-    @pytest.fixture
-    def recording(self) -> RecordingHub:
-        return install_recording_hub()
 
     def test_implicit_selection_skips_the_unconfigured_arr(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
@@ -1848,10 +1851,6 @@ class TestScheduleHours:
     The SCHEDULE_TIME notices are first-party WARNING Diagnostics through the
     hub (file line + console badge). Pinned here via a recording hub.
     """
-
-    @pytest.fixture
-    def recording(self) -> RecordingHub:
-        return install_recording_hub()
 
     @staticmethod
     def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:
