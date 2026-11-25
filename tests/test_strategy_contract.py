@@ -274,6 +274,14 @@ def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None
     return SonarrStrategy(deps, run or ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
 
 
+class TestPerItemSnapshotHook:
+    """The arr run reports a series' carried-over pending imports under the id this hook names."""
+
+    def test_sonarr_names_the_series_by_its_sonarr_id(self) -> None:
+        # Pending imports belong to a series by its Sonarr id, not its TVDB id.
+        assert make_sonarr_sync().pending_import_series_id(SonarrSeries(id=7, tvdbId=70)) == 7
+
+
 class TestArrRunStartHook:
     """get_items doubles as the arr run's start: it lists the mapped series, and the run reads them afresh."""
 
@@ -405,6 +413,19 @@ class TestSonarrCheckTitleBeforeTheGrab:
         assert run.unmonitored_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
+
+    def test_sonarr_one_monitored_episode_keeps_the_title_going(self) -> None:
+        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
+        window = [sonarr_ep(1, 1).model_copy(update={"monitored": False}), sonarr_ep(1, 2)]
+        strat = sonarr_checking(
+            run,
+            ScriptedEpisodes(FakeSonarrClient(episodes=window)),
+            config=make_config(sleep_time=0, ignore_unmonitored=True),
+        )
+
+        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        assert run.unmonitored_titles == []
+        assert run.log_al_title_calls == ["Title"]
 
     def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
@@ -1871,6 +1892,18 @@ class TestImportCompletedPayload:
             ("/downloads/Show - 01 [1080p].mkv", 7, [101], "SubGroup", "HASH")
         ]
 
+    def test_a_file_holding_two_episodes_is_posted_for_both(self) -> None:
+        # A double-length premiere ships as one file that holds two episodes.
+        name = "Show - 01-02 [1080p].mkv"
+        pending = pending_import(
+            file_episode_map={name: [101, 102]}, seadex_files=[name], ordered_episode_ids=(101, 102)
+        )
+        strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate(f"/d/{name}")])
+
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert posted_imports(sonarr) == [[(f"/d/{name}", [101, 102])]]
+
     @pytest.mark.parametrize(
         ("sonarr_parsed", "posted"),
         [
@@ -1906,6 +1939,23 @@ class TestImportCompletedPayload:
         assert quality is not None
         assert quality.quality is not None
         assert quality.quality.name == posted
+
+    def test_a_file_of_no_known_quality_is_posted_as_unknown_with_a_warning(self) -> None:
+        # Neither Sonarr's parse nor the file name says a quality, and no default is set.
+        recording = install_recording_hub()
+        name = "Show - 01.mkv"
+        pending = pending_import(file_episode_map={name: [101]}, seadex_files=[name])
+        unknown = {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate(f"/d/{name}", quality={"quality": unknown})]
+        )
+
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert posted_imports(sonarr) == [[(f"/d/{name}", [101])]]
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            "/d: could not confidently resolve quality for Show - 01.mkv - importing as Unknown (re-grab risk)"
+        ]
 
     def test_a_decomposed_disk_name_still_matches_its_composed_file_map_name(self) -> None:
         # The file map holds the composed e-acute. A macOS mount hands the name back decomposed.
@@ -2385,8 +2435,7 @@ class TestAutoImportWarningGating:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         warnings = [m for m in diagnostic_messages(recording, Severity.WARNING) if "could not be placed" in m]
-        assert len(warnings) == 1
-        assert "1 file could not be placed" in warnings[0]
+        assert warnings == ["Show · SubGroup: 1 file could not be placed on an episode and was not imported"]
 
 
 class TestUnmatchedAttemptResult:
