@@ -364,18 +364,18 @@ class TestSonarrCheckTitleBeforeTheGrab:
         assert (run.grab_requests, run.pauses_owed) == ([], 0)
 
     @pytest.mark.parametrize(
-        ("mapping", "warned"),
+        ("mapping", "warnings"),
         [
-            pytest.param(TitleMapping(anilist_id=5), False, id="season-not-in-sonarr"),
+            pytest.param(TitleMapping(anilist_id=5), [], id="season-not-in-sonarr"),
             pytest.param(
                 TitleMapping(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
-                True,
+                ["AniBridge has no usable season ranges for Title - not checked"],
                 id="anibridge-no-usable-ranges",
             ),
         ],
     )
     def test_sonarr_no_episodes_resolved_stops_and_warns_only_of_an_empty_anibridge_mapping(
-        self, mapping: TitleMapping, warned: bool
+        self, mapping: TitleMapping, warnings: list[str]
     ) -> None:
         # A mapping that resolves to no episode stops the title on a no-episodes row: never as unmonitored and
         # never on to the grab. AniBridge's empty {} tvdb mapping also warns of its cause. The warning keys off
@@ -388,8 +388,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
         assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert (run.nothing_to_grab_calls, run.pauses_owed) == ([], 1)
-        warnings = diagnostic_messages(recording, Severity.WARNING)
-        assert any("AniBridge has no usable season ranges" in message for message in warnings) is warned
+        assert diagnostic_messages(recording, Severity.WARNING) == warnings
 
     def test_sonarr_all_unmonitored_episodes_stop_with_an_unmonitored_row(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
@@ -1757,7 +1756,9 @@ class TestCloseTracked:
         status = strat.remove_from_queue(pending_import(infohash="abc123", title="Show"))
 
         assert status is EffectStatus.DONE
-        assert any("from Sonarr's queue" in m for m in diagnostic_messages(recording, Severity.INFO))
+        assert diagnostic_messages(recording, Severity.INFO) == [
+            "Removed the imported download Show · SubGroup from Sonarr's queue"
+        ]
 
     def test_failed_delete_asks_for_a_retry_and_stays_quiet(self) -> None:
         # The client's fail-open warning already fired; no success note on top.
@@ -2301,17 +2302,28 @@ class TestAutoImportWarningGating:
     """
 
     @pytest.mark.parametrize(
-        ("attempt_kind", "warned"),
+        ("attempt_kind", "warnings"),
         [
-            pytest.param(AttemptKind.ORDINARY, False, id="before-the-deadline"),
-            pytest.param(AttemptKind.FINAL, True, id="at-the-deadline"),
+            pytest.param(
+                AttemptKind.ORDINARY,
+                ["Show · SubGroup: 1 file could not be placed on an episode and was not imported"],
+                id="before-the-deadline",
+            ),
+            pytest.param(
+                AttemptKind.FINAL,
+                [
+                    "Show · SubGroup: 1 file could not be placed on an episode and was not imported",
+                    "/d: 1 intended file not visible to Sonarr for Show · SubGroup - will retry",
+                ],
+                id="at-the-deadline",
+            ),
         ],
     )
     def test_a_file_not_on_disk_is_warned_of_only_at_the_deadline(
-        self, attempt_kind: AttemptKind, warned: bool
+        self, attempt_kind: AttemptKind, warnings: list[str]
     ) -> None:
-        # The file map intends a file that isn't on disk yet (only an unrelated file is). Early on the copy may
-        # just not have finished.
+        # The file map intends a file that isn't on disk yet. Early on the copy may just not have finished. The
+        # unrelated file beside it can't be placed on any episode, which is final, so either attempt warns of it.
         pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101]})
         strat, _ = make_sonarr_for_import(candidates=[manual_candidate("/d/Unrelated.mkv")])
         recording = install_recording_hub()
@@ -2319,8 +2331,7 @@ class TestAutoImportWarningGating:
         result = strat.import_completed(pending, "/d", attempt_kind)
 
         assert result.all_done is False
-        warnings = diagnostic_messages(recording, Severity.WARNING)
-        assert any("not visible to Sonarr" in message for message in warnings) is warned
+        assert diagnostic_messages(recording, Severity.WARNING) == warnings
 
     @staticmethod
     def _strat_with_unplaceable(*names: str) -> tuple[SonarrStrategy, FakeSonarrClient]:
@@ -2487,7 +2498,7 @@ class TestLeftForHandImportFiles:
         assert first.all_done is False
         assert second == first
         assert sonarr.execute_calls == []
-        assert not any("could not be placed" in m for m in diagnostic_messages(recording, Severity.WARNING))
+        assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_a_hand_import_with_no_group_at_a_listed_size_finishes_the_pending_import(self) -> None:
         strat, sonarr = self._strat()
@@ -2571,6 +2582,19 @@ def _clean_history() -> HistoryPage:
     return HistoryPage.model_validate(
         {"records": [{"id": 9, "eventType": "grabbed", "date": "2026-07-17T00:00:00Z"}]},
     )
+
+
+_EMPTY_FOLDER_WARNING = (
+    "Show · SubGroup: Sonarr won't serve this download by id and reading its folder found no files (/d/Show)"
+    " - will retry"
+)
+"""The deadline's warning for a download Sonarr won't serve by id, whose folder `/d/Show` reads empty."""
+
+_NOT_VISIBLE_IN_EMPTY_FOLDER_WARNING = (
+    "/d/Show: 1 intended file not visible to Sonarr for Show · SubGroup"
+    " (it won't serve the download by id and reading /d/Show found no files) - will retry"
+)
+"""The deadline's warning for the file map's one file, when the download's folder `/d/Show` reads empty too."""
 
 
 class TestFolderFetchFallback:
@@ -2673,14 +2697,11 @@ class TestFolderFetchFallback:
 
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-        warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
-        assert len(warnings) == 1
-        assert "/d/Show" in warnings[0]
+        assert diagnostic_messages(recording, Severity.WARNING) == [_EMPTY_FOLDER_WARNING]
 
         strat.get_items()
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
-        warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
-        assert len(warnings) == 2
+        assert diagnostic_messages(recording, Severity.WARNING) == [_EMPTY_FOLDER_WARNING, _EMPTY_FOLDER_WARNING]
 
     def test_empty_download_id_fetch_with_an_empty_folder_waits_and_warns_at_the_deadline(self) -> None:
         recording = install_recording_hub()
@@ -2691,8 +2712,7 @@ class TestFolderFetchFallback:
         result = strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
 
         assert result.all_done is False
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "found no files" in warning
+        assert diagnostic_messages(recording, Severity.WARNING) == [_EMPTY_FOLDER_WARNING]
 
     def test_rebuilt_file_map_that_is_not_done_waits_without_pinning_it(self) -> None:
         recording = install_recording_hub()
@@ -2704,9 +2724,7 @@ class TestFolderFetchFallback:
 
         assert result.all_done is False
         assert result.pending is pending
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "1 intended file not visible to Sonarr" in warning
-        assert "reading /d/Show found no files" in warning
+        assert diagnostic_messages(recording, Severity.WARNING) == [_NOT_VISIBLE_IN_EMPTY_FOLDER_WARNING]
 
     def test_folder_fetch_is_never_kept(self) -> None:
         strat, sonarr = self._strat(
@@ -2857,9 +2875,7 @@ class TestUnwatchedTorrentImport:
 
         assert result.all_done is False
         assert sonarr.execute_calls == []
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "1 intended file not visible to Sonarr" in warning
-        assert "reading /d/Show found no files" in warning
+        assert diagnostic_messages(recording, Severity.WARNING) == [_NOT_VISIBLE_IN_EMPTY_FOLDER_WARNING]
 
 
 class TestRadarrFiles:
