@@ -2916,7 +2916,6 @@ class TestSonarrFiles:
         )
 
         assert files == ArrFiles(by_group={"RG": (800,)})
-        assert files.no_group == ()
 
 
 class TestArrFiles:
