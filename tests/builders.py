@@ -6,7 +6,7 @@
 import dataclasses
 import json
 import logging
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timedelta
 from types import MappingProxyType
@@ -25,6 +25,7 @@ from pearlarr.arr_categories import _CATEGORY_FIELDS, ArrCategoryResolver, Categ
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import (
     ArrFiles,
+    ArrItem,
     DownloadClientRecord,
     ManualImportCandidate,
     MatchedEpisode,
@@ -33,8 +34,11 @@ from pearlarr.arr_models import (
     SonarrEpisode,
     SonarrItem,
 )
+from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
+from pearlarr.arr_strategy import ArrStrategy
+from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import (
     _CACHED_TITLE_COLUMNS,
     AbstractCacheStore,
@@ -842,6 +846,32 @@ def make_run_deps(
         ),
         planner=make_planner(),
         reporter=_real_reporter(cache_store, anilist),
+    )
+
+
+def drive_arr_run[ItemT: ArrItem](
+    deps: ArrRunDeps,
+    strategy: Callable[[ArrRunServices], ArrStrategy[ItemT]],
+    *,
+    arr: Arr = Arr.SONARR,
+    item_id: int | None = None,
+    dry_run: bool = False,
+    import_wait_mode: ImportWaitMode | None = None,
+) -> None:
+    """Drive one whole `arr` run over `deps`, built the way bootstrap builds it.
+
+    The services and the loop are built from `deps` by their constructors, and `strategy` builds the run's strategy
+    on those services, as `SonarrStrategy(deps, services)` is built. A fake that needs no services is passed as
+    `lambda _: fake`. The keywords go to `run_arr` as the CLI's flags do: `item_id` as `--tvdb-id`, `dry_run` as
+    `--dry-run`, and `import_wait_mode` as `--import-wait-mode`, None leaving it to the config's `imports.wait_mode`.
+
+    What bootstrap does around a run stays with the caller: installing the hub, closing what it opened, and the
+    unwind of a run that raises. Each call gets a boot flow of its own, where bootstrap shares one across the arrs.
+    """
+
+    services = ArrRunServices(deps, arr)
+    ArrRunLoop(deps, services).run_arr(
+        strategy(services), item_id=item_id, dry_run=dry_run, import_wait_mode=import_wait_mode, boot=BootFlow()
     )
 
 

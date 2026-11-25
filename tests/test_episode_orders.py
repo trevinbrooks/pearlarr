@@ -27,10 +27,8 @@ from pearlarr.arr_models import (
     SonarrItem,
     SonarrSeries,
 )
-from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
-from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
@@ -55,6 +53,7 @@ from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
     anilist_body,
+    drive_arr_run,
     every_series,
     known_torrent,
     make_config,
@@ -1480,11 +1479,8 @@ def _run_deps(
 def _run_over(sonarr: FakeSonarrClient, deps: ArrRunDeps) -> RecordingHub:
     """One whole Sonarr run on `sonarr` with `deps`, and what it printed."""
 
-    services = ArrRunServices(deps, Arr.SONARR)
     recording = install_recording_hub()
-    ArrRunLoop(deps, services).run_arr(
-        SonarrStrategy(deps, services, sonarr_client=sonarr), item_id=None, dry_run=False, boot=BootFlow()
-    )
+    drive_arr_run(deps, lambda services: SonarrStrategy(deps, services, sonarr_client=sonarr))
     return recording
 
 
