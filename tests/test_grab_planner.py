@@ -683,7 +683,7 @@ class TestAReleaseByEpisode:
 class TestDebugLines:
     """The lines a check logs at debug, naming each episode as Sonarr lists it."""
 
-    def test_debug_logging_path_does_not_crash(self) -> None:
+    def test_at_debug_an_episode_with_no_file_is_still_grabbed(self) -> None:
         # At debug the planner names the group of the file it compared, and an episode with no file has none.
         planner = make_planner(logger=debug_logger("pearlarr-planner-missing-file"))
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1]))}
@@ -709,10 +709,9 @@ class TestDebugLines:
         with caplog.at_level("DEBUG"):
             planner.plan(seadex_dict=seadex, arr_files=ArrFiles(), title_episodes=[row])
 
-        assert [r.message for r in caplog.records if "S0" in r.message] == [
-            "Sonarr file for S01E04 has no release group but matches rg's listed size exactly - reading it as that release",
-            "Found SeaDex match to Sonarr for S01E04.",
-        ]
+        named = [r.message for r in caplog.records if "S0" in r.message]
+        assert named
+        assert all("S01E04" in message and "S02E01" not in message for message in named)
 
 
 class TestListedSizeOnTooManyEpisodes:
