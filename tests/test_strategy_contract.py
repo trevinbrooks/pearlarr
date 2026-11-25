@@ -1,16 +1,12 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These reach into the strategy's private collaborators (strat._episodes /
-# strat._executor) to pin the interface. Strict re-flags that and the repo disables
-# reportPrivateUsage for tests.
-"""Interface tests for the composition split.
+# The placement debug line tests call the strategy's private `_log_placements`. Strict re-flags that and the repo
+# disables reportPrivateUsage for tests.
+"""The Sonarr and Radarr strategies: a title's check, its import, and the files each arr holds.
 
-These pin the contract between the arr run machinery and the Arr strategies: each
-`ArrStrategy` hook reaches the shared pipeline only through the injected
-`ArrRunServices` the strategy keeps as `self._services` - and since the services
-split out of the old god class, that interface is literal: the scripted fake below
-is a real `ArrRunServices` subclass. The strategies are built bare
-(`object.__new__`) so no live Sonarr/Radarr client is constructed.
+A title's check runs over `_FakeRunServices`, a real `ArrRunServices` subclass that records what the strategy hands
+the run (the grab request, the rows it caches, the lines it prints). An import runs over a scripted Sonarr and is
+judged by the commands posted to it and the attempt result.
 """
 
 import unicodedata
@@ -26,7 +22,6 @@ from pearlarr.aired_view import AiredSeries, NoView, aired_series
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS, format_history_date
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.arr_models import (
-    AlternateTitle,
     ArrFiles,
     CommandResource,
     HistoryPage,
@@ -39,7 +34,7 @@ from pearlarr.arr_models import (
     QualityDefinition,
     QueueRecord,
     RadarrItem,
-    SeasonTypeCount,
+    RadarrMovie,
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
@@ -47,12 +42,19 @@ from pearlarr.arr_models import (
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
-from pearlarr.config import Arr
+from pearlarr.config import AppConfig, Arr
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.grab_placement import ListedFile, PlacedEntry, place_release
 from pearlarr.import_quality import resolve_language_objects
-from pearlarr.mappings import ExternalIds, MappingSource, ResolvedMappings, TitleMapping
+from pearlarr.mappings import (
+    ExternalIds,
+    MappingResolver,
+    MappingSource,
+    MappingSources,
+    ResolvedMappings,
+    TitleMapping,
+)
 from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
 from pearlarr.pending_follow import PendingFollower
 from pearlarr.pending_import import (
@@ -69,7 +71,7 @@ from pearlarr.planner import GrabPlan
 from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
 from pearlarr.series_reads import SeriesReads
-from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
+from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
@@ -94,7 +96,6 @@ from .builders import (
     claim_anilist_ids,
     every_series,
     grab_plan,
-    held_series_episodes,
     make_anilist_gateway,
     make_bare_instance,
     make_config,
@@ -145,30 +146,6 @@ from .sonarr_import_builders import (
     make_sonarr_for_import,
     started_process_pass,
 )
-
-
-class _Item:
-    """A fake Arr item exposing whatever id attributes a test sets.
-
-    Declares the full `ArrItem` surface so it structurally satisfies the
-    `SonarrItem` / `RadarrItem` protocols. Each test sets only the attributes
-    the hook under test actually reads.
-    """
-
-    id: int
-    title: str = ""
-    imdbId: str | None
-    monitored: bool
-    tvdbId: int
-    tmdbId: int
-    seasonType: str = AIRED_ORDER
-    seasonTypes: tuple[SeasonTypeCount, ...] = ()
-    alternateTitles: tuple[AlternateTitle, ...] = ()
-    totalEpisodeCount: int | None = None
-    order_sent: bool = False
-
-    def __init__(self, **kw: object) -> None:
-        self.__dict__.update(kw)
 
 
 class TitleMappingsCall(NamedTuple):
@@ -462,14 +439,60 @@ class _ScriptedParse:
         }
 
 
+def _sonarr_checking(
+    run: _FakeRunServices,
+    episodes: ScriptedEpisodes | None = None,
+    *,
+    config: AppConfig | None = None,
+    parse: _ScriptedParse | None = None,
+    listings: _ScriptedListings | None = None,
+) -> SonarrStrategy:
+    """A `SonarrStrategy` over `run`, its episode reads `episodes`, built without its constructor.
+
+    The parse and the listings are scripted (none by default), and the config waits no time between titles unless
+    `config` says otherwise.
+    """
+
+    episodes = episodes if episodes is not None else ScriptedEpisodes()
+    return make_bare_instance(
+        SonarrStrategy,
+        _services=run,
+        **scripted_roles(episodes, run.pending_imports),
+        _parse=parse or _ScriptedParse(),
+        _listings=listings or _ScriptedListings(),
+        _config=config or make_config(sleep_time=0),
+        logger=make_logger(),
+    )
+
+
+def _radarr_checking(
+    run: _FakeRunServices, radarr: FakeRadarrClient | None = None, *, interactive: bool = False
+) -> RadarrStrategy:
+    """A `RadarrStrategy` built by its constructor over `run` and `radarr`, in interactive mode if `interactive`."""
+
+    deps = make_run_deps(config=make_config(interactive=interactive))
+    return RadarrStrategy(deps, run, radarr if radarr is not None else FakeRadarrClient())
+
+
+def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None = None) -> SonarrStrategy:
+    """A `SonarrStrategy` built by its constructor over `sonarr`, where only TVDB series 50 maps, to AniList 500."""
+
+    mapped = MappingSources(anime={"Show": {"anilist_id": 500, "tvdb_id": 50}}, anidb=False, anibridge=False)
+    deps = make_run_deps(config=make_config(sleep_time=0))
+    deps = replace(
+        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
+    )
+    return SonarrStrategy(deps, run or ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
+
+
 class TestItemMappingsDelegates:
     """item_mappings resolves through the services it keeps, with arr-specific ids."""
 
     def test_radarr_uses_tmdb_and_imdb(self) -> None:
         run = _FakeRunServices(anilist_ids={7: TitleMapping(anilist_id=7)})
-        strat = make_bare_instance(RadarrStrategy, _services=run)
+        strat = _radarr_checking(run)
 
-        result = strat.item_mappings(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
+        result = strat.item_mappings(RadarrMovie(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: TitleMapping(anilist_id=7)}
         assert run.title_mappings_calls == [
@@ -478,50 +501,77 @@ class TestItemMappingsDelegates:
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
-        strat = make_bare_instance(SonarrStrategy, _services=run)
+        strat = _sonarr_checking(run)
 
-        strat.item_mappings(_Item(tvdbId=99, imdbId="tt9"))
+        strat.item_mappings(SonarrSeries(tvdbId=99, imdbId="tt9"))
 
         assert run.title_mappings_calls == [TitleMappingsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
 
 
 class TestFilterToSingle:
-    """filter_to_single narrows by the arr's external id (no arr run loop needed)."""
+    """filter_to_single keeps the item with the arr's external id, and warns when there is none."""
 
-    def test_radarr_matches_tmdb_id(self) -> None:
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
-        items: list[RadarrItem] = [_Item(tmdbId=1), _Item(tmdbId=2)]
+    @pytest.mark.parametrize(
+        ("wanted", "kept", "warnings"),
+        [
+            pytest.param(20, [SonarrSeries(tvdbId=20)], [], id="listed"),
+            pytest.param(
+                7, [], ["No anime series with TVDB ID 7 found in Sonarr - check the --tvdb-id value"], id="not-listed"
+            ),
+        ],
+    )
+    def test_sonarr_keeps_the_series_of_the_tvdb_id(
+        self, wanted: int, kept: list[SonarrItem], warnings: list[str]
+    ) -> None:
+        recording = install_recording_hub()
 
-        assert strat.filter_to_single(items, 2) == [items[1]]
-        assert strat.filter_to_single(items, 7) == []
+        result = make_sonarr_sync().filter_to_single([SonarrSeries(tvdbId=10), SonarrSeries(tvdbId=20)], wanted)
 
-    def test_sonarr_matches_tvdb_id(self) -> None:
-        strat = make_bare_instance(SonarrStrategy, logger=make_logger())
-        items: list[SonarrItem] = [_Item(tvdbId=10), _Item(tvdbId=20)]
+        assert (result, diagnostic_messages(recording, Severity.WARNING)) == (kept, warnings)
 
-        assert strat.filter_to_single(items, 10) == [items[0]]
+    @pytest.mark.parametrize(
+        ("wanted", "kept", "warnings"),
+        [
+            pytest.param(2, [RadarrMovie(tmdbId=2)], [], id="listed"),
+            pytest.param(
+                7, [], ["No anime movie with TMDB ID 7 found in Radarr - check the --tmdb-id value"], id="not-listed"
+            ),
+        ],
+    )
+    def test_radarr_keeps_the_movie_of_the_tmdb_id(
+        self, wanted: int, kept: list[RadarrItem], warnings: list[str]
+    ) -> None:
+        recording = install_recording_hub()
+
+        result = make_radarr_sync().filter_to_single([RadarrMovie(tmdbId=1), RadarrMovie(tmdbId=2)], wanted)
+
+        assert (result, diagnostic_messages(recording, Severity.WARNING)) == (kept, warnings)
 
 
 class TestArrRunStartHook:
-    """get_items doubles as the arr run's start hook: it resets the per-run scratch.
+    """get_items doubles as the arr run's start: it lists the mapped series, and the run reads them afresh."""
 
-    The episode reset/series hash now lives on the SonarrEpisodes collaborator.
-    This stays at strategy level to pin that get_items actually routes through it.
-    """
+    def test_sonarr_lists_only_the_series_with_an_anilist_mapping(self) -> None:
+        mapped = SonarrSeries(id=5, title="Show", tvdbId=50)
+        strat = _sonarr_mapping_tvdb_50(FakeSonarrClient(all_series=[mapped, SonarrSeries(id=7, tvdbId=70)]))
 
-    def test_sonarr_get_items_clears_the_series_episodes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        series: list[SonarrItem] = [_Item(id=5, tvdbId=50), _Item(id=7, tvdbId=70)]
-        strat = make_sonarr_sync(sonarr=FakeSonarrClient(all_series=series), series_episodes={5: [sonarr_ep(1, 1)]})
-        strat._episodes._picks_logged = {11}
-        monkeypatch.setattr(strat._episodes, "mapped_series", every_series)
+        assert strat.get_items() == [mapped]
 
-        result = strat.get_items()
+    def test_a_title_checked_in_the_next_run_reads_the_episodes_sonarr_holds_then(self) -> None:
+        # The first run reads episode 1 with no file. Its file lands before the second run, whose check must not
+        # go by the first run's rows.
+        series = SonarrSeries(id=5, title="Show", tvdbId=50)
+        sonarr = FakeSonarrClient(all_series=[series], episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)])
+        run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
+        strat = _sonarr_mapping_tvdb_50(sonarr, run)
 
-        assert result == series
-        # The episode collaborator drops its caches + recomputes the series hash as it enumerates.
-        assert held_series_episodes(strat._episodes) == {}
-        assert strat._episodes._picks_logged == set()
-        assert strat._reads.series_hash == sonarr_series_hash([5, 7])
+        strat.get_items()
+        strat.check_title(series, 500, TitleMapping(anilist_id=500))
+        sonarr.episodes_return = [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
+        strat.get_items()
+        strat.check_title(series, 500, TitleMapping(anilist_id=500))
+
+        assert run.missing_episodes == ["S01 E01"]
 
 
 class TestCheckTitleThreadsServices:
@@ -529,16 +579,16 @@ class TestCheckTitleThreadsServices:
 
     def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
         run = _FakeRunServices()
-        strat = make_bare_instance(RadarrStrategy, _services=run)
+        strat = _radarr_checking(run)
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.anilist_id_prologue_calls == [5]
 
     def test_sonarr_no_seadex_entry_stops_at_begin_check(self) -> None:
         run = _FakeRunServices()
-        strat = make_bare_instance(SonarrStrategy, _services=run)
+        strat = _sonarr_checking(run)
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.anilist_id_prologue_calls == [5]
 
     @pytest.mark.parametrize(
@@ -559,17 +609,10 @@ class TestCheckTitleThreadsServices:
         # never on to the grab. AniBridge's empty {} tvdb mapping also warns of its cause. The warning keys off
         # the source, so the mapping carries source=ANIBRIDGE as a real one does.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[]))
         recording = install_recording_hub()
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(episodes, run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
+        strat = _sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=[])))
 
-        strat.check_title(_Item(id=1, title="Title"), 5, mapping)
+        strat.check_title(SonarrSeries(id=1, title="Title"), 5, mapping)
         assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert (run.nothing_to_grab_calls, run.pauses_owed) == ([], 1)
@@ -579,15 +622,13 @@ class TestCheckTitleThreadsServices:
     def test_sonarr_all_unmonitored_episodes_stop_with_an_unmonitored_row(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         unmonitored = sonarr_ep(1, 1).model_copy(update={"monitored": False})
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])), run.pending_imports),
-            _config=make_config(sleep_time=0, ignore_unmonitored=True),
-            logger=make_logger(),
+        strat = _sonarr_checking(
+            run,
+            ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])),
+            config=make_config(sleep_time=0, ignore_unmonitored=True),
         )
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.unmonitored_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
@@ -595,40 +636,27 @@ class TestCheckTitleThreadsServices:
     def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         window = [sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)]
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(ScriptedEpisodes(FakeSonarrClient(episodes=window)), run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
+        strat = _sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=window)))
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         assert run.missing_episodes == ["S01 E02"]
 
     def test_sonarr_all_invalid_selection_routes_to_shared_stop(self) -> None:
         # The interactive pick rejected every token: the strategy must route to
         # report_invalid_selection (which persists nothing) and never reach the
         # grab tail - the Sonarr twin of the Radarr guard in test_seadex_dict.
-        seadex_dict: SeadexDict = {}
-        for name in ("GroupA", "GroupB"):
-            seadex_dict.update(_one_group_dict(name))
         run = _FakeRunServices(
             prologue_entry=make_entry_record(),
-            seadex_dict=seadex_dict,
+            seadex_dict=_groups("GroupA", "GroupB"),
             interactive_result={},
         )
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])), run.pending_imports),
-            _parse=_ScriptedParse(),
-            _listings=_ScriptedListings(),
-            _config=make_config(interactive=True, sleep_time=0),
-            logger=make_logger(),
+        strat = _sonarr_checking(
+            run,
+            ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
+            config=make_config(interactive=True, sleep_time=0),
         )
 
-        strat.check_title(_Item(id=1, title="Title", tvdbId=10, imdbId=None), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SonarrSeries(id=1, title="Title", tvdbId=10), 5, TitleMapping(anilist_id=5))
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
@@ -1619,14 +1647,14 @@ class TestRadarrImportCompletedHistory:
     def test_pending_import_series_id_is_none(self) -> None:
         # Radarr pending imports carry series_id=0, so the per-item snapshot hook key is
         # None (short-circuits the per-item snapshot - reconcile runs in the wait pass).
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
+        strat = make_radarr_sync()
 
-        assert strat.pending_import_series_id(_Item(id=5)) is None
+        assert strat.pending_import_series_id(RadarrMovie(id=5)) is None
 
     def test_import_progress_is_indeterminate_zero(self) -> None:
         # Radarr never enters the blocking wait, so the progress poll bar hook
         # returns the safe "no bar, promote nothing" value.
-        strat = make_bare_instance(RadarrStrategy, logger=make_logger())
+        strat = make_radarr_sync()
 
         assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
 
@@ -1636,6 +1664,8 @@ _GRAB_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
 _EP1 = sonarr_ep(1, 1, ep_id=101, episode_file_id=0)
 _EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
 _STAMP = "2026-01-01 00:00:00"
+_SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
+"""Series 7 as Sonarr lists it."""
 
 
 def _sonarr_grab_run(
@@ -1668,16 +1698,8 @@ def _sonarr_grab_run(
         import_wait_mode=mode,
         cache_store=store,
     )
-    strat = make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        **scripted_roles(episodes, run.pending_imports),
-        _parse=_ScriptedParse({_GRAB_URL: files}),
-        _listings=listings or _ScriptedListings(),
-        _config=make_config(sleep_time=0),
-        logger=make_logger(),
-    )
-    strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
+    strat = _sonarr_checking(run, episodes, parse=_ScriptedParse({_GRAB_URL: files}), listings=listings)
+    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
     return run
 
 
@@ -1741,20 +1763,14 @@ class TestSonarrCheckTitlePendingImportUpdates:
             cache_store=FakeCacheStore(),
         )
         parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(
-                ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
-                run.pending_imports,
-            ),
-            _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
-            _listings=_ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
+        strat = _sonarr_checking(
+            run,
+            ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
+            parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
+            listings=_ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
         )
 
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.MISNUMBERED
@@ -1967,16 +1983,13 @@ def _check_title_in_another_order(
     )
     episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}, order="dvd")
     parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
-    strat = make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        **scripted_roles(episodes, run.pending_imports),
-        _parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
-        _listings=_ScriptedListings(),
-        _config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
-        logger=make_logger(),
+    strat = _sonarr_checking(
+        run,
+        episodes,
+        config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
+        parse=_ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
     )
-    strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
+    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
     return run
 
 
@@ -2041,18 +2054,11 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     ) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
         recording = install_recording_hub()
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(
-                ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason}),
-                run.pending_imports,
-            ),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
+        strat = _sonarr_checking(
+            run, ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason})
         )
 
-        strat.check_title(_Item(id=7, title="Show"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
 
         (warning,) = diagnostic_messages(recording, Severity.WARNING)
         assert warning == (
@@ -2076,15 +2082,9 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
         recording = install_recording_hub()
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(ScriptedEpisodes(), run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
+        strat = _sonarr_checking(run, ScriptedEpisodes())
 
-        strat.check_title(_Item(id=7, title="Show"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
 
         assert diagnostic_messages(recording) == []
         assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 0)
@@ -2415,15 +2415,9 @@ class TestSonarrCheckTitleMetadataUnread:
         episodes = ScriptedEpisodes(
             FakeSonarrClient(episodes=window), windows={5: window}, order=order, unread_anilist_ids=frozenset({4})
         )
-        strat = make_bare_instance(
-            SonarrStrategy,
-            _services=run,
-            **scripted_roles(episodes, run.pending_imports),
-            _config=make_config(sleep_time=0),
-            logger=make_logger(),
-        )
+        strat = _sonarr_checking(run, episodes)
 
-        strat.check_title(_Item(id=7, title="Show", tvdbId=70, imdbId=None), 5, TitleMapping(anilist_id=5))
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
 
         assert len(run.no_releases_calls) + len(run.nothing_to_grab_calls) == 1
         assert (run.no_releases_unread, run.nothing_to_grab_unread) == ([], [])
@@ -2456,14 +2450,8 @@ class TestRadarrCheckTitlePendingImportUpdates:
             arr=Arr.RADARR,
             cache_store=store,
         )
-        strat = make_bare_instance(
-            RadarrStrategy,
-            _services=run,
-            radarr=FakeRadarrClient(),
-            logger=make_logger(),
-            _config=make_config(),
-        )
-        strat.check_title(_Item(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
+        strat = _radarr_checking(run)
+        strat.check_title(RadarrMovie(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
         return run
 
     def test_a_release_to_grab_starts_a_pending_import_claimed_by_the_movies_title(self) -> None:
@@ -3160,51 +3148,23 @@ class TestResolveLanguageObjects:
         assert [language.name for language in resolve_language_objects(names, defs)] == resolved
 
 
-class _FakeRadarr:
-    """Minimal Radarr client: scripts (and records) the per-movie movie-file list."""
+def _groups(*names: str) -> SeadexDict:
+    """A `SeadexDict` with one release from each group of `names`."""
 
-    def __init__(self, files: list[MovieFile]) -> None:
-        self._files = files
-        self.movie_files_calls: list[int] = []
-
-    def movie_files(self, movie_id: int) -> list[MovieFile]:
-        self.movie_files_calls.append(movie_id)
-        return self._files
-
-
-def _one_group_dict(srg: str) -> SeadexDict:
-    """A one-group `SeadexDict` keyed by `srg`, carrying a single release."""
-
-    url = f"https://nyaa.si/{srg}"
-    return {srg: rg_group({url: make_release(url=url)})}
+    return {name: rg_group({f"https://nyaa.si/{name}": make_release(url=f"https://nyaa.si/{name}")}) for name in names}
 
 
 class TestRadarrCheckTitle:
     """check_title's movie middle threads its facts through the services it keeps."""
 
-    @staticmethod
-    def _make_strat(
-        run: _FakeRunServices, *, files: list[MovieFile] | None = None, interactive: bool = False
-    ) -> tuple[RadarrStrategy, _FakeRadarr]:
-        radarr = _FakeRadarr(files or [])
-        strat = make_bare_instance(
-            RadarrStrategy,
-            _services=run,
-            radarr=radarr,
-            logger=make_logger(),
-            _config=make_config(interactive=interactive),
-        )
-        return strat, radarr
-
-    def test_cached_title_short_circuits_before_any_movie_read(self) -> None:
+    def test_a_cached_title_stops_with_an_empty_coverage_backfill(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
-        strat, radarr = self._make_strat(run)
+        strat = _radarr_checking(run)
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        # Neither the SeaDex read nor the movie files were reached.
-        assert run.get_seadex_dict_calls == []
-        assert radarr.movie_files_calls == []
-        # The lazy backfill coverage passed is the movie's empty-coverage thunk.
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+
+        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
+        # A movie has no episodes, so the coverage a cached row is backfilled with is empty.
         [coverage] = run.cached_skip_coverages
         assert coverage() == ""
 
@@ -3215,9 +3175,9 @@ class TestRadarrCheckTitle:
             anilist_title="Movie Title",
             seadex_dict={},
         )
-        strat, _ = self._make_strat(run)
+        strat = _radarr_checking(run)
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
         expected: CachedTitleUpdate = {
             "name": "Movie Title",
             "updated_at": entry.updated_at,
@@ -3229,8 +3189,8 @@ class TestRadarrCheckTitle:
 
     def test_a_grab_carries_the_movies_files_to_the_plan_and_every_group_they_are_of(self) -> None:
         entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
-        seadex_dict = _one_group_dict("SubGroup")
-        filtered = _one_group_dict("SubGroup")
+        seadex_dict = _groups("SubGroup")
+        filtered = _groups("SubGroup")
         run = _FakeRunServices(
             prologue_entry=entry,
             anilist_title="Movie Title",
@@ -3242,9 +3202,9 @@ class TestRadarrCheckTitle:
             MovieFile(release_group="GroupA", size=150),
             MovieFile(release_group="GroupB", size=200),
         ]
-        strat, _ = self._make_strat(run, files=files)
+        strat = _radarr_checking(run, FakeRadarrClient(movie_files=files))
 
-        strat.check_title(_Item(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(RadarrMovie(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
 
         assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"GroupA": (100, 150), "GroupB": (200,)}))]
         [req] = run.grab_requests
@@ -3253,22 +3213,23 @@ class TestRadarrCheckTitle:
         assert req.seadex_dict is filtered
         assert req.replaced_groups == ("GroupA", "GroupB")
 
-    def _interactive_call_count(self, *, interactive: bool, n_groups: int) -> int:
-        """Run one check_title and count the interactive-filter invocations."""
-
-        seadex_dict: SeadexDict = {}
-        for idx in range(n_groups):
-            seadex_dict.update(_one_group_dict(f"Group{idx}"))
+    @pytest.mark.parametrize(
+        ("interactive", "seadex_dict", "prompts"),
+        [
+            pytest.param(True, _groups("GroupA", "GroupB"), 1, id="interactive-two-groups"),
+            pytest.param(True, _groups("GroupA"), 0, id="interactive-one-group"),
+            pytest.param(False, _groups("GroupA", "GroupB"), 0, id="not-interactive"),
+        ],
+    )
+    def test_only_an_interactive_run_with_two_groups_asks_which_to_grab(
+        self, interactive: bool, seadex_dict: SeadexDict, prompts: int
+    ) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
-        strat, _ = self._make_strat(run, interactive=interactive)
+        strat = _radarr_checking(run, interactive=interactive)
 
-        strat.check_title(_Item(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        return len(run.interactive_calls)
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
 
-    def test_interactive_prompts_only_for_multi_release_interactive(self) -> None:
-        assert self._interactive_call_count(interactive=True, n_groups=2) == 1
-        assert self._interactive_call_count(interactive=True, n_groups=1) == 0
-        assert self._interactive_call_count(interactive=False, n_groups=2) == 0
+        assert len(run.interactive_calls) == prompts
 
 
 class TestRadarrFiles:
@@ -3278,8 +3239,10 @@ class TestRadarrFiles:
         # An unreadable size with no group converts to 0, which disqualifies the whole
         # ownership multiset (fail-closed, like the planner's size matching of Sonarr files with no group): the
         # readable sizes alone must not let a release claim the copy.
-        radarr = _FakeRadarr([MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)])
-        strat = make_bare_instance(RadarrStrategy, radarr=radarr)
+        radarr = FakeRadarrClient(
+            movie_files=[MovieFile(release_group=None, size=500), MovieFile(release_group=None, size=None)]
+        )
+        strat = make_radarr_sync(radarr=radarr)
 
         assert strat.radarr_files(7) == ArrFiles(no_group=(500, 0))
 
