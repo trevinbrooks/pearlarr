@@ -204,13 +204,6 @@ def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() ->
     ]
 
 
-def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None = None) -> SonarrStrategy:
-    """A `SonarrStrategy` built by its constructor over `sonarr`, where only TVDB series 50 maps, to AniList 500."""
-
-    deps = mapping_one_series(make_run_deps(config=make_config(sleep_time=0)), tvdb_id=50, anilist_id=500)
-    return SonarrStrategy(deps, run or ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
-
-
 class TestItemMappingsDelegates:
     """item_mappings resolves through the services it keeps, with arr-specific ids."""
 
@@ -274,6 +267,13 @@ class TestFilterToSingle:
         assert (result, diagnostic_messages(recording, Severity.WARNING)) == (kept, warnings)
 
 
+def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None = None) -> SonarrStrategy:
+    """A `SonarrStrategy` built by its constructor over `sonarr`, where only TVDB series 50 maps, to AniList 500."""
+
+    deps = mapping_one_series(make_run_deps(config=make_config(sleep_time=0)), tvdb_id=50, anilist_id=500)
+    return SonarrStrategy(deps, run or ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
+
+
 class TestArrRunStartHook:
     """get_items doubles as the arr run's start: it lists the mapped series, and the run reads them afresh."""
 
@@ -298,6 +298,58 @@ class TestArrRunStartHook:
         strat.check_title(series, 500, TitleMapping(anilist_id=500))
 
         assert run.missing_episodes == ["S01 E01"]
+
+
+_GRAB_URL = "https://nyaa.si/1"
+_GRAB_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
+_EP1 = sonarr_ep(1, 1, ep_id=101, episode_file_id=0)
+_EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
+_STAMP = "2026-01-01 00:00:00"
+_SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
+"""Series 7 as Sonarr lists it."""
+
+
+_STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
+"""The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
+
+
+_LISTED_EP1 = _EP1.renumbered(season=1, episode=1, absolute=None)
+"""Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
+
+
+def _sonarr_grab_run(
+    *,
+    store: FakeCacheStore,
+    episodes: ScriptedEpisodes,
+    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
+    grab: bool = True,
+    files: tuple[ListedFile, ...] | None = None,
+    listings: ScriptedListings | None = None,
+) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5 (series 7) listing one torrent, in a blocking run unless `mode` says.
+
+    The series has mappings for titles 4 and 5 and for the ignored title 6. The torrent is `files`, or `_GRAB_FILES`
+    named as the season's first two episodes. The plan grabs it unless `grab` is off.
+    """
+
+    if files is None:
+        parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
+        files = tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)
+    release = make_release(url=_GRAB_URL, infohash="h1", files=[f.file_name for f in files])
+    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
+    run = FakeRunServices(
+        anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
+        ignored={6: TitleMapping(anilist_id=6)},
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show Cour 2",
+        seadex_dict=seadex,
+        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
+        import_wait_mode=mode,
+        cache_store=store,
+    )
+    strat = sonarr_checking(run, episodes, parse=ScriptedParse({_GRAB_URL: files}), listings=listings)
+    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+    return run
 
 
 class TestSonarrCheckTitleBeforeTheGrab:
@@ -383,6 +435,974 @@ class TestSonarrCheckTitleBeforeTheGrab:
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
+
+
+class TestSonarrCheckTitlePendingImportUpdates:
+    """A Sonarr grab places each listed torrent under the title's window.
+
+    A stored torrent is placed as its pending import's leftover.
+    """
+
+    def test_a_stored_torrent_is_placed_as_its_pending_imports_leftover(self) -> None:
+        # Cour 1's pending import already has file 01 in its file map. Cour 2 marks the same torrent to grab: only
+        # file 02 is placed, under the stored claim's window and this title's, and the pending import update merges
+        # onto the pending import.
+        store = FakeCacheStore()
+        resident = pending_import(
+            infohash="h1",
+            anilist_id=22,
+            series_id=7,
+            title="Show Cour 1",
+            ordered_episode_ids=(101,),
+            file_episode_map={_GRAB_FILES[0]: [101]},
+            seadex_files=list(_GRAB_FILES),
+        )
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
+        sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
+
+        run = _sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_EP2]}))
+
+        (req,) = run.grab_requests
+        (update,) = req.pending_import_updates.values()
+        assert update.pending_import == resident
+        assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
+        assert update.claim.anilist_id == 5
+        assert update.claim.ordered_episode_ids == (102,)
+        pending = update.pending_import_at(_STAMP, restart=False)
+        assert claim_anilist_ids(pending) == (22, 5)
+        assert dict(pending.file_episode_map) == {
+            normalize_file_name(_GRAB_FILES[0]): (101,),
+            normalize_file_name(_GRAB_FILES[1]): (102,),
+        }
+        # The planner reads the release by the whole file map's episodes inside this title's window.
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
+        assert req.input_unread_groups == ()
+
+    def test_a_specials_torrent_the_listing_contradicts_is_skipped(self) -> None:
+        # The series' entries list the torrent over specials 2, 4 and 6, three as it is wide, and its `1` is none of
+        # them: the torrent counts by another TVDB state. Nothing is placed for the planner, and the release is
+        # skipped.
+        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
+        files = tuple(f"Show.S00E{n:02d}.mkv" for n in range(1, 4))
+        seadex: SeadexDict = {
+            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", files=list(files))}),
+        }
+        run = FakeRunServices(
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_title="Show Specials",
+            seadex_dict=seadex,
+            plan_marks=frozenset({_GRAB_URL}),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+            cache_store=FakeCacheStore(),
+        )
+        parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
+        strat = sonarr_checking(
+            run,
+            ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
+            parse=ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
+            listings=ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
+        )
+
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.MISNUMBERED
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == []
+        assert req.pending_import_updates["h1"].file_map == {}
+        assert req.input_unread_groups == ()
+
+    @pytest.mark.parametrize(
+        ("episode_count", "placed"),
+        [
+            pytest.param(2, {"ova - 01 [grp].mkv": (501,), "ova - 02 [grp].mkv": (504,)}, id="the-windows-two"),
+            pytest.param(3, {}, id="an-episode-sonarr-lacks"),
+        ],
+    )
+    def test_the_titles_anilist_episode_count_reaches_its_placement(
+        self, episode_count: int, placed: dict[str, tuple[int, ...]]
+    ) -> None:
+        # Two specials numbered apart take the sequence only when they are the title's every episode.
+        specials = [
+            sonarr_ep(0, 1, ep_id=501, episode_file_id=0, air_date="2016-03-01"),
+            sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
+        ]
+        names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=specials), windows={5: specials}, counts={5: episode_count}
+        )
+
+        run = _sonarr_grab_run(
+            store=FakeCacheStore(),
+            episodes=episodes,
+            files=tuple(ListedFile(name, 1000, parsed_info()) for name in names),
+        )
+
+        (req,) = run.grab_requests
+        assert req.pending_import_updates["h1"].file_map == placed
+
+    def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
+
+        run = _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=ScriptedListings(unreachable=True))
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
+        assert req.pending_import_updates["h1"].file_map == {}
+        assert req.input_unread_groups == ("NAN0",)
+
+    def test_the_listing_read_gets_the_ignored_titles_too(self) -> None:
+        listings = ScriptedListings()
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
+
+        _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=listings)
+
+        kept = {4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)}
+        assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored={6: TitleMapping(anilist_id=6)}))]
+
+    def test_with_the_wait_off_a_stored_torrent_is_placed_and_no_pending_import_update_is_built(self) -> None:
+        # A run that waits on no import reads no stored pending import. This one was stored without TVDB ids, so a
+        # check that read it could not follow it and would leave its torrent unread.
+        store = FakeCacheStore()
+        resident = pending_import(
+            infohash="h1",
+            series_id=7,
+            file_episode_map={_GRAB_FILES[0]: [101]},
+            seadex_files=list(_GRAB_FILES),
+            tvdb_ids=None,
+        )
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
+
+        run = _sonarr_grab_run(store=store, episodes=episodes, mode=ImportWaitMode.OFF)
+
+        (req,) = run.grab_requests
+        assert req.pending_import_updates == {}
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
+        assert req.input_unread_groups == ()
+
+
+_MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
+"""TVDB episode 9001 of series 7 as a special on row 150, after it left the season's first episode."""
+
+
+_SECOND_ROW = sonarr_ep(1, 2, ep_id=102, tvdb_id=9002, episode_file_id=0)
+"""The season's second episode of series 7, on the row it was stored on."""
+
+
+def _stored_on_the_first_row(*, tvdb_ids: Mapping[int, int] | None) -> PendingImport:
+    """Torrent "h1" as title 22 stored it: file 01 on row 101 of series 7, held with `tvdb_ids`."""
+
+    return pending_import(
+        infohash="h1",
+        anilist_id=22,
+        series_id=7,
+        title="Show Cour 1",
+        ordered_episode_ids=(101,),
+        file_episode_map={_GRAB_FILES[0]: [101]},
+        seadex_files=list(_GRAB_FILES),
+        tvdb_ids=tvdb_ids,
+    )
+
+
+def _store_holding(pending: PendingImport) -> FakeCacheStore:
+    """A store holding `pending`, with titles 9, 22 and 23 cached."""
+
+    store = FakeCacheStore()
+    store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
+    for anilist_id in (9, 22, 23):
+        store.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": _STAMP})
+    return store
+
+
+def _title_stamps(store: FakeCacheStore) -> dict[int, str | None]:
+    """The cache stamp of each title `_store_holding` cached."""
+
+    cached_titles = {anilist_id: store.get_cached_title(Arr.SONARR, anilist_id) for anilist_id in (9, 22, 23)}
+    return {anilist_id: cached.updated_at for anilist_id, cached in cached_titles.items() if cached is not None}
+
+
+class TestSonarrCheckTitleFollowsStoredPendingImports:
+    """A check follows each stored pending import of the entry's torrents before it places them."""
+
+    def test_a_stored_pending_import_is_followed_before_its_torrent_is_placed(self) -> None:
+        store = _store_holding(_stored_on_the_first_row(tvdb_ids={101: 9001}))
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
+        )
+
+        run = _sonarr_grab_run(store=store, episodes=episodes)
+
+        (req,) = run.grab_requests
+        pending = req.pending_import_updates["h1"].pending_import_at(_STAMP, restart=False)
+        assert dict(pending.file_episode_map) == {
+            normalize_file_name(_GRAB_FILES[0]): (150,),
+            normalize_file_name(_GRAB_FILES[1]): (102,),
+        }
+        assert [claim.ordered_episode_ids for claim in pending.claims] == [(150,), (102,)]
+
+    @pytest.mark.parametrize(
+        ("stored", "rows", "stamps"),
+        [
+            pytest.param(
+                _stored_on_the_first_row(tvdb_ids={101: 9001}),
+                (150,),
+                {9: _STAMP, 22: None, 23: _STAMP},
+                id="one-series",
+            ),
+            pytest.param(
+                two_claim_pending_import(
+                    anilist_ids=(22, 23),
+                    series_ids=(7, 8),
+                    windows=((101,), (201,)),
+                    infohash="h1",
+                    file_episode_map={_GRAB_FILES[0]: (101,), _GRAB_FILES[1]: (201,)},
+                    seadex_files=list(_GRAB_FILES),
+                    tvdb_ids={101: 9001, 201: 9101},
+                ),
+                (150, 250),
+                {9: _STAMP, 22: None, 23: None},
+                id="two-series",
+            ),
+        ],
+    )
+    def test_a_followed_pending_import_is_saved_when_nothing_is_grabbed_and_its_titles_are_uncached(
+        self, stored: PendingImport, rows: tuple[int, ...], stamps: dict[int, str | None]
+    ) -> None:
+        store = _store_holding(stored)
+        sonarr = PerSeriesSonarrClient(
+            {7: [_MOVED_SPECIAL, _SECOND_ROW], 8: [sonarr_ep(1, 2, ep_id=250, tvdb_id=9101, episode_file_id=0)]},
+            candidates=[],
+        )
+
+        run = _sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_SECOND_ROW]}), grab=False)
+
+        (req,) = run.grab_requests
+        row = store.get_pending_import_row(Arr.SONARR, "h1")
+        assert req.pending_import_updates == {}
+        assert row is not None
+        assert row["file_episode_map"] == {
+            normalize_file_name(name): [ep] for name, ep in zip(_GRAB_FILES, rows, strict=False)
+        }
+        assert _title_stamps(store) == stamps
+
+    def test_a_stored_pending_import_that_cannot_be_followed_is_not_joined_and_its_torrent_is_unread(self) -> None:
+        stored = _stored_on_the_first_row(tvdb_ids=None)
+        store = _store_holding(stored)
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
+        )
+
+        run = _sonarr_grab_run(store=store, episodes=episodes)
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
+        assert req.input_unread_groups == ("NAN0",)
+        assert req.pending_import_updates["h1"].pending_import is None
+        assert store.get_pending_import_row(Arr.SONARR, "h1") == stored.to_json()
+        assert _title_stamps(store) == {9: _STAMP, 22: _STAMP, 23: _STAMP}
+
+
+def _check_title_in_another_order(
+    window: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
+) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5 over `window`, all of series 7 as aired, numbered by its DVD order.
+
+    The entry lists one torrent of `_GRAB_FILES`, named as the season's first two episodes, which the plan grabs
+    unless `grab` is off.
+    """
+
+    release = make_release(url=_GRAB_URL, infohash="h1", files=list(_GRAB_FILES))
+    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
+    run = FakeRunServices(
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show",
+        seadex_dict=seadex,
+        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
+        import_wait_mode=ImportWaitMode.BLOCKING,
+        cache_store=FakeCacheStore(),
+    )
+    episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}, order="dvd")
+    parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
+    strat = sonarr_checking(
+        run,
+        episodes,
+        config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
+        parse=ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
+    )
+    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+    return run
+
+
+class TestSonarrCheckTitleOnASeriesInAnotherOrder:
+    """A title of a series Sonarr numbers by another order is checked by its aired episodes.
+
+    What Sonarr holds is read off the episodes it has a row for, and the title's window keeps every aired episode.
+    """
+
+    def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
+        unmonitored = _LISTED_EP1.model_copy(update={"monitored": False})
+
+        run = _check_title_in_another_order([unmonitored, _STAND_IN_E2], ignore_unmonitored=True)
+
+        assert (run.unmonitored_titles, run.log_al_title_calls) == (["Show"], [])
+
+    def test_a_cached_rows_coverage_backfill_is_of_the_episodes_sonarr_has(self) -> None:
+        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
+
+        (coverage,) = run.cached_skip_coverages
+        assert coverage() == "S01 E01"
+
+    def test_the_plan_is_made_over_the_episodes_sonarr_has(self) -> None:
+        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
+
+        assert run.planned_title_episodes == [(_LISTED_EP1,)]
+
+    @pytest.mark.parametrize(
+        ("window", "grab", "skip_reason", "left_out"),
+        [
+            pytest.param(
+                [_LISTED_EP1, _STAND_IN_E2], True, None, ["S01 E02 (1 of 2 files, NAN0)"], id="one-of-its-files"
+            ),
+            pytest.param(
+                [stand_in_ep(1, 1, tvdb_id=9001), _STAND_IN_E2, sonarr_ep(1, 3, ep_id=103, episode_file_id=0)],
+                True,
+                SkipReason.AIRED_ONLY,
+                ["S01 E01-E02 (2 of 2 files, NAN0)"],
+                id="its-every-file",
+            ),
+            pytest.param([_LISTED_EP1, _STAND_IN_E2], False, None, [], id="a-release-the-plan-does-not-grab"),
+        ],
+    )
+    def test_a_grabs_files_on_episodes_sonarr_has_no_row_for_are_reported_in_one_row(
+        self, window: list[SonarrEpisode], grab: bool, skip_reason: SkipReason | None, left_out: list[str]
+    ) -> None:
+        run = _check_title_in_another_order(window, grab=grab)
+
+        (req,) = run.grab_requests
+        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is skip_reason
+        assert run.left_out == left_out
+
+    @pytest.mark.parametrize(
+        ("reason", "not_stored"),
+        [
+            pytest.param(NoView.ORDERS_UNREAD, "aired episodes", id="aired-episodes"),
+            pytest.param(NoView.SCENE_UNREAD, "scene numbers from TheXEM", id="scene-numbers"),
+        ],
+    )
+    def test_a_series_with_no_aired_view_yet_is_left_unchecked_with_a_warning_of_what_is_not_stored(
+        self, reason: NoView, not_stored: str
+    ) -> None:
+        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
+        recording = install_recording_hub()
+        strat = sonarr_checking(
+            run, ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason})
+        )
+
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+
+        (warning,) = diagnostic_messages(recording, Severity.WARNING)
+        assert warning == (
+            f"Show not checked - Sonarr numbers its series by the DVD order and the series' {not_stored} are not "
+            "stored yet - checking again next run"
+        )
+        assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 1)
+        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
+
+
+class TestSonarrCheckTitleOnASeriesInAiredOrder:
+    """A title of a series in aired order says nothing of its numbers, and nothing when its series can't be read."""
+
+    def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP1, _EP2]})
+
+        run = _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes)
+
+        assert (run.numbers_orders, run.left_out) == ([], [])
+
+    def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
+        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
+        recording = install_recording_hub()
+        strat = sonarr_checking(run, ScriptedEpisodes())
+
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+
+        assert diagnostic_messages(recording) == []
+        assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 0)
+        assert (run.grab_requests, run.no_releases_calls) == ([], [])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _SeriesInSonarr:
+    """Series 7 as Sonarr has it, and how Sonarr parses each file of the one torrent SeaDex lists for it."""
+
+    series: SonarrSeries
+    episodes: list[SonarrEpisode]
+    parses: Mapping[str, ParsedFileInfo]
+    orders: Mapping[str, tuple[OrderRow, ...]] | None = None
+    """The TVDB orders stored for the series, with TheXEM read as mapping none of its episodes. None when nothing
+    is stored."""
+
+
+def _series_seven(season_type: str, alternate_title: dict[str, object]) -> SonarrSeries:
+    """Sonarr's row of series 7 as the wire sends it, numbered by `season_type`, with its one alternate title."""
+
+    return SonarrSeries.model_validate(
+        {"id": 7, "title": "Show", "tvdbId": 70, "seasonType": season_type, "alternateTitles": [alternate_title]}
+    )
+
+
+def _sequel_in_dvd_order() -> _SeriesInSonarr:
+    """A sequel's four files numbered as a first season, on a series Sonarr numbers by its DVD order.
+
+    TVDB's aired order has two seasons, of three and four episodes. The DVD order is one season of the first six, so
+    Sonarr lists the aired S02E01 to S02E03 as S01E04 to S01E06 and has no row for the aired S02E04. It reads
+    "Show Zoku S01E0n" by the second season's name and matches nothing. An aired Sonarr matches the second season's
+    episodes.
+    """
+
+    aired = (
+        *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
+        *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
+    )
+    dvd = tuple(OrderRow(1, n, 9000 + n, None) for n in range(1, 7))
+    names = [f"Show Zoku S01E{n:02d}.mkv" for n in (1, 2, 3, 4)]
+    return _SeriesInSonarr(
+        series=_series_seven("dvd", {"title": "Show Zoku", "sceneSeasonNumber": 2}),
+        episodes=[sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, episode_file_id=0) for n in range(1, 7)],
+        parses={
+            name: ParsedFileInfo(season_number=1, episode_numbers=(n,), series_title="Show Zoku", series_id=7)
+            for n, name in enumerate(names, start=1)
+        },
+        orders={"official": aired, "dvd": dvd},
+    )
+
+
+def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
+
+    The library read, the parse cache and each parse's matched episodes are the real ones. The plan grabs the
+    torrent, whose nth file is n thousand bytes, and AniList knows no title. `episode_by_size` is the episode id
+    SeaDex lists a one-episode release of each size for.
+    """
+
+    names = list(library.parses)
+    sizes = [1000 * n for n in range(1, len(names) + 1)]
+    release = make_release(url=_GRAB_URL, infohash="h1", files=names, size=sizes)
+    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
+    cache = FakeCacheStore()
+    if library.orders is not None:
+        cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
+        cache.put_scene_mappings(library.series.tvdbId, stored_scene_mappings())
+    run = FakeRunServices(
+        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        anilist_title="Show Second Season",
+        seadex_dict=seadex,
+        plan_marks=frozenset({_GRAB_URL}),
+        import_wait_mode=ImportWaitMode.BLOCKING,
+        cache_store=cache,
+    )
+    sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
+    deps = replace(
+        make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
+    )
+    deps = mapping_one_series(deps, tvdb_id=library.series.tvdbId, anilist_id=5)
+    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
+    episodes = SonarrEpisodes(deps, sonarr, run, reads)
+    episodes.refresh_library()
+    strat = make_bare_instance(
+        SonarrStrategy,
+        _services=run,
+        _episodes=episodes,
+        _reads=reads,
+        _follower=PendingFollower(run.pending_imports, reads, make_logger()),
+        _parse=SonarrParseCache(deps, sonarr, reads),
+        _listings=ScriptedListings(episode_by_size=episode_by_size),
+        _config=make_config(sleep_time=0),
+        logger=make_logger(),
+    )
+    strat.check_title(library.series, 5, TitleMapping(anilist_id=5, tvdb_season=2))
+    return run
+
+
+class TestSonarrCheckTitleOverSonarrsParses:
+    """A title's check places a file by what the library read says of its series: the order and the other names."""
+
+    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(self) -> None:
+        library = _sequel_in_dvd_order()
+        first, second, third, fourth = (normalize_file_name(name) for name in library.parses)
+
+        run = _check_second_season(library)
+
+        (req,) = run.grab_requests
+        update = req.pending_import_updates["h1"]
+        assert update.file_map == {first: (14,), second: (15,), third: (16,)}
+        assert update.excluded == (fourth,)
+        assert run.left_out == ["S02 E04 (1 of 4 files, NAN0)"]
+        assert [(ep.aired_key, ep.printed) for ep in req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes] == [
+            (EpisodeKey(2, n), PrintedKey(EpisodeKey(1, 3 + n))) for n in (1, 2, 3)
+        ]
+
+    def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(self) -> None:
+        # The group numbers the second season from one under the series' other name, and Sonarr matched the file
+        # into the first season. The number is read within the season only because the run knows the name.
+        name = "[grp] Shou - 01.mkv"
+        library = _SeriesInSonarr(
+            series=_series_seven(AIRED_ORDER, {"title": "Shou"}),
+            episodes=[
+                *(sonarr_ep(1, n, ep_id=10 + n, absolute=n, episode_file_id=0) for n in (1, 2, 3, 4)),
+                *(sonarr_ep(2, n, ep_id=14 + n, absolute=4 + n, episode_file_id=0) for n in (1, 2, 3)),
+            ],
+            parses={
+                name: ParsedFileInfo(
+                    season_number=0,
+                    absolute_episode_numbers=(1,),
+                    series_title="Shou",
+                    matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=11),),
+                    series_id=7,
+                )
+            },
+        )
+
+        run = _check_second_season(library)
+
+        (req,) = run.grab_requests
+        assert req.pending_import_updates["h1"].file_map == {normalize_file_name(name): (15,)}
+
+
+class TestSonarrCheckTitlePrintsSonarrsNumbers:
+    """On a series Sonarr numbers by another order, a title's lines print each episode by the number Sonarr lists."""
+
+    def test_the_titles_rows_and_stored_coverage_are_in_sonarrs_numbers_under_the_named_order(self) -> None:
+        run = _check_second_season(_sequel_in_dvd_order())
+
+        (req,) = run.grab_requests
+        claim = req.pending_import_updates["h1"].claim
+        assert (run.title_block_coverages, run.missing_episodes) == (["S01 E04-E06"], ["S01 E04-E06"])
+        assert (req.update.get("coverage"), claim.window_coverage, claim.claimed_coverage) == ("S01 E04-E06",) * 3
+        assert run.numbers_orders == ["dvd"]
+
+    def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(self) -> None:
+        # SeaDex lists a one-episode release of the first file's size for the aired S02E02, which Sonarr lists as
+        # S01E05, and one of the second file's size for the aired S02E01.
+        recording = install_recording_hub()
+
+        _check_second_season(_sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
+
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            (
+                f"{_GRAB_URL}: show zoku s01e01.mkv goes on S01E05 because its size matches SeaDex's S01E05 release "
+                "(its name reads as S01E01)"
+                " (1 more file in the debug log)"
+            )
+        ]
+
+
+class TestPlacementDebugLine:
+    """The grab's debug line per release says what placed and why the release was skipped."""
+
+    def test_a_release_skipped_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        logger = debug_logger("pearlarr-placement-line")
+        strat = make_bare_instance(SonarrStrategy, logger=logger)
+        series = episode_index([_EP1])
+        grabbing_title = make_grabbing_title(series, series)
+        placement = place_release(
+            [ListedFile("Show - 01.mkv", 1000, None)], grabbing_title, new_torrent(grabbing_title)
+        )
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
+
+        assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
+        assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
+
+    def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
+        # A Blu-ray torrent numbers 13 files for a 12-episode season: the DVD order splits the opener in two halves
+        # Sonarr doesn't list, numbers the aired second episode on after them, and keeps the whole opener last.
+        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
+        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
+        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
+        series = episode_index(season, {"dvd": dvd})
+        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
+        logger = debug_logger("pearlarr-placement-line-orders")
+        strat = make_bare_instance(SonarrStrategy, logger=logger)
+        placement = place_release(
+            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
+        )
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
+
+        halves = ", ".join(
+            f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
+            for n in (1, 2)
+        )
+        assert [r.message for r in caplog.records] == [
+            f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
+        ]
+
+    def test_on_a_series_in_another_order_every_placed_file_is_named_by_sonarrs_numbers(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The same 13 files, and Sonarr numbers the series by the DVD order: it has a row for each half, where they
+        # land, and lists the aired second to twelfth episodes as S07E03 to S07E13.
+        aired = tuple(OrderRow(4, n, 400 + n, None) for n in range(1, 13))
+        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
+        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
+        rows = [sonarr_ep(7, row.episode, ep_id=row.tvdb_id, episode_file_id=0, tvdb_id=row.tvdb_id) for row in dvd]
+        view = aired_series(rows, SonarrSeriesOrders(70, "dvd", None), stored_orders({AIRED_ORDER: aired, "dvd": dvd}))
+        assert isinstance(view, AiredSeries)
+        series = episode_index(view.aired, {"dvd": dvd}, view.own_only)
+        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
+        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
+        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-own-rows"))
+        placement = place_release(
+            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
+        )
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
+
+        on_rows = ", ".join(f"{normalize_file_name(names[n - 1])} (S07 E0{n})" for n in (1, 2))
+        assert [r.message for r in caplog.records] == [
+            f"{_GRAB_URL}: placed S07 E03-E13; on episodes the aired order lacks: {on_rows}"
+        ]
+
+    def test_a_file_on_an_episode_sonarr_has_no_row_for_is_named_with_its_aired_episode(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        series = episode_index([_LISTED_EP1, _STAND_IN_E2])
+        grabbing_title = make_grabbing_title(series, series)
+        files = [ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)]
+        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-aired"))
+        placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
+
+        with caplog.at_level("DEBUG"):
+            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
+
+        (line,) = [r.message for r in caplog.records]
+        assert line == (
+            f"{_GRAB_URL}: placed S01 E01; set aside: {normalize_file_name(_GRAB_FILES[1])} "
+            "(aired episode not in Sonarr's order: S01 E02)"
+        )
+
+
+class TestSonarrCheckTitleMetadataUnread:
+    """A grab asks whether its check read a title without its AniList answer or a series without its TVDB orders.
+
+    The titles are every title of the title's series, the series are the title's and every stored pending import's.
+    A title that stops before a grab asks about itself alone.
+    """
+
+    @pytest.mark.parametrize(
+        ("unread_series", "unread_anilist_ids", "expected"),
+        [
+            pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
+            pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
+            pytest.param(frozenset({8}), frozenset[int](), True, id="a-stored-records-series"),
+            pytest.param(frozenset[int](), frozenset({5}), True, id="its-own-entry"),
+            pytest.param(frozenset[int](), frozenset({4}), True, id="another-entry-of-its-series"),
+            pytest.param(frozenset[int](), frozenset({6}), True, id="an-ignored-entry-of-its-series"),
+        ],
+    )
+    def test_the_grab_request_carries_whether_its_metadata_is_unread(
+        self, unread_series: frozenset[int], unread_anilist_ids: frozenset[int], expected: bool
+    ) -> None:
+        # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
+        # import too.
+        store = FakeCacheStore()
+        resident = pending_import(infohash="h1", anilist_id=22, series_id=8, seadex_files=list(_GRAB_FILES))
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=[_EP1, _EP2]),
+            windows={5: [_EP2]},
+            unread_series=unread_series,
+            unread_anilist_ids=unread_anilist_ids,
+        )
+
+        run = _sonarr_grab_run(store=store, episodes=episodes)
+
+        (req,) = run.grab_requests
+        assert req.metadata_unread is expected
+
+    @pytest.mark.parametrize(
+        ("window", "order", "stopped_on"),
+        [
+            # No release to grab caches the title as having none. No episode in Sonarr's order caches it as
+            # having nothing to grab.
+            pytest.param([_EP2], AIRED_ORDER, ([5], list[int]()), id="no-suitable-release"),
+            pytest.param([_STAND_IN_E2], "dvd", (list[int](), [5]), id="no-episode-in-sonarrs-order"),
+        ],
+    )
+    def test_a_title_that_stops_before_a_grab_is_not_unread_for_another_entry_of_its_series(
+        self, window: list[SonarrEpisode], order: str, stopped_on: tuple[list[int], list[int]]
+    ) -> None:
+        run = FakeRunServices(
+            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
+            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_title="Show Cour 2",
+            seadex_dict={},
+            cache_store=FakeCacheStore(),
+        )
+        episodes = ScriptedEpisodes(
+            FakeSonarrClient(episodes=window), windows={5: window}, order=order, unread_anilist_ids=frozenset({4})
+        )
+        strat = sonarr_checking(run, episodes)
+
+        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+
+        no_releases = [anilist_id for anilist_id, _ in run.no_releases_calls]
+        assert (no_releases, [anilist_id for anilist_id, _ in run.nothing_to_grab_calls]) == stopped_on
+        assert (run.no_releases_unread, run.nothing_to_grab_unread) == ([], [])
+
+
+class TestRadarrCheckTitle:
+    """A movie's check stops on no SeaDex entry, a cached title or no releases. A grab carries its files to the plan."""
+
+    def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
+        run = FakeRunServices()
+        strat = radarr_checking(run)
+
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        assert run.anilist_id_prologue_calls == [5]
+
+    def test_a_cached_title_stops_with_an_empty_coverage_backfill(self) -> None:
+        run = FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
+        strat = radarr_checking(run)
+
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+
+        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
+        # A movie has no episodes, so the coverage a cached row is backfilled with is empty.
+        [coverage] = run.cached_skip_coverages
+        assert coverage() == ""
+
+    def test_no_releases_routes_to_shared_stop_with_movie_cache_details(self) -> None:
+        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        run = FakeRunServices(
+            prologue_entry=entry,
+            anilist_title="Movie Title",
+            seadex_dict={},
+        )
+        strat = radarr_checking(run)
+
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        expected: CachedTitleUpdate = {
+            "name": "Movie Title",
+            "updated_at": entry.updated_at,
+            "url": "https://releases.moe/5",
+            "coverage": "",
+        }
+        assert run.no_releases_calls == [(5, expected)]
+        assert run.grab_requests == []
+
+    def test_a_grab_carries_the_movies_files_to_the_plan_and_every_group_they_are_of(self) -> None:
+        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        seadex_dict = seadex_groups("SubGroup")
+        filtered = seadex_groups("SubGroup")
+        run = FakeRunServices(
+            prologue_entry=entry,
+            anilist_title="Movie Title",
+            seadex_dict=seadex_dict,
+            plan_grabs_result=grab_plan(filtered),
+        )
+        files = [
+            MovieFile(release_group="GroupA", size=100),
+            MovieFile(release_group="GroupA", size=150),
+            MovieFile(release_group="GroupB", size=200),
+        ]
+        strat = radarr_checking(run, FakeRadarrClient(movie_files=files))
+
+        strat.check_title(RadarrMovie(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
+
+        assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"GroupA": (100, 150), "GroupB": (200,)}))]
+        [req] = run.grab_requests
+        assert (req.anilist_id, req.arr_title, req.title_name) == (5, "Item Title", "Movie Title")
+        assert req.entry is entry
+        assert req.seadex_dict is filtered
+        assert req.replaced_groups == ("GroupA", "GroupB")
+
+    @pytest.mark.parametrize(
+        ("interactive", "seadex_dict", "prompts"),
+        [
+            pytest.param(True, seadex_groups("GroupA", "GroupB"), 1, id="interactive-two-groups"),
+            pytest.param(True, seadex_groups("GroupA"), 0, id="interactive-one-group"),
+            pytest.param(False, seadex_groups("GroupA", "GroupB"), 0, id="not-interactive"),
+        ],
+    )
+    def test_only_an_interactive_run_with_two_groups_asks_which_to_grab(
+        self, interactive: bool, seadex_dict: SeadexDict, prompts: int
+    ) -> None:
+        run = FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
+        strat = radarr_checking(run, interactive=interactive)
+
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+
+        assert len(run.interactive_calls) == prompts
+
+
+class TestRadarrCheckTitlePendingImportUpdates:
+    """A Radarr grab builds a `PendingImportUpdate` per release to grab, keyed by its hash in qBittorrent.
+
+    A run that waits on no import builds none.
+    """
+
+    @staticmethod
+    def _run_process(
+        *, store: FakeCacheStore, cross_seed: str | None = None, mode: ImportWaitMode = ImportWaitMode.BLOCKING
+    ) -> FakeRunServices:
+        """Drive `check_title` to grab_and_cache and return the recording services, in a blocking run unless `mode` says.
+
+        `cross_seed` marks the release as carried by that torrent.
+        """
+
+        item = make_release(url="https://nyaa.si/1", infohash="h1")
+        item.cross_seed_hash = cross_seed
+        seadex: SeadexDict = {"NAN0": rg_group({"https://nyaa.si/1": item})}
+        run = FakeRunServices(
+            prologue_entry=make_entry_record(url="https://releases.moe/9"),
+            anilist_title="A Movie",
+            seadex_dict=seadex,
+            plan_marks=frozenset({"https://nyaa.si/1"}),
+            import_wait_mode=mode,
+            arr=Arr.RADARR,
+            cache_store=store,
+        )
+        strat = radarr_checking(run)
+        strat.check_title(RadarrMovie(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
+        return run
+
+    def test_a_release_to_grab_starts_a_pending_import_claimed_by_the_movies_title(self) -> None:
+        run = self._run_process(store=FakeCacheStore())
+
+        (req,) = run.grab_requests
+        update = req.pending_import_updates["h1"]
+        assert (update.claim.anilist_id, update.claim.series_id) == (42, 0)
+        assert (update.claim.title, update.claim.url) == ("A Movie", "https://releases.moe/9")
+        assert (update.pending_import, update.file_map) == (None, {})
+
+    def test_no_pending_import_updates_when_wait_mode_off(self) -> None:
+        run = self._run_process(store=FakeCacheStore(), mode=ImportWaitMode.OFF)
+
+        (req,) = run.grab_requests
+        assert req.pending_import_updates == {}
+
+    def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
+        store = FakeCacheStore()
+        resident = pending_import(infohash="c1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
+
+        run = self._run_process(store=store, cross_seed="c1")
+
+        (req,) = run.grab_requests
+        update = req.pending_import_updates["c1"]
+        assert update.pending_import == resident
+        assert (update.facts.infohash, update.facts.is_cross_seed) == ("c1", True)
+
+
+def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
+    """One Radarr `/history/since` record, as the import-evidence match reads it."""
+
+    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
+
+
+class TestRadarrImportCompletedHistory:
+    """Radarr reconciles a completed download off its OWN import history (evidence, never action).
+
+    Radarr's completed-download handling does the import; `import_completed` only
+    reads history as proof so the pending import can drop and the category gate release.
+    """
+
+    @pytest.mark.parametrize(
+        ("history", "done"),
+        [
+            pytest.param([_import_history("h")], True, id="import-event"),
+            # Radarr stores the download id uppercased.
+            pytest.param([_import_history("H")], True, id="import-event-id-uppercased"),
+            # No import proof (none yet, a non-import event, or Radarr unreachable): fail
+            # closed: waiting keeps the pending import waiting, never done on an unread history.
+            pytest.param([], False, id="no-event-yet"),
+            pytest.param([_import_history("h", event="grabbed")], False, id="non-import-event"),
+            pytest.param(None, False, id="history-outage"),
+        ],
+    )
+    def test_only_an_import_event_for_the_download_ends_the_pending_import(
+        self, history: list[HistoryRecord] | None, done: bool
+    ) -> None:
+        radarr = FakeRadarrClient()
+        radarr.history_since_return = history
+        strat = make_radarr_sync(radarr=radarr)
+
+        result = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
+
+        assert result.all_done is done
+
+    def test_history_fetched_once_per_wait_pass(self) -> None:
+        # Two pending imports in one wait pass share ONE history fetch (memoized).
+        radarr = FakeRadarrClient(history_since=[_import_history("h")])
+        strat = make_radarr_sync(radarr=radarr)
+
+        strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
+        strat.import_completed(pending_import(infohash="other"), "/d", AttemptKind.ORDINARY)
+
+        assert len(radarr.history_calls) == 1
+
+    def test_the_next_arr_run_reads_the_history_again(self) -> None:
+        # The import landed between two runs. A history held over from the first would never show it.
+        radarr = FakeRadarrClient()
+        strat = make_radarr_sync(radarr=radarr)
+        pending = pending_import(infohash="h")
+
+        earlier = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        radarr.history_since_return = [_import_history("h")]
+        strat.get_items()
+        later = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert (earlier.all_done, later.all_done) == (False, True)
+
+    def test_history_is_asked_for_no_further_back_than_the_cap(self) -> None:
+        store, radarr = FakeCacheStore(), FakeRadarrClient()
+        long_ago = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10))
+        pending = pending_import(infohash="h", added_at=long_ago)
+        store.put_pending_import_row(Arr.RADARR, "h", pending.to_json())
+        strat = make_radarr_sync(radarr=radarr, cache_store=store)
+        # Two hours under the cap, for a Radarr clock a little behind pearlarr's.
+        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=2)
+
+        earliest = format_history_date(datetime.now(UTC) - back)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        latest = format_history_date(datetime.now(UTC) - back)
+
+        assert [earliest <= since <= latest for since in radarr.history_calls] == [True]
+
+    def test_history_window_starts_at_the_oldest_stamp_inside_the_cap(self) -> None:
+        older = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS - 10))
+        newer = stamp_of(datetime.now() - timedelta(days=1))
+        store, radarr = FakeCacheStore(), FakeRadarrClient()
+        latest = pending_import(infohash="new", added_at=newer)
+        store.put_pending_import_row(Arr.RADARR, "new", latest.to_json())
+        store.put_pending_import_row(Arr.RADARR, "old", pending_import(infohash="old", added_at=older).to_json())
+        strat = make_radarr_sync(radarr=radarr, cache_store=store)
+
+        strat.import_completed(latest, "/d", AttemptKind.ORDINARY)
+
+        # Two hours before the stamp, for a Radarr clock a little behind pearlarr's.
+        start = parse_stamp(older).astimezone(UTC) - timedelta(hours=2)
+        assert radarr.history_calls == [format_history_date(start)]
+
+    def test_pending_import_series_id_is_none(self) -> None:
+        # Radarr pending imports carry series_id=0, so the per-item snapshot hook key is
+        # None (short-circuits the per-item snapshot - reconcile runs in the wait pass).
+        strat = make_radarr_sync()
+
+        assert strat.pending_import_series_id(RadarrMovie(id=5)) is None
+
+    def test_import_progress_is_indeterminate_zero(self) -> None:
+        # Radarr never enters the blocking wait, so the progress poll bar hook
+        # returns the safe "no bar, promote nothing" value.
+        strat = make_radarr_sync()
+
+        assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
 
 
 class _QbitState(NamedTuple):
@@ -1230,937 +2250,73 @@ class TestImportOnOwnOnlyRows:
         assert second.all_done is True
 
 
-def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
-    """One Radarr `/history/since` record, as the import-evidence match reads it."""
-
-    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
-
-
-class TestRadarrImportCompletedHistory:
-    """Radarr reconciles a completed download off its OWN import history (evidence, never action).
-
-    Radarr's completed-download handling does the import; `import_completed` only
-    reads history as proof so the pending import can drop and the category gate release.
-    """
-
-    @pytest.mark.parametrize(
-        ("history", "done"),
-        [
-            pytest.param([_import_history("h")], True, id="import-event"),
-            # Radarr stores the download id uppercased.
-            pytest.param([_import_history("H")], True, id="import-event-id-uppercased"),
-            # No import proof (none yet, a non-import event, or Radarr unreachable): fail
-            # closed: waiting keeps the pending import waiting, never done on an unread history.
-            pytest.param([], False, id="no-event-yet"),
-            pytest.param([_import_history("h", event="grabbed")], False, id="non-import-event"),
-            pytest.param(None, False, id="history-outage"),
-        ],
-    )
-    def test_only_an_import_event_for_the_download_ends_the_pending_import(
-        self, history: list[HistoryRecord] | None, done: bool
-    ) -> None:
-        radarr = FakeRadarrClient()
-        radarr.history_since_return = history
-        strat = make_radarr_sync(radarr=radarr)
-
-        result = strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is done
-
-    def test_history_fetched_once_per_wait_pass(self) -> None:
-        # Two pending imports in one wait pass share ONE history fetch (memoized).
-        radarr = FakeRadarrClient(history_since=[_import_history("h")])
-        strat = make_radarr_sync(radarr=radarr)
-
-        strat.import_completed(pending_import(infohash="h"), "/d", AttemptKind.ORDINARY)
-        strat.import_completed(pending_import(infohash="other"), "/d", AttemptKind.ORDINARY)
-
-        assert len(radarr.history_calls) == 1
-
-    def test_the_next_arr_run_reads_the_history_again(self) -> None:
-        # The import landed between two runs. A history held over from the first would never show it.
-        radarr = FakeRadarrClient()
-        strat = make_radarr_sync(radarr=radarr)
-        pending = pending_import(infohash="h")
-
-        earlier = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        radarr.history_since_return = [_import_history("h")]
-        strat.get_items()
-        later = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert (earlier.all_done, later.all_done) == (False, True)
-
-    def test_history_is_asked_for_no_further_back_than_the_cap(self) -> None:
-        store, radarr = FakeCacheStore(), FakeRadarrClient()
-        long_ago = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10))
-        pending = pending_import(infohash="h", added_at=long_ago)
-        store.put_pending_import_row(Arr.RADARR, "h", pending.to_json())
-        strat = make_radarr_sync(radarr=radarr, cache_store=store)
-        # Two hours under the cap, for a Radarr clock a little behind pearlarr's.
-        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=2)
-
-        earliest = format_history_date(datetime.now(UTC) - back)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        latest = format_history_date(datetime.now(UTC) - back)
-
-        assert [earliest <= since <= latest for since in radarr.history_calls] == [True]
-
-    def test_history_window_starts_at_the_oldest_stamp_inside_the_cap(self) -> None:
-        older = stamp_of(datetime.now() - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS - 10))
-        newer = stamp_of(datetime.now() - timedelta(days=1))
-        store, radarr = FakeCacheStore(), FakeRadarrClient()
-        latest = pending_import(infohash="new", added_at=newer)
-        store.put_pending_import_row(Arr.RADARR, "new", latest.to_json())
-        store.put_pending_import_row(Arr.RADARR, "old", pending_import(infohash="old", added_at=older).to_json())
-        strat = make_radarr_sync(radarr=radarr, cache_store=store)
-
-        strat.import_completed(latest, "/d", AttemptKind.ORDINARY)
-
-        # Two hours before the stamp, for a Radarr clock a little behind pearlarr's.
-        start = parse_stamp(older).astimezone(UTC) - timedelta(hours=2)
-        assert radarr.history_calls == [format_history_date(start)]
-
-    def test_pending_import_series_id_is_none(self) -> None:
-        # Radarr pending imports carry series_id=0, so the per-item snapshot hook key is
-        # None (short-circuits the per-item snapshot - reconcile runs in the wait pass).
-        strat = make_radarr_sync()
-
-        assert strat.pending_import_series_id(RadarrMovie(id=5)) is None
-
-    def test_import_progress_is_indeterminate_zero(self) -> None:
-        # Radarr never enters the blocking wait, so the progress poll bar hook
-        # returns the safe "no bar, promote nothing" value.
-        strat = make_radarr_sync()
-
-        assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
-
-
-_GRAB_URL = "https://nyaa.si/1"
-_GRAB_FILES = ("Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv")
-_EP1 = sonarr_ep(1, 1, ep_id=101, episode_file_id=0)
-_EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
-_STAMP = "2026-01-01 00:00:00"
-_SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
-"""Series 7 as Sonarr lists it."""
-
-
-def _sonarr_grab_run(
-    *,
-    store: FakeCacheStore,
-    episodes: ScriptedEpisodes,
-    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
-    grab: bool = True,
-    files: tuple[ListedFile, ...] | None = None,
-    listings: ScriptedListings | None = None,
-) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 (series 7) listing one torrent, in a blocking run unless `mode` says.
-
-    The series has mappings for titles 4 and 5 and for the ignored title 6. The torrent is `files`, or `_GRAB_FILES`
-    named as the season's first two episodes. The plan grabs it unless `grab` is off.
-    """
-
-    if files is None:
-        parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
-        files = tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)
-    release = make_release(url=_GRAB_URL, infohash="h1", files=[f.file_name for f in files])
-    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
-    run = FakeRunServices(
-        anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-        ignored={6: TitleMapping(anilist_id=6)},
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show Cour 2",
-        seadex_dict=seadex,
-        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
-        import_wait_mode=mode,
-        cache_store=store,
-    )
-    strat = sonarr_checking(run, episodes, parse=ScriptedParse({_GRAB_URL: files}), listings=listings)
-    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-    return run
-
-
-class TestSonarrCheckTitlePendingImportUpdates:
-    """A Sonarr grab places each listed torrent under the title's window.
-
-    A stored torrent is placed as its pending import's leftover.
-    """
-
-    def test_a_stored_torrent_is_placed_as_its_pending_imports_leftover(self) -> None:
-        # Cour 1's pending import already has file 01 in its file map. Cour 2 marks the same torrent to grab: only
-        # file 02 is placed, under the stored claim's window and this title's, and the pending import update merges
-        # onto the pending import.
-        store = FakeCacheStore()
-        resident = pending_import(
-            infohash="h1",
-            anilist_id=22,
-            series_id=7,
-            title="Show Cour 1",
-            ordered_episode_ids=(101,),
-            file_episode_map={_GRAB_FILES[0]: [101]},
-            seadex_files=list(_GRAB_FILES),
-        )
-        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        sonarr = FakeSonarrClient(episodes=[_EP1, _EP2])
-
-        run = _sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_EP2]}))
-
-        (req,) = run.grab_requests
-        (update,) = req.pending_import_updates.values()
-        assert update.pending_import == resident
-        assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
-        assert update.claim.anilist_id == 5
-        assert update.claim.ordered_episode_ids == (102,)
-        pending = update.pending_import_at(_STAMP, restart=False)
-        assert claim_anilist_ids(pending) == (22, 5)
-        assert dict(pending.file_episode_map) == {
-            normalize_file_name(_GRAB_FILES[0]): (101,),
-            normalize_file_name(_GRAB_FILES[1]): (102,),
-        }
-        # The planner reads the release by the whole file map's episodes inside this title's window.
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
-        assert req.input_unread_groups == ()
-
-    def test_a_specials_torrent_the_listing_contradicts_is_skipped(self) -> None:
-        # The series' entries list the torrent over specials 2, 4 and 6, three as it is wide, and its `1` is none of
-        # them: the torrent counts by another TVDB state. Nothing is placed for the planner, and the release is
-        # skipped.
-        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
-        files = tuple(f"Show.S00E{n:02d}.mkv" for n in range(1, 4))
-        seadex: SeadexDict = {
-            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", files=list(files))}),
-        }
-        run = FakeRunServices(
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            anilist_title="Show Specials",
-            seadex_dict=seadex,
-            plan_marks=frozenset({_GRAB_URL}),
-            import_wait_mode=ImportWaitMode.BLOCKING,
-            cache_store=FakeCacheStore(),
-        )
-        parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
-        strat = sonarr_checking(
-            run,
-            ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
-            parse=ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
-            listings=ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
-        )
-
-        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.MISNUMBERED
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == []
-        assert req.pending_import_updates["h1"].file_map == {}
-        assert req.input_unread_groups == ()
-
-    @pytest.mark.parametrize(
-        ("episode_count", "placed"),
-        [
-            pytest.param(2, {"ova - 01 [grp].mkv": (501,), "ova - 02 [grp].mkv": (504,)}, id="the-windows-two"),
-            pytest.param(3, {}, id="an-episode-sonarr-lacks"),
-        ],
-    )
-    def test_the_titles_anilist_episode_count_reaches_its_placement(
-        self, episode_count: int, placed: dict[str, tuple[int, ...]]
-    ) -> None:
-        # Two specials numbered apart take the sequence only when they are the title's every episode.
-        specials = [
-            sonarr_ep(0, 1, ep_id=501, episode_file_id=0, air_date="2016-03-01"),
-            sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
-        ]
-        names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=specials), windows={5: specials}, counts={5: episode_count}
-        )
-
-        run = _sonarr_grab_run(
-            store=FakeCacheStore(),
-            episodes=episodes,
-            files=tuple(ListedFile(name, 1000, parsed_info()) for name in names),
-        )
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates["h1"].file_map == placed
-
-    def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
-
-        run = _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=ScriptedListings(unreachable=True))
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert req.pending_import_updates["h1"].file_map == {}
-        assert req.input_unread_groups == ("NAN0",)
-
-    def test_the_listing_read_gets_the_ignored_titles_too(self) -> None:
-        listings = ScriptedListings()
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
-
-        _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=listings)
-
-        kept = {4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)}
-        assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored={6: TitleMapping(anilist_id=6)}))]
-
-    def test_with_the_wait_off_a_stored_torrent_is_placed_and_no_pending_import_update_is_built(self) -> None:
-        # A run that waits on no import reads no stored pending import. This one was stored without TVDB ids, so a
-        # check that read it could not follow it and would leave its torrent unread.
-        store = FakeCacheStore()
-        resident = pending_import(
-            infohash="h1",
-            series_id=7,
-            file_episode_map={_GRAB_FILES[0]: [101]},
-            seadex_files=list(_GRAB_FILES),
-            tvdb_ids=None,
-        )
-        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
-
-        run = _sonarr_grab_run(store=store, episodes=episodes, mode=ImportWaitMode.OFF)
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates == {}
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
-        assert req.input_unread_groups == ()
-
-
-_MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
-"""TVDB episode 9001 of series 7 as a special on row 150, after it left the season's first episode."""
-
-_SECOND_ROW = sonarr_ep(1, 2, ep_id=102, tvdb_id=9002, episode_file_id=0)
-"""The season's second episode of series 7, on the row it was stored on."""
-
-
-def _stored_on_the_first_row(*, tvdb_ids: Mapping[int, int] | None) -> PendingImport:
-    """Torrent "h1" as title 22 stored it: file 01 on row 101 of series 7, held with `tvdb_ids`."""
-
-    return pending_import(
-        infohash="h1",
-        anilist_id=22,
-        series_id=7,
-        title="Show Cour 1",
-        ordered_episode_ids=(101,),
-        file_episode_map={_GRAB_FILES[0]: [101]},
-        seadex_files=list(_GRAB_FILES),
-        tvdb_ids=tvdb_ids,
-    )
-
-
-def _store_holding(pending: PendingImport) -> FakeCacheStore:
-    """A store holding `pending`, with titles 9, 22 and 23 cached."""
-
-    store = FakeCacheStore()
-    store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-    for anilist_id in (9, 22, 23):
-        store.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": _STAMP})
-    return store
-
-
-def _title_stamps(store: FakeCacheStore) -> dict[int, str | None]:
-    """The cache stamp of each title `_store_holding` cached."""
-
-    cached_titles = {anilist_id: store.get_cached_title(Arr.SONARR, anilist_id) for anilist_id in (9, 22, 23)}
-    return {anilist_id: cached.updated_at for anilist_id, cached in cached_titles.items() if cached is not None}
-
-
-class TestSonarrCheckTitleFollowsStoredPendingImports:
-    """A check follows each stored pending import of the entry's torrents before it places them."""
-
-    def test_a_stored_pending_import_is_followed_before_its_torrent_is_placed(self) -> None:
-        store = _store_holding(_stored_on_the_first_row(tvdb_ids={101: 9001}))
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
-
-        run = _sonarr_grab_run(store=store, episodes=episodes)
-
-        (req,) = run.grab_requests
-        pending = req.pending_import_updates["h1"].pending_import_at(_STAMP, restart=False)
-        assert dict(pending.file_episode_map) == {
-            normalize_file_name(_GRAB_FILES[0]): (150,),
-            normalize_file_name(_GRAB_FILES[1]): (102,),
-        }
-        assert [claim.ordered_episode_ids for claim in pending.claims] == [(150,), (102,)]
-
-    @pytest.mark.parametrize(
-        ("stored", "rows", "stamps"),
-        [
-            pytest.param(
-                _stored_on_the_first_row(tvdb_ids={101: 9001}),
-                (150,),
-                {9: _STAMP, 22: None, 23: _STAMP},
-                id="one-series",
-            ),
-            pytest.param(
-                two_claim_pending_import(
-                    anilist_ids=(22, 23),
-                    series_ids=(7, 8),
-                    windows=((101,), (201,)),
-                    infohash="h1",
-                    file_episode_map={_GRAB_FILES[0]: (101,), _GRAB_FILES[1]: (201,)},
-                    seadex_files=list(_GRAB_FILES),
-                    tvdb_ids={101: 9001, 201: 9101},
-                ),
-                (150, 250),
-                {9: _STAMP, 22: None, 23: None},
-                id="two-series",
-            ),
-        ],
-    )
-    def test_a_followed_pending_import_is_saved_when_nothing_is_grabbed_and_its_titles_are_uncached(
-        self, stored: PendingImport, rows: tuple[int, ...], stamps: dict[int, str | None]
-    ) -> None:
-        store = _store_holding(stored)
-        sonarr = PerSeriesSonarrClient(
-            {7: [_MOVED_SPECIAL, _SECOND_ROW], 8: [sonarr_ep(1, 2, ep_id=250, tvdb_id=9101, episode_file_id=0)]},
-            candidates=[],
-        )
-
-        run = _sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_SECOND_ROW]}), grab=False)
-
-        (req,) = run.grab_requests
-        row = store.get_pending_import_row(Arr.SONARR, "h1")
-        assert req.pending_import_updates == {}
-        assert row is not None
-        assert row["file_episode_map"] == {
-            normalize_file_name(name): [ep] for name, ep in zip(_GRAB_FILES, rows, strict=False)
-        }
-        assert _title_stamps(store) == stamps
-
-    def test_a_stored_pending_import_that_cannot_be_followed_is_not_joined_and_its_torrent_is_unread(self) -> None:
-        stored = _stored_on_the_first_row(tvdb_ids=None)
-        store = _store_holding(stored)
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
-
-        run = _sonarr_grab_run(store=store, episodes=episodes)
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert req.input_unread_groups == ("NAN0",)
-        assert req.pending_import_updates["h1"].pending_import is None
-        assert store.get_pending_import_row(Arr.SONARR, "h1") == stored.to_json()
-        assert _title_stamps(store) == {9: _STAMP, 22: _STAMP, 23: _STAMP}
-
-
-_STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
-"""The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
-
-_LISTED_EP1 = _EP1.renumbered(season=1, episode=1, absolute=None)
-"""Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
-
-
-def _check_title_in_another_order(
-    window: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
-) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 over `window`, all of series 7 as aired, numbered by its DVD order.
-
-    The entry lists one torrent of `_GRAB_FILES`, named as the season's first two episodes, which the plan grabs
-    unless `grab` is off.
-    """
-
-    release = make_release(url=_GRAB_URL, infohash="h1", files=list(_GRAB_FILES))
-    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
-    run = FakeRunServices(
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show",
-        seadex_dict=seadex,
-        plan_marks=frozenset({_GRAB_URL}) if grab else frozenset(),
-        import_wait_mode=ImportWaitMode.BLOCKING,
-        cache_store=FakeCacheStore(),
-    )
-    episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}, order="dvd")
-    parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(_GRAB_FILES, start=1)}
-    strat = sonarr_checking(
-        run,
-        episodes,
-        config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
-        parse=ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in _GRAB_FILES)}),
-    )
-    strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-    return run
-
-
-class TestSonarrCheckTitleOnASeriesInAnotherOrder:
-    """A title of a series Sonarr numbers by another order is checked by its aired episodes.
-
-    What Sonarr holds is read off the episodes it has a row for, and the title's window keeps every aired episode.
-    """
-
-    def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
-        unmonitored = _LISTED_EP1.model_copy(update={"monitored": False})
-
-        run = _check_title_in_another_order([unmonitored, _STAND_IN_E2], ignore_unmonitored=True)
-
-        assert (run.unmonitored_titles, run.log_al_title_calls) == (["Show"], [])
-
-    def test_a_cached_rows_coverage_backfill_is_of_the_episodes_sonarr_has(self) -> None:
-        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        (coverage,) = run.cached_skip_coverages
-        assert coverage() == "S01 E01"
-
-    def test_the_plan_is_made_over_the_episodes_sonarr_has(self) -> None:
-        run = _check_title_in_another_order([_LISTED_EP1, _STAND_IN_E2])
-
-        assert run.planned_title_episodes == [(_LISTED_EP1,)]
-
-    @pytest.mark.parametrize(
-        ("window", "grab", "skip_reason", "left_out"),
-        [
-            pytest.param(
-                [_LISTED_EP1, _STAND_IN_E2], True, None, ["S01 E02 (1 of 2 files, NAN0)"], id="one-of-its-files"
-            ),
-            pytest.param(
-                [stand_in_ep(1, 1, tvdb_id=9001), _STAND_IN_E2, sonarr_ep(1, 3, ep_id=103, episode_file_id=0)],
-                True,
-                SkipReason.AIRED_ONLY,
-                ["S01 E01-E02 (2 of 2 files, NAN0)"],
-                id="its-every-file",
-            ),
-            pytest.param([_LISTED_EP1, _STAND_IN_E2], False, None, [], id="a-release-the-plan-does-not-grab"),
-        ],
-    )
-    def test_a_grabs_files_on_episodes_sonarr_has_no_row_for_are_reported_in_one_row(
-        self, window: list[SonarrEpisode], grab: bool, skip_reason: SkipReason | None, left_out: list[str]
-    ) -> None:
-        run = _check_title_in_another_order(window, grab=grab)
-
-        (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is skip_reason
-        assert run.left_out == left_out
-
-    @pytest.mark.parametrize(
-        ("reason", "not_stored"),
-        [
-            pytest.param(NoView.ORDERS_UNREAD, "aired episodes", id="aired-episodes"),
-            pytest.param(NoView.SCENE_UNREAD, "scene numbers from TheXEM", id="scene-numbers"),
-        ],
-    )
-    def test_a_series_with_no_aired_view_yet_is_left_unchecked_with_a_warning_of_what_is_not_stored(
-        self, reason: NoView, not_stored: str
-    ) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
-        recording = install_recording_hub()
-        strat = sonarr_checking(
-            run, ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1]), order="dvd", no_views={7: reason})
-        )
-
-        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-
-        (warning,) = diagnostic_messages(recording, Severity.WARNING)
-        assert warning == (
-            f"Show not checked - Sonarr numbers its series by the DVD order and the series' {not_stored} are not "
-            "stored yet - checking again next run"
-        )
-        assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 1)
-        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
-
-
-class TestSonarrCheckTitleOnASeriesInAiredOrder:
-    """A title of a series in aired order says nothing of its numbers, and nothing when its series can't be read."""
-
-    def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP1, _EP2]})
-
-        run = _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes)
-
-        assert (run.numbers_orders, run.left_out) == ([], [])
-
-    def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
-        recording = install_recording_hub()
-        strat = sonarr_checking(run, ScriptedEpisodes())
-
-        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-
-        assert diagnostic_messages(recording) == []
-        assert (run.no_episodes_titles, run.log_al_title_calls, run.pauses_owed) == ([], [], 0)
-        assert (run.grab_requests, run.no_releases_calls) == ([], [])
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _SeriesInSonarr:
-    """Series 7 as Sonarr has it, and how Sonarr parses each file of the one torrent SeaDex lists for it."""
-
-    series: SonarrSeries
-    episodes: list[SonarrEpisode]
-    parses: Mapping[str, ParsedFileInfo]
-    orders: Mapping[str, tuple[OrderRow, ...]] | None = None
-    """The TVDB orders stored for the series, with TheXEM read as mapping none of its episodes. None when nothing
-    is stored."""
-
-
-def _series_seven(season_type: str, alternate_title: dict[str, object]) -> SonarrSeries:
-    """Sonarr's row of series 7 as the wire sends it, numbered by `season_type`, with its one alternate title."""
-
-    return SonarrSeries.model_validate(
-        {"id": 7, "title": "Show", "tvdbId": 70, "seasonType": season_type, "alternateTitles": [alternate_title]}
-    )
-
-
-def _sequel_in_dvd_order() -> _SeriesInSonarr:
-    """A sequel's four files numbered as a first season, on a series Sonarr numbers by its DVD order.
-
-    TVDB's aired order has two seasons, of three and four episodes. The DVD order is one season of the first six, so
-    Sonarr lists the aired S02E01 to S02E03 as S01E04 to S01E06 and has no row for the aired S02E04. It reads
-    "Show Zoku S01E0n" by the second season's name and matches nothing. An aired Sonarr matches the second season's
-    episodes.
-    """
-
-    aired = (
-        *(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3)),
-        *(OrderRow(2, n, 9003 + n, 3 + n) for n in (1, 2, 3, 4)),
-    )
-    dvd = tuple(OrderRow(1, n, 9000 + n, None) for n in range(1, 7))
-    names = [f"Show Zoku S01E{n:02d}.mkv" for n in (1, 2, 3, 4)]
-    return _SeriesInSonarr(
-        series=_series_seven("dvd", {"title": "Show Zoku", "sceneSeasonNumber": 2}),
-        episodes=[sonarr_ep(1, n, ep_id=10 + n, tvdb_id=9000 + n, episode_file_id=0) for n in range(1, 7)],
-        parses={
-            name: ParsedFileInfo(season_number=1, episode_numbers=(n,), series_title="Show Zoku", series_id=7)
-            for n, name in enumerate(names, start=1)
-        },
-        orders={"official": aired, "dvd": dvd},
-    )
-
-
-def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
-
-    The library read, the parse cache and each parse's matched episodes are the real ones. The plan grabs the
-    torrent, whose nth file is n thousand bytes, and AniList knows no title. `episode_by_size` is the episode id
-    SeaDex lists a one-episode release of each size for.
-    """
-
-    names = list(library.parses)
-    sizes = [1000 * n for n in range(1, len(names) + 1)]
-    release = make_release(url=_GRAB_URL, infohash="h1", files=names, size=sizes)
-    seadex: SeadexDict = {"NAN0": rg_group({_GRAB_URL: release})}
-    cache = FakeCacheStore()
-    if library.orders is not None:
-        cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
-        cache.put_scene_mappings(library.series.tvdbId, stored_scene_mappings())
-    run = FakeRunServices(
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show Second Season",
-        seadex_dict=seadex,
-        plan_marks=frozenset({_GRAB_URL}),
-        import_wait_mode=ImportWaitMode.BLOCKING,
-        cache_store=cache,
-    )
-    sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
-    deps = replace(
-        make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
-    )
-    deps = mapping_one_series(deps, tvdb_id=library.series.tvdbId, anilist_id=5)
-    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
-    episodes = SonarrEpisodes(deps, sonarr, run, reads)
-    episodes.refresh_library()
-    strat = make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        _episodes=episodes,
-        _reads=reads,
-        _follower=PendingFollower(run.pending_imports, reads, make_logger()),
-        _parse=SonarrParseCache(deps, sonarr, reads),
-        _listings=ScriptedListings(episode_by_size=episode_by_size),
-        _config=make_config(sleep_time=0),
-        logger=make_logger(),
-    )
-    strat.check_title(library.series, 5, TitleMapping(anilist_id=5, tvdb_season=2))
-    return run
-
-
-class TestSonarrCheckTitleOverSonarrsParses:
-    """A title's check places a file by what the library read says of its series: the order and the other names."""
-
-    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(self) -> None:
-        library = _sequel_in_dvd_order()
-        first, second, third, fourth = (normalize_file_name(name) for name in library.parses)
-
-        run = _check_second_season(library)
-
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        assert update.file_map == {first: (14,), second: (15,), third: (16,)}
-        assert update.excluded == (fourth,)
-        assert run.left_out == ["S02 E04 (1 of 4 files, NAN0)"]
-        assert [(ep.aired_key, ep.printed) for ep in req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes] == [
-            (EpisodeKey(2, n), PrintedKey(EpisodeKey(1, 3 + n))) for n in (1, 2, 3)
-        ]
-
-    def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(self) -> None:
-        # The group numbers the second season from one under the series' other name, and Sonarr matched the file
-        # into the first season. The number is read within the season only because the run knows the name.
-        name = "[grp] Shou - 01.mkv"
-        library = _SeriesInSonarr(
-            series=_series_seven(AIRED_ORDER, {"title": "Shou"}),
-            episodes=[
-                *(sonarr_ep(1, n, ep_id=10 + n, absolute=n, episode_file_id=0) for n in (1, 2, 3, 4)),
-                *(sonarr_ep(2, n, ep_id=14 + n, absolute=4 + n, episode_file_id=0) for n in (1, 2, 3)),
-            ],
-            parses={
-                name: ParsedFileInfo(
-                    season_number=0,
-                    absolute_episode_numbers=(1,),
-                    series_title="Shou",
-                    matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=11),),
-                    series_id=7,
-                )
-            },
-        )
-
-        run = _check_second_season(library)
-
-        (req,) = run.grab_requests
-        assert req.pending_import_updates["h1"].file_map == {normalize_file_name(name): (15,)}
-
-
-class TestSonarrCheckTitlePrintsSonarrsNumbers:
-    """On a series Sonarr numbers by another order, a title's lines print each episode by the number Sonarr lists."""
-
-    def test_the_titles_rows_and_stored_coverage_are_in_sonarrs_numbers_under_the_named_order(self) -> None:
-        run = _check_second_season(_sequel_in_dvd_order())
-
-        (req,) = run.grab_requests
-        claim = req.pending_import_updates["h1"].claim
-        assert (run.title_block_coverages, run.missing_episodes) == (["S01 E04-E06"], ["S01 E04-E06"])
-        assert (req.update.get("coverage"), claim.window_coverage, claim.claimed_coverage) == ("S01 E04-E06",) * 3
-        assert run.numbers_orders == ["dvd"]
-
-    def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(self) -> None:
-        # SeaDex lists a one-episode release of the first file's size for the aired S02E02, which Sonarr lists as
-        # S01E05, and one of the second file's size for the aired S02E01.
-        recording = install_recording_hub()
-
-        _check_second_season(_sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
-
-        assert diagnostic_messages(recording, Severity.WARNING) == [
-            (
-                f"{_GRAB_URL}: show zoku s01e01.mkv goes on S01E05 because its size matches SeaDex's S01E05 release "
-                "(its name reads as S01E01)"
-                " (1 more file in the debug log)"
-            )
-        ]
-
-
-class TestPlacementDebugLine:
-    """The grab's debug line per release says what placed and why the release was skipped."""
-
-    def test_a_release_skipped_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
-        logger = debug_logger("pearlarr-placement-line")
-        strat = make_bare_instance(SonarrStrategy, logger=logger)
-        series = episode_index([_EP1])
-        grabbing_title = make_grabbing_title(series, series)
-        placement = place_release(
-            [ListedFile("Show - 01.mkv", 1000, None)], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
-
-    def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
-        # A Blu-ray torrent numbers 13 files for a 12-episode season: the DVD order splits the opener in two halves
-        # Sonarr doesn't list, numbers the aired second episode on after them, and keeps the whole opener last.
-        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
-        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
-        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        series = episode_index(season, {"dvd": dvd})
-        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
-        logger = debug_logger("pearlarr-placement-line-orders")
-        strat = make_bare_instance(SonarrStrategy, logger=logger)
-        placement = place_release(
-            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        halves = ", ".join(
-            f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
-            for n in (1, 2)
-        )
-        assert [r.message for r in caplog.records] == [
-            f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
-        ]
-
-    def test_on_a_series_in_another_order_every_placed_file_is_named_by_sonarrs_numbers(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # The same 13 files, and Sonarr numbers the series by the DVD order: it has a row for each half, where they
-        # land, and lists the aired second to twelfth episodes as S07E03 to S07E13.
-        aired = tuple(OrderRow(4, n, 400 + n, None) for n in range(1, 13))
-        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
-        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        rows = [sonarr_ep(7, row.episode, ep_id=row.tvdb_id, episode_file_id=0, tvdb_id=row.tvdb_id) for row in dvd]
-        view = aired_series(rows, SonarrSeriesOrders(70, "dvd", None), stored_orders({AIRED_ORDER: aired, "dvd": dvd}))
-        assert isinstance(view, AiredSeries)
-        series = episode_index(view.aired, {"dvd": dvd}, view.own_only)
-        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
-        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-own-rows"))
-        placement = place_release(
-            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        on_rows = ", ".join(f"{normalize_file_name(names[n - 1])} (S07 E0{n})" for n in (1, 2))
-        assert [r.message for r in caplog.records] == [
-            f"{_GRAB_URL}: placed S07 E03-E13; on episodes the aired order lacks: {on_rows}"
-        ]
-
-    def test_a_file_on_an_episode_sonarr_has_no_row_for_is_named_with_its_aired_episode(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        series = episode_index([_LISTED_EP1, _STAND_IN_E2])
-        grabbing_title = make_grabbing_title(series, series)
-        files = [ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)]
-        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-aired"))
-        placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        (line,) = [r.message for r in caplog.records]
-        assert line == (
-            f"{_GRAB_URL}: placed S01 E01; set aside: {normalize_file_name(_GRAB_FILES[1])} "
-            "(aired episode not in Sonarr's order: S01 E02)"
-        )
-
-
-class TestSonarrCheckTitleMetadataUnread:
-    """A grab asks whether its check read a title without its AniList answer or a series without its TVDB orders.
-
-    The titles are every title of the title's series, the series are the title's and every stored pending import's.
-    A title that stops before a grab asks about itself alone.
-    """
-
-    @pytest.mark.parametrize(
-        ("unread_series", "unread_anilist_ids", "expected"),
-        [
-            pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
-            pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
-            pytest.param(frozenset({8}), frozenset[int](), True, id="a-stored-records-series"),
-            pytest.param(frozenset[int](), frozenset({5}), True, id="its-own-entry"),
-            pytest.param(frozenset[int](), frozenset({4}), True, id="another-entry-of-its-series"),
-            pytest.param(frozenset[int](), frozenset({6}), True, id="an-ignored-entry-of-its-series"),
-        ],
-    )
-    def test_the_grab_request_carries_whether_its_metadata_is_unread(
-        self, unread_series: frozenset[int], unread_anilist_ids: frozenset[int], expected: bool
-    ) -> None:
-        # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
-        # import too.
-        store = FakeCacheStore()
-        resident = pending_import(infohash="h1", anilist_id=22, series_id=8, seadex_files=list(_GRAB_FILES))
-        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_EP1, _EP2]),
-            windows={5: [_EP2]},
-            unread_series=unread_series,
-            unread_anilist_ids=unread_anilist_ids,
-        )
-
-        run = _sonarr_grab_run(store=store, episodes=episodes)
-
-        (req,) = run.grab_requests
-        assert req.metadata_unread is expected
-
-    @pytest.mark.parametrize(
-        ("window", "order", "stopped_on"),
-        [
-            # No release to grab caches the title as having none. No episode in Sonarr's order caches it as
-            # having nothing to grab.
-            pytest.param([_EP2], AIRED_ORDER, ([5], list[int]()), id="no-suitable-release"),
-            pytest.param([_STAND_IN_E2], "dvd", (list[int](), [5]), id="no-episode-in-sonarrs-order"),
-        ],
-    )
-    def test_a_title_that_stops_before_a_grab_is_not_unread_for_another_entry_of_its_series(
-        self, window: list[SonarrEpisode], order: str, stopped_on: tuple[list[int], list[int]]
-    ) -> None:
-        run = FakeRunServices(
-            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            anilist_title="Show Cour 2",
-            seadex_dict={},
-            cache_store=FakeCacheStore(),
-        )
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=window), windows={5: window}, order=order, unread_anilist_ids=frozenset({4})
-        )
-        strat = sonarr_checking(run, episodes)
-
-        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
-
-        no_releases = [anilist_id for anilist_id, _ in run.no_releases_calls]
-        assert (no_releases, [anilist_id for anilist_id, _ in run.nothing_to_grab_calls]) == stopped_on
-        assert (run.no_releases_unread, run.nothing_to_grab_unread) == ([], [])
-
-
-class TestRadarrCheckTitlePendingImportUpdates:
-    """A Radarr grab builds a `PendingImportUpdate` per release to grab, keyed by its hash in qBittorrent.
-
-    A run that waits on no import builds none.
+class TestDefaultQualityWarning:
+    """An unmatched `imports.default_quality` warns once per run, in the executor that uses it.
+
+    `quality_parts_from_name` stays pure (its silent-empty return is pinned
+    elsewhere). The executor is where the configured name meets the run's real
+    Sonarr definitions, and it runs once per FILE, hence the once-per-run guard.
     """
 
     @staticmethod
-    def _run_process(
-        *, store: FakeCacheStore, cross_seed: str | None = None, mode: ImportWaitMode = ImportWaitMode.BLOCKING
-    ) -> FakeRunServices:
-        """Drive `check_title` to grab_and_cache and return the recording services, in a blocking run unless `mode` says.
-
-        `cross_seed` marks the release as carried by that torrent.
-        """
-
-        item = make_release(url="https://nyaa.si/1", infohash="h1")
-        item.cross_seed_hash = cross_seed
-        seadex: SeadexDict = {"NAN0": rg_group({"https://nyaa.si/1": item})}
-        run = FakeRunServices(
-            prologue_entry=make_entry_record(url="https://releases.moe/9"),
-            anilist_title="A Movie",
-            seadex_dict=seadex,
-            plan_marks=frozenset({"https://nyaa.si/1"}),
-            import_wait_mode=mode,
-            arr=Arr.RADARR,
-            cache_store=store,
+    def _strat_with_default(name: str | None) -> tuple[SonarrStrategy, FakeSonarrClient, RecordingHub]:
+        # The candidate + definitions resolve cleanly, so the only quality-related
+        # warning in play is the unmatched-default one.
+        quality = {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}
+        overrides: dict[str, list[str] | str] = {} if name is None else {"import_default_quality": name}
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv", quality=quality)],
+            quality_defs=[QualityDefinition.model_validate(quality)],
+            config_overrides=overrides,
         )
-        strat = radarr_checking(run)
-        strat.check_title(RadarrMovie(id=5, title="Movie"), 42, TitleMapping(anilist_id=42))
-        return run
+        return strat, sonarr, install_recording_hub()
 
-    def test_a_release_to_grab_starts_a_pending_import_claimed_by_the_movies_title(self) -> None:
-        run = self._run_process(store=FakeCacheStore())
+    @staticmethod
+    def _default_quality_warnings(recording: RecordingHub) -> list[str]:
+        return [message for message in diagnostic_messages(recording, Severity.WARNING) if "default_quality" in message]
 
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["h1"]
-        assert (update.claim.anilist_id, update.claim.series_id) == (42, 0)
-        assert (update.claim.title, update.claim.url) == ("A Movie", "https://releases.moe/9")
-        assert (update.pending_import, update.file_map) == (None, {})
+    def test_unmatched_name_warns_once_per_run(self) -> None:
+        pending = pending_import()
+        strat, sonarr, recording = self._strat_with_default("Blueray-1080p")
 
-    def test_no_pending_import_updates_when_wait_mode_off(self) -> None:
-        run = self._run_process(store=FakeCacheStore(), mode=ImportWaitMode.OFF)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        (req,) = run.grab_requests
-        assert req.pending_import_updates == {}
+        # Both polls ran the auto import (rebuilt the payload), yet the typo warned once.
+        assert len(sonarr.execute_calls) == 2
+        assert self._default_quality_warnings(recording) == [
+            "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition - ignoring it",
+        ]
 
-    def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
-        store = FakeCacheStore()
-        resident = pending_import(infohash="c1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
-        store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
+        # The next arr run warns of it again.
+        strat.get_items()
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert len(self._default_quality_warnings(recording)) == 2
 
-        run = self._run_process(store=store, cross_seed="c1")
+    @pytest.mark.parametrize("name", [pytest.param("WEBDL-1080p", id="matched"), pytest.param(None, id="unset")])
+    def test_a_matched_or_unset_name_does_not_warn(self, name: str | None) -> None:
+        strat, sonarr, recording = self._strat_with_default(name)
 
-        (req,) = run.grab_requests
-        update = req.pending_import_updates["c1"]
-        assert update.pending_import == resident
-        assert (update.facts.infohash, update.facts.is_cross_seed) == ("c1", True)
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert len(sonarr.execute_calls) == 1
+        assert self._default_quality_warnings(recording) == []
+
+
+class TestResolveLanguageObjects:
+    """A configured language name matches Sonarr's whatever its case, and one Sonarr doesn't define is dropped."""
+
+    @pytest.mark.parametrize(
+        ("names", "resolved"),
+        [
+            pytest.param(["JAPANESE"], ["Japanese"], id="another-case"),
+            pytest.param(["Klingon", "English"], ["English"], id="an-unknown-name"),
+        ],
+    )
+    def test_a_name_resolves_to_sonarrs_language_of_that_name(self, names: list[str], resolved: list[str]) -> None:
+        defs = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
+
+        assert [language.name for language in resolve_language_objects(names, defs)] == resolved
 
 
 class TestAutoImportWarningGating:
@@ -2420,59 +2576,6 @@ class TestOrderOnlyHalves:
             missing=(EpisodeKey(4, 1),),
         )
         assert sonarr.execute_calls == []
-
-
-class TestDefaultQualityWarning:
-    """An unmatched `imports.default_quality` warns once per run, in the executor that uses it.
-
-    `quality_parts_from_name` stays pure (its silent-empty return is pinned
-    elsewhere). The executor is where the configured name meets the run's real
-    Sonarr definitions, and it runs once per FILE, hence the once-per-run guard.
-    """
-
-    @staticmethod
-    def _strat_with_default(name: str | None) -> tuple[SonarrStrategy, FakeSonarrClient, RecordingHub]:
-        # The candidate + definitions resolve cleanly, so the only quality-related
-        # warning in play is the unmatched-default one.
-        quality = {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}
-        overrides: dict[str, list[str] | str] = {} if name is None else {"import_default_quality": name}
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv", quality=quality)],
-            quality_defs=[QualityDefinition.model_validate(quality)],
-            config_overrides=overrides,
-        )
-        return strat, sonarr, install_recording_hub()
-
-    @staticmethod
-    def _default_quality_warnings(recording: RecordingHub) -> list[str]:
-        return [message for message in diagnostic_messages(recording, Severity.WARNING) if "default_quality" in message]
-
-    def test_unmatched_name_warns_once_per_run(self) -> None:
-        pending = pending_import()
-        strat, sonarr, recording = self._strat_with_default("Blueray-1080p")
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        # Both polls ran the auto import (rebuilt the payload), yet the typo warned once.
-        assert len(sonarr.execute_calls) == 2
-        assert self._default_quality_warnings(recording) == [
-            "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition - ignoring it",
-        ]
-
-        # The next arr run warns of it again.
-        strat.get_items()
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert len(self._default_quality_warnings(recording)) == 2
-
-    @pytest.mark.parametrize("name", [pytest.param("WEBDL-1080p", id="matched"), pytest.param(None, id="unset")])
-    def test_a_matched_or_unset_name_does_not_warn(self, name: str | None) -> None:
-        strat, sonarr, recording = self._strat_with_default(name)
-
-        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert len(sonarr.execute_calls) == 1
-        assert self._default_quality_warnings(recording) == []
 
 
 def _clean_history() -> HistoryPage:
@@ -2770,107 +2873,6 @@ class TestUnwatchedTorrentImport:
         [warning] = diagnostic_messages(recording, Severity.WARNING)
         assert "1 intended file not visible to Sonarr" in warning
         assert "reading /d/Show found no files" in warning
-
-
-class TestResolveLanguageObjects:
-    """A configured language name matches Sonarr's whatever its case, and one Sonarr doesn't define is dropped."""
-
-    @pytest.mark.parametrize(
-        ("names", "resolved"),
-        [
-            pytest.param(["JAPANESE"], ["Japanese"], id="another-case"),
-            pytest.param(["Klingon", "English"], ["English"], id="an-unknown-name"),
-        ],
-    )
-    def test_a_name_resolves_to_sonarrs_language_of_that_name(self, names: list[str], resolved: list[str]) -> None:
-        defs = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
-
-        assert [language.name for language in resolve_language_objects(names, defs)] == resolved
-
-
-class TestRadarrCheckTitle:
-    """A movie's check stops on no SeaDex entry, a cached title or no releases. A grab carries its files to the plan."""
-
-    def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
-        run = FakeRunServices()
-        strat = radarr_checking(run)
-
-        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.anilist_id_prologue_calls == [5]
-
-    def test_a_cached_title_stops_with_an_empty_coverage_backfill(self) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
-        strat = radarr_checking(run)
-
-        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-
-        assert (run.grab_requests, run.no_releases_calls, run.nothing_to_grab_calls) == ([], [], [])
-        # A movie has no episodes, so the coverage a cached row is backfilled with is empty.
-        [coverage] = run.cached_skip_coverages
-        assert coverage() == ""
-
-    def test_no_releases_routes_to_shared_stop_with_movie_cache_details(self) -> None:
-        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
-        run = FakeRunServices(
-            prologue_entry=entry,
-            anilist_title="Movie Title",
-            seadex_dict={},
-        )
-        strat = radarr_checking(run)
-
-        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        expected: CachedTitleUpdate = {
-            "name": "Movie Title",
-            "updated_at": entry.updated_at,
-            "url": "https://releases.moe/5",
-            "coverage": "",
-        }
-        assert run.no_releases_calls == [(5, expected)]
-        assert run.grab_requests == []
-
-    def test_a_grab_carries_the_movies_files_to_the_plan_and_every_group_they_are_of(self) -> None:
-        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
-        seadex_dict = seadex_groups("SubGroup")
-        filtered = seadex_groups("SubGroup")
-        run = FakeRunServices(
-            prologue_entry=entry,
-            anilist_title="Movie Title",
-            seadex_dict=seadex_dict,
-            plan_grabs_result=grab_plan(filtered),
-        )
-        files = [
-            MovieFile(release_group="GroupA", size=100),
-            MovieFile(release_group="GroupA", size=150),
-            MovieFile(release_group="GroupB", size=200),
-        ]
-        strat = radarr_checking(run, FakeRadarrClient(movie_files=files))
-
-        strat.check_title(RadarrMovie(id=3, title="Item Title"), 5, TitleMapping(anilist_id=5))
-
-        assert run.plan_grabs_calls == [(seadex_dict, ArrFiles(by_group={"GroupA": (100, 150), "GroupB": (200,)}))]
-        [req] = run.grab_requests
-        assert (req.anilist_id, req.arr_title, req.title_name) == (5, "Item Title", "Movie Title")
-        assert req.entry is entry
-        assert req.seadex_dict is filtered
-        assert req.replaced_groups == ("GroupA", "GroupB")
-
-    @pytest.mark.parametrize(
-        ("interactive", "seadex_dict", "prompts"),
-        [
-            pytest.param(True, seadex_groups("GroupA", "GroupB"), 1, id="interactive-two-groups"),
-            pytest.param(True, seadex_groups("GroupA"), 0, id="interactive-one-group"),
-            pytest.param(False, seadex_groups("GroupA", "GroupB"), 0, id="not-interactive"),
-        ],
-    )
-    def test_only_an_interactive_run_with_two_groups_asks_which_to_grab(
-        self, interactive: bool, seadex_dict: SeadexDict, prompts: int
-    ) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
-        strat = radarr_checking(run, interactive=interactive)
-
-        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-
-        assert len(run.interactive_calls) == prompts
 
 
 class TestRadarrFiles:
