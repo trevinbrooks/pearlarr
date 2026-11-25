@@ -57,7 +57,7 @@ from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
 from pearlarr.library_read import LibraryRead
-from pearlarr.mappings import MappingResolver, MappingSources
+from pearlarr.mappings import AnimeIdsByName, MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import emit_to_hub, hub_counts
 from pearlarr.parse_cache import ParseCacheRows
@@ -788,6 +788,7 @@ def make_run_deps(
     skyhook_client: AbstractSkyHookClient | None = None,
     xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
+    anime_ids: AnimeIdsByName | None = None,
 ) -> ArrRunDeps:
     """A real `ArrRunDeps` for an `arr` run over typed fakes, built the way a run builds it.
 
@@ -796,6 +797,9 @@ def make_run_deps(
     dry run). The notifier posts to the config's Discord and wait webhook URLs, a no-op when neither is set.
     Its AniList client is scripted and knows no title, and the reporter shares its gateway, as a run's does.
     `categories` swaps in a resolver that reads the arr's clients, in place of the config passthrough.
+
+    The mappings are the Anime-IDs rows in `anime_ids`, given inline as a config can give them, and none by default.
+    The other two sources are off, and the ignore list and refresh age are the config's, as bootstrap reads them.
     """
 
     if config is None:
@@ -824,13 +828,13 @@ def make_run_deps(
         parse_cache_rows=ParseCacheRows(cache_store),
         http=http,
         qbit=qbit,
-        # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
+        # A real resolver over in-memory mappings (no network). It carries a real (empty)
         # `anibridge` the strategy reads at construction.
         resolver=MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
+            refresh_days=config.mappings.refresh_days,
+            ignore_anilist_ids=config.seadex.ignore_anilist_ids,
             web=http,
-            sources=MappingSources(anime={}, anidb=False, anibridge=False),
+            sources=MappingSources(anime=anime_ids or {}, anidb=False, anibridge=False),
         ),
         logger=logger,
         seadex=seadex or FakeSeaDexSource(),
