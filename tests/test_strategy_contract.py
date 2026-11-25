@@ -587,15 +587,12 @@ class TestArrRunStartHook:
         assert run.missing_episodes == ["S01 E01"]
 
 
-class TestCheckTitleThreadsServices:
-    """The per-title head runs through the services it keeps. No entry stops this title."""
+class TestSonarrCheckTitleBeforeTheGrab:
+    """A series' check stops before the grab when there is nothing to grab.
 
-    def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
-        run = _FakeRunServices()
-        strat = _radarr_checking(run)
-
-        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
-        assert run.anilist_id_prologue_calls == [5]
+    No SeaDex entry, no episodes, only unmonitored episodes or no pick left stops the title. The window's missing
+    episodes are shown.
+    """
 
     def test_sonarr_no_seadex_entry_stops_at_begin_check(self) -> None:
         run = _FakeRunServices()
@@ -3139,7 +3136,14 @@ def _groups(*names: str) -> SeadexDict:
 
 
 class TestRadarrCheckTitle:
-    """check_title's movie middle threads its facts through the services it keeps."""
+    """A movie's check stops on no SeaDex entry, a cached title or no releases. A grab carries its files to the plan."""
+
+    def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
+        run = _FakeRunServices()
+        strat = _radarr_checking(run)
+
+        strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        assert run.anilist_id_prologue_calls == [5]
 
     def test_a_cached_title_stops_with_an_empty_coverage_backfill(self) -> None:
         run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
