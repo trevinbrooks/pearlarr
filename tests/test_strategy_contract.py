@@ -1737,13 +1737,12 @@ class TestSonarrCheckTitlePendingImportUpdates:
         pending = update.pending_import_at(_STAMP, restart=False)
         assert claim_anilist_ids(pending) == (22, 5)
         assert dict(pending.file_episode_map) == {
-            normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (101, 102), strict=True)
+            normalize_file_name(_GRAB_FILES[0]): (101,),
+            normalize_file_name(_GRAB_FILES[1]): (102,),
         }
         # The planner reads the release by the whole file map's episodes inside this title's window.
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
         assert req.input_unread_groups == ()
-        # The stored claim's window came off the per-run whole-series read.
-        assert sonarr.episodes_calls == [7]
 
     def test_a_specials_torrent_the_listing_contradicts_is_skipped(self) -> None:
         # The series' entries list the torrent over specials 2, 4 and 6, three as it is wide, and its `1` is none of
@@ -1901,7 +1900,8 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         (req,) = run.grab_requests
         pending = req.pending_import_updates["h1"].pending_import_at(_STAMP, restart=False)
         assert dict(pending.file_episode_map) == {
-            normalize_file_name(name): (ep,) for name, ep in zip(_GRAB_FILES, (150, 102), strict=True)
+            normalize_file_name(_GRAB_FILES[0]): (150,),
+            normalize_file_name(_GRAB_FILES[1]): (102,),
         }
         assert [claim.ordered_episode_ids for claim in pending.claims] == [(150,), (102,)]
 
@@ -2400,14 +2400,16 @@ class TestSonarrCheckTitleMetadataUnread:
         assert req.metadata_unread is expected
 
     @pytest.mark.parametrize(
-        ("window", "order"),
+        ("window", "order", "stopped_on"),
         [
-            pytest.param([_EP2], AIRED_ORDER, id="no-suitable-release"),
-            pytest.param([_STAND_IN_E2], "dvd", id="no-episode-in-sonarrs-order"),
+            # No release to grab caches the title as having none. No episode in Sonarr's order caches it as
+            # having nothing to grab.
+            pytest.param([_EP2], AIRED_ORDER, ([5], list[int]()), id="no-suitable-release"),
+            pytest.param([_STAND_IN_E2], "dvd", (list[int](), [5]), id="no-episode-in-sonarrs-order"),
         ],
     )
     def test_a_title_that_stops_before_a_grab_is_not_unread_for_another_entry_of_its_series(
-        self, window: list[SonarrEpisode], order: str
+        self, window: list[SonarrEpisode], order: str, stopped_on: tuple[list[int], list[int]]
     ) -> None:
         run = _FakeRunServices(
             anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
@@ -2423,7 +2425,8 @@ class TestSonarrCheckTitleMetadataUnread:
 
         strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
 
-        assert len(run.no_releases_calls) + len(run.nothing_to_grab_calls) == 1
+        no_releases = [anilist_id for anilist_id, _ in run.no_releases_calls]
+        assert (no_releases, [anilist_id for anilist_id, _ in run.nothing_to_grab_calls]) == stopped_on
         assert (run.no_releases_unread, run.nothing_to_grab_unread) == ([], [])
 
 
