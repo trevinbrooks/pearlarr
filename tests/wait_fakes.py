@@ -8,9 +8,10 @@
 import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import override
+from typing import cast, override
 
 import pytest
+import qbittorrentapi
 
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.arr_strategy import ImportCompleter
@@ -145,6 +146,12 @@ class FakeQbit:
                 rows.append(row)
         return rows
 
+    def client(self) -> qbittorrentapi.Client:
+        """This fake as the SDK client it stands in for."""
+
+        # The sanctioned leaf-client hatch: the SDK client has no interface to subclass.
+        return cast("qbittorrentapi.Client", self)
+
 
 class CategoryQbit(FakeQbit):
     """A `FakeQbit` recording the category writes the post-import move makes.
@@ -213,6 +220,7 @@ class RecordingStrategy(FakeStrategy):
     `attempts` answers `import_completed`, `progress` the import progress read and `removals` `remove_from_queue`.
     An exception in `attempts` or `progress` is raised, as a failed request would be. The attempts and the queue
     removals change something in the arr, so each is recorded. The progress read changes nothing and isn't.
+    `supports_blocking_wait` False is Radarr's side, which has no blocking wait.
     """
 
     def __init__(
@@ -221,8 +229,9 @@ class RecordingStrategy(FakeStrategy):
         attempts: Sequence[AttemptResult | Exception] = (NO_ATTEMPT,),
         progress: Sequence[ImportProgress | Exception] = (NO_PROGRESS,),
         removals: Sequence[EffectStatus] = (EffectStatus.DONE,),
+        supports_blocking_wait: bool = True,
     ) -> None:
-        super().__init__(items=[], anilist_ids={})
+        super().__init__(items=[], anilist_ids={}, supports_blocking_wait=supports_blocking_wait)
         self._attempts = _Script(attempts)
         self._progress = _Script(progress)
         self._removals = _Script(removals)

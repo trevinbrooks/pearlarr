@@ -5,7 +5,6 @@ They cover the gates on each, the retries inside a run, and the owed cleanup a l
 """
 
 from dataclasses import replace
-from typing import cast
 
 import httpx
 import pytest
@@ -52,13 +51,6 @@ from .wait_fakes import (
     stored_awaiting_cleanup,
 )
 
-
-def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
-    """A fake as the SDK client it stands in for (the sanctioned leaf-client hatch: no interface to subclass)."""
-
-    return cast("qbittorrentapi.Client", qbit)
-
-
 _ARR_URL = "http://arr.test"
 
 
@@ -66,7 +58,7 @@ def _reading_sonarrs_clients(config: AppConfig, qbit: FakeQbit) -> ArrCategoryRe
     """A resolver reading Sonarr's download clients from `_ARR_URL`, with no retry inside a read, like a run's."""
 
     http, _ = bind_arr_http(_ARR_URL)
-    return make_categories(config, sources=CategorySources(replace(http, retries=0), _sdk_client(qbit)))
+    return make_categories(config, sources=CategorySources(replace(http, retries=0), qbit.client()))
 
 
 class TestPostImportCategory:
@@ -271,9 +263,7 @@ class TestCloseSkipOnMoveToUnwatched:
             strategy=strategy,
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7)],
-            categories=make_fetched_categories(
-                make_config(), grab=grab, post_import=post_import, qbit=_sdk_client(qbit)
-            ),
+            categories=make_fetched_categories(make_config(), grab=grab, post_import=post_import, qbit=qbit.client()),
         )
 
     @pytest.mark.parametrize(
@@ -332,7 +322,7 @@ class TestMoveKeepsAnUnseenTorrentOut:
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7, awaiting_cleanup=awaiting_cleanup)],
             categories=make_fetched_categories(
-                make_config(), grab="tv-sonarr", post_import=post_import, qbit=_sdk_client(qbit)
+                make_config(), grab="tv-sonarr", post_import=post_import, qbit=qbit.client()
             ),
         )
 
