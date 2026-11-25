@@ -4,8 +4,8 @@
 Each test runs a whole arr run, the loop and its services built by their constructors, over a cache an earlier run
 left pending imports in. qBittorrent is scripted, time is a fake clock, and the arr's side of an import is a
 scripted strategy. The outcome is read off the events the run showed, the cache once it is closed and opened again,
-what the arr was asked to do, and what the wait webhook was sent. That the finish runs once on every path, and
-that a failed push only warns, is pinned in `test_run_finalize`.
+what the arr was asked to do, and what the wait webhook was sent. That a run whose title or library item failed
+still ends with its summary is pinned in `test_arr_run_scan`, and that a failed push only warns in `test_run_finalize`.
 """
 
 import json

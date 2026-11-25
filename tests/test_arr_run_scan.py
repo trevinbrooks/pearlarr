@@ -1,114 +1,158 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# Reads the loop's private run state and services. The repo disables reportPrivateUsage for tests, strict re-flags it.
-"""Guards the arr run loop's scan: a failing title or item, and the item's own name."""
+"""Tests for an arr run's scan: which library items it checks and what it shows for each.
 
-import logging
+Each test runs a whole Sonarr run, the loop and its services built by their constructors. The arr's side is a
+strategy that lists a library and records each title the scan asks it to check, or the real Sonarr strategy where
+only it shows the outcome. The outcome is read off the events the run showed and the titles the scan asked to check.
+How the run ends once the scan is done is in `test_arr_run_finish`.
+"""
+
 from typing import override
 
-from pearlarr.boot_flow import BootFlow
+from pearlarr.arr_models import HistoryRecord, SonarrSeries
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import Diagnostic, Severity
+from pearlarr.output import (
+    ArrRunSummaryReady,
+    Diagnostic,
+    Severity,
+    TitleRow,
+)
+from pearlarr.output.events import TitleState
+from pearlarr.sonarr_strategy import SonarrStrategy
+from pearlarr.wait_types import ImportWaitMode
 
-from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
-from .run_loop_fakes import FinalizeRecorder, make_engine
-
-
-class TestPerTitleErrorContainment:
-    """One title's failure is contained to that title, not the whole item."""
-
-    def test_one_title_error_does_not_stop_its_siblings(self, logger: logging.Logger) -> None:
-        strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=1, title="A")],
-            anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)},
-            process_raises_on=1,
-        )
-        finalize = FinalizeRecorder()
-        recording = install_recording_hub()
-        make_engine(finalize, logger).run_arr(
-            strategy,
-            item_id=None,
-            dry_run=True,
-            boot=BootFlow(),
-        )
-
-        # The first title raised but was contained: the sibling title 2 is still checked.
-        assert strategy.process_calls == [1, 2]
-        # The per-title failure is an ERROR Diagnostic with its traceback (containment
-        # is observable).
-        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A (AniList #1): unexpected error (boom on anilist_id 1) - moving on to the next title"
-        assert error.trace is not None
-        # The single finalize still ran once on the normal path to the arr run's end.
-        assert finalize.calls == 1
+from .builders import drive_arr_run, make_config, make_run_deps
+from .fakes import FakeArrItem, FakeSonarrClient, FakeStrategy, RecordingHub, install_recording_hub
+from .wait_fakes import FakeQbit
 
 
-class _ItemRaisingStrategy(FakeStrategy):
-    """A `FakeStrategy` whose mapping lookup raises for one item id.
+class _Library(FakeStrategy):
+    """The arr's side of a scan over `items`, each mapping one title, whose AniList id is the item's id.
 
-    This is the hook `run_arr` hits per item BEFORE the per-title loop (the
-    OUTER containment handler).
+    `checked` holds the item of each title the scan asked it to check, by the item's title.
     """
 
-    def __init__(
-        self,
-        *,
-        items: list[FakeArrItem],
-        anilist_ids: dict[int, TitleMapping],
-        raise_on_item: int,
-    ) -> None:
-        super().__init__(items=items, anilist_ids=anilist_ids)
-        self._raise_on_item = raise_on_item
+    def __init__(self, *items: FakeArrItem) -> None:
+        super().__init__(items=list(items), anilist_ids={})
+        self.checked: list[str] = []
 
     @override
     def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        # Only the per-item scan calls with the log_ignored default. The pre-loop
-        # activity/prefetch steps pass False and must stay healthy.
-        if log_ignored and item.id == self._raise_on_item:
-            raise RuntimeError("mapping lookup exploded")
-        return super().item_mappings(item, log_ignored)
+        return {item.id: TitleMapping(anilist_id=item.id)}
+
+    @override
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        self.checked.append(item.title)
 
 
-class TestPerItemErrorContainment:
-    """A whole item's failure is contained to that item, not the arr run."""
+def _scan(strategy: FakeStrategy) -> RecordingHub:
+    """One whole Sonarr run of `strategy`, and what it showed."""
 
-    def test_one_item_error_does_not_stop_its_siblings(self, logger: logging.Logger) -> None:
-        strategy = _ItemRaisingStrategy(
-            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
-            anilist_ids={5: TitleMapping(anilist_id=5)},
-            raise_on_item=1,
+    recording = install_recording_hub()
+    drive_arr_run(make_run_deps(), lambda _: strategy)
+    return recording
+
+
+def _rows(recording: RecordingHub) -> list[tuple[TitleState, str]]:
+    """The one-line title rows the run showed, each by its state and label."""
+
+    return [(row.state, row.label) for row in recording.of_type(TitleRow)]
+
+
+_FILE_IMPORTED = HistoryRecord(
+    id=1, date="2026-07-06T10:00:00Z", item_id=7, event_type="downloadFolderImported", download_id=None, reason=None
+)
+"""Sonarr's history record of a file imported into series 7."""
+
+
+def test_an_ignored_title_is_shown_once_by_the_name_of_its_series() -> None:
+    # Series 7 maps AniList 1 and 2, and 2 is ignored. The imported file has the activity read ask for its titles
+    # before the scan, as the prefetch does. Title 1, with no SeaDex entry, keeps the series off an undecided case:
+    # a series whose only title is ignored shows a no-mapping row too.
+    config = make_config(url="http://sonarr", api_key="key", ignore_anilist_ids={2})
+    deps = make_run_deps(
+        config=config,
+        anime_ids={
+            "Frieren": {"anilist_id": 1, "tvdb_id": 50, "tvdb_season": 1},
+            "Frieren Season 2": {"anilist_id": 2, "tvdb_id": 50, "tvdb_season": 2},
+        },
+    )
+    series = SonarrSeries.model_validate({"id": 7, "title": "Sousou no Frieren", "tvdbId": 50})
+    sonarr = FakeSonarrClient(all_series=[series], history_since=[_FILE_IMPORTED])
+    recording = install_recording_hub()
+
+    drive_arr_run(deps, lambda services: SonarrStrategy(deps, services, sonarr_client=sonarr))
+
+    assert _rows(recording) == [(TitleState.IGNORED, "Sousou no Frieren"), (TitleState.NO_ENTRY, "Sousou no Frieren")]
+
+
+class _TitleFails(_Library):
+    """A library whose items each map titles 1 and 2, the check of title 1 failing."""
+
+    @override
+    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
+        return {1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)}
+
+    @override
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        if anilist_id == 1:
+            raise RuntimeError("check failed")
+        super().check_title(item, anilist_id, mapping)
+
+
+class _SnapshotFails(_Library):
+    """A library whose `failing` item's import snapshot fails once its title is checked."""
+
+    def __init__(self, *items: FakeArrItem, failing: str) -> None:
+        super().__init__(*items)
+        self._failing = failing
+
+    @override
+    def pending_import_series_id(self, item: FakeArrItem) -> int | None:
+        if item.title == self._failing:
+            raise RuntimeError("snapshot failed")
+        return None
+
+
+def _errors(recording: RecordingHub) -> list[Diagnostic]:
+    """The errors the run showed."""
+
+    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
+
+
+class TestOneFailureIsContained:
+    """A title or a library item that fails is shown as an error with its traceback, and the scan moves on.
+
+    A failing title leaves the item's other titles checked, and a failing item the library's other items. The run
+    ends with its summary all the same, the error counted in it.
+    """
+
+    def test_a_failing_title_leaves_the_items_other_titles_checked(self) -> None:
+        library = _TitleFails(FakeArrItem(item_id=7, title="Frieren"))
+
+        recording = _scan(library)
+
+        # Title 2's check, after title 1's failed.
+        assert library.checked == ["Frieren"]
+        (error,) = _errors(recording)
+        assert error.message == "Frieren (AniList #1): unexpected error (check failed) - moving on to the next title"
+        assert error.trace is not None
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        assert summary.summary.errors == 1
+
+    def test_a_failing_item_leaves_the_librarys_other_items_checked(self) -> None:
+        library = _SnapshotFails(
+            FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"), failing="Frieren"
         )
-        finalize = FinalizeRecorder()
         recording = install_recording_hub()
 
-        make_engine(finalize, logger).run_arr(
-            strategy,
-            item_id=None,
-            dry_run=True,
-            boot=BootFlow(),
-        )
+        # The scan takes each item's import snapshot only while the wait is on, which takes qBittorrent.
+        deps = make_run_deps(qbit=FakeQbit().client())
+        drive_arr_run(deps, lambda _: library, import_wait_mode=ImportWaitMode.DEFERRED)
 
-        # Item A raised before its per-title loop began. Sibling item B was still scanned.
-        assert strategy.process_calls == [5]
-        # The per-item failure is an ERROR Diagnostic with its traceback.
-        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A: unexpected error (mapping lookup exploded) - moving on to the next library item"
+        assert library.checked == ["Frieren", "Dandadan"]
+        (error,) = _errors(recording)
+        assert error.message == "Frieren: unexpected error (snapshot failed) - moving on to the next library item"
         assert error.trace is not None
-        # The arr run still reached the single post-loop finalize site.
-        assert finalize.calls == 1
-
-
-class TestScanItemState:
-    """The scan puts the arr item's own name in the arr run state before any per-title line."""
-
-    def test_arr_title_follows_the_item(self, logger: logging.Logger) -> None:
-        strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=1, title="A")],
-            anilist_ids={1: TitleMapping(anilist_id=1)},
-        )
-        engine = make_engine(FinalizeRecorder(), logger)
-        install_recording_hub()
-
-        engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
-
-        assert engine._state.arr_title == "A"
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        assert summary.summary.errors == 1
