@@ -2,14 +2,12 @@
 # pyright: reportPrivateUsage=false
 # Drives ArrRunLoop._notify_wait_complete directly (the containment handler has no public
 # interface). The repo disables reportPrivateUsage for tests, strict re-flags it.
-"""Guards the arr run loop's commit points and its single finalize site at the arr run's end.
+"""Guards the arr run loop's commit points and its finalize at the arr run's end.
 
-The ONE post-loop `_finish_arr_run` site runs once on every path. These pin that hoist so
-a future change can't silently double-finalize or skip the wait pass.
-A real run also commits after each item, so a stop keeps the items it finished.
+A real run commits after each item, so a stop keeps the items it finished.
 
-The strategy is the shared typed `FakeStrategy` (an `ArrStrategy` recording
-its `check_title` calls), the arr run loop's collaborators are the small typed
+The strategy is the shared typed `FakeStrategy` (an `ArrStrategy` with
+scripted returns), the arr run loop's collaborators are the small typed
 fakes in `run_loop_fakes`, and `_finish_arr_run` is mostly replaced by a typed
 recorder - so the contracts are pinned by asserting recorded state.
 """

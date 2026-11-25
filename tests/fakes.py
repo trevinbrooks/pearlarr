@@ -324,7 +324,6 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         items: list[FakeArrItem],
         anilist_ids: dict[int, TitleMapping],
         services: ArrRunServices | None = None,
-        process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
         supports_blocking_wait: bool = True,
     ) -> None:
@@ -333,9 +332,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         # Every processed id is held past the cap on these services' run state, as the grab pipeline keeps one: the
         # title's hold and the run tally.
         self._cap_services = services
-        self._process_raises_on = process_raises_on
         self._supports_blocking_wait = supports_blocking_wait
-        self.process_calls: list[int] = []
         # Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
         self.history_calls: list[str] = []
@@ -389,9 +386,6 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
     @override
     def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        self.process_calls.append(anilist_id)
-        if self._process_raises_on is not None and anilist_id == self._process_raises_on:
-            raise ValueError(f"boom on anilist_id {anilist_id}")
         if self._cap_services is not None:
             self._cap_services.state.per_title.held_by_cap = True
             self._cap_services.state.stats.held_by_cap += 1
