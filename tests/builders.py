@@ -1141,18 +1141,12 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     return mgr
 
 
-def make_planner(**overrides: Any) -> GrabPlanner:
-    """A `GrabPlanner` with test-friendly defaults (arr `SONARR`, not interactive)."""
+def make_planner(
+    *, arr: Arr = Arr.SONARR, interactive: bool = False, logger: logging.Logger | None = None
+) -> GrabPlanner:
+    """A `GrabPlanner` for `arr`, not interactive unless asked, logging to a quiet logger unless given one."""
 
-    logger = make_logger()
-
-    defaults: dict[str, Any] = {
-        "arr": Arr.SONARR,
-        "interactive": False,
-        "logger": logger,
-    }
-    defaults.update(overrides)
-    return GrabPlanner(**defaults)
+    return GrabPlanner(arr=arr, interactive=interactive, logger=logger or make_logger())
 
 
 def placed_episode(season: int, episode: int, size: int) -> PlacedEpisode:
