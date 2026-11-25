@@ -6,7 +6,6 @@ included. A row that already holds a file gets this one only while it is still o
 """
 
 from dataclasses import replace
-from typing import NamedTuple
 
 import pytest
 
@@ -38,6 +37,7 @@ from .sonarr_import_builders import (
     make_sonarr_for_import,
     posted_imports,
 )
+from .wait_fakes import FakeQbit, FakeTorrent
 
 _SHOW_FILE = "Show - 01 [1080p].mkv"
 
@@ -291,32 +291,6 @@ class TestImportOnOwnOnlyRows:
         assert second.all_done is True
 
 
-class _QbitState(NamedTuple):
-    """The two `state_enum` booleans `poll_torrent` reads."""
-
-    is_complete: bool = True
-    is_errored: bool = False
-
-
-class _CompletedRow(NamedTuple):
-    """One complete qBittorrent info row (the fields `poll_torrent` reads)."""
-
-    content_path: str
-    state_enum: _QbitState = _QbitState()
-    progress: float = 1.0
-
-
-class _CompletedQbit:
-    """A qBittorrent stub whose poll always reads one complete torrent."""
-
-    def __init__(self, content_path: str) -> None:
-        self._row = _CompletedRow(content_path)
-
-    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[_CompletedRow]:
-        del torrent_hashes
-        return [self._row]
-
-
 class TestImportOverEpisodeFiles:
     """Whether an episode that already holds a file is still owed this pending import's file.
 
@@ -403,7 +377,12 @@ class TestImportOverEpisodeFiles:
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
         state = ArrRunState(arr=Arr.SONARR)
-        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
+        mgr = make_import_wait_manager(
+            qbit=FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]}),
+            cache_store=store,
+            strategy=strat,
+            state=state,
+        )
 
         mgr.report_imports_for_series(claim.series_id)
 
@@ -428,7 +407,12 @@ class TestImportOverEpisodeFiles:
         )
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         state = ArrRunState(arr=Arr.SONARR)
-        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
+        mgr = make_import_wait_manager(
+            qbit=FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]}),
+            cache_store=store,
+            strategy=strat,
+            state=state,
+        )
 
         mgr.finish_cleanups()
 
