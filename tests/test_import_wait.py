@@ -191,6 +191,9 @@ class FakeQbit:
             if steps is None:
                 return []
             return [self._next(steps, self._heavy_index, torrent_hashes.casefold())]
+        if not torrent_hashes:
+            # qBittorrent reads an empty hash filter as no filter and answers with every torrent it holds.
+            pytest.fail("qBittorrent was asked for torrents with an empty hash filter, which returns all of them")
         rows: list[FakeTorrent] = []
         for infohash in torrent_hashes:
             steps = self._download_progress.get(infohash.casefold())
