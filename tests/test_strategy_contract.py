@@ -39,7 +39,7 @@ from pearlarr.arr_models import (
     SonarrItem,
     SonarrSeries,
 )
-from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import AppConfig, Arr
@@ -94,7 +94,6 @@ from .builders import (
     FakeClock,
     ScriptedAniListClient,
     claim_anilist_ids,
-    every_series,
     grab_plan,
     make_anilist_gateway,
     make_bare_instance,
@@ -481,14 +480,21 @@ def _radarr_checking(
     return RadarrStrategy(deps, run, radarr if radarr is not None else FakeRadarrClient())
 
 
+def _mapping_one_series(deps: ArrRunDeps, *, tvdb_id: int, anilist_id: int) -> ArrRunDeps:
+    """`deps` whose mappings map TVDB series `tvdb_id` to AniList title `anilist_id`, and nothing else."""
+
+    mapped = MappingSources(
+        anime={"Show": {"anilist_id": anilist_id, "tvdb_id": tvdb_id}}, anidb=False, anibridge=False
+    )
+    return replace(
+        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
+    )
+
+
 def _sonarr_mapping_tvdb_50(sonarr: FakeSonarrClient, run: ArrRunServices | None = None) -> SonarrStrategy:
     """A `SonarrStrategy` built by its constructor over `sonarr`, where only TVDB series 50 maps, to AniList 500."""
 
-    mapped = MappingSources(anime={"Show": {"anilist_id": 500, "tvdb_id": 50}}, anidb=False, anibridge=False)
-    deps = make_run_deps(config=make_config(sleep_time=0))
-    deps = replace(
-        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
-    )
+    deps = _mapping_one_series(make_run_deps(config=make_config(sleep_time=0)), tvdb_id=50, anilist_id=500)
     return SonarrStrategy(deps, run or ArrRunServices(deps, Arr.SONARR), sonarr_client=sonarr)
 
 
@@ -2144,7 +2150,7 @@ def _sequel_in_dvd_order() -> _SeriesInSonarr:
 
 
 def _check_second_season(
-    monkeypatch: pytest.MonkeyPatch, library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None
+    library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None
 ) -> _FakeRunServices:
     """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
 
@@ -2173,9 +2179,9 @@ def _check_second_season(
     deps = replace(
         make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
     )
+    deps = _mapping_one_series(deps, tvdb_id=library.series.tvdbId, anilist_id=5)
     reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
     episodes = SonarrEpisodes(deps, sonarr, run, reads)
-    monkeypatch.setattr(episodes, "mapped_series", every_series)
     episodes.refresh_library()
     strat = make_bare_instance(
         SonarrStrategy,
@@ -2195,13 +2201,11 @@ def _check_second_season(
 class TestSonarrCheckTitleOverSonarrsParses:
     """A title's check places a file by what the library read says of its series: the order and the other names."""
 
-    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_sequels_files_numbered_as_a_first_season_land_on_the_aired_second_season(self) -> None:
         library = _sequel_in_dvd_order()
         first, second, third, fourth = (normalize_file_name(name) for name in library.parses)
 
-        run = _check_second_season(monkeypatch, library)
+        run = _check_second_season(library)
 
         (req,) = run.grab_requests
         update = req.pending_import_updates["h1"]
@@ -2212,9 +2216,7 @@ class TestSonarrCheckTitleOverSonarrsParses:
             (EpisodeKey(2, n), PrintedKey(EpisodeKey(1, 3 + n))) for n in (1, 2, 3)
         ]
 
-    def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_file_named_by_an_alternate_title_of_the_series_lands_by_its_number_in_the_season(self) -> None:
         # The group numbers the second season from one under the series' other name, and Sonarr matched the file
         # into the first season. The number is read within the season only because the run knows the name.
         name = "[grp] Shou - 01.mkv"
@@ -2235,7 +2237,7 @@ class TestSonarrCheckTitleOverSonarrsParses:
             },
         )
 
-        run = _check_second_season(monkeypatch, library)
+        run = _check_second_season(library)
 
         (req,) = run.grab_requests
         assert req.pending_import_updates["h1"].file_map == {normalize_file_name(name): (15,)}
@@ -2244,10 +2246,8 @@ class TestSonarrCheckTitleOverSonarrsParses:
 class TestSonarrCheckTitlePrintsSonarrsNumbers:
     """On a series Sonarr numbers by another order, a title's lines print each episode by the number Sonarr lists."""
 
-    def test_the_titles_rows_and_stored_coverage_are_in_sonarrs_numbers_under_the_named_order(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        run = _check_second_season(monkeypatch, _sequel_in_dvd_order())
+    def test_the_titles_rows_and_stored_coverage_are_in_sonarrs_numbers_under_the_named_order(self) -> None:
+        run = _check_second_season(_sequel_in_dvd_order())
 
         (req,) = run.grab_requests
         claim = req.pending_import_updates["h1"].claim
@@ -2255,14 +2255,12 @@ class TestSonarrCheckTitlePrintsSonarrsNumbers:
         assert (req.update.get("coverage"), claim.window_coverage, claim.claimed_coverage) == ("S01 E04-E06",) * 3
         assert run.numbers_orders == ["dvd"]
 
-    def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(self) -> None:
         # SeaDex lists a one-episode release of the first file's size for the aired S02E02, which Sonarr lists as
         # S01E05, and one of the second file's size for the aired S02E01.
         recording = install_recording_hub()
 
-        _check_second_season(monkeypatch, _sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
+        _check_second_season(_sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
 
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (
