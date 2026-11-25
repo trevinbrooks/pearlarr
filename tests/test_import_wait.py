@@ -951,50 +951,50 @@ class TestLeftForHandImportRowFinish:
 class TestTallyCarriedOverIntoStats:
     """tally_carried_over_into_stats counts each still-waiting pending import once."""
 
+    def test_a_carried_over_pending_import_counts_by_the_state_the_run_noted(self) -> None:
+        # Both counters add up, a pending import nothing observed this run counts as downloading, and an
+        # errored one is counted nowhere.
+        state = ArrRunState(
+            arr=Arr.SONARR,
+            pending_import_states={
+                "q": PendingImportState.DOWNLOADING,
+                "d1": PendingImportState.DOWNLOADED,
+                "d2": PendingImportState.DOWNLOADED,
+                "e": PendingImportState.ERRORED,
+            },
+        )
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            stored_pending_imports=[pending_import(infohash=key) for key in ("q", "d1", "d2", "e", "untouched")],
+            state=state,
+        )
+
+        mgr.tally_carried_over_into_stats()
+
+        assert (state.stats.downloading, state.stats.downloaded) == (2, 2)
+
     @pytest.mark.parametrize(
-        ("stored", "state", "counted"),
+        ("stored", "grabbed", "seen_again", "counted"),
         [
-            # Both counters add up, a pending import nothing observed this run counts as downloading, and an
-            # errored one is counted nowhere.
-            pytest.param(
-                [pending_import(infohash=key) for key in ("q", "d1", "d2", "e", "untouched")],
-                ArrRunState(
-                    arr=Arr.SONARR,
-                    pending_import_states={
-                        "q": PendingImportState.DOWNLOADING,
-                        "d1": PendingImportState.DOWNLOADED,
-                        "d2": PendingImportState.DOWNLOADED,
-                        "e": PendingImportState.ERRORED,
-                    },
-                ),
-                (2, 2),
-                id="each-state",
-            ),
-            pytest.param(
-                [pending_import(infohash="h")],
-                ArrRunState(arr=Arr.SONARR, grabbed_this_run={"h": pending_import(infohash="h")}),
-                (0, 0),
-                id="grabbed-this-run",
-            ),
-            pytest.param(
-                [pending_import(infohash="h")],
-                ArrRunState(arr=Arr.SONARR, reacquired_keys={"h"}),
-                (1, 0),
-                id="seen-again-this-run",
-            ),
-            pytest.param(
-                [pending_import(infohash="h", awaiting_cleanup=True)],
-                ArrRunState(arr=Arr.SONARR),
-                (0, 0),
-                id="awaiting-cleanup",
-            ),
+            # Found in qBittorrent again without a grab, it still counts.
+            pytest.param([pending_import(infohash="h")], [], ("h",), (1, 0), id="seen-again-this-run"),
+            # A grab this run counts as grabbed instead.
+            pytest.param([], [pending_import(infohash="h")], (), (0, 0), id="grabbed-this-run"),
+            # It already imported and only its cleanup is owed.
+            pytest.param([pending_import(infohash="h", awaiting_cleanup=True)], [], (), (0, 0), id="awaiting-cleanup"),
         ],
     )
     def test_counts_each_carried_over_pending_import_still_waiting(
-        self, stored: list[PendingImport], state: ArrRunState, counted: tuple[int, int]
+        self,
+        stored: list[PendingImport],
+        grabbed: list[PendingImport],
+        seen_again: tuple[str, ...],
+        counted: tuple[int, int],
     ) -> None:
+        state = ArrRunState(arr=Arr.SONARR, reacquired_keys=set(seen_again))
         mgr = make_orchestration_manager(
-            qbit=None, strategy=_RecordingStrategy(), stored_pending_imports=stored, state=state
+            qbit=None, strategy=_RecordingStrategy(), stored_pending_imports=stored, grabbed=grabbed, state=state
         )
 
         mgr.tally_carried_over_into_stats()
@@ -1314,14 +1314,14 @@ class TestRunBlocking:
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
 
     @pytest.mark.parametrize(
-        ("clock", "ending"),
+        ("clock_type", "ending"),
         [
-            pytest.param(_InterruptSleepClock(), nullcontext(), id="ctrl-c-ends-the-wait-and-the-run-goes-on"),
-            pytest.param(_StopSleepClock(), pytest.raises(SystemExit), id="a-sigterm-stop-propagates"),
+            pytest.param(_InterruptSleepClock, nullcontext(), id="ctrl-c-ends-the-wait-and-the-run-goes-on"),
+            pytest.param(_StopSleepClock, pytest.raises(SystemExit), id="a-sigterm-stop-propagates"),
         ],
     )
     def test_an_interrupted_wait_notes_what_is_left(
-        self, clock: FakeClock, ending: AbstractContextManager[object]
+        self, clock_type: type[FakeClock], ending: AbstractContextManager[object]
     ) -> None:
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
@@ -1332,7 +1332,7 @@ class TestRunBlocking:
             download_timeout=3600,
             import_timeout=600,
             import_poll_interval=30,
-            clock=clock,
+            clock=clock_type(),
         )
         view = RecordingWaitView()
         recording = install_recording_hub()
