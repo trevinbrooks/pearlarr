@@ -481,66 +481,66 @@ class TestSameGroupDuplicateDedup:
         )
 
 
+class TestAMovieRelease:
+    """A movie's release, decided by its group and its file sizes against Radarr's files."""
+
+    @pytest.mark.parametrize(
+        ("sizes", "files", "grabs"),
+        [
+            pytest.param([100], ArrFiles(), {"u1": "grab"}, id="no-file"),
+            pytest.param(
+                [100], ArrFiles(by_group={"OldRG": (100,)}), {"u1": "grab"}, id="a-group-seadex-does-not-list"
+            ),
+            pytest.param([100], ArrFiles(by_group={"EMBER": (100,)}), {}, id="its-group-at-a-listed-size"),
+            pytest.param(
+                [200], ArrFiles(by_group={"EMBER": (100,)}), {"u1": "upgrade"}, id="its-group-at-another-size"
+            ),
+            pytest.param([100, 7], ArrFiles(no_group=(100,)), {}, id="no-group-at-a-listed-size-beside-extras"),
+            pytest.param([100], ArrFiles(no_group=(50,)), {"u1": "grab"}, id="no-group-at-another-size"),
+            pytest.param([100], ArrFiles(no_group=(100, 60)), {"u1": "grab"}, id="no-group-files-only-partly-listed"),
+            pytest.param(
+                [], ArrFiles(no_group=(50,)), {"u1": "grab"}, id="no-group-against-a-release-listing-no-files"
+            ),
+            pytest.param([0, 100], ArrFiles(no_group=(0,)), {"u1": "grab"}, id="an-empty-file-with-no-group"),
+        ],
+    )
+    def test_a_movie_release_is_grabbed_unless_the_arr_has_its_copy(
+        self, sizes: list[int], files: ArrFiles, grabs: dict[str, Mark]
+    ) -> None:
+        # A group matches whatever its case. Files with no group are the release's copy when it lists every one of
+        # their sizes: a release carries files the arr never keeps (subtitles, extras), and an empty file proves nothing.
+        seadex = {"Ember": rg_group({"u1": make_release(size=sizes)})}
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, files)
+
+        assert _grabs(plan.seadex_dict) == grabs
+
+    @pytest.mark.parametrize("owner", [pytest.param("Ember", id="named"), pytest.param("", id="blank-name")])
+    def test_movie_owned_copy_with_no_group_suppresses_the_sibling_grab(self, owner: str) -> None:
+        # The file with no group is the owner's by size, so the arr has a preferred copy, as it would had the file kept
+        # its group, and another group is not grabbed over it. A blank name matches nothing by name, but owns by size.
+        seadex = {
+            owner: rg_group({"u1": make_release(size=[100, 7])}),
+            "RG": rg_group({"u2": make_release(size=[300])}),
+        }
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(no_group=(100,)))
+
+        assert _grabs(plan.seadex_dict) == {}
+
+    def test_matching_group_radarr_none_size_grabs(self) -> None:
+        # What happens today, not a decision: a file whose size Radarr couldn't read leaves its group with no size,
+        # which reads as every listed size differing, so the release is grabbed as an upgrade. A release that lists
+        # no sizes is the other way round: it keeps the arr's copy.
+        seadex = {"RG": rg_group({"u1": make_release(size=[100])})}
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"RG": ()}))
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
+
+
 class TestFilterByReleaseGroup:
     """`plan` skips a release whose group and size(s) already match what the arr has (case-insensitively), grabbing otherwise."""
-
-    def test_new_group_no_episodes_grabs(self) -> None:
-        planner = make_planner()
-        seadex = {"NewRG": rg_group({"u1": make_release(episodes=[], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"OldRG": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["NewRG"].releases["u1"].to_grab is True
-
-    def test_matching_group_sizes_match_no_grab(self) -> None:
-        planner = make_planner()
-        seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"RG": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["RG"].releases["u1"].to_grab is False
-
-    def test_matching_group_sizes_differ_grabs(self) -> None:
-        planner = make_planner()
-        seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[200], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"RG": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["RG"].releases["u1"].to_grab is True
-
-    def test_matching_group_case_insensitive_no_grab(self) -> None:
-        # The no-episode path matches by normalized name like the per-episode
-        # path: Radarr's "EMBER" is SeaDex's "Ember", so a size match must not
-        # re-grab (raw comparison used to re-grab owned content).
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"EMBER": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
-
-    def test_matching_group_case_insensitive_size_mismatch_grabs(self) -> None:
-        # The same normalized group with DISJOINT sizes must still upgrade.
-        # This pins the membership + size-lookup normalization specifically:
-        # the overlap-gate normalization alone would read the group as covered
-        # and leave `to_grab` False (a silently missed upgrade).
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[200], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"EMBER": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
-        assert result.seadex_dict["Ember"].releases["u1"].is_upgrade is True
 
     def test_nothing_placed_on_the_title_no_files_grabs(self) -> None:
         # The placement put none of the release's files on the title's episodes (its
@@ -870,141 +870,6 @@ class TestFilterByReleaseGroup:
         assert result.guards.entry_groups == ()
         assert result.guards.stale_groups == ("Era-Raws",)
 
-    def test_movie_groupless_file_at_exact_sizes_no_grab(self) -> None:
-        # The no-episode twin: files with no group key their sizes under None, and
-        # every file with no group belonging to this release reads as owned.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(100,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
-
-    def test_movie_groupless_file_size_matched_past_the_release_extras(self) -> None:
-        # A release carries files the arr never has (subs, fonts, extras), so
-        # containment runs arr -> release. Requiring every LISTED size in the arr
-        # would only ever identify a single-file release.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100, 7], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(100,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is False
-
-    def test_movie_with_no_files_at_all_grabs(self) -> None:
-        # A movie with no files converts to an empty `ArrFiles`, leaving no size with no
-        # group to identify anything: an empty multiset must never read as covered.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
-
-    def test_movie_zero_size_file_with_no_group_grabs(self) -> None:
-        # A zero-byte failed copy proves nothing, even against a zero-size listed file.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[0, 100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(0,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
-
-    def test_movie_groupless_file_at_other_size_grabs(self) -> None:
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(50,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u1"].to_grab is True
-
-    def test_movie_blank_named_group_never_name_matches_files_with_no_group(self) -> None:
-        # PIN: a group whose name normalizes to None has no name to match, so it
-        # reaches the no-group ownership check, where a sizeless release proves
-        # nothing and the grab stands. The old null-keyed dict read a blank group
-        # name against files with no group as a NAME match and read the copy as owned unverified.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"": rg_group({"u1": make_release(episodes=[], size=[], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(50,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict[""].releases["u1"].to_grab is True
-
-    def test_movie_blank_named_group_partial_size_overlap_grabs(self) -> None:
-        # PIN: no-group ownership is all-or-nothing. A blank-named group whose
-        # release covers only PART of the no-group multiset does not own the
-        # copy, so the grab stands. The old null-keyed dict name-matched the
-        # blank name and read the copy as owned on any size overlap.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"": rg_group({"u1": make_release(episodes=[], size=[50], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(50, 60)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict[""].releases["u1"].to_grab is True
-
-    def test_movie_blank_named_group_grabs_plain_not_upgrade(self) -> None:
-        # PIN: a blank name never reaches the name-match branch, so its grab is a
-        # plain grab, never an upgrade - with no name there is no evidence
-        # the arr's copy is an older cut of the same release.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(50,)),
-            title_episodes=None,
-        )
-        item = result.seadex_dict[""].releases["u1"]
-        assert item.to_grab is True
-        assert item.is_upgrade is False
-
-    def test_movie_blank_named_group_sets_no_overlap_when_not_owner(self) -> None:
-        # PIN: a blank name that does NOT own the no-group copy sets no overlap,
-        # so the title grabs (the movie-level reducer keeps one release). The old
-        # null-keyed dict read blank-vs-no-group as both a name match AND an
-        # overlap, keeping every release from a grab - the title silently grabbed nothing.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {
-            "": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")}),
-            "RG": rg_group({"u2": make_release(episodes=[], size=[300], infohash="h2")}),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(100, 60)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict[""].releases["u1"].to_grab is True
-
-    def test_movie_blank_named_owner_keeps_siblings_ungrabbed_by_overlap(self) -> None:
-        # PIN: ownership IS an overlap. When the blank-named group owns the
-        # no-group copy by size, a sibling group absent from the library stays ungrabbed
-        # exactly as it would had the copy kept its group - nothing grabs.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {
-            "": rg_group({"u1": make_release(episodes=[], size=[100, 7], infohash="h1")}),
-            "RG": rg_group({"u2": make_release(episodes=[], size=[300], infohash="h2")}),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(100,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict[""].releases["u1"].to_grab is False
-        assert result.seadex_dict["RG"].releases["u2"].to_grab is False
-
     def test_placed_episodes_but_no_title_episodes_skips(self) -> None:
         planner = make_planner()
         seadex = {
@@ -1020,19 +885,6 @@ class TestFilterByReleaseGroup:
             title_episodes=None,
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
-
-    def test_matching_group_radarr_none_size_grabs(self) -> None:
-        # A group whose only file has an unreadable size keeps its name with no
-        # sizes. That empty set is disjoint from the real SeaDex sizes, so the
-        # group is grabbed.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"RG": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"RG": ()}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["RG"].releases["u1"].to_grab is True
 
     def test_debug_logging_path_does_not_crash(self) -> None:
         # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
@@ -1372,23 +1224,6 @@ class TestGroupGuardFacts:
             ],
         )
         assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
-
-    def test_movie_owned_copy_with_no_group_suppresses_the_sibling_grab(self) -> None:
-        # The movie file with no group is group A's by size. Grabbing sibling group B
-        # would replace the preferred copy the arr already owns - the
-        # owned copy counts as an overlap exactly as one with a group would.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {
-            "A": rg_group({"u1": make_release(episodes=[], size=[100], infohash="h1")}),
-            "B": rg_group({"u2": make_release(episodes=[], size=[200], infohash="h2")}),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(no_group=(100,)),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["A"].releases["u1"].to_grab is False
-        assert result.seadex_dict["B"].releases["u2"].to_grab is False
 
 
 class TestReduceDropRescue:
