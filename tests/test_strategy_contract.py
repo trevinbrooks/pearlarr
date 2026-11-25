@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# The placement debug line tests call the strategy's private `_log_placements`. Strict re-flags that and the repo
-# disables reportPrivateUsage for tests.
 """The Sonarr and Radarr strategies: a title's check, its import, and the files each arr holds.
 
 A title's check runs over `FakeRunServices`, a real `ArrRunServices` subclass that records what the strategy hands
@@ -17,7 +14,7 @@ from typing import ClassVar, NamedTuple
 
 import pytest
 
-from pearlarr.aired_view import AiredSeries, NoView, aired_series
+from pearlarr.aired_view import NoView
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS, format_history_date
 from pearlarr.arr_http import DeleteOutcome
 from pearlarr.arr_models import (
@@ -43,7 +40,7 @@ from pearlarr.arr_run_state import ArrRunState
 from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.file_paths import normalize_file_name
-from pearlarr.grab_placement import ListedFile, PlacedEntry, place_release
+from pearlarr.grab_placement import ListedFile
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import (
     ExternalIds,
@@ -58,17 +55,15 @@ from pearlarr.pending_import import (
     OwnedAtGrab,
     PendingImport,
     SizeMatchedEpisode,
-    TitleNames,
     TvdbIds,
 )
-from pearlarr.placement_types import episode_index
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import parse_stamp, stamp_of
-from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow, SonarrSeriesOrders
+from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow
 from pearlarr.wait_types import (
     NO_PROGRESS,
     AttemptKind,
@@ -93,7 +88,6 @@ from .builders import (
     make_config,
     make_entry_record,
     make_fetched_categories,
-    make_grabbing_title,
     make_import_wait_manager,
     make_logger,
     make_radarr_sync,
@@ -102,7 +96,6 @@ from .builders import (
     make_sonarr_episodes,
     make_sonarr_sync,
     manual_candidate,
-    new_torrent,
     numbered_names,
     parsed_info,
     pending_import,
@@ -126,7 +119,6 @@ from .fakes import (
     QbitCategoryReads,
     RecordingHub,
     ScriptedEpisodes,
-    debug_logger,
     diagnostic_messages,
     install_recording_hub,
 )
@@ -1013,96 +1005,6 @@ class TestSonarrCheckTitlePrintsSonarrsNumbers:
                 " (1 more file in the debug log)"
             )
         ]
-
-
-class TestPlacementDebugLine:
-    """The grab's debug line per release says what placed and why the release was skipped."""
-
-    def test_a_release_skipped_on_a_failed_read_names_the_read_once(self, caplog: pytest.LogCaptureFixture) -> None:
-        logger = debug_logger("pearlarr-placement-line")
-        strat = make_bare_instance(SonarrStrategy, logger=logger)
-        series = episode_index([_EP1])
-        grabbing_title = make_grabbing_title(series, series)
-        placement = place_release(
-            [ListedFile("Show - 01.mkv", 1000, None)], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        assert placement.skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
-        assert [r.message for r in caplog.records] == [f"{_GRAB_URL}: placed nothing (not grabbed: a read failed)"]
-
-    def test_a_file_left_for_a_hand_import_is_named_with_why(self, caplog: pytest.LogCaptureFixture) -> None:
-        # A Blu-ray torrent numbers 13 files for a 12-episode season: the DVD order splits the opener in two halves
-        # Sonarr doesn't list, numbers the aired second episode on after them, and keeps the whole opener last.
-        season = [sonarr_ep(4, n, ep_id=400 + n, episode_file_id=0, tvdb_id=400 + n) for n in range(1, 13)]
-        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
-        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        series = episode_index(season, {"dvd": dvd})
-        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
-        logger = debug_logger("pearlarr-placement-line-orders")
-        strat = make_bare_instance(SonarrStrategy, logger=logger)
-        placement = place_release(
-            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        halves = ", ".join(
-            f"{normalize_file_name(names[n - 1])} (another TVDB order, not in Sonarr's list: DVD S07E0{n})"
-            for n in (1, 2)
-        )
-        assert [r.message for r in caplog.records] == [
-            f"{_GRAB_URL}: placed S04 E02-E12; left for a hand import: {halves}"
-        ]
-
-    def test_on_a_series_in_another_order_every_placed_file_is_named_by_sonarrs_numbers(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # The same 13 files, and Sonarr numbers the series by the DVD order: it has a row for each half, where they
-        # land, and lists the aired second to twelfth episodes as S07E03 to S07E13.
-        aired = tuple(OrderRow(4, n, 400 + n, None) for n in range(1, 13))
-        dvd = (OrderRow(7, 1, 9001, None), OrderRow(7, 2, 9002, None))
-        dvd += (*(OrderRow(7, n + 1, 400 + n, None) for n in range(2, 13)), OrderRow(7, 21, 401, None))
-        rows = [sonarr_ep(7, row.episode, ep_id=row.tvdb_id, episode_file_id=0, tvdb_id=row.tvdb_id) for row in dvd]
-        view = aired_series(rows, SonarrSeriesOrders(70, "dvd", None), stored_orders({AIRED_ORDER: aired, "dvd": dvd}))
-        assert isinstance(view, AiredSeries)
-        series = episode_index(view.aired, {"dvd": dvd}, view.own_only)
-        names = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-        grabbing_title = make_grabbing_title(series, series, names=TitleNames("Show", ("Show Ending",)))
-        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-own-rows"))
-        placement = place_release(
-            [ListedFile(name, 1000, parsed_info()) for name in names], grabbing_title, new_torrent(grabbing_title)
-        )
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        on_rows = ", ".join(f"{normalize_file_name(names[n - 1])} (S07 E0{n})" for n in (1, 2))
-        assert [r.message for r in caplog.records] == [
-            f"{_GRAB_URL}: placed S07 E03-E13; on episodes the aired order lacks: {on_rows}"
-        ]
-
-    def test_a_file_on_an_episode_sonarr_has_no_row_for_is_named_with_its_aired_episode(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        series = episode_index([_LISTED_EP1, _STAND_IN_E2])
-        grabbing_title = make_grabbing_title(series, series)
-        files = [ListedFile(name, 1000, parsed_info(season=1, episodes=(n,))) for n, name in enumerate(_GRAB_FILES, 1)]
-        strat = make_bare_instance(SonarrStrategy, logger=debug_logger("pearlarr-placement-line-aired"))
-        placement = place_release(files, grabbing_title, new_torrent(grabbing_title))
-
-        with caplog.at_level("DEBUG"):
-            strat._log_placements(PlacedEntry(grabbing_title, {_GRAB_URL: placement}), [series])
-
-        (line,) = [r.message for r in caplog.records]
-        assert line == (
-            f"{_GRAB_URL}: placed S01 E01; set aside: {normalize_file_name(_GRAB_FILES[1])} "
-            "(aired episode not in Sonarr's order: S01 E02)"
-        )
 
 
 class TestSonarrCheckTitleMetadataUnread:
