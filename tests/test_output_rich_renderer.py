@@ -41,17 +41,11 @@ from pearlarr.output import (
 from pearlarr.output.console_text import INDENT
 from pearlarr.releases import SkipReason
 
-from .fakes import AsciiStringIO, feed_renderer, strip_ansi
+from .fakes import AsciiStringIO, feed_renderer, rich_renderer, strip_ansi
 
 _BOOT = ScopeId(ScopeKind.BOOT, 1)
 _WAIT = ScopeId(ScopeKind.WAIT, 2)
 _TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 3)
-
-
-def _renderer(width: int = 120) -> tuple[RichRenderer, io.StringIO]:
-    stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
-    return RichRenderer(lambda: console), stream
 
 
 def _lines(stream: io.StringIO) -> list[str]:
@@ -66,21 +60,21 @@ class TestPosition:
     """Ambient indent tracks the open scope: boot step and wait indents, column 0 otherwise, reset on `begin_run`."""
 
     def test_open_boot_scope_indents_to_the_boot_step_lines(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_BOOT, label="boot"), _warning("perms loose"))
 
         assert _lines(stream) == [f"{INDENT}⚠ perms loose"]
 
     def test_closed_boot_scope_renders_at_column_zero(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_BOOT, label="boot"), ScopeClosed(scope=_BOOT), _warning("late"))
 
         assert _lines(stream) == ["⚠ late"]
 
     def test_open_wait_region_indents(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_WAIT, label="wait"), _warning("webhook flaked"))
 
@@ -93,7 +87,7 @@ class TestPosition:
         indent with the listing instead of breaking it at the run margin.
         """
 
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -107,7 +101,7 @@ class TestPosition:
     def test_before_the_first_item_stays_at_column_zero_under_run_alone(self) -> None:
         """ARR_RUN alone is structural: before any item opens, the run margin holds."""
 
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -118,7 +112,7 @@ class TestPosition:
         assert _lines(stream)[-1] == "⚠ before the first item"
 
     def test_begin_run_resets_the_open_scopes(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, ScopeOpened(scope=_BOOT, label="boot"))
         renderer.begin_run()
@@ -137,7 +131,7 @@ class TestUnwindPosition:
     """
 
     def test_arr_run_finished_clears_a_mid_scan_title_to_column_zero(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -153,7 +147,7 @@ class TestUnwindPosition:
 
     def test_without_the_unwind_emit_the_error_indents_under_the_title(self) -> None:
         # The negative control: what the unwind's ArrRunFinished prevents.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -168,7 +162,7 @@ class TestUnwindPosition:
     def test_arr_run_finished_also_clears_an_open_boot_scope(self) -> None:
         # An arr run that dies inside ArrRunDeps.build never opens a scan: the boot scope
         # is depth-1 too, so the same close evicts it and the error lands at column 0.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -182,7 +176,7 @@ class TestUnwindPosition:
     def test_a_repeat_arr_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty scope path (defense in
         # depth, production emits it once per arr run).
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -199,21 +193,21 @@ class TestFloors:
     """Severity floors: third-party diagnostics floor at WARNING unless DEBUG. First-party honors the configured level."""
 
     def test_third_party_info_is_floored_at_the_default_level(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, Diagnostic(severity=Severity.INFO, message="handshake ok", origin="httpx"))
 
         assert stream.getvalue() == ""
 
     def test_third_party_warning_renders_with_its_origin(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _warning("flaky pool", origin="httpx"))
 
         assert _lines(stream) == ["⚠ httpx: flaky pool"]
 
     def test_debug_level_admits_third_party_chatter(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.DEBUG)
 
         feed_renderer(renderer, Diagnostic(severity=Severity.INFO, message="handshake ok", origin="httpx"))
@@ -221,7 +215,7 @@ class TestFloors:
         assert _lines(stream) == ["httpx: handshake ok"]
 
     def test_first_party_info_renders_dim_without_a_badge(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME))
 
@@ -249,7 +243,7 @@ class TestNoOps:
     """No-op paths: a `file_only` diagnostic and a missing rich console both suppress rendering without raising."""
 
     def test_file_only_diagnostics_never_render(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -273,7 +267,7 @@ class TestDurableLoopLines:
     _AT = datetime(2026, 1, 1, 23, 5, tzinfo=timezone(timedelta(hours=-5)))
 
     def test_next_run_scheduled_prints_the_plain_footer(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, NextRunScheduled(at=self._AT))
 
@@ -281,7 +275,7 @@ class TestDurableLoopLines:
 
     def test_next_run_scheduled_is_hidden_by_a_raised_level(self) -> None:
         # Matches the old raw INFO record's behavior at a configured WARNING.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
 
         feed_renderer(renderer, NextRunScheduled(at=self._AT))
@@ -291,7 +285,7 @@ class TestDurableLoopLines:
     def test_release_skipped_and_grab_failed_render_as_scan_lines(self) -> None:
         # No longer the pass case: the flipped producers' events draw the same
         # detail rows the raw warnings did (bytes pinned in test_scan_parity).
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -311,7 +305,7 @@ class TestRendering:
     def test_trace_renders_a_capped_traceback_but_never_locals(self) -> None:
         """The secrets pin, renderer-side: CapturedTrace was extracted with show_locals=False, so a frame local's VALUE can never render."""
 
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         sentinel = "hunter2-" + "sentinel"  # never a contiguous string in this file
         try:
             leaked = sentinel
@@ -331,14 +325,14 @@ class TestRendering:
         assert sentinel not in out
 
     def test_messages_render_literally_never_as_markup(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _warning("[1/182] Frieren [MARKED INCOMPLETE]"))
 
         assert _lines(stream) == ["⚠ [1/182] Frieren [MARKED INCOMPLETE]"]
 
     def test_badge_glyphs_per_severity(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -353,7 +347,7 @@ class TestRendering:
 
         stream = AsciiStringIO()
         # legacy_windows pinned so the ASCII encoding alone drives the fallback.
-        console = Console(file=stream, force_terminal=True, legacy_windows=False, width=120)
+        console = Console(file=stream, force_terminal=True, legacy_windows=False, width=100)
         renderer = RichRenderer(lambda: console)
 
         feed_renderer(
