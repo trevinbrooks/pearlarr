@@ -493,6 +493,12 @@ class TestAMovieRelease:
             pytest.param(
                 [200], ArrFiles(by_group={"EMBER": (100,)}), {"u1": "upgrade"}, id="its-group-at-another-size"
             ),
+            pytest.param(
+                [100, 200], ArrFiles(by_group={"EMBER": (100, 999)}), {}, id="its-group-with-one-file-at-another-size"
+            ),
+            pytest.param(
+                [], ArrFiles(by_group={"EMBER": (100,)}), {}, id="its-group-against-a-release-listing-no-files"
+            ),
             pytest.param([100, 7], ArrFiles(no_group=(100,)), {}, id="no-group-at-a-listed-size-beside-extras"),
             pytest.param([100], ArrFiles(no_group=(50,)), {"u1": "grab"}, id="no-group-at-another-size"),
             pytest.param([100], ArrFiles(no_group=(100, 60)), {"u1": "grab"}, id="no-group-files-only-partly-listed"),
@@ -505,8 +511,9 @@ class TestAMovieRelease:
     def test_a_movie_release_is_grabbed_unless_the_arr_has_its_copy(
         self, sizes: list[int], files: ArrFiles, grabs: dict[str, Mark]
     ) -> None:
-        # A group matches whatever its case. Files with no group are the release's copy when it lists every one of
-        # their sizes: a release carries files the arr never keeps (subtitles, extras), and an empty file proves nothing.
+        # A group matches whatever its case, and its copy is an upgrade only when none of its files is at a listed size.
+        # Files with no group are the copy when the release lists all their sizes, since it carries extras the arr never
+        # keeps. A release that lists no files, or an empty file, proves nothing.
         seadex = {"Ember": rg_group({"u1": make_release(size=sizes)})}
 
         plan = make_planner(arr=Arr.RADARR).plan(seadex, files)
@@ -887,19 +894,9 @@ class TestListedSizeOnTooManyEpisodes:
 class TestGroupGuardFacts:
     """What the plan tells the import: which groups' copies the arr has, which are outdated, and whose files lack a group."""
 
-    def test_no_episode_mixed_sizes_exit_the_guard_without_a_grab(self) -> None:
-        # One of the movie's files is at a listed size and one isn't: no upgrade of the whole release, so nothing is
-        # grabbed, but the copy is partly outdated and the group is not protected.
-        seadex = {"Blunt": rg_group({"u1": make_release(size=[100, 200])})}
-
-        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Blunt": (100, 999)}))
-
-        assert _grabs(plan.seadex_dict) == {}
-        assert plan.guards == OwnedAtGrab(stale_groups=("Blunt",))
-
     def test_episode_partly_outdated_group_exits_the_guard_without_a_grab(self) -> None:
-        # The same by episode: one episode at an unlisted size is no upgrade of the whole release, but the import
-        # must be free to replace that file.
+        # One episode at an unlisted size is no upgrade of the whole release, but the import must be free to replace
+        # that file.
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200], episodes=[_S1E1, _S1E2]))}
         title = [
             sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
@@ -926,24 +923,26 @@ class TestGroupGuardFacts:
         assert _grabs(plan.seadex_dict) == {"u2": "grab"}
         assert plan.guards == OwnedAtGrab(entry_groups=("X",), stale_groups=("Y",))
 
-    def test_blind_release_never_reads_as_an_upgrade(self) -> None:
-        # A release that lists no sizes proves nothing: the arr's copy stands, and with every release of the group
-        # blind the group is neither protected nor outdated.
-        seadex = {"Ember": rg_group({"u1": make_release(size=[])})}
+    @pytest.mark.parametrize(
+        ("listed", "guards"),
+        [
+            pytest.param([()], OwnedAtGrab(), id="its-only-release-lists-no-files"),
+            pytest.param([(100,), ()], OwnedAtGrab(entry_groups=("Ember",)), id="beside-a-release-listing-the-size"),
+        ],
+    )
+    def test_a_release_that_lists_no_files_says_nothing_of_its_groups_copy(
+        self, listed: list[tuple[int, ...]], guards: OwnedAtGrab
+    ) -> None:
+        # The group's releases placed nothing, and each lists the sizes in `listed`. One that lists none neither
+        # protects the arr's copy nor marks it outdated, and takes nothing from a sibling that lists its size.
+        releases = {f"u{n}": make_release(size=list(sizes)) for n, sizes in enumerate(listed, 1)}
+        seadex = {"Ember": _sonarr_group(**releases)}
+        title = [sonarr_ep(1, 1, size=100, release_group="Ember")]
 
-        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Ember": (100,)}))
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
         assert _grabs(plan.seadex_dict) == {}
-        assert plan.guards == OwnedAtGrab()
-
-    def test_blind_release_beside_a_sized_owned_one_keeps_the_group_protected(self) -> None:
-        # A blind cross-seed takes nothing from the protection the sized release earned.
-        seadex = {"Ember": rg_group({"u1": make_release(size=[100]), "u2": make_release(size=[])})}
-
-        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Ember": (100,)}))
-
-        assert _grabs(plan.seadex_dict) == {}
-        assert plan.guards == OwnedAtGrab(entry_groups=("Ember",))
+        assert plan.guards == guards
 
     def test_groups_with_no_files_in_the_arr_stay_protected(self) -> None:
         # A group the arr has no file of is protected, so a copy of it imported while the grab waits is not overwritten.
