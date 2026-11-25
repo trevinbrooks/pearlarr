@@ -17,7 +17,7 @@ from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import ExternalIds, MappingResolver, MappingSources, ResolvedMappings, TitleMapping
 from pearlarr.pending_import import TitleNames
 from pearlarr.pending_import_store import PendingImportStore
-from pearlarr.placement_types import FetchedListings, TorrentListing
+from pearlarr.placement_types import FetchedListings
 from pearlarr.planner import GrabPlan
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import SeadexDict
@@ -258,20 +258,13 @@ class FakeRunServices(ArrRunServices):
 
 
 class ScriptedListings:
-    """A scripted listings collaborator: per-hash listings and size matches, or SeaDex unreachable."""
+    """A scripted listings collaborator: no torrent listed and the given size matches, or SeaDex unreachable."""
 
-    def __init__(
-        self,
-        listed: Mapping[str, TorrentListing] | None = None,
-        episode_by_size: Mapping[int, int] | None = None,
-        *,
-        unreachable: bool = False,
-    ) -> None:
-        self._read = None if unreachable else FetchedListings(listed or {}, episode_by_size or {})
-        self.reads: list[tuple[int, ResolvedMappings]] = []
+    def __init__(self, episode_by_size: Mapping[int, int] | None = None, *, unreachable: bool = False) -> None:
+        self._read = None if unreachable else FetchedListings({}, episode_by_size or {})
 
     def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
-        self.reads.append((series_id, resolved))
+        del series_id, resolved
         return self._read
 
 

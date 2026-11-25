@@ -45,7 +45,6 @@ from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import (
     ExternalIds,
     MappingSource,
-    ResolvedMappings,
     TitleMapping,
 )
 from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
@@ -80,6 +79,7 @@ from pearlarr.wait_types import (
 from .builders import (
     FakeCacheStore,
     FakeClock,
+    FakeSeaDexSource,
     ScriptedAniListClient,
     claim_anilist_ids,
     grab_plan,
@@ -95,6 +95,7 @@ from .builders import (
     make_run_deps,
     make_sonarr_episodes,
     make_sonarr_sync,
+    make_torrent_record,
     manual_candidate,
     numbered_names,
     parsed_info,
@@ -107,8 +108,6 @@ from .builders import (
     stored_orders,
     stored_scene_mappings,
     title_claim,
-    title_window,
-    torrent_listing,
     two_claim_pending_import,
 )
 from .fakes import (
@@ -489,37 +488,48 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == [placed_episode(season=1, episode=2, size=1000)]
         assert req.input_unread_groups == ()
 
-    def test_a_specials_torrent_the_listing_contradicts_is_skipped(self) -> None:
-        # The series' entries list the torrent over specials 2, 4 and 6, three as it is wide, and its `1` is none of
-        # them: the torrent counts by another TVDB state. Nothing is placed for the planner, and the release is
-        # skipped.
-        specials = [sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)]
-        files = tuple(f"Show.S00E{n:02d}.mkv" for n in range(1, 4))
-        seadex: SeadexDict = {
-            "NAN0": rg_group({_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", files=list(files))}),
+    def test_the_listing_that_skips_a_specials_torrent_counts_the_ignored_titles_entry(self) -> None:
+        # Title 5 has specials 2 and 4. Its entry lists the torrent, and so does the entry of title 6, which the
+        # series' mappings ignore, on special 6: three specials, as the torrent is wide, and its `1` is none of them.
+        # The torrent counts by another TVDB state, so nothing is placed and every file is left for a hand import.
+        files = ("Show.S00E01.mkv", "Show.S00E02.mkv", "Show.S00E03.mkv")
+        torrent = make_torrent_record(url=_GRAB_URL, infohash="h1", file_names=files)
+        own_entry = make_entry_record(anilist_id=5, url="https://releases.moe/5", torrents=(torrent,))
+        seadex = FakeSeaDexSource(
+            {5: own_entry, 6: make_entry_record(anilist_id=6, url="https://releases.moe/6", torrents=(torrent,))}
+        )
+        own = TitleMapping(anilist_id=5, tvdb_mappings={0: [(2, 2), (4, 4)]})
+        seadex_dict: SeadexDict = {
+            "NAN0": rg_group(
+                {_GRAB_URL: make_release(url=_GRAB_URL, infohash="h1", files=list(files), size=[1000] * 3)}
+            )
         }
         run = FakeRunServices(
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
+            anilist_ids={5: own},
+            ignored={6: TitleMapping(anilist_id=6, tvdb_mappings={0: [(6, 6)]})},
+            prologue_entry=own_entry,
             anilist_title="Show Specials",
-            seadex_dict=seadex,
+            seadex_dict=seadex_dict,
             plan_marks=frozenset({_GRAB_URL}),
             import_wait_mode=ImportWaitMode.BLOCKING,
             cache_store=FakeCacheStore(),
         )
         parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
-        strat = sonarr_checking(
-            run,
-            ScriptedEpisodes(FakeSonarrClient(episodes=specials), windows={5: [specials[1], specials[3]]}),
-            parse=ScriptedParse({_GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in files)}),
-            listings=ScriptedListings({"h1": torrent_listing(title_window(1, (502, 504, 506)))}),
+        sonarr = FakeSonarrClient(
+            episodes=[sonarr_ep(0, n, ep_id=500 + n, episode_file_id=0) for n in range(1, 7)], parse_fn=parses.get
         )
+        strat = SonarrStrategy(make_run_deps(seadex=seadex), run, sonarr_client=sonarr)
 
-        strat.check_title(_SERIES_7, 5, TitleMapping(anilist_id=5))
+        strat.check_title(_SERIES_7, 5, own)
 
         (req,) = run.grab_requests
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.MISNUMBERED
-        assert req.seadex_dict["NAN0"].releases[_GRAB_URL].episodes == []
-        assert req.pending_import_updates["h1"].file_map == {}
+        release = req.seadex_dict["NAN0"].releases[_GRAB_URL]
+        assert (release.skip_reason, release.episodes) == (SkipReason.MISNUMBERED, [])
+        update = req.pending_import_updates["h1"]
+        assert (update.file_map, update.hand_import_files) == (
+            {},
+            ("show.s00e01.mkv", "show.s00e02.mkv", "show.s00e03.mkv"),
+        )
         assert req.input_unread_groups == ()
 
     @pytest.mark.parametrize(
@@ -560,15 +570,6 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.seadex_dict["NAN0"].releases[_GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
         assert req.pending_import_updates["h1"].file_map == {}
         assert req.input_unread_groups == ("NAN0",)
-
-    def test_the_listing_read_gets_the_ignored_titles_too(self) -> None:
-        listings = ScriptedListings()
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[_EP1, _EP2]), windows={5: [_EP2]})
-
-        _sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=listings)
-
-        kept = {4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)}
-        assert listings.reads == [(7, ResolvedMappings(kept=kept, ignored={6: TitleMapping(anilist_id=6)}))]
 
     def test_with_the_wait_off_a_stored_torrent_is_placed_and_no_pending_import_update_is_built(self) -> None:
         # A run that waits on no import reads no stored pending import. This one was stored without TVDB ids, so a
