@@ -48,6 +48,7 @@ from pearlarr.clock import Clock
 from pearlarr.config import AppConfig, Arr
 from pearlarr.episode_ids import is_row_id
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeStatuses, TrustedGroups
+from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
 from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
@@ -1552,6 +1553,10 @@ def pending_import(**overrides: Any) -> PendingImport:
         without = rows_without_tvdb_ids(defaults["file_episode_map"], defaults["claims"])
         defaults["tvdb_ids"] = TvdbIds({**without.by_row_id, **tvdb_ids})
     return PendingImport(**defaults)
+
+
+HALVES = tuple(normalize_file_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
+"""The two halves of a split opener, which only the DVD order numbers."""
 
 
 def order_only_hand_import_files(

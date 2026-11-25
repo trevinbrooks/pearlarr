@@ -8,7 +8,6 @@ from typing import cast
 
 import pytest
 
-from pearlarr.file_paths import normalize_file_name
 from pearlarr.pending_import import (
     NO_ORDER_ONLY,
     NO_TVDB_IDS,
@@ -26,6 +25,7 @@ from pearlarr.pending_import import (
 from pearlarr.releases import EpisodeKey, OrderOnlyKey
 
 from .builders import (
+    HALVES,
     SEP,
     claim_anilist_ids,
     pending_import,
@@ -34,9 +34,6 @@ from .builders import (
     title_claim,
     title_window,
 )
-
-HALVES = tuple(normalize_file_name(f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv") for n in (1, 2))
-"""The two halves of a split opener, which only the DVD order numbers."""
 
 _HALF_KEYS = (OrderOnlyKey("dvd", EpisodeKey(7, 1)), OrderOnlyKey("dvd", EpisodeKey(7, 2)))
 """The halves' DVD-order keys."""
