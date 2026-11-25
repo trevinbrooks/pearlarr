@@ -23,7 +23,6 @@ from pearlarr.config import Arr
 from pearlarr.output import (
     ArrRunFinished,
     Diagnostic,
-    Event,
     Phase,
     RichRenderer,
     RowFinished,
@@ -44,7 +43,7 @@ from pearlarr.output.wait_lines import live_model
 from pearlarr.output.wait_region import WaitRegion, _LiveFrame
 from pearlarr.wait_types import Outcome
 
-from .fakes import CaptureHandler, RecordingHub, install_recording_hub, strip_ansi
+from .fakes import CaptureHandler, RecordingHub, feed_renderer, install_recording_hub, strip_ansi
 
 
 def _render_group(group: Group) -> str:
@@ -68,11 +67,6 @@ def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     return RichRenderer(lambda: console, time_source=lambda: 0.0), stream
 
 
-def _feed(renderer: RichRenderer, *events: Event) -> None:
-    for event in events:
-        renderer.handle(event, 0.0)
-
-
 def _plain(stream: io.StringIO) -> str:
     return strip_ansi(stream.getvalue()).replace("\r", "")
 
@@ -91,10 +85,10 @@ class TestWaitLiveRegionLifecycle:
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
+        feed_renderer(renderer, WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING))
         assert renderer._wait._live is None  # WaitStarted alone never opens the live region
 
-        _feed(renderer, _progress(_dl("Show"), elapsed=0))
+        feed_renderer(renderer, _progress(_dl("Show"), elapsed=0))
         live = renderer._wait._live
         assert live is not None and live.is_started
 
@@ -104,7 +98,7 @@ class TestWaitLiveRegionLifecycle:
     def test_row_finish_prints_above_the_active_live_region(self) -> None:
         renderer, stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=2, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show A"), elapsed=0),
@@ -113,7 +107,7 @@ class TestWaitLiveRegionLifecycle:
         live = renderer._wait._live
         assert live is not None and live.is_started  # the live region is still active
 
-        _feed(
+        feed_renderer(
             renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.BLOCKING)
         )
         out = _plain(stream)
@@ -125,7 +119,7 @@ class TestWaitLiveRegionLifecycle:
         # the observable guarantee is a stopped Live WITH the tally present.
         renderer, stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
@@ -133,7 +127,7 @@ class TestWaitLiveRegionLifecycle:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(
+        feed_renderer(
             renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=150, in_progress=0, kind=WaitKind.BLOCKING)
         )
         assert renderer._wait._live is None and not live.is_started
@@ -142,7 +136,7 @@ class TestWaitLiveRegionLifecycle:
     def test_a_finish_with_no_rows_prints_no_tally(self) -> None:
         renderer, stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
@@ -154,7 +148,7 @@ class TestWaitLiveRegionLifecycle:
     def test_begin_run_stops_the_live(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
@@ -174,7 +168,7 @@ class TestNonLiveProgressLine:
     def test_prints_start_and_throttled_progress_lines_without_a_live(self) -> None:
         renderer, stream = _live_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),  # the start snapshot never prints a progress line
@@ -191,7 +185,7 @@ class TestNonLiveProgressLine:
         renderer, stream = _live_renderer(width=20)
         renderer.set_level(logging.WARNING)
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
@@ -209,7 +203,7 @@ class TestNonLiveProgressLine:
         renderer, stream = _live_renderer(width=40)
         renderer.set_level(logging.WARNING)
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
@@ -225,7 +219,7 @@ class TestOpenScopesTeardown:
     def test_scope_closed_tears_down_the_wait_live(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
@@ -234,13 +228,13 @@ class TestOpenScopesTeardown:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, ScopeClosed(scope=_WAIT))
+        feed_renderer(renderer, ScopeClosed(scope=_WAIT))
         assert renderer._wait._live is None and not live.is_started
 
     def test_arr_run_finished_unwind_tears_down_the_wait_live(self) -> None:
         renderer, _stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
@@ -249,7 +243,7 @@ class TestOpenScopesTeardown:
         live = renderer._wait._live
         assert live is not None and live.is_started
 
-        _feed(renderer, ArrRunFinished(arr=Arr.SONARR))
+        feed_renderer(renderer, ArrRunFinished(arr=Arr.SONARR))
         assert renderer._wait._live is None and not live.is_started
 
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:
@@ -257,7 +251,7 @@ class TestOpenScopesTeardown:
         # A second pass mints a fresh Live (a leaked slot would be reused, nested).
         renderer, _stream = _live_renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             ScopeOpened(scope=_WAIT, label="wait"),
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
@@ -266,10 +260,10 @@ class TestOpenScopesTeardown:
         first = renderer._wait._live
         assert first is not None and first.is_started
 
-        _feed(renderer, ScopeClosed(scope=_WAIT))
+        feed_renderer(renderer, ScopeClosed(scope=_WAIT))
         assert renderer._wait._live is None and not first.is_started
 
-        _feed(
+        feed_renderer(
             renderer,
             ScopeOpened(scope=_WAIT_TWO, label="wait"),
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
@@ -286,14 +280,14 @@ class TestOpenScopesTeardown:
         renderer, stream = _live_renderer()
         renderer.set_level(logging.WARNING)
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),
         )
         assert renderer._wait._live is not None  # the live region is NOT level-gated
 
-        _feed(
+        feed_renderer(
             renderer,
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
             WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.BLOCKING),
@@ -306,7 +300,7 @@ class TestOpenScopesTeardown:
     def test_without_a_rich_console_every_wait_event_no_ops(self) -> None:
         renderer = RichRenderer(lambda: None, time_source=lambda: 0.0)
 
-        _feed(
+        feed_renderer(
             renderer,
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             _progress(_dl("Show"), elapsed=0),

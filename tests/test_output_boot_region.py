@@ -29,7 +29,6 @@ from pearlarr.output import (
     BootStepSlow,
     BootStepStarted,
     Diagnostic,
-    Event,
     PearlarrStarted,
     RichRenderer,
     ScanStarted,
@@ -50,7 +49,7 @@ from pearlarr.output.boot_region import (
 from pearlarr.wait_types import OutcomeKind
 
 from .builders import SEP
-from .fakes import strip_ansi
+from .fakes import feed_renderer, strip_ansi
 
 _BOOT_SCOPE = ScopeId(ScopeKind.BOOT, 900)
 _BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT, 901)
@@ -95,11 +94,6 @@ def _renderer(*, width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     return RichRenderer(lambda: console), stream
 
 
-def _feed(renderer: RichRenderer, *events: Event) -> None:
-    for event in events:
-        renderer.handle(event, 0.0)
-
-
 def _plain(stream: io.StringIO) -> str:
     return strip_ansi(stream.getvalue()).replace("\r", "")
 
@@ -142,7 +136,7 @@ class TestBootRegion:
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(renderer, PearlarrStarted(version="v9.9.9", data_dir="/data/dir"))
+        feed_renderer(renderer, PearlarrStarted(version="v9.9.9", data_dir="/data/dir"))
 
         lines = _plain(stream).splitlines()
         assert "Pearlarr v9.9.9" in lines
@@ -151,7 +145,7 @@ class TestBootRegion:
     def test_finished_steps_become_durable_scrollback_lines(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             _opened(),
             _started("Reading config"),
@@ -176,7 +170,7 @@ class TestBootRegion:
     def test_labels_render_literally_never_as_markup(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             _opened(),
             _started("[1/2] weird [bold]label[/bold]"),
@@ -191,7 +185,7 @@ class TestBootRegion:
         # LogBootView did - the heads-up line carries liveness instead of a spinner.
         renderer, narrow = _renderer(width=20)
 
-        _feed(
+        feed_renderer(
             renderer,
             _opened(),
             _started("Refreshing mappings"),
@@ -203,7 +197,7 @@ class TestBootRegion:
         assert "  Refreshing mappings…" in _plain(narrow).splitlines()
 
         live_renderer, wide = _renderer()
-        _feed(
+        feed_renderer(
             live_renderer,
             _opened(),
             _started("Refreshing mappings"),
@@ -218,14 +212,14 @@ class TestBootRegion:
     def test_scope_closed_tears_down_the_live_slot(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(renderer, _opened(), _started("One"), _finished("One"))
+        feed_renderer(renderer, _opened(), _started("One"), _finished("One"))
         live = renderer._boot._live
         assert live is not None and live.is_started
-        _feed(renderer, ScopeClosed(scope=_BOOT_SCOPE))
+        feed_renderer(renderer, ScopeClosed(scope=_BOOT_SCOPE))
         assert renderer._boot._live is None and not live.is_started
         # A second boot scope must start a FRESH Live: rich refuses two concurrent
         # Lives on one console, so a leaked slot would raise LiveError here.
-        _feed(
+        feed_renderer(
             renderer,
             _opened(_BOOT_SCOPE_TWO),
             _started("Two", serial=2),
@@ -242,10 +236,10 @@ class TestBootRegion:
         # any ScopeClosed. The spinner must not survive over the scan output.
         renderer, _stream = _renderer()
 
-        _feed(renderer, _opened(), _started("Fetching library"))
+        feed_renderer(renderer, _opened(), _started("Fetching library"))
         live = renderer._boot._live
         assert live is not None and live.is_started
-        _feed(renderer, ScanStarted(arr=Arr.SONARR, total=182))
+        feed_renderer(renderer, ScanStarted(arr=Arr.SONARR, total=182))
 
         assert renderer._boot._live is None and not live.is_started
 
@@ -253,10 +247,10 @@ class TestBootRegion:
         # Teardown keys on the boot scope leaving the open scopes, not on WHICH event caused it.
         for boundary in (PearlarrStarted(version="v9.9.9", data_dir="/data"), ScheduledRunStarted(number=2)):
             renderer, _stream = _renderer()
-            _feed(renderer, _opened(), _started("Fetching library"))
+            feed_renderer(renderer, _opened(), _started("Fetching library"))
             live = renderer._boot._live
             assert live is not None and live.is_started
-            _feed(renderer, boundary)
+            feed_renderer(renderer, boundary)
             assert renderer._boot._live is None and not live.is_started
 
     def test_arr_run_finished_boundary_evicts_the_live_and_the_next_arr_run_starts_fresh(self) -> None:
@@ -266,14 +260,14 @@ class TestBootRegion:
         # nested on rich's live stack), so the load-bearing pin is object identity.
         renderer, stream = _renderer()
 
-        _feed(renderer, _opened(), _started("One"))
+        feed_renderer(renderer, _opened(), _started("One"))
         first_arr_run_live = renderer._boot._live
         assert first_arr_run_live is not None and first_arr_run_live.is_started
 
-        _feed(renderer, ArrRunFinished(arr=Arr.SONARR))
+        feed_renderer(renderer, ArrRunFinished(arr=Arr.SONARR))
         assert renderer._boot._live is None and not first_arr_run_live.is_started
 
-        _feed(renderer, _opened(_BOOT_SCOPE_TWO), _started("Two", serial=2), _finished("Two", serial=2))
+        feed_renderer(renderer, _opened(_BOOT_SCOPE_TWO), _started("Two", serial=2), _finished("Two", serial=2))
         second_arr_run_live = renderer._boot._live
         assert second_arr_run_live is not None and second_arr_run_live.is_started
         assert second_arr_run_live is not first_arr_run_live  # a fresh slot, never the leftover one
@@ -287,11 +281,11 @@ class TestBootRegion:
     def test_begin_run_and_close_stop_a_live_slot(self) -> None:
         renderer, _stream = _renderer()
 
-        _feed(renderer, _opened(), _started("One"))
+        feed_renderer(renderer, _opened(), _started("One"))
         renderer.begin_run()
-        _feed(renderer, _opened(), _started("Two", serial=2))
+        feed_renderer(renderer, _opened(), _started("Two", serial=2))
         renderer.close()
-        _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_BOOT_SCOPE))
+        feed_renderer(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_BOOT_SCOPE))
 
     def test_a_raising_live_stop_still_prints_the_ready_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The shared base class (LiveRegion._stop_live) contains a stop() raise so a
@@ -305,7 +299,7 @@ class TestBootRegion:
         monkeypatch.setattr(Live, "stop", exploding_stop)
         renderer, stream = _renderer()
 
-        _feed(renderer, _opened(), _started("Fetching library"), BootReady(elapsed_s=0.61))
+        feed_renderer(renderer, _opened(), _started("Fetching library"), BootReady(elapsed_s=0.61))
 
         assert renderer._boot._live is None
         assert "ready in 0.61s" in _plain(stream)
@@ -313,7 +307,7 @@ class TestBootRegion:
     def test_progress_updates_never_raise_and_stay_transient(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(
+        feed_renderer(
             renderer,
             _opened(),
             _started("Refreshing mappings"),
@@ -331,7 +325,7 @@ class TestBootRegion:
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
 
-        _feed(
+        feed_renderer(
             renderer,
             PearlarrStarted(version="v9.9.9", data_dir="/data"),
             _opened(),
@@ -353,7 +347,7 @@ class TestBootRegion:
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
 
-        _feed(
+        feed_renderer(
             renderer,
             _opened(),
             _started("Reading config"),
@@ -369,9 +363,9 @@ class TestBootRegion:
     def test_level_source_is_live_not_a_construction_snapshot(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(renderer, _opened(), _started("One"), _finished("One"))
+        feed_renderer(renderer, _opened(), _started("One"), _finished("One"))
         renderer.set_level(logging.WARNING)
-        _feed(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_BOOT_SCOPE))
+        feed_renderer(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_BOOT_SCOPE))
 
         out = _plain(stream)
         assert "✔ One" in out
@@ -380,7 +374,7 @@ class TestBootRegion:
     def test_without_a_rich_console_every_boot_event_no_ops(self) -> None:
         renderer = RichRenderer(lambda: None)
 
-        _feed(
+        feed_renderer(
             renderer,
             PearlarrStarted(version="v9.9.9", data_dir="/data"),
             _started("Reading config"),
