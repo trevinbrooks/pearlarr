@@ -8,8 +8,9 @@ is skipped with a notice.
 
 The same-files tests call `reduce_overlapping_grabs` on marks already set: the marks, and which of them are upgrades,
 are that step's whole input, and building each from the arr's files would bury it. A group built with `rg_group` and
-no episodes is a movie's, as Radarr sends it. The planner reads a release's sizes and placed episodes, never its file
-names.
+no episodes is a movie's, as Radarr sends it. A group's private release lists files its public releases lack: one
+whose files they cover is dropped before the planner sees it. The planner reads a release's sizes and placed
+episodes, never its file names.
 """
 
 import logging
@@ -178,7 +179,12 @@ class TestGroupsCoveringTheSameFiles:
         # The mixed group comes first, but its private release would be skipped when added, losing what only it
         # covers: the fully public group is kept.
         seadex = {
-            "Mixed": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
+            "Mixed": rg_group(
+                {
+                    "u1": make_release(download=True, size=[100]),
+                    "u2": make_release(download=True, is_public=False, size=[200]),
+                }
+            ),
             "Pub": rg_group({"u3": make_release(download=True)}),
         }
 
@@ -190,8 +196,18 @@ class TestGroupsCoveringTheSameFiles:
     def test_keeper_degrades_to_first_when_all_mixed(self) -> None:
         # With no fully public group the first is kept whole, and the add skips its private release with a warning.
         seadex = {
-            "MixedA": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
-            "MixedB": rg_group({"u3": make_release(download=True), "u4": make_release(download=True, is_public=False)}),
+            "MixedA": rg_group(
+                {
+                    "u1": make_release(download=True, size=[100]),
+                    "u2": make_release(download=True, is_public=False, size=[200]),
+                }
+            ),
+            "MixedB": rg_group(
+                {
+                    "u3": make_release(download=True, size=[300]),
+                    "u4": make_release(download=True, is_public=False, size=[400]),
+                }
+            ),
         }
 
         _reduce(seadex)
@@ -218,7 +234,7 @@ class TestGroupsCoveringTheSameFiles:
         # release's files ungrabbed: the fully public group stands in.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
-            "MixedPub": rg_group({"u2": make_release(is_public=False), "u3": make_release()}),
+            "MixedPub": rg_group({"u2": make_release(is_public=False, size=[200]), "u3": make_release(size=[100])}),
             "Pub": rg_group({"u4": make_release()}),
         }
 
@@ -248,7 +264,12 @@ class TestGroupsCoveringTheSameFiles:
         # public group not marked to grab is a fallback, which never replaces M's outdated copy: M is kept, and the
         # outdated mark is set with no notice, since the add warns for the private release.
         seadex = {
-            "M": rg_group({"u1": make_release(), "u2": make_release(download=True, is_public=False, upgrade=True)}),
+            "M": rg_group(
+                {
+                    "u1": make_release(size=[100]),
+                    "u2": make_release(download=True, is_public=False, upgrade=True, size=[200]),
+                }
+            ),
             "F": rg_group({"u3": make_release(is_fallback=True)}),
         }
 
@@ -260,7 +281,12 @@ class TestGroupsCoveringTheSameFiles:
     def test_degraded_keeper_promotes_preferred_public_on_size_mismatch(self) -> None:
         # The same mixed group, beside a public group that is no fallback: that group stands in.
         seadex = {
-            "M": rg_group({"u1": make_release(), "u2": make_release(download=True, is_public=False, upgrade=True)}),
+            "M": rg_group(
+                {
+                    "u1": make_release(size=[100]),
+                    "u2": make_release(download=True, is_public=False, upgrade=True, size=[200]),
+                }
+            ),
             "P": rg_group({"u3": make_release()}),
         }
 
@@ -274,7 +300,12 @@ class TestGroupsCoveringTheSameFiles:
         # With no upgrade the grabs may be of files the arr lacks, and the public group not marked may be owned, so
         # nothing stands in and the mixed group is kept.
         seadex = {
-            "Mixed": rg_group({"u1": make_release(download=True), "u2": make_release(download=True, is_public=False)}),
+            "Mixed": rg_group(
+                {
+                    "u1": make_release(download=True, size=[100]),
+                    "u2": make_release(download=True, is_public=False, size=[200]),
+                }
+            ),
             "P": rg_group({"u3": make_release()}),
         }
 
@@ -303,22 +334,22 @@ class TestGroupsCoveringTheSameFiles:
         seadex = {
             "M": rg_group(
                 {
-                    "u_pub": make_release(download=True),
-                    "u_priv": make_release(download=True, is_public=False, upgrade=True),
+                    "u_pub": make_release(download=True, upgrade=True, size=[100]),
+                    "u_priv": make_release(download=True, is_public=False, upgrade=True, size=[200]),
                 }
             ),
         }
 
         skips = _reduce(seadex)
 
-        assert _grabs(seadex) == {"u_pub": "grab", "u_priv": "upgrade"}
+        assert _grabs(seadex) == {"u_pub": "upgrade", "u_priv": "upgrade"}
         assert skips == PrivateOnlyNotices()
 
     def test_promotes_mixed_group_not_to_grab_flipping_only_public_releases(self) -> None:
         # A mixed group is the only one that can stand in for the private upgrade: its public release is grabbed.
         seadex = {
             "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True)}),
-            "M": rg_group({"m_pub": make_release(), "m_priv": make_release(is_public=False)}),
+            "M": rg_group({"m_pub": make_release(size=[100]), "m_priv": make_release(is_public=False, size=[200])}),
         }
 
         skips = _reduce(seadex)
