@@ -1,7 +1,7 @@
 # pyright: strict
 """Tests for the scan rendering layer.
 
-Two halves over ONE set of goldens (the data in `test_scan_parity`, captured
+Two halves over ONE set of goldens (the data in `scan_goldens`, captured
 from the live reporter): the pure `scan_lines` builders reproduce the exact
 `(level, message, payload)` tuples per event, and the RichRenderer's scan branch
 renders the same lines through the shared payload renderers on the shared
@@ -52,7 +52,7 @@ from pearlarr.output.scan_lines import (
 )
 
 from .fakes import strip_ansi
-from .test_scan_parity import (
+from .scan_goldens import (
     ACTION_DOWNLOADING_NO_WAIT,
     ACTION_DOWNLOADING_NO_WAIT_LINES,
     ACTION_DOWNLOADING_WAITING,
