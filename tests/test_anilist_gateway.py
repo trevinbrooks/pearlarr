@@ -17,7 +17,7 @@ from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
 from pearlarr.stamps import STAMP_FORMAT
 
 from .builders import FakeCacheStore, ScriptedAniListClient, anilist_body, make_anilist_gateway
-from .fakes import CaptureHandler
+from .fakes import CaptureHandler, RecordingProgress
 
 
 def _stamp(*, days_ago: int) -> str:
@@ -50,16 +50,6 @@ def _dateless_answer(anilist_id: int) -> dict[str, Any]:
     body = anilist_body(anilist_id)
     del body["data"]["Media"]["startDate"]
     return {"fetched_at": _stamp(days_ago=1), "data": body}
-
-
-class _RecordingProgress:
-    """Typed recording ProgressSink: captures each (fraction, detail) update."""
-
-    def __init__(self) -> None:
-        self.updates: list[tuple[float, str | None]] = []
-
-    def progress(self, fraction: float, detail: str | None = None) -> None:
-        self.updates.append((fraction, detail))
 
 
 class TestLoadCache:
@@ -105,7 +95,7 @@ class TestPrefetch:
         client = ScriptedAniListClient(absent=frozenset({7}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        progress = _RecordingProgress()
+        progress = RecordingProgress()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
         fetched = gateway.prefetch(ids, dry_run=False, progress=progress)
@@ -166,7 +156,7 @@ class TestPrefetch:
         client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
         gateway = make_anilist_gateway(client, store)
-        progress = _RecordingProgress()
+        progress = RecordingProgress()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
         fetched = gateway.prefetch(ids, dry_run=False, progress=progress)

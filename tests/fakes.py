@@ -261,6 +261,18 @@ class AsciiStringIO(io.StringIO):
     encoding = "ascii"
 
 
+class RecordingProgress:
+    """A `ProgressCallback` that records each (fraction, detail) update, in call order."""
+
+    def __init__(self) -> None:
+        self.updates: list[tuple[float, str | None]] = []
+
+    def progress(self, fraction: float, detail: str | None = None) -> None:
+        """Record one update."""
+
+        self.updates.append((fraction, detail))
+
+
 _CLOCK_USE_LIMIT = 10_000
 """Reads plus sleeps one `FakeClock` allows, far past the hundred or so the busiest test takes."""
 
