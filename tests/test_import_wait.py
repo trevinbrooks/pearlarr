@@ -873,16 +873,12 @@ class TestUnmatchedRowFinish:
     def test_run_blocking_finishes_unmatched_on_the_first_poll(self) -> None:
         # The result ends the wait on the poll that establishes it: no final attempt, no import clock.
         strategy = self._strategy()
-        store, view = _run_blocking_wait(
-            strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            import_timeout=600,
-        )
+        store, view = _run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
 
         final = view.final("h")
         assert final.outcome is Outcome.NOTHING_PLACED
         assert final.left_for_hand_import.names == self._NAMES
-        assert final.phase_elapsed_s < 600
+        assert final.phase_elapsed_s == 0
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY]
         assert _stored(store) == {"h": False}
 
@@ -1106,8 +1102,10 @@ class TestRunBlocking:
 
         mgr.run_blocking(view=view)
 
-        paths = {call.infohash: call.content_path for call in strategy.import_calls}
-        assert paths == {"fast": "/fast", "slow": "/slow"}
+        assert [(call.infohash, call.content_path) for call in strategy.import_calls] == [
+            ("fast", "/fast"),
+            ("slow", "/slow"),
+        ]
         assert [view.final(key).outcome for key in ("fast", "slow")] == [Outcome.IMPORTED, Outcome.IMPORTED]
         assert store.get_pending_import_rows(Arr.SONARR) == {}
 
@@ -1134,7 +1132,7 @@ class TestRunBlocking:
         # as files get done and promotes the row to IMPORTED the instant all are done
         # - no second import_completed poll, no RefreshMonitoredDownloads.
         strategy = _RecordingStrategy(
-            attempts=[attempt_result(all_done=False, command_issued=True)],
+            attempts=[attempt_result(all_done=False, command_issued=True, file_map_episode_count=3)],
             progress=[
                 ImportProgress(1, 3, determinate=True),
                 ImportProgress(2, 3, determinate=True),
@@ -1150,12 +1148,7 @@ class TestRunBlocking:
 
         # Only ONE poll. The progress poll did the rest.
         assert len(strategy.import_calls) == 1
-        # The bar advanced (2/3 seen) before the row finished.
-        assert any(
-            t.key == "h" and t.import_done == 2 and t.import_total == 3
-            for snap in view.snapshots
-            for t in snap.torrents
-        )
+        assert [(t.import_done, t.import_total) for t in view.seen("h", Phase.IMPORTING)] == [(0, 3), (1, 3), (2, 3)]
         assert view.final("h").outcome is Outcome.IMPORTED
         assert _stored(store) == {}
 
