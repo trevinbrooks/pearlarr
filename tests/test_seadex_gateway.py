@@ -9,7 +9,7 @@ from pearlarr.output import Severity
 from pearlarr.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexNoEntry
 
 from .builders import make_entry_record
-from .fakes import diagnostic_messages, install_recording_hub
+from .fakes import RecordingProgress, diagnostic_messages, install_recording_hub
 
 
 def _rec(anilist_id: int) -> EntryRecord:
@@ -61,16 +61,6 @@ class FakeSeaDex:
         if anilist_id in self.entries:
             return self.entries[anilist_id]
         raise EntryNotFoundError("nope")
-
-
-class _Recorder:
-    """A `ProgressCallback` that records every `progress` call."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[float, str | None]] = []
-
-    def progress(self, fraction: float, detail: str | None = None) -> None:
-        self.calls.append((fraction, detail))
 
 
 def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
@@ -206,10 +196,10 @@ class TestSeaDexPrefetch:
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
         fake = FakeSeaDex({}, filter_error=httpx.ConnectError("down"))
         gateway = _gateway(fake)
-        rec = _Recorder()
+        rec = RecordingProgress()
 
         assert gateway.prefetch(ids, progress=rec) == len(ids)
-        assert rec.calls[-1] == (1.0, f"{len(ids)}/{len(ids)}")
+        assert rec.updates[-1] == (1.0, f"{len(ids)}/{len(ids)}")
 
     def test_failed_chunk_ids_are_not_marked_absent(self) -> None:
         # An id in a failed chunk is transiently unread, never a remembered
@@ -279,15 +269,15 @@ class TestSeaDexPrefetch:
         fake = FakeSeaDex({1: _rec(1)})
         gateway = _gateway(fake)
         gateway.prefetch([1])  # warm the per-run cache first
-        rec = _Recorder()
+        rec = RecordingProgress()
         assert gateway.prefetch([1], progress=rec) == 0  # nothing left to fetch
-        assert rec.calls == []  # no work -> no progress drive
+        assert rec.updates == []  # no work -> no progress drive
 
     def test_prefetch_drives_progress_per_batch(self) -> None:
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
         fake = FakeSeaDex({i: _rec(i) for i in ids})
         gateway = _gateway(fake)
-        rec = _Recorder()
+        rec = RecordingProgress()
         assert gateway.prefetch(ids, progress=rec) == len(ids)
-        assert len(rec.calls) == 3  # one drive per batch
-        assert rec.calls[-1] == (1.0, f"{len(ids)}/{len(ids)}")  # ends complete
+        assert len(rec.updates) == 3  # one drive per batch
+        assert rec.updates[-1] == (1.0, f"{len(ids)}/{len(ids)}")  # ends complete

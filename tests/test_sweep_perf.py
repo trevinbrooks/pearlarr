@@ -57,7 +57,7 @@ from .builders import (
     rg_group,
     sonarr_ep,
 )
-from .fakes import FakeSonarrClient, ScriptedEpisodes, debug_logger
+from .fakes import FakeSonarrClient, RecordingProgress, ScriptedEpisodes, debug_logger
 
 _NOW = datetime(2026, 6, 28, 12, 0, 0)
 _MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
@@ -321,16 +321,6 @@ def _ids(*anilist_ids: int) -> dict[int, TitleMapping]:
     return {aid: TitleMapping(anilist_id=aid) for aid in anilist_ids}
 
 
-class _Recorder:
-    """A `ProgressCallback` that records every `progress` call."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[float, str | None]] = []
-
-    def progress(self, fraction: float, detail: str | None = None) -> None:
-        self.calls.append((fraction, detail))
-
-
 class _Sonarr(FakeSonarrClient):
     """A scripted Sonarr client for the prefetch warm.
 
@@ -485,13 +475,13 @@ class TestPrefetchEpisodes:
 
     def test_drives_progress_per_series(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
-        rec = _Recorder()
+        rec = RecordingProgress()
         eps.prefetch([_item(1), _item(2), _item(3)], progress=rec)
         # One drive per warmed series, ending complete. Completion order is
         # nondeterministic, so assert on the count + the final value, not the
         # intermediate sequence.
-        assert len(rec.calls) == 2
-        assert rec.calls[-1] == (1.0, "2/2")
+        assert len(rec.updates) == 2
+        assert rec.updates[-1] == (1.0, "2/2")
 
     def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
         sonarr = _GatedSonarr()
@@ -513,10 +503,10 @@ class TestPrefetchEpisodes:
         # It's still attempted, so it counts toward the return value + the bar.
         eps, sonarr = self._eps(mapped={9})
         sonarr.return_none = True
-        rec = _Recorder()
+        rec = RecordingProgress()
         assert eps.prefetch([_item(9)], progress=rec) == 1
         assert held_series_episodes(eps) == {}  # nothing cached
-        assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
+        assert rec.updates[-1] == (1.0, "1/1")  # but progress still completed
 
 
 class TestAiredSeriesRead:

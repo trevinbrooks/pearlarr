@@ -14,7 +14,7 @@ from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
 from pearlarr.xem_gateway import XemGateway
 
 from .builders import FakeCacheStore, stored_scene_mappings
-from .fakes import FakeXemClient
+from .fakes import FakeXemClient, RecordingProgress
 
 _SERIES = 79214
 _OTHER = 257756
@@ -32,16 +32,6 @@ def _gateway(client: FakeXemClient, stored: Mapping[int, CachedSceneMappings] | 
     for tvdb_id, record in (stored or {}).items():
         cache.put_scene_mappings(tvdb_id, record)
     return XemGateway(client=client, cache_store=cache)
-
-
-class _RecordingProgress:
-    """Captures each (fraction, detail) update."""
-
-    def __init__(self) -> None:
-        self.updates: list[tuple[float, str | None]] = []
-
-    def progress(self, fraction: float, detail: str | None = None) -> None:
-        self.updates.append((fraction, detail))
 
 
 def test_a_series_never_read_is_read_and_its_mappings_served() -> None:
@@ -146,7 +136,7 @@ def test_an_unreachable_thexem_keeps_what_is_stored_and_leaves_the_rest_unasked(
 
 
 def test_progress_counts_each_series_asked_for_one_whose_answer_cannot_be_used_too() -> None:
-    progress = _RecordingProgress()
+    progress = RecordingProgress()
     # The second of three due series can't be used. A fourth is fresh and a fifth in aired order: neither counts.
     client = FakeXemClient(unusable=frozenset({2}))
     gateway = _gateway(client, {4: stored_scene_mappings(_OLDER, fresh_for=timedelta(days=1))})
