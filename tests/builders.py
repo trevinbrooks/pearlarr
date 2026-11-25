@@ -964,13 +964,17 @@ def grab_request(**overrides: Any) -> GrabRequest:
 
 
 def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
-    """A bare `GrabPipeline` carrying only what its methods read, `_state` a blocking run, not a dry run."""
+    """A bare `GrabPipeline` carrying only what its methods read, `_state` a blocking run, not a dry run.
+
+    Its AniList client is scripted and knows no title unless `anilist_client` is given, so no lookup leaves the test.
+    """
 
     config = _split_config(overrides)
     logger = make_logger()
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     web = httpx.Client()
-    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web))
+    anilist_client = overrides.pop("anilist_client", None) or ScriptedAniListClient(title=None)
+    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=anilist_client)
     defaults: dict[str, Any] = {
         "_config": config,
         "_planner": make_planner(),
