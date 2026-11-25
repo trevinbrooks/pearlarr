@@ -845,7 +845,10 @@ def _lower_hash(infohash: str | None) -> str | None:
 
 
 class FakeTorrents:
-    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)` or full `AddResult`."""
+    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)` or full `AddResult`.
+
+    It records each release's hash in `calls` and whether it was asked as a dry run in `dry_runs`.
+    """
 
     def __init__(
         self,
@@ -857,6 +860,7 @@ class FakeTorrents:
         self._by_hash = {_lower_hash(h): scripted for h, scripted in by_hash.items()}
         self._raises = {_lower_hash(h): exc for h, exc in (raises or {}).items()}
         self.calls: list[str | None] = []
+        self.dry_runs: list[bool] = []
 
     def add(
         self,
@@ -866,9 +870,9 @@ class FakeTorrents:
     ) -> AddResult:
         """Return the scripted `AddResult` for the release's infohash, or raise its scripted error."""
 
-        del dry_run
         infohash = item.infohash
         self.calls.append(infohash)
+        self.dry_runs.append(dry_run)
         if infohash in self._raises:
             raise self._raises[infohash]
         scripted = self._by_hash[infohash]
