@@ -206,139 +206,39 @@ class FakeQbit:
         return rows
 
 
-class _InterruptOnHash(FakeQbit):
-    """Raises KeyboardInterrupt when the poll reaches the given hash.
+class CategoryQbit(FakeQbit):
+    """A `FakeQbit` recording the category writes the post-import move makes.
 
-    Models a Ctrl-C landing mid-advance-loop, after earlier pending imports already advanced.
+    `set_errors` scripts per-call `torrents_set_category` failures (popped in
+    order), so the create-on-409 retry and the best-effort warn path can be driven.
+    `preferences_error` fails every settings read. Without one, subcategories read as on.
     """
 
-    def __init__(self, torrents: dict[str, list[QbitStep]], *, interrupt_on: str) -> None:
+    def __init__(
+        self,
+        torrents: dict[str, list[QbitStep]] | None = None,
+        *,
+        set_errors: list[Exception] | None = None,
+        preferences_error: Exception | None = None,
+    ) -> None:
         super().__init__(torrents)
-        self._interrupt_on = interrupt_on.casefold()
+        self._set_errors = list(set_errors or [])
+        self._preferences_error = preferences_error
+        self.set_category_calls: list[tuple[str, str]] = []
+        self.created_categories: list[str] = []
 
-    @override
-    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
-        if isinstance(torrent_hashes, str) and torrent_hashes.casefold() == self._interrupt_on:
-            raise KeyboardInterrupt
-        return super().torrents_info(torrent_hashes=torrent_hashes)
+    def torrents_set_category(self, *, category: str, torrent_hashes: str) -> None:
+        if self._set_errors:
+            raise self._set_errors.pop(0)
+        self.set_category_calls.append((category, torrent_hashes))
 
+    def torrents_create_category(self, *, name: str) -> None:
+        self.created_categories.append(name)
 
-def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
-    """A fake as the SDK client it stands in for (the sanctioned leaf-client hatch: no interface to subclass)."""
-
-    return cast("qbittorrentapi.Client", qbit)
-
-
-_ARR_URL = "http://arr.test"
-
-
-def _reading_sonarrs_clients(config: AppConfig, qbit: FakeQbit) -> ArrCategoryResolver:
-    """A resolver reading Sonarr's download clients from `_ARR_URL`, with no retry inside a read, like a run's."""
-
-    http, _ = bind_arr_http(_ARR_URL)
-    return make_categories(config, sources=CategorySources(replace(http, retries=0), _sdk_client(qbit)))
-
-
-def make_pollers(qbit: FakeQbit | None) -> WaitPollers:
-    """Bare `WaitPollers` wired only with the `qbit` the polls read (the ctor takes a real client only)."""
-
-    return make_bare_instance(WaitPollers, _qbit=qbit, _logger=make_logger(), strategy=None)
-
-
-class TestPollTorrent:
-    """poll_torrent turns a single qBittorrent read into a sanitized TorrentPoll."""
-
-    def test_errored(self) -> None:
-        pollers = make_pollers(FakeQbit({"h": [FakeTorrent(is_errored=True)]}))
-
-        assert pollers.poll_torrent("h") == TorrentPoll(TorrentStatus.ERRORED, None)
-
-    def test_complete_on_full_progress_without_flag(self) -> None:
-        # progress == 1.0 counts as complete even if the state flag is unset.
-        torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
-        pollers = make_pollers(FakeQbit({"h": [torrent]}))
-
-        assert pollers.poll_torrent("h") == TorrentPoll(
-            TorrentStatus.COMPLETE,
-            "/data/movie",
-            DownloadProgress(1.0, None, None, None, None),
-        )
-
-    def test_none_on_transient_api_error(self) -> None:
-        # A dropped connection / re-auth in flight is "still waiting", not finished.
-        # The un-observed flag tells the wait pass the zeroed download progress is a
-        # placeholder (keep the last real bar), not a reading.
-        pollers = make_pollers(FakeQbit({"h": [qbittorrentapi.APIConnectionError("boom")]}))
-
-        assert pollers.poll_torrent("h") == TorrentPoll(None, None, observed=False)
-
-    def test_none_when_no_client(self) -> None:
-        pollers = make_pollers(None)
-
-        assert pollers.poll_torrent("h") == TorrentPoll(None, None, observed=False)
-
-
-class TestPollDownloadProgress:
-    """poll_download_progress: ONE batched, read-only info call for the wait region refresh."""
-
-    def test_empty_set_makes_no_call(self) -> None:
-        qbit = FakeQbit({})
-        pollers = make_pollers(qbit)
-
-        assert pollers.poll_download_progress([]) == {}
-        assert qbit.calls == 0
-
-    def test_transient_error_yields_nothing(self) -> None:
-        # The rows just keep their last download progress until the next poll.
-        pollers = make_pollers(FakeQbit(download_progress={"h": [qbittorrentapi.APIConnectionError("boom")]}))
-
-        assert pollers.poll_download_progress(["h"]) == {}
-
-    def test_each_asked_hash_gets_its_own_reading(self) -> None:
-        qbit = FakeQbit(
-            download_progress={
-                "a": [FakeTorrent(progress=0.2, dlspeed=10)],
-                "b": [FakeTorrent(progress=0.8, dlspeed=20)],
-            }
-        )
-
-        assert make_pollers(qbit).poll_download_progress(["a", "b"]) == {
-            "a": DownloadProgress(0.2, 10, None, None, None),
-            "b": DownloadProgress(0.8, 20, None, None, None),
-        }
-
-    def test_unasked_rows_are_ignored(self) -> None:
-        # The batch answers for "h" with a row whose hash reads back "other" -
-        # poll_download_progress must drop what it can't key back to an asked hash.
-        pollers = make_pollers(FakeQbit(download_progress={"h": [FakeTorrent(torrent_hash="other", progress=0.4)]}))
-
-        assert pollers.poll_download_progress(["h"]) == {}
-
-
-class _AutoTickClock(FakeClock):
-    """Time passing between reads: every `now` reading advances by `step`."""
-
-    @override
-    def monotonic(self) -> float:
-        t = super().monotonic()
-        self.t += self._step
-        return t
-
-
-class _InterruptSleepClock(FakeClock):
-    """A clock whose sleep raises KeyboardInterrupt (Ctrl-C mid-wait)."""
-
-    @override
-    def sleep(self, seconds: float) -> None:
-        raise KeyboardInterrupt
-
-
-class _StopSleepClock(FakeClock):
-    """A clock whose sleep raises `SystemExit` (a SIGTERM stop mid-wait)."""
-
-    @override
-    def sleep(self, seconds: float) -> None:
-        raise SystemExit(0)
+    def app_preferences(self) -> dict[str, object]:
+        if self._preferences_error is not None:
+            raise self._preferences_error
+        return {"use_subcategories": True}
 
 
 @dataclass(frozen=True)
@@ -527,6 +427,117 @@ class RecordingWaitView(WaitView):
         """Whether any recorded snapshot showed `key` in `phase`."""
 
         return any(t.key == key and t.phase is phase for snap in self.snapshots for t in snap.torrents)
+
+
+def _run_blocking_wait(
+    strategy: _RecordingStrategy,
+    qbit: FakeQbit,
+    *,
+    step: float = 30,
+    download_timeout: int = 3600,
+    import_timeout: int = 600,
+    progress_poll_interval: int = 5,
+    post_import_category: str | None = None,
+) -> tuple[ImportWaitManager, RecordingWaitView]:
+    """Drive `run_blocking` to completion over one fresh-grab pending import on hash "h".
+
+    The pending import is both a this-run grab and stored (the common blocking-wait
+    shape). The poll interval is fixed at 30; the knob defaults mirror
+    the plain-config shape the class's tests share.
+    """
+
+    pending = pending_import(infohash="h")
+    mgr = make_orchestration_manager(
+        qbit=qbit,
+        strategy=strategy,
+        stored_pending_imports=[pending],
+        pending=[pending],
+        download_timeout=download_timeout,
+        import_timeout=import_timeout,
+        import_poll_interval=30,
+        progress_poll_interval=progress_poll_interval,
+        post_import_category=post_import_category,
+        clock=FakeClock(step=step),
+    )
+    view = RecordingWaitView()
+    mgr.run_blocking(view=view)
+    return mgr, view
+
+
+def make_pollers(qbit: FakeQbit | None) -> WaitPollers:
+    """Bare `WaitPollers` wired only with the `qbit` the polls read (the ctor takes a real client only)."""
+
+    return make_bare_instance(WaitPollers, _qbit=qbit, _logger=make_logger(), strategy=None)
+
+
+class TestPollTorrent:
+    """poll_torrent turns a single qBittorrent read into a sanitized TorrentPoll."""
+
+    def test_errored(self) -> None:
+        pollers = make_pollers(FakeQbit({"h": [FakeTorrent(is_errored=True)]}))
+
+        assert pollers.poll_torrent("h") == TorrentPoll(TorrentStatus.ERRORED, None)
+
+    def test_complete_on_full_progress_without_flag(self) -> None:
+        # progress == 1.0 counts as complete even if the state flag is unset.
+        torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
+        pollers = make_pollers(FakeQbit({"h": [torrent]}))
+
+        assert pollers.poll_torrent("h") == TorrentPoll(
+            TorrentStatus.COMPLETE,
+            "/data/movie",
+            DownloadProgress(1.0, None, None, None, None),
+        )
+
+    def test_none_on_transient_api_error(self) -> None:
+        # A dropped connection / re-auth in flight is "still waiting", not finished.
+        # The un-observed flag tells the wait pass the zeroed download progress is a
+        # placeholder (keep the last real bar), not a reading.
+        pollers = make_pollers(FakeQbit({"h": [qbittorrentapi.APIConnectionError("boom")]}))
+
+        assert pollers.poll_torrent("h") == TorrentPoll(None, None, observed=False)
+
+    def test_none_when_no_client(self) -> None:
+        pollers = make_pollers(None)
+
+        assert pollers.poll_torrent("h") == TorrentPoll(None, None, observed=False)
+
+
+class TestPollDownloadProgress:
+    """poll_download_progress: ONE batched, read-only info call for the wait region refresh."""
+
+    def test_empty_set_makes_no_call(self) -> None:
+        qbit = FakeQbit({})
+        pollers = make_pollers(qbit)
+
+        assert pollers.poll_download_progress([]) == {}
+        assert qbit.calls == 0
+
+    def test_transient_error_yields_nothing(self) -> None:
+        # The rows just keep their last download progress until the next poll.
+        pollers = make_pollers(FakeQbit(download_progress={"h": [qbittorrentapi.APIConnectionError("boom")]}))
+
+        assert pollers.poll_download_progress(["h"]) == {}
+
+    def test_each_asked_hash_gets_its_own_reading(self) -> None:
+        qbit = FakeQbit(
+            download_progress={
+                "a": [FakeTorrent(progress=0.2, dlspeed=10)],
+                "b": [FakeTorrent(progress=0.8, dlspeed=20)],
+            }
+        )
+
+        assert make_pollers(qbit).poll_download_progress(["a", "b"]) == {
+            "a": DownloadProgress(0.2, 10, None, None, None),
+            "b": DownloadProgress(0.8, 20, None, None, None),
+        }
+
+    def test_unasked_rows_are_ignored(self) -> None:
+        # The batch answers for "h" with a row whose hash reads back "other" -
+        # poll_download_progress must drop what it can't key back to an asked hash.
+        pollers = make_pollers(FakeQbit(download_progress={"h": [FakeTorrent(torrent_hash="other", progress=0.4)]}))
+
+        assert pollers.poll_download_progress(["h"]) == {}
 
 
 class TestReportImportsForSeries:
@@ -738,6 +749,16 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         radarr_row = store.get_cached_title(Arr.RADARR, 5)
         assert radarr_row is not None
         assert radarr_row.updated_at == self._CACHED_ON
+
+
+class _AutoTickClock(FakeClock):
+    """Time passing between reads: every `now` reading advances by `step`."""
+
+    @override
+    def monotonic(self) -> float:
+        t = super().monotonic()
+        self.t += self._step
+        return t
 
 
 class TestRunDeferred:
@@ -972,45 +993,6 @@ class TestLeftForHandImportRowFinish:
         assert qbit.set_category_calls == []
 
 
-class TestBlockingWaitRowDiscriminator:
-    """Wait rows carry `carried_over`, so _finish_arr_run can tell them from fresh grabs."""
-
-    def test_wait_rows_tell_fresh_from_carried_over(self) -> None:
-        # One fresh grab + one carried-over pending import, both import: only the
-        # carried-over row is marked, even though the fresh import leaves
-        # `grabbed_this_run` mid-pass.
-        strategy = _RecordingStrategy(
-            completed=attempt_result(all_done=True),
-        )
-        fresh = pending_import(infohash="f", title="Fresh")
-        carried = pending_import(infohash="c", title="Carried")
-        qbit = FakeQbit(
-            {
-                "f": [FakeTorrent(is_complete=True, content_path="/f")],
-                "c": [FakeTorrent(is_complete=True, content_path="/c")],
-            },
-        )
-        mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            stored_pending_imports=[fresh, carried],
-            pending=[fresh],
-            clock=FakeClock(step=30),
-        )
-
-        result = mgr.run_blocking(view=RecordingWaitView())
-
-        assert result is not None
-        assert {row.label: row.carried_over for row in result.rows} == {
-            f"Fresh{SEP}SubGroup": False,
-            f"Carried{SEP}SubGroup": True,
-        }
-        # Imported rows leave the store, so neither converts to a pending import state, and
-        # the `imported` bump stays _finish_arr_run's.
-        assert mgr._state.pending_import_states == {}
-        assert mgr._state.stats.imported == 0
-
-
 class TestTallyCarriedOverIntoStats:
     """tally_carried_over_into_stats counts each still-waiting pending import once."""
 
@@ -1065,39 +1047,37 @@ class TestTallyCarriedOverIntoStats:
         assert (state.stats.downloading, state.stats.downloaded) == counted
 
 
-def _run_blocking_wait(
-    strategy: _RecordingStrategy,
-    qbit: FakeQbit,
-    *,
-    step: float = 30,
-    download_timeout: int = 3600,
-    import_timeout: int = 600,
-    progress_poll_interval: int = 5,
-    post_import_category: str | None = None,
-) -> tuple[ImportWaitManager, RecordingWaitView]:
-    """Drive `run_blocking` to completion over one fresh-grab pending import on hash "h".
+class _InterruptSleepClock(FakeClock):
+    """A clock whose sleep raises KeyboardInterrupt (Ctrl-C mid-wait)."""
 
-    The pending import is both a this-run grab and stored (the common blocking-wait
-    shape). The poll interval is fixed at 30; the knob defaults mirror
-    the plain-config shape the class's tests share.
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise KeyboardInterrupt
+
+
+class _StopSleepClock(FakeClock):
+    """A clock whose sleep raises `SystemExit` (a SIGTERM stop mid-wait)."""
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise SystemExit(0)
+
+
+class _InterruptOnHash(FakeQbit):
+    """Raises KeyboardInterrupt when the poll reaches the given hash.
+
+    Models a Ctrl-C landing mid-advance-loop, after earlier pending imports already advanced.
     """
 
-    pending = pending_import(infohash="h")
-    mgr = make_orchestration_manager(
-        qbit=qbit,
-        strategy=strategy,
-        stored_pending_imports=[pending],
-        pending=[pending],
-        download_timeout=download_timeout,
-        import_timeout=import_timeout,
-        import_poll_interval=30,
-        progress_poll_interval=progress_poll_interval,
-        post_import_category=post_import_category,
-        clock=FakeClock(step=step),
-    )
-    view = RecordingWaitView()
-    mgr.run_blocking(view=view)
-    return mgr, view
+    def __init__(self, torrents: dict[str, list[QbitStep]], *, interrupt_on: str) -> None:
+        super().__init__(torrents)
+        self._interrupt_on = interrupt_on.casefold()
+
+    @override
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
+        if isinstance(torrent_hashes, str) and torrent_hashes.casefold() == self._interrupt_on:
+            raise KeyboardInterrupt
+        return super().torrents_info(torrent_hashes=torrent_hashes)
 
 
 class _ExplodingDropStore(FakeCacheStore):
@@ -1114,6 +1094,45 @@ class _ExplodingPutStore(FakeCacheStore):
     @override
     def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
         raise RuntimeError("put boom")
+
+
+class TestBlockingWaitRowDiscriminator:
+    """Wait rows carry `carried_over`, so _finish_arr_run can tell them from fresh grabs."""
+
+    def test_wait_rows_tell_fresh_from_carried_over(self) -> None:
+        # One fresh grab + one carried-over pending import, both import: only the
+        # carried-over row is marked, even though the fresh import leaves
+        # `grabbed_this_run` mid-pass.
+        strategy = _RecordingStrategy(
+            completed=attempt_result(all_done=True),
+        )
+        fresh = pending_import(infohash="f", title="Fresh")
+        carried = pending_import(infohash="c", title="Carried")
+        qbit = FakeQbit(
+            {
+                "f": [FakeTorrent(is_complete=True, content_path="/f")],
+                "c": [FakeTorrent(is_complete=True, content_path="/c")],
+            },
+        )
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            stored_pending_imports=[fresh, carried],
+            pending=[fresh],
+            clock=FakeClock(step=30),
+        )
+
+        result = mgr.run_blocking(view=RecordingWaitView())
+
+        assert result is not None
+        assert {row.label: row.carried_over for row in result.rows} == {
+            f"Fresh{SEP}SubGroup": False,
+            f"Carried{SEP}SubGroup": True,
+        }
+        # Imported rows leave the store, so neither converts to a pending import state, and
+        # the `imported` bump stays _finish_arr_run's.
+        assert mgr._state.pending_import_states == {}
+        assert mgr._state.stats.imported == 0
 
 
 class TestRunBlocking:
@@ -1935,6 +1954,7 @@ _MOVED_DOWN_ONE = [
 ]
 """A read of series 7 with TVDB episode 9001 on row 102 and 9002 on row 103."""
 
+
 _FOLLOWED_ROW = {"show - 01 [1080p].mkv": [102], "show - 02 [1080p].mkv": [103]}
 """The file map `_followed` gives `_two_titles_stored`, as the stored row holds it."""
 
@@ -2062,43 +2082,24 @@ class TestPendingImportWrites:
         assert mgr._state.grabbed_this_run == {keep.infohash: keep}
 
 
-class CategoryQbit(FakeQbit):
-    """A `FakeQbit` recording the category writes the post-import move makes.
-
-    `set_errors` scripts per-call `torrents_set_category` failures (popped in
-    order), so the create-on-409 retry and the best-effort warn path can be driven.
-    `preferences_error` fails every settings read. Without one, subcategories read as on.
-    """
-
-    def __init__(
-        self,
-        torrents: dict[str, list[QbitStep]] | None = None,
-        *,
-        set_errors: list[Exception] | None = None,
-        preferences_error: Exception | None = None,
-    ) -> None:
-        super().__init__(torrents)
-        self._set_errors = list(set_errors or [])
-        self._preferences_error = preferences_error
-        self.set_category_calls: list[tuple[str, str]] = []
-        self.created_categories: list[str] = []
-
-    def torrents_set_category(self, *, category: str, torrent_hashes: str) -> None:
-        if self._set_errors:
-            raise self._set_errors.pop(0)
-        self.set_category_calls.append((category, torrent_hashes))
-
-    def torrents_create_category(self, *, name: str) -> None:
-        self.created_categories.append(name)
-
-    def app_preferences(self) -> dict[str, object]:
-        if self._preferences_error is not None:
-            raise self._preferences_error
-        return {"use_subcategories": True}
-
-
 _COMPLETE: dict[str, list[QbitStep]] = {"h": [FakeTorrent(is_complete=True, content_path="/d")]}
 """Torrent "h" complete in qBittorrent, as a `FakeQbit` script."""
+
+
+def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
+    """A fake as the SDK client it stands in for (the sanctioned leaf-client hatch: no interface to subclass)."""
+
+    return cast("qbittorrentapi.Client", qbit)
+
+
+_ARR_URL = "http://arr.test"
+
+
+def _reading_sonarrs_clients(config: AppConfig, qbit: FakeQbit) -> ArrCategoryResolver:
+    """A resolver reading Sonarr's download clients from `_ARR_URL`, with no retry inside a read, like a run's."""
+
+    http, _ = bind_arr_http(_ARR_URL)
+    return make_categories(config, sources=CategorySources(replace(http, retries=0), _sdk_client(qbit)))
 
 
 class TestPostImportCategory:
@@ -2207,36 +2208,6 @@ class TestPostImportCategory:
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert [c.infohash for c in strategy.close_calls] == ["h"]
         assert store.get_pending_import_rows(Arr.SONARR) == {}
-
-
-def _movie_import(download_id: str) -> HistoryRecord:
-    """One Radarr `/history/since` import record keyed by the torrent's downloadId."""
-
-    return HistoryRecord.model_validate({"eventType": "movieFolderImported", "downloadId": download_id, "movieId": 5})
-
-
-def _radarr_reconcile_manager(
-    *, qbit: CategoryQbit, history: list[HistoryRecord] | None, store: FakeCacheStore, post_import_category: str
-) -> ImportWaitManager:
-    """A manager wired for a Radarr run: a real `RadarrStrategy` reconciling off scripted history.
-
-    The manager and the strategy share `store`, so a pending import the reconcile
-    drops is gone for the cross-arr category count. The `_state.arr` is RADARR, so
-    the arr-scoped steps read the Radarr pending imports.
-    """
-
-    config = make_config(radarr_post_import_category=post_import_category)
-    radarr = FakeRadarrClient()
-    radarr.history_since_return = history
-    return make_import_wait_manager(
-        config=config,
-        qbit=qbit,
-        cache_store=store,
-        categories=make_categories(config, Arr.RADARR),
-        strategy=make_radarr_sync(radarr=radarr, config=config, cache_store=store),
-        reporter=_RecordingReporter(),
-        state=ArrRunState(arr=Arr.RADARR),
-    )
 
 
 class TestRemoveFromQueue:
@@ -2676,6 +2647,36 @@ class TestCleanupRetryVerification:
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.IMPORT_IN_PROGRESS, True)]
+
+
+def _movie_import(download_id: str) -> HistoryRecord:
+    """One Radarr `/history/since` import record keyed by the torrent's downloadId."""
+
+    return HistoryRecord.model_validate({"eventType": "movieFolderImported", "downloadId": download_id, "movieId": 5})
+
+
+def _radarr_reconcile_manager(
+    *, qbit: CategoryQbit, history: list[HistoryRecord] | None, store: FakeCacheStore, post_import_category: str
+) -> ImportWaitManager:
+    """A manager wired for a Radarr run: a real `RadarrStrategy` reconciling off scripted history.
+
+    The manager and the strategy share `store`, so a pending import the reconcile
+    drops is gone for the cross-arr category count. The `_state.arr` is RADARR, so
+    the arr-scoped steps read the Radarr pending imports.
+    """
+
+    config = make_config(radarr_post_import_category=post_import_category)
+    radarr = FakeRadarrClient()
+    radarr.history_since_return = history
+    return make_import_wait_manager(
+        config=config,
+        qbit=qbit,
+        cache_store=store,
+        categories=make_categories(config, Arr.RADARR),
+        strategy=make_radarr_sync(radarr=radarr, config=config, cache_store=store),
+        reporter=_RecordingReporter(),
+        state=ArrRunState(arr=Arr.RADARR),
+    )
 
 
 class TestCrossArrCategoryGate:
