@@ -3,7 +3,7 @@
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from typing import NamedTuple, override
+from typing import override
 
 from seadex import EntryRecord
 
@@ -14,7 +14,14 @@ from pearlarr.cache import CachedTitleUpdate
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.grab_placement import ListedFile
-from pearlarr.mappings import ExternalIds, MappingResolver, MappingSources, ResolvedMappings, TitleMapping
+from pearlarr.mappings import (
+    AnimeIdsRawMapping,
+    ExternalIds,
+    MappingResolver,
+    MappingSources,
+    ResolvedMappings,
+    TitleMapping,
+)
 from pearlarr.pending_import import TitleNames
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import FetchedListings
@@ -37,17 +44,6 @@ from .builders import (
     scripted_roles,
 )
 from .fakes import FakeRadarrClient, ScriptedEpisodes
-
-
-class TitleMappingsCall(NamedTuple):
-    """One recorded `title_mappings` call (the args the strategy forwarded).
-
-    Defaults mirror the method's own defaults, so a recorded call equals an expected
-    one constructed with only the fields the strategy actually varied.
-    """
-
-    ids: ExternalIds
-    log_ignored: bool = True
 
 
 class FakeRunServices(ArrRunServices):
@@ -94,7 +90,6 @@ class FakeRunServices(ArrRunServices):
         self._plan_marks = plan_marks
         self._plan_grabs_result = plan_grabs_result
         self._import_wait_mode = import_wait_mode
-        self.title_mappings_calls: list[TitleMappingsCall] = []
         self.anilist_id_prologue_calls: list[int] = []
         self.no_episodes_titles: list[str] = []
         self.unmonitored_titles: list[str] = []
@@ -133,7 +128,7 @@ class FakeRunServices(ArrRunServices):
 
     @override
     def title_mappings(self, ids: ExternalIds, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        self.title_mappings_calls.append(TitleMappingsCall(ids, log_ignored))
+        del ids, log_ignored
         return self._anilist_ids
 
     @override
@@ -324,9 +319,19 @@ def seadex_groups(*names: str) -> SeadexDict:
 def mapping_one_series(deps: ArrRunDeps, *, tvdb_id: int, anilist_id: int) -> ArrRunDeps:
     """`deps` whose mappings map TVDB series `tvdb_id` to AniList title `anilist_id`, and nothing else."""
 
-    mapped = MappingSources(
-        anime={"Show": {"anilist_id": anilist_id, "tvdb_id": tvdb_id}}, anidb=False, anibridge=False
-    )
+    return _mapping_only(deps, {"anilist_id": anilist_id, "tvdb_id": tvdb_id})
+
+
+def mapping_one_imdb_title(deps: ArrRunDeps, *, imdb_id: str, anilist_id: int) -> ArrRunDeps:
+    """`deps` whose mappings map IMDb title `imdb_id` to AniList title `anilist_id`, and nothing else."""
+
+    return _mapping_only(deps, {"anilist_id": anilist_id, "imdb_id": imdb_id})
+
+
+def _mapping_only(deps: ArrRunDeps, row: AnimeIdsRawMapping) -> ArrRunDeps:
+    """`deps` whose mappings are the one Anime-IDs row `row`."""
+
+    mapped = MappingSources(anime={"Show": row}, anidb=False, anibridge=False)
     return replace(
         deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
     )
