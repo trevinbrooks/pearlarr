@@ -6,14 +6,10 @@ deterministic close-deeper behavior, unwind close-all, idempotent defensive
 closes, and the label-only read APIs (path text, path_for, during).
 """
 
-from pearlarr.arr_run_state import ArrRunStats
 from pearlarr.config import Arr
 from pearlarr.output import (
     KIND_DEPTH,
     ArrRunFinished,
-    ArrRunSummary,
-    ArrRunSummaryReady,
-    ArrRunTally,
     BootStepFinished,
     BootStepStarted,
     Diagnostic,
@@ -36,6 +32,8 @@ from pearlarr.output import (
 from pearlarr.output.events import TitleState
 from pearlarr.wait_types import OutcomeKind
 
+from .scan_goldens import SUMMARY_MINIMAL
+
 _BOOT = ScopeId(ScopeKind.BOOT, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)
 _TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 3)
@@ -51,22 +49,6 @@ def _open_scopes(*events: Event) -> OpenScopes:
 
 def _kinds(open_scopes: OpenScopes) -> list[ScopeKind]:
     return [open_scope.kind for open_scope in open_scopes.scopes()]
-
-
-def _summary_ready() -> ArrRunSummaryReady:
-    return ArrRunSummaryReady(
-        ArrRunSummary(
-            arr=Arr.SONARR,
-            dry_run_note=None,
-            grabbed_count=0,
-            tally=ArrRunTally.from_stats(ArrRunStats()),
-            wait_mode_on=False,
-            warnings=0,
-            errors=0,
-            elapsed_s=None,
-            tip=None,
-        ),
-    )
 
 
 # --- explicit opens/closes -----------------------------------------------------------
@@ -161,7 +143,7 @@ def test_run_summary_ready_closes_to_run_level() -> None:
     open_scopes = _open_scopes(
         ScanStarted(arr=Arr.SONARR, total=1),
         ItemStarted(arr=Arr.SONARR, index=1, total=1, title="A"),
-        _summary_ready(),
+        SUMMARY_MINIMAL,
     )
     assert _kinds(open_scopes) == [ScopeKind.ARR_RUN]
 

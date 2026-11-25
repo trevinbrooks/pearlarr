@@ -95,6 +95,7 @@ from pearlarr.releases import AnotherTitlesCounts, SkipReason
 from pearlarr.wait_types import Outcome, OutcomeKind
 
 from .builders import files_left_for_hand_import, order_only_hand_import_files
+from .scan_goldens import SUMMARY_MINIMAL
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
@@ -441,24 +442,6 @@ def _summary_ready() -> ArrRunSummaryReady:
             errors=0,
             elapsed_s=401.0,
             tip=NeedsActionCause.PRIVATE_ONLY,
-        ),
-    )
-
-
-def _quiet_summary_ready() -> ArrRunSummaryReady:
-    """A summary with nothing actionable and no errors (stays plain INFO)."""
-
-    return ArrRunSummaryReady(
-        ArrRunSummary(
-            arr=Arr.SONARR,
-            dry_run_note=None,
-            grabbed_count=0,
-            tally=ArrRunTally.from_stats(ArrRunStats()),
-            wait_mode_on=False,
-            warnings=0,
-            errors=0,
-            elapsed_s=None,
-            tip=None,
         ),
     )
 
@@ -1114,7 +1097,7 @@ def test_json_release_skipped_reasons_are_the_skip_reason_names() -> None:
 
 
 def test_json_summary_carries_held_by_cap_only_when_the_run_held_titles() -> None:
-    (quiet,) = _json_lines([_quiet_summary_ready()])
+    (quiet,) = _json_lines([SUMMARY_MINIMAL])
     assert "held_by_cap" not in quiet
 
     stats = ArrRunStats(checked=3)
@@ -1367,5 +1350,5 @@ def test_json_summary_admission_is_data_dependent_at_a_warning_threshold() -> No
     quiet = io.StringIO()
     quiet_renderer = JsonRenderer(quiet)
     quiet_renderer.set_level(logging.WARNING)
-    quiet_renderer.handle(_quiet_summary_ready(), _EPOCH)
+    quiet_renderer.handle(SUMMARY_MINIMAL, _EPOCH)
     assert quiet.getvalue() == ""  # nothing actionable: the routine summary drops
