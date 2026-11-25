@@ -2519,34 +2519,48 @@ class TestOrderOnlyHalves:
     """A name-numbered torrent whose split opener's halves only the DVD order numbers, its other eleven files in."""
 
     _RUN: ClassVar[list[str]] = [f"[grp] Show Ending S1 - {n:02d} [ABCD1234].mkv" for n in range(1, 14)]
-    _KEYS: ClassVar[tuple[OrderOnlyKey, ...]] = (
-        OrderOnlyKey("dvd", EpisodeKey(7, 1)),
-        OrderOnlyKey("dvd", EpisodeKey(7, 2)),
-    )
 
-    def test_the_attempt_result_keys_each_half_by_its_file_name_and_names_the_empty_opener(self) -> None:
+    @pytest.mark.parametrize(
+        ("opener", "missing", "untrusted"),
+        [
+            pytest.param(sonarr_ep(4, 1, ep_id=401, episode_file_id=0), (EpisodeKey(4, 1),), (), id="opener-empty"),
+            pytest.param(
+                sonarr_ep(4, 1, ep_id=401, release_group="other"),
+                (),
+                (EpisodeKey(4, 1),),
+                id="opener-holds-another-groups-file",
+            ),
+        ],
+    )
+    def test_the_attempt_result_keys_each_half_by_its_file_name_and_names_the_opener_still_needed(
+        self, opener: SonarrEpisode, missing: tuple[EpisodeKey, ...], untrusted: tuple[EpisodeKey, ...]
+    ) -> None:
         run = [normalize_file_name(name) for name in self._RUN]
         pending = pending_import(
             release_group="grp",
             seadex_files=self._RUN,
             file_episode_map={name: [400 + n] for n, name in enumerate(run[2:], start=2)},
             hand_import_files=run[:2],
-            order_only=dict(zip(run[:2], self._KEYS, strict=True)),
+            order_only={
+                run[0]: OrderOnlyKey("dvd", EpisodeKey(7, 1)),
+                run[1]: OrderOnlyKey("dvd", EpisodeKey(7, 2)),
+            },
             ordered_episode_ids=[400 + n for n in range(1, 13)],
         )
         strat, sonarr = make_sonarr_for_import(
             candidates=[manual_candidate(f"/d/{name}") for name in self._RUN],
-            episodes=[
-                sonarr_ep(4, 1, ep_id=401, episode_file_id=0),
-                *(sonarr_ep(4, n, ep_id=400 + n, release_group="grp") for n in range(2, 13)),
-            ],
+            episodes=[opener, *(sonarr_ep(4, n, ep_id=400 + n, release_group="grp") for n in range(2, 13))],
         )
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.left_for_hand_import == LeftForHandImport(
-            files=tuple(HandImportFile(name, key) for name, key in zip(self._RUN[:2], self._KEYS, strict=True)),
-            missing=(EpisodeKey(4, 1),),
+            files=(
+                HandImportFile("[grp] Show Ending S1 - 01 [ABCD1234].mkv", OrderOnlyKey("dvd", EpisodeKey(7, 1))),
+                HandImportFile("[grp] Show Ending S1 - 02 [ABCD1234].mkv", OrderOnlyKey("dvd", EpisodeKey(7, 2))),
+            ),
+            missing=missing,
+            untrusted=untrusted,
         )
         assert sonarr.execute_calls == []
 
