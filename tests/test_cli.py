@@ -117,6 +117,16 @@ def _starter_text() -> str:
     return "".join(line for line in template.splitlines(keepends=True) if not line.startswith("# GENERATED"))
 
 
+def _write_data_dir_config(body: str) -> Path:
+    """Write `body` as the config in the test's data dir, where `resolve_paths` looks for it, and give its path."""
+
+    paths = resolve_paths()
+    os.makedirs(paths.data_dir)
+    config = Path(paths.config_file)
+    config.write_text(body, encoding="utf-8")
+    return config
+
+
 class TestCacheRoundTrip:
     """`cache_backup`/`cache_restore`/`cache_remove` round-trip and clean up the cache db.
 
@@ -588,14 +598,6 @@ class TestConfiguredArrs:
         assert recording.of_type(Diagnostic) == []
 
 
-def _write_data_dir_config(body: str) -> None:
-    """Write `body` as the config in the test's data dir, where `resolve_paths` looks for it."""
-
-    paths = resolve_paths()
-    os.makedirs(paths.data_dir)
-    Path(paths.config_file).write_text(body, encoding="utf-8")
-
-
 # Mapping stanza shared by the runnable-config helpers: disabled sources keep
 # the resolver off the network, so a run gets past the shared-deps stage and
 # into the per-arr loop without any I/O.
@@ -669,9 +671,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # The syntax error sits ON the credential line: the report must carry the
         # problem + position (from the error's parts), never str(e)'s source
         # snippet, which would quote the api key back to the console/log.
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
+        _write_data_dir_config('sonarr:\n  api_key: "hunter2\n')
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -723,9 +723,7 @@ class TestRunFailuresAreCleanAndNonzero:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
+        _write_data_dir_config("sonar:\n  url: x\n")
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -747,9 +745,7 @@ class TestSelectionSettlesBeforeMappingFetch:
             raise AssertionError("mapping sources must not be fetched when nothing can run")
 
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", fail_build)
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("", encoding="utf-8")  # valid config, neither arr configured
+        _write_data_dir_config("")  # valid config, neither arr configured
 
         assert run_single() is False
         capsys.readouterr()  # swallow the boot banner + error line
@@ -767,18 +763,14 @@ class TestConfigInspection:
         assert not os.path.exists(resolve_paths().config_file)
 
     def test_validate_lists_the_bad_keys(self, capsys: pytest.CaptureFixture[str]) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
+        _write_data_dir_config("sonar:\n  url: x\n")
         assert config_validate() is False
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
         assert "  - sonar: unknown key" in err
 
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
+        _write_data_dir_config('sonarr:\n  api_key: "hunter2\n')
         assert config_validate() is False
         captured = capsys.readouterr()
         assert "Unreadable YAML" in captured.err
@@ -786,9 +778,7 @@ class TestConfigInspection:
         assert "hunter2" not in captured.err + captured.out
 
     def test_validate_reports_what_a_run_would_use(self, capsys: pytest.CaptureFixture[str]) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n", encoding="utf-8")
+        _write_data_dir_config("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n")
         assert config_validate() is True
         out = capsys.readouterr().out
         assert "OK" in out
@@ -800,12 +790,9 @@ class TestConfigInspection:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text(
+        _write_data_dir_config(
             "sonarr:\n  url: http://sonarr:8989\n  api_key: hunter2\n"
-            "notifications:\n  discord_url: https://discord.com/api/webhooks/1/tok\n",
-            encoding="utf-8",
+            "notifications:\n  discord_url: https://discord.com/api/webhooks/1/tok\n"
         )
         assert config_show() is True
         out = capsys.readouterr().out
@@ -819,9 +806,7 @@ class TestConfigInspection:
     def test_validate_reports_an_old_schema_with_its_conversions(self, capsys: pytest.CaptureFixture[str]) -> None:
         # Valid-but-old is a status fact, not a failure: the run migrates it in
         # memory, and validate names the command that updates the file itself.
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("seadex:\n  private_releases: allow\n", encoding="utf-8")
+        _write_data_dir_config("seadex:\n  private_releases: allow\n")
         assert config_validate() is True
         out = capsys.readouterr().out
         assert "OK" in out
@@ -833,9 +818,7 @@ class TestConfigInspection:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("radarr:\n  url: http://radarr:7878\n", encoding="utf-8")
+        _write_data_dir_config("radarr:\n  url: http://radarr:7878\n")
         assert config_validate() is True  # the file itself is valid
         assert "radarr.api_key is not set" in capsys.readouterr().out
 
@@ -843,16 +826,13 @@ class TestConfigInspection:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text(
+        _write_data_dir_config(
             "sonarr:\n  url: http://user:basicpass@sonarr:8989\n  api_key: k\n"
             "qbittorrent:\n"
             "  host: http://qbit:8080\n"
             "  username: qbcanaryuser\n"
             "  password: hunter2\n"
-            "  options:\n    REQUESTS_ARGS:\n      headers:\n        Authorization: Bearer sekrit\n",
-            encoding="utf-8",
+            "  options:\n    REQUESTS_ARGS:\n      headers:\n        Authorization: Bearer sekrit\n"
         )
         assert config_show() is True
         out = capsys.readouterr().out
@@ -885,10 +865,8 @@ class TestConfigMigrate:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
         text = "seadex:\n  public_only: true\nsonarr:\n  url: http://s\n  api_key: hunter2\n"
-        Path(paths.config_file).write_text(text, encoding="utf-8")
+        config = _write_data_dir_config(text)
 
         assert config_migrate() is True
 
@@ -897,23 +875,21 @@ class TestConfigMigrate:
         assert "public_only" in out
         # The command echoes paths and notes, never config values.
         assert "hunter2" not in out
-        assert Path(paths.config_file + ".bak").read_text(encoding="utf-8") == text
-        migrated = Path(paths.config_file).read_text(encoding="utf-8")
+        assert Path(f"{config}.bak").read_text(encoding="utf-8") == text
+        migrated = config.read_text(encoding="utf-8")
         assert "api_key: hunter2" in migrated
         assert "public_only" not in migrated
         assert f"config_version: {CONFIG_VERSION}" in migrated
 
     def test_a_current_file_is_nothing_to_do(self, capsys: pytest.CaptureFixture[str]) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
         text = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n"
-        Path(paths.config_file).write_text(text, encoding="utf-8")
+        config = _write_data_dir_config(text)
 
         assert config_migrate() is True
 
         assert "nothing to do" in capsys.readouterr().out
-        assert Path(paths.config_file).read_text(encoding="utf-8") == text
-        assert not os.path.exists(paths.config_file + ".bak")
+        assert config.read_text(encoding="utf-8") == text
+        assert not os.path.exists(f"{config}.bak")
 
     def test_missing_file_points_at_init_and_writes_nothing(
         self,
@@ -927,18 +903,16 @@ class TestConfigMigrate:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
         text = "seadex:\n  public_only: true\ntypo_key: 1\n"
-        Path(paths.config_file).write_text(text, encoding="utf-8")
+        config = _write_data_dir_config(text)
 
         assert config_migrate() is False
 
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
         assert "typo_key" in err
-        assert Path(paths.config_file).read_text(encoding="utf-8") == text
-        assert not os.path.exists(paths.config_file + ".bak")
+        assert config.read_text(encoding="utf-8") == text
+        assert not os.path.exists(f"{config}.bak")
 
 
 class TestVersionAndHelp:
@@ -1631,10 +1605,7 @@ class TestUnwritableDataDir:
         # Handler order in load_shared_config matters twice: FileNotFoundError
         # (exit 1) must not swallow this OSError, and the OSError handler must
         # catch it before the traceback handler. Skip + retry, never exit.
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        config = Path(paths.config_file)
-        config.write_text("sonarr:\n  url: http://s\n  api_key: k\n", encoding="utf-8")
+        config = _write_data_dir_config("sonarr:\n  url: http://s\n  api_key: k\n")
         config.chmod(0o000)
         try:
             assert run_single(sonarr=True) is False
@@ -1676,9 +1647,8 @@ class TestScheduledLifecycle:
         # Only the MISSING file exits: an invalid config is likely mid-edit, so
         # scheduled mode must keep skipping + retrying, never raise out of the loop.
         recording = install_recording_hub()
+        _write_data_dir_config("sonar:\n  url: x\n")
         paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
         result = run_arrs(
             [ArrTarget(Arr.SONARR)],
@@ -1700,9 +1670,8 @@ class TestScheduledLifecycle:
         # The run brings an old file forward on disk, not just in memory: one
         # terse notice names the backup, and no old-schema warning fires.
         recording = install_recording_hub()
+        _write_data_dir_config(_OLD_SCHEMA_CONFIG)
         paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text(_OLD_SCHEMA_CONFIG, encoding="utf-8")
         self._stub_resolver(monkeypatch)
 
         assert (
@@ -1726,10 +1695,9 @@ class TestScheduledLifecycle:
         # Live repro of the original bug: --dry-run rewrote an 81 B old-schema
         # file to the full 12 kB template. The file must stay byte-identical.
         recording = install_recording_hub()
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
         old = _OLD_SCHEMA_CONFIG
-        Path(paths.config_file).write_text(old, encoding="utf-8")
+        _write_data_dir_config(old)
+        paths = resolve_paths()
         self._stub_resolver(monkeypatch)
 
         run_arrs(
@@ -1751,12 +1719,8 @@ class TestScheduledLifecycle:
     ) -> None:
         # The knob must reach the file log renderer with the CONFIGURED value, not a default.
         install_recording_hub()
+        _write_data_dir_config("sonarr:\n  url: http://s\n  api_key: k\nadvanced:\n  log_retention_days: 3\n")
         paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text(
-            "sonarr:\n  url: http://s\n  api_key: k\nadvanced:\n  log_retention_days: 3\n",
-            encoding="utf-8",
-        )
         applied: list[int] = []
         original = FileLogRenderer.apply_retention_days
 
