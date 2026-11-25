@@ -1,302 +1,354 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# These tests still call the arr run loop's private finish on a bare loop and read its state.
-# Strict re-flags that, and the repo disables reportPrivateUsage for tests.
-"""Tests for the arr run loop's finish: the order of its steps, what a raise leaves, and its `imported` count.
+"""Tests for the end of an arr run: what it shows, counts, saves and sends once the scan is done.
 
-The reporter, store and wait manager are typed recorders, so the order is read off one list of markers. The
-finalize site that calls the finish is pinned in `test_run_finalize`.
+Each test runs a whole arr run, the loop and its services built by their constructors, over a cache an earlier run
+left pending imports in. qBittorrent is scripted, time is a fake clock, and the arr's side of an import is a
+scripted strategy. The outcome is read off the events the run showed, the cache once it is closed and opened again,
+what the arr was asked to do, and what the wait webhook was sent. That the finish runs once on every path, and
+that a failed push only warns, is pinned in `test_run_finalize`.
 """
 
-from typing import override
+import json
+from dataclasses import replace
+from pathlib import Path
+from typing import cast, override
 
 import pytest
+import respx
 
 from pearlarr.arr_run_loop import ArrRunLoop
-from pearlarr.arr_run_state import ArrRunState
-from pearlarr.config import Arr
-from pearlarr.wait_types import ImportWaitMode, Outcome, PendingImportState
-from pearlarr.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.boot_flow import BootFlow
+from pearlarr.boundary import Json
+from pearlarr.cache import CacheStore
+from pearlarr.config import AppConfig, Arr
+from pearlarr.mappings import TitleMapping
+from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, WaitStarted
+from pearlarr.pending_import import PendingImport
+from pearlarr.wait_types import ImportProgress, ImportWaitMode
 
-from .builders import CLIENT_SENTINEL, FakeCacheStore, make_bare_instance, make_config, make_logger, make_services
-from .fakes import FakeStrategy
+from .builders import attempt_result, make_config, make_run_deps, pending_import
+from .fakes import FakeArrItem, FakeClock, RecordingHub, install_recording_hub
+from .wait_fakes import TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStrategy
 
+_ALL_IMPORTED = (attempt_result(),)
+"""The arr's answer to every import it is asked for: all of the torrent's files are in."""
 
-class _FinalizeReporter:
-    """Records the arr run finish's summary + the two close boundaries as markers."""
+_FINISHED = FakeTorrent(is_complete=True, content_path="/downloads/done")
+"""A torrent qBittorrent has finished downloading."""
 
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
+_DOWNLOADING = FakeTorrent(progress=0.5)
+"""A torrent qBittorrent is still downloading."""
 
-    def scan_finished(self, arr: Arr) -> None:
-        self._calls.append("scan_finished")
-
-    def log_arr_run_summary(
-        self,
-        state: ArrRunState,
-        *,
-        dry_run: bool,
-        has_client: bool,
-    ) -> bool:
-        self._calls.append("summary")
-        return True
-
-    def arr_run_finished(self, arr: Arr) -> None:
-        self._calls.append("run_finished")
+_WEBHOOK = "https://hook.example/wait"
+"""The wait webhook the notifying tests set in the config."""
 
 
-class _RecordingCacheStore(FakeCacheStore):
-    """A `FakeCacheStore` whose `save` appends a `"save"` ordering marker."""
+def _pending(infohash: str, title: str = "Frieren") -> PendingImport:
+    """A pending import of `title` on series 7 by SubGroup, so its wait row reads `<title> · SubGroup`."""
 
-    def __init__(self, calls: list[str]) -> None:
-        super().__init__()
-        self._calls = calls
-
-    @override
-    def save(self, *, dry_run: bool) -> None:
-        self._calls.append("save")
+    return pending_import(infohash=infohash, title=title, series_id=7, release_group="SubGroup")
 
 
-class _FinalizeWaitManager:
-    """A fake wait manager for the finish-ordering tests.
+def _cache_left_with(cache: Path, arr: Arr, *pending: PendingImport) -> None:
+    """Save `pending` for `arr` into the cache file at `cache`, as an earlier run would have left them."""
 
-    Every step appends its ordering marker. The real ones return early on the
-    empty working set these tests build - recording nothing - so a recording
-    fake is what makes each step observable. `raise_on` scripts one step to
-    fail, for the unwind pins (the raise escapes `_finish_arr_run`, exactly as a
-    real failure would, and bootstrap's finally is what closes the run).
-    `check_result` / `blocking_result` script what the wait passes return, so the
-    finish's `imported` bump off the result rows is observable too.
-    """
-
-    def __init__(
-        self,
-        calls: list[str],
-        *,
-        raise_on: str | None = None,
-        check_result: WaitResult | None = None,
-        blocking_result: WaitResult | None = None,
-    ) -> None:
-        self._calls = calls
-        self._raise_on = raise_on
-        self._check_result = check_result
-        self._blocking_result = blocking_result
-
-    def _mark(self, name: str) -> None:
-        self._calls.append(name)
-        if name == self._raise_on:
-            raise RuntimeError(f"{name} exploded")
-
-    def finish_cleanups(self) -> None:
-        self._mark("cleanup")
-
-    def run_deferred(self) -> WaitResult | None:
-        self._mark("check")
-        return self._check_result
-
-    def tally_carried_over_into_stats(self) -> None:
-        self._mark("tally")
-
-    def run_blocking(self) -> WaitResult | None:
-        self._mark("monitor")
-        return self._blocking_result
+    store = CacheStore.load(str(cache), config_hash="")
+    for each in pending:
+        store.put_pending_import_row(arr, each.infohash, each.to_json())
+    store.save(dry_run=False)
+    store.close()
 
 
-def _finalize_engine(
-    calls: list[str],
+def _saved_pending_imports(cache: Path, arr: Arr) -> set[str]:
+    """The hashes of the pending imports the cache file at `cache` holds for `arr`, read fresh."""
+
+    store = CacheStore.load(str(cache), config_hash="")
+    try:
+        return set(store.get_pending_import_rows(arr))
+    finally:
+        store.close()
+
+
+def _run(
+    cache: Path,
+    strategy: RecordingStrategy,
+    qbit: FakeQbit | None,
     *,
-    qbit: object,
     mode: ImportWaitMode,
-    raise_on: str | None = None,
-    supports_blocking_wait: bool = True,
-    check_result: WaitResult | None = None,
-    blocking_result: WaitResult | None = None,
-) -> ArrRunLoop:
-    """A bare arr run loop whose every finish step appends a marker to `calls`.
+    dry_run: bool = False,
+    arr: Arr = Arr.SONARR,
+    config: AppConfig | None = None,
+) -> None:
+    """One whole arr run of `strategy` over the cache file at `cache`, closed after it as bootstrap closes it.
 
-    The reporter, cache store, and wait manager are typed recorders (a
-    `_FinalizeReporter` / `_RecordingCacheStore` / `_FinalizeWaitManager`), so
-    `_finish_arr_run`'s ordering is asserted on the recorded `calls` list without a
-    live Sonarr/qBittorrent. The finish's dry-run fact comes off the services hub,
-    so a bare one shares the arr run loop's state (and the `qbit` that decides dry run).
-    `raise_on` names the wait-manager step that should blow up. `supports_blocking_wait`
-    scripts the active strategy's blocking-wait flag - True is a Sonarr-shaped
-    strategy, False a Radarr one (reconciles pre-summary, never runs a blocking wait pass).
+    The deps, the loop and its services are built the way a run builds them. `mode` goes to `run_arr` as the
+    `--import-wait-mode` override does, so it wins over the config's `imports.wait_mode`, and `dry_run` as
+    `--dry-run` does. `qbit` None is a run with no qBittorrent configured. Every sleep passes one poll interval on a
+    fake clock, so no wait sleeps for real.
     """
 
-    state = ArrRunState(arr=Arr.SONARR, import_wait_mode=mode)
-    return make_bare_instance(
-        ArrRunLoop,
-        qbit=qbit,
-        logger=make_logger(),
-        _config=make_config(
-            download_timeout=3600,
-            import_timeout=600,
-            import_poll_interval=30,
-        ),
-        _reporter=_FinalizeReporter(calls),
-        cache_store=_RecordingCacheStore(calls),
-        _wait_manager=_FinalizeWaitManager(
-            calls,
-            raise_on=raise_on,
-            check_result=check_result,
-            blocking_result=blocking_result,
-        ),
-        _services=make_services(qbit=qbit, _state=state),
-        _active_strategy=FakeStrategy(items=[], anilist_ids={}, supports_blocking_wait=supports_blocking_wait),
-        _state=state,
-    )
+    store = CacheStore.load(str(cache), config_hash="")
+    try:
+        client = None if qbit is None else qbit.client()
+        deps = make_run_deps(config=config, cache_store=store, qbit=client, arr=arr, clock=FakeClock(step=30))
+        loop = ArrRunLoop(deps, ArrRunServices(deps, arr))
+        loop.run_arr(strategy, item_id=None, dry_run=dry_run, import_wait_mode=mode, boot=BootFlow())
+    finally:
+        store.close()
 
 
-class TestFinishArrRunOrdering:
-    """_finish_arr_run brackets the finish with its close boundaries, summary before the blocking wait pass.
+def _finish_steps(recording: RecordingHub) -> list[str]:
+    """What the end of the run showed, in order: the scan closing, each wait opening, the summary, the run closing."""
 
-    `scan_finished` leads on every path - so the reconcile/tally diagnostics that
-    follow print at run level, never inside the last title - and `arr_run_finished`
-    trails the save, so it is the arr run's last event. Finishing the cleanups leads the
-    wait steps in every active mode, before any wait pass reads the store.
+    steps: list[str] = []
+    for event in recording.events:
+        match event:
+            case ScanFinished(arr=arr):
+                steps.append(f"{arr} scan finished")
+            case WaitStarted(kind=kind):
+                steps.append(f"{kind.name.lower()} wait")
+            case ArrRunSummaryReady():
+                steps.append("summary")
+            case ArrRunFinished(arr=arr):
+                steps.append(f"{arr} run finished")
+            case _:
+                pass
+    return steps
+
+
+class TestWhatARunShows:
+    """The end of a run closes the scan first, shows the summary before the blocking wait, and closes the run last.
+
+    With the scan closed first, what the waits report prints at run level, never inside the last title. The summary
+    comes before the blocking wait, so the run's tally shows while it waits. Closing the run is its last event.
     """
 
     @pytest.mark.parametrize(
-        ("qbit", "mode", "supports_blocking_wait", "steps"),
+        ("mode", "steps"),
         [
-            # The arr run summary must print before the blocking wait pass, and the save must be dead
-            # last (so the store reflects the wait pass's drops).
             pytest.param(
-                CLIENT_SENTINEL,
                 ImportWaitMode.BLOCKING,
-                True,
-                ["scan_finished", "cleanup", "tally", "summary", "monitor", "save", "run_finished"],
+                ["sonarr scan finished", "summary", "blocking wait", "sonarr run finished"],
                 id="blocking",
             ),
             pytest.param(
-                CLIENT_SENTINEL,
                 ImportWaitMode.DEFERRED,
-                True,
-                ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"],
+                ["sonarr scan finished", "deferred wait", "summary", "sonarr run finished"],
                 id="deferred",
-            ),
-            # A Radarr-shaped strategy (no blocking wait) reconciles pre-summary in
-            # BLOCKING too - the blocking wait pass would otherwise be its only reconcile - and
-            # never enters the wait region.
-            pytest.param(
-                CLIENT_SENTINEL,
-                ImportWaitMode.BLOCKING,
-                False,
-                ["scan_finished", "cleanup", "check", "tally", "summary", "save", "run_finished"],
-                id="blocking-without-a-wait-pass",
-            ),
-            # A dry run (no client) runs no wait step.
-            pytest.param(
-                None, ImportWaitMode.BLOCKING, True, ["scan_finished", "summary", "save", "run_finished"], id="dry-run"
             ),
         ],
     )
-    def test_each_mode_runs_its_wait_steps_in_order(
-        self, qbit: object, mode: ImportWaitMode, supports_blocking_wait: bool, steps: list[str]
+    def test_a_sonarr_run_shows_its_wait_in_order(self, tmp_path: Path, mode: ImportWaitMode, steps: list[str]) -> None:
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+        recording = install_recording_hub()
+
+        _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), FakeQbit(TORRENT_H_COMPLETE), mode=mode)
+
+        assert _finish_steps(recording) == steps
+
+    def test_a_radarr_run_looks_at_its_imports_before_the_summary_in_blocking_mode(self, tmp_path: Path) -> None:
+        # Radarr has no blocking wait, so the deferred wait is the only look its pending imports get. It stores a
+        # movie's pending import on series 0, with no episode map.
+        cache = tmp_path / "cache.db"
+        movie = pending_import(infohash="h", title="Frieren", series_id=0, file_episode_map={}, seadex_files=())
+        _cache_left_with(cache, Arr.RADARR, movie)
+        recording = install_recording_hub()
+
+        _run(
+            cache,
+            RecordingStrategy(attempts=_ALL_IMPORTED, supports_blocking_wait=False),
+            FakeQbit(TORRENT_H_COMPLETE),
+            mode=ImportWaitMode.BLOCKING,
+            arr=Arr.RADARR,
+        )
+
+        assert _finish_steps(recording) == ["radarr scan finished", "deferred wait", "summary", "radarr run finished"]
+
+    @pytest.mark.parametrize(
+        ("stored", "mode", "dry_run"),
+        [
+            # A dry run imports nothing, so it looks at no pending import whatever the mode.
+            pytest.param((_pending("h"),), ImportWaitMode.BLOCKING, True, id="dry-run"),
+            pytest.param((_pending("h"),), ImportWaitMode.OFF, False, id="wait-off"),
+            pytest.param((), ImportWaitMode.BLOCKING, False, id="nothing-pending-blocking"),
+            pytest.param((), ImportWaitMode.DEFERRED, False, id="nothing-pending-deferred"),
+        ],
+    )
+    def test_a_run_with_no_wait_to_run_shows_none(
+        self, tmp_path: Path, stored: tuple[PendingImport, ...], mode: ImportWaitMode, dry_run: bool
     ) -> None:
-        calls: list[str] = []
-        engine = _finalize_engine(calls, qbit=qbit, mode=mode, supports_blocking_wait=supports_blocking_wait)
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, *stored)
+        recording = install_recording_hub()
 
-        engine._finish_arr_run()
+        _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), FakeQbit(TORRENT_H_COMPLETE), mode=mode, dry_run=dry_run)
 
-        assert calls == steps
+        assert _finish_steps(recording) == ["sonarr scan finished", "summary", "sonarr run finished"]
 
 
-class TestFinishArrRunUnwind:
-    """A raise in the finish leaves `arr_run_finished` to bootstrap's unwind emit.
+class _SeriesInLibrary(RecordingStrategy):
+    """Sonarr's side of a run over a library of series 7 under one title, so the scan reports its pending imports."""
 
-    The scan is already closed either way, so the arr-run-fatal error the composition
-    root logs can never render inside a leftover title. The
-    finally spans the whole finish, so a raise still saves - the run's staged writes
-    survive rather than rolling back when bootstrap closes the store.
+    @override
+    def get_items(self) -> list[FakeArrItem]:
+        return [FakeArrItem(item_id=7, title="Frieren")]
+
+    @override
+    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
+        return {1: TitleMapping(anilist_id=1)}
+
+    @override
+    def pending_import_series_id(self, item: FakeArrItem) -> int | None:
+        return item.id
+
+
+class TestWhatARunCounts:
+    """The summary counts each pending import where the run left it, and says when the run could grab nothing."""
+
+    def test_the_summary_counts_each_carried_over_import_where_it_ended(self, tmp_path: Path) -> None:
+        # The arr answers every import and progress read the same (every file in), so qBittorrent decides each end:
+        # "a" is finished when the scan reports on it, so the scan shows it imported; "b" is downloading then and
+        # finished by the deferred wait, which imports it; "c" is still downloading at the end.
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b"), _pending("c"))
+        qbit = FakeQbit({"a": [_FINISHED], "b": [_DOWNLOADING, _FINISHED], "c": [_DOWNLOADING]})
+        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=(ImportProgress(1, 1, determinate=True),))
+        recording = install_recording_hub()
+
+        _run(cache, strategy, qbit, mode=ImportWaitMode.DEFERRED)
+
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        assert summary.summary.tally.imported == 2
+        assert summary.summary.tally.downloading == 1
+        assert summary.summary.tally.downloaded == 0
+
+    @pytest.mark.parametrize(
+        ("qbit", "dry_run", "note"),
+        [
+            pytest.param(FakeQbit(), False, None, id="real-run"),
+            pytest.param(FakeQbit(), True, "nothing grabbed", id="dry-run"),
+            pytest.param(None, False, "qBittorrent not configured; nothing grabbed", id="no-qbittorrent"),
+        ],
+    )
+    def test_the_summary_notes_a_dry_run_and_why(
+        self, tmp_path: Path, qbit: FakeQbit | None, dry_run: bool, note: str | None
+    ) -> None:
+        recording = install_recording_hub()
+
+        _run(tmp_path / "cache.db", RecordingStrategy(), qbit, mode=ImportWaitMode.OFF, dry_run=dry_run)
+
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        assert summary.summary.dry_run_note == note
+
+
+class TestWhatARunSaves:
+    """What a run leaves in the cache and the arr for the next run, a stop in its finish included.
+
+    The save trails the blocking wait, so it holds the imports the wait finished. It runs in a finally around both
+    waits, so a stop never rolls back what the run did when the cache is closed. A stop is the exit a SIGTERM
+    raises, landing here while qBittorrent is read. Closing the run is not shown on the way out: bootstrap's unwind
+    shows it, so it lands once.
     """
 
-    def test_reconcile_raise_closes_the_scan_but_not_the_run(self) -> None:
-        calls: list[str] = []
-        engine = _finalize_engine(
-            calls,
-            qbit=CLIENT_SENTINEL,
-            mode=ImportWaitMode.DEFERRED,
-            raise_on="check",
+    def test_the_saved_cache_drops_the_import_the_blocking_wait_finished(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+
+        _run(
+            cache, RecordingStrategy(attempts=_ALL_IMPORTED), FakeQbit(TORRENT_H_COMPLETE), mode=ImportWaitMode.BLOCKING
         )
 
-        with pytest.raises(RuntimeError, match="check exploded"):
-            engine._finish_arr_run()
+        assert _saved_pending_imports(cache, Arr.SONARR) == set()
 
-        # The raise still escapes (bootstrap closes the run), but the finally now
-        # saves so the run's staged writes persist rather than rolling back.
-        assert calls == ["scan_finished", "cleanup", "check", "save"]
+    @pytest.mark.parametrize("mode", [ImportWaitMode.BLOCKING, ImportWaitMode.DEFERRED])
+    def test_a_run_finishes_the_cleanup_an_earlier_run_left_owed(self, tmp_path: Path, mode: ImportWaitMode) -> None:
+        # An earlier run imported "h" but did not finish its cleanup, so it is stored owing it. The wait leaves
+        # such an import out of its rows: the finish is the only step that finishes it.
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, replace(_pending("h"), awaiting_cleanup=True))
+        strategy = RecordingStrategy(attempts=_ALL_IMPORTED)
 
-    def test_blocking_wait_raise_still_saves_but_leaves_the_run_open(self) -> None:
-        # arr_run_finished sits OUTSIDE the save's finally on purpose: emitting it there
-        # would double up with bootstrap's unwind emit on this very path.
-        calls: list[str] = []
-        engine = _finalize_engine(
-            calls,
-            qbit=CLIENT_SENTINEL,
+        _run(cache, strategy, FakeQbit(TORRENT_H_COMPLETE), mode=mode)
+
+        assert strategy.removal_calls == ["h"]
+        assert _saved_pending_imports(cache, Arr.SONARR) == set()
+
+    def test_a_run_with_the_wait_off_leaves_its_pending_imports_alone(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+        strategy = RecordingStrategy(attempts=_ALL_IMPORTED)
+
+        _run(cache, strategy, FakeQbit(TORRENT_H_COMPLETE), mode=ImportWaitMode.OFF)
+
+        assert strategy.import_calls == []
+        assert _saved_pending_imports(cache, Arr.SONARR) == {"h"}
+
+    def test_a_stop_in_the_deferred_wait_still_saves_the_import_it_finished(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b", "Dandadan"))
+        # The stop lands while qBittorrent is read for "b", after "a" was imported.
+        qbit = FakeQbit({"a": [_FINISHED], "b": [SystemExit(0)]})
+        recording = install_recording_hub()
+
+        with pytest.raises(SystemExit):
+            _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), qbit, mode=ImportWaitMode.DEFERRED)
+
+        assert _saved_pending_imports(cache, Arr.SONARR) == {"b"}
+        assert _finish_steps(recording) == ["sonarr scan finished", "deferred wait"]
+
+    def test_a_stop_in_the_blocking_wait_still_saves_the_import_it_finished(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b", "Dandadan"))
+        # "b" is still downloading at the first poll, and the stop lands while qBittorrent is read on the next.
+        qbit = FakeQbit({"a": [_FINISHED], "b": [_DOWNLOADING, SystemExit(0)]})
+        recording = install_recording_hub()
+
+        with pytest.raises(SystemExit):
+            _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), qbit, mode=ImportWaitMode.BLOCKING)
+
+        assert _saved_pending_imports(cache, Arr.SONARR) == {"b"}
+        assert _finish_steps(recording) == ["sonarr scan finished", "summary", "blocking wait"]
+
+
+class TestWhatARunSends:
+    """A blocking wait that finished an import sends its report to the wait webhook, unless notifying is off."""
+
+    @respx.mock
+    def test_a_blocking_wait_that_finished_an_import_sends_the_wait_webhook(self, tmp_path: Path) -> None:
+        hook = respx.post(_WEBHOOK).respond(json={})
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+        config = make_config(url="http://sonarr", api_key="key", wait_webhook_url=_WEBHOOK)
+
+        _run(
+            cache,
+            RecordingStrategy(attempts=_ALL_IMPORTED),
+            FakeQbit(TORRENT_H_COMPLETE),
             mode=ImportWaitMode.BLOCKING,
-            raise_on="monitor",
+            config=config,
         )
 
-        with pytest.raises(RuntimeError, match="monitor exploded"):
-            engine._finish_arr_run()
+        assert hook.call_count == 1
+        report = cast("dict[str, Json]", json.loads(hook.calls.last.request.content))
+        (row,) = cast("list[dict[str, Json]]", report["rows"])
+        assert report["arr"] == "sonarr"
+        assert row["label"] == "Frieren · SubGroup"
 
-        assert calls == ["scan_finished", "cleanup", "tally", "summary", "monitor", "save"]
+    @respx.mock
+    def test_a_run_set_not_to_notify_sends_no_wait_webhook(self, tmp_path: Path) -> None:
+        hook = respx.post(_WEBHOOK).respond(json={})
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+        config = make_config(url="http://sonarr", api_key="key", wait_webhook_url=_WEBHOOK, wait_notify=False)
 
-    def test_tally_raise_still_saves_but_leaves_the_run_open(self) -> None:
-        # A pre-summary raise also lands in the finally, so the run's staged writes
-        # persist. Deferred so reconcile precedes tally and pins the whole prefix.
-        calls: list[str] = []
-        engine = _finalize_engine(
-            calls,
-            qbit=CLIENT_SENTINEL,
-            mode=ImportWaitMode.DEFERRED,
-            raise_on="tally",
+        _run(
+            cache,
+            RecordingStrategy(attempts=_ALL_IMPORTED),
+            FakeQbit(TORRENT_H_COMPLETE),
+            mode=ImportWaitMode.BLOCKING,
+            config=config,
         )
 
-        with pytest.raises(RuntimeError, match="tally exploded"):
-            engine._finish_arr_run()
-
-        assert calls == ["scan_finished", "cleanup", "check", "tally", "save"]
-
-
-class TestFinishArrRunImportedBump:
-    """_finish_arr_run owns the tally's `imported` bump, filtered to carried-over rows."""
-
-    def test_deferred_counts_scan_report_and_check_imports(self) -> None:
-        calls: list[str] = []
-        check = WaitResult(
-            (
-                WaitOutcomeRow("carried", Outcome.IMPORTED, carried_over=True),
-                WaitOutcomeRow("fresh", Outcome.IMPORTED),
-                WaitOutcomeRow("left", Outcome.STILL_DOWNLOADING, carried_over=True),
-            ),
-            elapsed_s=1.0,
-        )
-        engine = _finalize_engine(calls, qbit=CLIENT_SENTINEL, mode=ImportWaitMode.DEFERRED, check_result=check)
-        engine._state.pending_import_states["snap"] = PendingImportState.IMPORTED
-        engine._state.pending_import_states["kept"] = PendingImportState.DOWNLOADED
-
-        engine._finish_arr_run()
-
-        # One import the report confirmed plus one carried-over deferred-wait import. The
-        # fresh row stays `added` and the non-imported ones stay out.
-        assert engine._state.stats.imported == 2
-
-    def test_blocking_counts_carried_over_waited_imports(self) -> None:
-        calls: list[str] = []
-        wait_result = WaitResult(
-            (
-                WaitOutcomeRow("carried", Outcome.IMPORTED, carried_over=True),
-                WaitOutcomeRow("fresh", Outcome.IMPORTED),
-            ),
-            elapsed_s=1.0,
-        )
-        engine = _finalize_engine(
-            calls, qbit=CLIENT_SENTINEL, mode=ImportWaitMode.BLOCKING, blocking_result=wait_result
-        )
-
-        engine._finish_arr_run()
-
-        assert engine._state.stats.imported == 1
+        assert hook.call_count == 0
