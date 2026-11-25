@@ -14,11 +14,12 @@ from typing import Any
 import httpx
 import pytest
 import qbittorrentapi
+import respx
 from seadex import Tracker
 
 from pearlarr import notify
 from pearlarr.arr_run_state import ArrRunState, PerTitleState
-from pearlarr.config import Arr
+from pearlarr.config import Arr, PrivateReleaseAction
 from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import (
     GrabPipeline,
@@ -29,8 +30,12 @@ from pearlarr.grab_placement import PendingImportUpdate
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
+    GrabAction,
     GrabFailed,
+    GrabStatus,
+    GroupLabel,
     NeedsActionCause,
+    ReleaseLabel,
     ReleaseSkipped,
     Severity,
     TitleDetail,
@@ -76,12 +81,15 @@ from .builders import (
 )
 from .fakes import install_recording_hub
 
+_DISCORD_URL = "https://discord.example/hook"
 
-def _run_state(*, torrents_added: int = 0) -> ArrRunState:
+
+def _run_state(*, torrents_added: int = 0, dry_run: bool = False) -> ArrRunState:
     """A blocking Sonarr run checking the title named Show, `torrents_added` adds already counted toward the cap."""
 
     return ArrRunState(
         arr=Arr.SONARR,
+        dry_run=dry_run,
         import_wait_mode=ImportWaitMode.BLOCKING,
         torrents_added=torrents_added,
         per_title=PerTitleState(title_name="Show"),
@@ -91,16 +99,24 @@ def _run_state(*, torrents_added: int = 0) -> ArrRunState:
 def _pipeline(
     *,
     torrents: FakeTorrents,
-    qbit: object = CLIENT_SENTINEL,
     state: ArrRunState | None = None,
+    qbittorrent: bool = True,
     **overrides: object,
 ) -> GrabPipeline:
-    """A bare `GrabPipeline` wired for the add path (a blocking run, not a dry run), on `state` when one is given.
+    """A bare `GrabPipeline` on `state` (a blocking run, not a dry run, when none is given).
 
-    `overrides` go to `make_grab_pipeline`: config settings, or a part of the pipeline to swap in.
+    `qbittorrent` False leaves qBittorrent unset, which makes any run a dry run. `overrides` go to
+    `make_grab_pipeline`: config settings, or a part of the pipeline to swap in.
     """
 
+    qbit = CLIENT_SENTINEL if qbittorrent else None
     return make_grab_pipeline(_torrents=torrents, qbit=qbit, _state=state or _run_state(), **overrides)
+
+
+def _discord() -> Notifier:
+    """A notifier posting to the Discord webhook at `_DISCORD_URL`."""
+
+    return Notifier(discord_url=_DISCORD_URL, webhook_url=None, web=httpx.Client())
 
 
 def _grab_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> GrabRequest:
@@ -224,6 +240,42 @@ class TestAGrab:
 
         assert state.stats.up_to_date == 2
 
+    @pytest.mark.parametrize(
+        ("dry_run", "qbittorrent"),
+        [pytest.param(True, True, id="asked-for"), pytest.param(False, False, id="no-qbittorrent")],
+    )
+    @respx.mock
+    def test_a_dry_run_asks_each_add_as_a_dry_run_and_tracks_posts_and_holds_nothing(
+        self, dry_run: bool, qbittorrent: bool
+    ) -> None:
+        # Two releases under a cap of 1: a real run would add the first and hold the second.
+        recording = install_recording_hub()
+        webhook = respx.post(_DISCORD_URL).respond(json={})
+        one, two = _release(1), _release(2)
+        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG 1"), "h2": (AddStatus.ADDED, "Show-RG 2")})
+        state = _run_state(dry_run=dry_run)
+        pipeline = _pipeline(
+            torrents=torrents, state=state, qbittorrent=qbittorrent, max_torrents_to_add=1, _notifier=_discord()
+        )
+        request = _grab_request({"RG": rg_group({one.url: one, two.url: two})})
+        updates = {"h1": pending_import_update("h1"), "h2": pending_import_update("h2")}
+
+        pipeline.grab_and_cache(replace(request, pending_import_updates=updates))
+
+        assert (torrents.calls, torrents.dry_runs) == (["h1", "h2"], [True, True])
+        assert (_pending_import_rows(pipeline), _guards(pipeline), state.grabbed_this_run) == ({}, {}, {})
+        assert not webhook.called
+        assert (state.stats.held_by_cap, recording.of_type(CapReached)) == (0, [])
+        assert recording.of_type(GrabAction) == [
+            GrabAction(
+                status=GrabStatus.WOULD_GRAB,
+                groups=(GroupLabel("RG"),),
+                grabbed=(ReleaseLabel("Show-RG 1", "RG"), ReleaseLabel("Show-RG 2", "RG")),
+                in_qbit=(),
+                waiting_to_import=False,
+            )
+        ]
+
 
 class TestGrabReleaseRegistersPending:
     """A grabbed release's pending import is stored from its update, and a fresh add is a grab that counts toward the cap."""
@@ -272,22 +324,6 @@ class TestGrabReleaseRegistersPending:
         assert claim_anilist_ids(state.grabbed_this_run["h1"]) == (11, 22)
         assert state.reacquired_keys == set()
         assert _guards(second).keys() == {11, 22}
-
-    def test_dry_run_does_not_register_but_returns_outcome(self) -> None:
-        # No client -> dry run: nothing persisted, but the outcome still surfaces.
-        torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "x")})
-        state = _run_state()
-        pipeline = _pipeline(torrents=torrents, qbit=None, state=state)
-        updates = {"h1": pending_import_update("h1")}
-
-        _, results = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
-        )
-
-        assert _pending_import_rows(pipeline) == {}
-        assert _guards(pipeline) == {}
-        assert state.grabbed_this_run == {}
-        assert [r.outcome for r in results] == [AddStatus.ALREADY_IN_QBIT]
 
     def test_radarr_registration_writes_no_guard_row(self) -> None:
         # Guard evidence is Sonarr-only enforcement: a Radarr state driven through
@@ -529,16 +565,12 @@ class TestTheRunCap:
         assert (pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None) == held
         assert (state.stats.held_by_cap, state.stats.needs_action) == (int(held), [])
 
-    @pytest.mark.parametrize(
-        ("cap", "qbit"),
-        [pytest.param(0, CLIENT_SENTINEL, id="cap-of-zero"), pytest.param(1, None, id="dry-run")],
-    )
-    def test_a_run_with_no_cap_in_force_adds_every_release_and_announces_no_cap(self, cap: int, qbit: object) -> None:
+    def test_a_cap_of_zero_adds_every_release_and_announces_no_cap(self) -> None:
         recording = install_recording_hub()
         one = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
         two = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "one"), "h2": (AddStatus.ADDED, "two")})
-        pipeline = _pipeline(torrents=torrents, qbit=qbit, max_torrents_to_add=cap)
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=0)
 
         pipeline.grab_and_cache(_grab_request({"RG": rg_group({one.url: one, two.url: two})}))
 
@@ -567,11 +599,12 @@ class TestTrackerSkips:
     """
 
     @pytest.mark.parametrize(
-        ("skipped", "config", "reason", "cause"),
+        ("skipped", "private_releases", "interactive", "reason", "cause"),
         [
             pytest.param(
                 [SkipReason.UNSUPPORTED_TRACKER],
-                {},
+                PrivateReleaseAction.WARN,
+                False,
                 "tracker not yet supported; grab manually",
                 NeedsActionCause.UNSUPPORTED_TRACKER,
                 id="no-parser",
@@ -579,7 +612,8 @@ class TestTrackerSkips:
             # The two reasons are either/or: private-only wins.
             pytest.param(
                 [SkipReason.PRIVATE_ONLY, SkipReason.UNSUPPORTED_TRACKER],
-                {"private_releases": "warn"},
+                PrivateReleaseAction.WARN,
+                False,
                 "private-only release; private releases not supported",
                 NeedsActionCause.PRIVATE_ONLY,
                 id="private-beside-no-parser",
@@ -588,7 +622,8 @@ class TestTrackerSkips:
             # the summary tip from suggesting the fallback that's already on.
             pytest.param(
                 [SkipReason.PRIVATE_ONLY],
-                {"private_releases": "fallback"},
+                PrivateReleaseAction.FALLBACK,
+                False,
                 "private-only release; no fallback covers these files",
                 NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
                 id="private-in-fallback-mode",
@@ -597,7 +632,8 @@ class TestTrackerSkips:
             # tip never suggests the fallback.
             pytest.param(
                 [SkipReason.PRIVATE_ONLY],
-                {"private_releases": "fallback", "interactive": True},
+                PrivateReleaseAction.FALLBACK,
+                True,
                 "hand-picked private release; private releases not supported",
                 NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
                 id="hand-picked-private",
@@ -605,13 +641,18 @@ class TestTrackerSkips:
         ],
     )
     def test_a_title_with_nothing_grabbable_is_left_uncached_under_one_row_saying_why(
-        self, skipped: list[SkipReason], config: dict[str, object], reason: str, cause: NeedsActionCause
+        self,
+        skipped: list[SkipReason],
+        private_releases: PrivateReleaseAction,
+        interactive: bool,
+        reason: str,
+        cause: NeedsActionCause,
     ) -> None:
         recording = install_recording_hub()
         releases = [_release(n, skip) for n, skip in enumerate(skipped, start=1)]
         torrents = FakeTorrents({})
         state = _run_state()
-        pipeline = _pipeline(torrents=torrents, state=state, **config)
+        pipeline = _pipeline(torrents=torrents, state=state, private_releases=private_releases, interactive=interactive)
 
         pipeline.grab_and_cache(_grab_request({"NAN0": rg_group({release.url: release for release in releases})}))
 
@@ -622,27 +663,33 @@ class TestTrackerSkips:
 
 
 @pytest.mark.parametrize(
-    ("beside", "config", "cause"),
+    ("beside", "private_releases", "interactive", "cause"),
     [
-        pytest.param(SkipReason.UNSUPPORTED_TRACKER, {}, None, id="no-parser"),
+        pytest.param(SkipReason.UNSUPPORTED_TRACKER, PrivateReleaseAction.WARN, False, None, id="no-parser"),
+        pytest.param(SkipReason.PRIVATE_ONLY, PrivateReleaseAction.FALLBACK, True, None, id="hand-picked-private"),
         pytest.param(
-            SkipReason.PRIVATE_ONLY,
-            {"private_releases": "fallback", "interactive": True},
-            None,
-            id="hand-picked-private",
+            SkipReason.MISNUMBERED, PrivateReleaseAction.WARN, False, NeedsActionCause.MISNUMBERED, id="misnumbered"
         ),
-        pytest.param(SkipReason.MISNUMBERED, {}, NeedsActionCause.MISNUMBERED, id="misnumbered"),
-        pytest.param(None, {}, NeedsActionCause.GRAB_FAILED, id="failed-grab"),
+        pytest.param(None, PrivateReleaseAction.WARN, False, NeedsActionCause.GRAB_FAILED, id="failed-grab"),
     ],
 )
 def test_a_grab_caches_its_title_past_a_tracker_skip_and_never_past_a_placement_skip_or_a_failed_grab(
-    beside: SkipReason | None, config: dict[str, object], cause: NeedsActionCause | None
+    beside: SkipReason | None,
+    private_releases: PrivateReleaseAction,
+    interactive: bool,
+    cause: NeedsActionCause | None,
 ) -> None:
     # The one add reaches the cap of 1, which changes none of it.
     first, second = _release(1, beside), _release(2)
     torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}, raises={"h1": httpx.ConnectError("nyaa down")})
     state = _run_state()
-    pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=1, **config)
+    pipeline = _pipeline(
+        torrents=torrents,
+        state=state,
+        max_torrents_to_add=1,
+        private_releases=private_releases,
+        interactive=interactive,
+    )
 
     pipeline.grab_and_cache(_grab_request({"RG": rg_group({first.url: first, second.url: second})}))
 
@@ -934,9 +981,9 @@ def test_two_reasons_on_one_title_list_it_once_under_the_one_that_outranks_the_o
 
 
 class TestGrabPushesNotice:
-    """A title's grab posts one Discord notice built from its request and what the adds did.
+    """A title's grab posts one Discord notice built from its request and what the adds did, never when nothing was added.
 
-    Never in a dry run, and never when nothing was added.
+    A dry run posts none (`TestAGrab`).
     """
 
     @staticmethod
@@ -944,8 +991,6 @@ class TestGrabPushesNotice:
         monkeypatch: pytest.MonkeyPatch,
         torrents: FakeTorrents,
         seadex_dict: SeadexDict | None = None,
-        *,
-        qbit: object = CLIENT_SENTINEL,
     ) -> list[DiscordEmbed]:
         """The embeds posted for title 42's grab of `seadex_dict` (group PMR's one release h1 when not given)."""
 
@@ -958,7 +1003,6 @@ class TestGrabPushesNotice:
         monkeypatch.setattr(notify, "discord_push", record)
         pipeline = _pipeline(
             torrents=torrents,
-            qbit=qbit,
             _notifier=Notifier(
                 discord_url="https://discord.example",
                 webhook_url=None,
@@ -1013,8 +1057,3 @@ class TestGrabPushesNotice:
 
     def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assert self._grab(monkeypatch, FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-PMR")})) == []
-
-    def test_dry_run_never_pushes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A dry run simulates the add (so the count is non-zero) but the push is
-        # an outward notification and must stay silent.
-        assert self._grab(monkeypatch, FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}), qbit=None) == []
