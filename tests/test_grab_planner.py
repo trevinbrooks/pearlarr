@@ -216,6 +216,38 @@ class TestGroupsCoveringTheSameFiles:
         assert _grabs(seadex) == {"u3": "grab"}
         assert skips == PrivateOnlyNotices()
 
+    def test_a_group_whose_private_release_the_arr_has_is_kept_as_fully_public(self) -> None:
+        # E01 and E02 have no file, and E03 has the file of Pub's private release at its listed size, so that release
+        # isn't marked. Grabbing Pub then skips nothing and brings both missing episodes: it is kept over the mixed
+        # group before it, whose private release would be skipped when added.
+        seadex = {
+            "Mixed": _sonarr_group(
+                u1=make_release(size=[100], episodes=[_S1E1]),
+                u2=make_release(size=[200], episodes=[_S1E2], is_public=False),
+                u3=make_release(size=[300], episodes=[placed_episode(season=1, episode=3, size=300)]),
+            ),
+            "Pub": _sonarr_group(
+                u4=make_release(
+                    size=[110, 210],
+                    episodes=[
+                        placed_episode(season=1, episode=1, size=110),
+                        placed_episode(season=1, episode=2, size=210),
+                    ],
+                ),
+                u5=make_release(size=[310], episodes=[placed_episode(season=1, episode=3, size=310)], is_public=False),
+            ),
+        }
+        title = [
+            sonarr_ep(1, 1, episode_file_id=0),
+            sonarr_ep(1, 2, episode_file_id=0),
+            sonarr_ep(1, 3, size=310, release_group="Pub"),
+        ]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u4": "grab"}
+        assert plan.skips == PrivateOnlyNotices()
+
     def test_of_mixed_groups_only_the_first_is_kept(self) -> None:
         # With no fully public group the first is kept whole, and the add skips its private release with a warning.
         seadex = {
