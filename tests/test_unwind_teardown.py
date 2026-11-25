@@ -10,7 +10,7 @@ step the arr run happened to die in.
 These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - the
 error actually landing at column 0 - is pinned against the real renderer in
 `test_output_rich_renderer.TestUnwindPosition`. The boundary calls of the arr run's finish
-are pinned in `test_import_wait.TestFinishArrRunOrdering` / `TestFinishArrRunUnwind`.
+are pinned in `test_arr_run_finish.TestFinishArrRunOrdering` / `TestFinishArrRunUnwind`.
 `ArrRunFinished` is emitted exactly once per arr run: the finish emits on success, and
 bootstrap's inner handler emits only when the arr run died first. The open scopes' close
 idempotency (`test_output_scope_path`) and the renderer no-op
@@ -281,5 +281,5 @@ class TestCompletedArrRunSingleClose:
         assert completed is True
         # The unwind emit fires only on a dying arr run. A normal return leaves the close
         # to the arr run's finish (faked to a no-op here). The real finish's emit is pinned in
-        # test_import_wait.TestFinishArrRunOrdering, so zero here proves nothing doubled.
+        # test_arr_run_finish.TestFinishArrRunOrdering, so zero here proves nothing doubled.
         assert recording.of_type(ArrRunFinished) == []
