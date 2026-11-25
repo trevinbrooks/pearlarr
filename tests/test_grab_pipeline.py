@@ -539,11 +539,15 @@ class TestTheRunCap:
         assert (state.stats.held_by_cap, state.stats.needs_action, _cached_at(pipeline)) == (1, [], None)
 
     @pytest.mark.parametrize(
-        ("already_added", "announced"),
-        [pytest.param(0, [1], id="reaches-the-cap"), pytest.param(1, [], id="already-past-it")],
+        ("already_added", "announced", "cached"),
+        [
+            # Reaching the cap holds nothing of this title, so it caches.
+            pytest.param(0, [1], _UPDATED_AT, id="reaches-the-cap"),
+            pytest.param(1, [], None, id="already-past-it"),
+        ],
     )
     def test_only_the_title_whose_add_reaches_the_cap_announces_it(
-        self, already_added: int, announced: list[int]
+        self, already_added: int, announced: list[int], cached: str | None
     ) -> None:
         recording = install_recording_hub()
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
@@ -551,7 +555,7 @@ class TestTheRunCap:
 
         pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
 
-        assert [e.cap for e in recording.of_type(CapReached)] == announced
+        assert ([e.cap for e in recording.of_type(CapReached)], _cached_at(pipeline)) == (announced, cached)
 
     def test_a_joining_title_held_by_the_cap_saves_its_claim(self) -> None:
         # A torrent already in qBittorrent under a stored pending import stays tracked past the cap: the title's claim
@@ -748,6 +752,14 @@ class TestPlacementSkips:
                 "its files place under another title SeaDex lists it with; any it could not place need a hand import",
                 NeedsActionCause.PLACED_ELSEWHERE,
                 id="another-titles-files",
+            ),
+            # A read the placement needs failed while the release still had a file to place.
+            pytest.param(
+                SkipReason.PLACEMENT_INPUT_UNREAD,
+                NO_ANOTHER_TITLES_COUNTS,
+                "a read the placement needs failed; will retry next run",
+                NeedsActionCause.PLACEMENT_INPUT_UNREAD,
+                id="a-read-failed",
             ),
         ],
     )
