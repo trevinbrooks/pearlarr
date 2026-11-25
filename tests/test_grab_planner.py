@@ -52,6 +52,12 @@ _S1E2 = placed_episode(season=1, episode=2, size=200)
 _S2E1 = placed_episode(season=2, episode=1, size=300)
 
 
+def _grabbing_instead(public: str) -> str:
+    """The notice's reason when group `public` is grabbed in place of a private-only set."""
+
+    return f"private-only; grabbing public release {public} instead"
+
+
 def _grabs(seadex: SeadexDict) -> dict[str, Mark]:
     """Each release still marked to grab, by its key, and how."""
 
@@ -259,7 +265,7 @@ class TestGroupsCoveringTheSameFiles:
 
         assert _grabs(seadex) == {"u4": "grab"}
         assert skips == PrivateOnlyNotices(
-            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+            notices=[PrivateOnlyNotice(["Priv"], _grabbing_instead("Pub"), Severity.INFO)]
         )
 
     def test_promotion_considers_preferred_public_group(self) -> None:
@@ -273,7 +279,7 @@ class TestGroupsCoveringTheSameFiles:
 
         assert _grabs(seadex) == {"u2": "grab"}
         assert skips == PrivateOnlyNotices(
-            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+            notices=[PrivateOnlyNotice(["Priv"], _grabbing_instead("Pub"), Severity.INFO)]
         )
 
     def test_degraded_keeper_skips_when_only_a_fallback_could_stand_in(self) -> None:
@@ -354,9 +360,7 @@ class TestGroupsCoveringTheSameFiles:
         skips = _reduce(seadex)
 
         assert _grabs(seadex) == {"m_pub": "grab"}
-        assert skips == PrivateOnlyNotices(
-            notices=[PrivateOnlyNotice(["P"], "private-only; grabbing public release M instead", Severity.INFO)]
-        )
+        assert skips == PrivateOnlyNotices(notices=[PrivateOnlyNotice(["P"], _grabbing_instead("M"), Severity.INFO)])
 
     def test_groups_that_placed_nothing_are_each_kept(self) -> None:
         # Nothing shows what a group covers when none of its files placed on the title, so a duplicate grab is
@@ -466,7 +470,7 @@ class TestSameGroupDuplicateDedup:
 
         assert _grabs(seadex) == {"u2": "grab"}
         assert skips == PrivateOnlyNotices(
-            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+            notices=[PrivateOnlyNotice(["Priv"], _grabbing_instead("Pub"), Severity.INFO)]
         )
 
 
