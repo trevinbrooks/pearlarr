@@ -290,19 +290,22 @@ class TestSonarrBusy:
     """
 
     @pytest.mark.parametrize(
-        ("queue", "commands", "attempt_kind"),
+        ("command", "attempt_kind"),
         [
-            pytest.param(_CLEAN_PENDING, [started_process_pass()], AttemptKind.ORDINARY, id="a-pass"),
-            pytest.param(_CLEAN_PENDING, [started_process_pass()], AttemptKind.FINAL, id="a-pass-final"),
+            pytest.param(started_process_pass(), AttemptKind.ORDINARY, id="a-pass"),
+            pytest.param(started_process_pass(), AttemptKind.FINAL, id="a-pass-final"),
             pytest.param(
-                [], [inflight_manual_import("OTHERHASH", status="queued")], AttemptKind.ORDINARY, id="another-import"
+                inflight_manual_import("OTHERHASH", status="queued"), AttemptKind.ORDINARY, id="another-import"
             ),
         ],
     )
     def test_a_disk_command_listed_when_the_attempt_starts_holds_it(
-        self, queue: list[QueueRecord], commands: list[CommandResource], attempt_kind: AttemptKind
+        self, command: CommandResource, attempt_kind: AttemptKind
     ) -> None:
-        strat, sonarr = _strategy(queue, commands=commands)
+        # Sonarr imports one download at a time, so this one may be next in line. Its record is a clean importPending,
+        # which an ordinary attempt would otherwise just wait on, so only the command list read at the start can hold
+        # it as busy.
+        strat, sonarr = _strategy(_CLEAN_PENDING, commands=[command])
 
         result = strat.import_completed(pending_import(), "/d", attempt_kind)
 
