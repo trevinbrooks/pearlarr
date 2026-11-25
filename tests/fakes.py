@@ -638,6 +638,25 @@ class HookedSonarrClient(FakeSonarrClient):
         return answer
 
 
+class PerSeriesSonarrClient(FakeSonarrClient):
+    """A `FakeSonarrClient` whose episode read is scripted per series: an unscripted series fails the read."""
+
+    def __init__(
+        self,
+        episodes_by_series: dict[int, list[SonarrEpisode]],
+        *,
+        candidates: list[ManualImportCandidate],
+    ) -> None:
+        super().__init__(candidates=candidates, execute_command_id=42)
+        self.episodes_by_series = episodes_by_series
+
+    @override
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        del quiet
+        self.episodes_calls.append(series_id)
+        return self.episodes_by_series.get(series_id)
+
+
 class FakeRadarrClient(AbstractRadarrClient):
     """A typed, scriptable fake of `AbstractRadarrClient`."""
 

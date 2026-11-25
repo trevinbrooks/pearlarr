@@ -14,8 +14,16 @@ from pearlarr.arr_models import (
 )
 from pearlarr.sonarr_strategy import SonarrStrategy
 
-from .builders import PENDING_IMPORT_ADDED, FakeCacheStore, FakeClock, make_config, make_sonarr_sync, sonarr_ep
-from .fakes import NEUTRAL_RESCAN, HookedSonarrClient
+from .builders import (
+    PENDING_IMPORT_ADDED,
+    FakeCacheStore,
+    FakeClock,
+    make_config,
+    make_sonarr_sync,
+    manual_candidate,
+    sonarr_ep,
+)
+from .fakes import NEUTRAL_RESCAN, FakeSonarrClient, HookedSonarrClient
 
 _RESCAN_NAME = "RefreshMonitoredDownloads"
 RESCAN_AFTER_ADD = CommandResource(
@@ -28,6 +36,15 @@ RESCAN_BEFORE_ADD = CommandResource(
 
 FILELESS_EPISODES = [sonarr_ep(1, number, ep_id=100 + number, episode_file_id=0) for number in range(1, 10)]
 """Episodes 101 to 109 of one season, none with a file."""
+
+FIRST_FILE = "Show - 01 [1080p].mkv"
+SECOND_FILE = "Show - 02 [1080p].mkv"
+
+
+def both_files() -> list[ManualImportCandidate]:
+    """`FIRST_FILE` and `SECOND_FILE` in the download folder."""
+
+    return [manual_candidate(f"/d/{FIRST_FILE}"), manual_candidate(f"/d/{SECOND_FILE}")]
 
 
 def make_sonarr_for_import(
@@ -113,3 +130,27 @@ def closed_history() -> HistoryPage:
             ],
         },
     )
+
+
+def imported_history(*rows: tuple[int, str]) -> HistoryPage:
+    """A closed-history page whose import rows carry `(episodeId, droppedPath)` for series 7, above the grab."""
+
+    records: list[dict[str, object]] = [
+        {
+            "id": 10 + index,
+            "eventType": "downloadFolderImported",
+            "date": "2026-01-02T00:00:00Z",
+            "seriesId": 7,
+            "episodeId": episode_id,
+            "data": {"droppedPath": path},
+        }
+        for index, (episode_id, path) in enumerate(rows)
+    ]
+    records.append({"id": 1, "eventType": "grabbed", "date": "2026-01-01T00:00:00Z"})
+    return HistoryPage.model_validate({"records": records, "totalRecords": len(records)})
+
+
+def posted_imports(sonarr: FakeSonarrClient) -> list[list[tuple[str, list[int]]]]:
+    """The `(path, episode ids)` of every file in each auto import sent to Sonarr, one list per import."""
+
+    return [[(f.path, f.episodeIds) for f in files] for files, _mode in sonarr.execute_calls]
