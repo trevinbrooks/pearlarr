@@ -565,18 +565,18 @@ class TestAReleaseThatPlacedNothing:
         assert _grabs(plan.seadex_dict) == {}
 
     @pytest.mark.parametrize(
-        ("skip_reason", "grabbed"),
+        ("skip_reason", "grabs"),
         [
-            pytest.param(None, False, id="nothing-placed"),
-            pytest.param(SkipReason.AIRED_ONLY, True, id="no-row-for-its-episodes"),
+            pytest.param(None, {}, id="nothing-placed"),
+            pytest.param(SkipReason.AIRED_ONLY, {"u2": "grab"}, id="no-row-for-its-episodes"),
         ],
     )
     def test_a_release_sonarr_has_no_row_for_covers_none_of_the_titles_episodes(
-        self, skip_reason: SkipReason | None, grabbed: bool
+        self, skip_reason: SkipReason | None, grabs: dict[str, Mark]
     ) -> None:
-        # The arr's E01 file is Left's, from some other release of the group, and its E02 file is Other's. Left's
-        # listed release placed nothing. With no reason it may hold any episode, so Other isn't grabbed over E01.
-        # Skipped because Sonarr has no row for its episodes, it holds none of the title's, and Other is grabbed.
+        # The arr's E01 file is Left's at the size Left lists, and its E02 file is Other's. Left's release placed
+        # nothing. With no reason it may hold any episode, so Other isn't grabbed over E01. Skipped because Sonarr has
+        # no row for its episodes, it holds none of the title's, and Other is grabbed for E01.
         left = make_release(size=[500])
         left.skip_reason = skip_reason
         placed = [placed_episode(season=1, episode=1, size=200), placed_episode(season=1, episode=2, size=300)]
@@ -584,11 +584,11 @@ class TestAReleaseThatPlacedNothing:
             "Left": _sonarr_group(u1=left),
             "Other": _sonarr_group(u2=make_release(size=[200, 300], episodes=placed)),
         }
-        title = [sonarr_ep(1, 1, size=100, release_group="Left"), sonarr_ep(1, 2, size=300, release_group="Other")]
+        title = [sonarr_ep(1, 1, size=500, release_group="Left"), sonarr_ep(1, 2, size=300, release_group="Other")]
 
         plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert plan.seadex_dict["Other"].releases["u2"].to_grab is grabbed
+        assert _grabs(plan.seadex_dict) == grabs
 
 
 class TestAReleaseByEpisode:
@@ -725,18 +725,6 @@ class TestListedSizeOnTooManyEpisodes:
         return {"Era-Raws": _sonarr_group(u1=make_release(size=list(sizes), episodes=episodes, is_public=is_public))}
 
     @staticmethod
-    def _plan(seadex: dict[str, GroupReleases], title_episodes: list[SonarrEpisode]) -> GrabPlan:
-        """The planner's result for `seadex` against `title_episodes`, every file with a group reported to the arr."""
-
-        return make_planner().plan(seadex, arr_files(title_episodes), title_episodes)
-
-    @classmethod
-    def _decide(cls, seadex: dict[str, GroupReleases], title_episodes: list[SonarrEpisode]) -> Release:
-        """The Era-Raws release after the planner decides it against `title_episodes`."""
-
-        return cls._plan(seadex, title_episodes).seadex_dict["Era-Raws"].releases["u1"]
-
-    @staticmethod
     def _ours(episode: int, size: int) -> SonarrEpisode:
         """Season 1 `episode` with an Era-Raws file at `size`."""
 
@@ -745,100 +733,98 @@ class TestListedSizeOnTooManyEpisodes:
     def test_one_listed_file_on_two_episode_files_grabs(self) -> None:
         # File 2 imported onto both episodes: episode 1 lacks its own file. Sonarr's rows look the same whether one file
         # sits on both episodes or each holds a copy.
-        item = self._decide(self._listing(100, 200), [self._ours(1, 200), self._ours(2, 200)])
+        title = [self._ours(1, 200), self._ours(2, 200)]
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        plan = make_planner().plan(self._listing(100, 200), arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_a_listed_size_placed_on_no_episode_but_held_grabs(self) -> None:
         # File 999 is listed but placed nowhere, so the arr having it on E02 is one too many.
-        episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
-        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200, 999], episodes=episodes))}
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200, 999], episodes=[_S1E1, _S1E2]))}
+        title = [self._ours(1, 100), self._ours(2, 999)]
 
-        item = self._decide(seadex, [self._ours(1, 100), self._ours(2, 999)])
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_an_episode_two_listed_files_claim_at_different_sizes_is_left_out(self) -> None:
         # E01 is ambiguous, so size 200 counts once in the arr against its one placement on E02.
-        episodes = [
-            placed_episode(season=1, episode=1, size=100),
-            placed_episode(season=1, episode=1, size=150),
-            placed_episode(season=1, episode=2, size=200),
-        ]
+        episodes = [_S1E1, placed_episode(season=1, episode=1, size=150), _S1E2]
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 150, 200], episodes=episodes))}
+        title = [self._ours(1, 200), self._ours(2, 200)]
 
-        item = self._decide(seadex, [self._ours(1, 200), self._ours(2, 200)])
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_one_listed_file_placed_on_two_episodes_and_held_on_both_does_not_grab(self) -> None:
         episodes = [placed_episode(season=1, episode=1, size=300), placed_episode(season=1, episode=2, size=300)]
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[300], episodes=episodes))}
+        title = [self._ours(1, 300), self._ours(2, 300)]
 
-        item = self._decide(seadex, [self._ours(1, 300), self._ours(2, 300)])
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_size_listed_twice_held_twice_does_not_grab(self) -> None:
-        item = self._decide(self._listing(300, 300), [self._ours(1, 300), self._ours(2, 300)])
+        title = [self._ours(1, 300), self._ours(2, 300)]
 
-        assert item.to_grab is False
+        plan = make_planner().plan(self._listing(300, 300), arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_another_groups_files_at_a_listed_size_are_not_counted(self) -> None:
         # Other's release placed nowhere, so it may hold either episode: its files are not this group's to count.
-        seadex = {
-            **self._listing(100, 200),
-            "Other": _sonarr_group(u2=make_release(size=[200, 200])),
-        }
-        item = self._decide(
-            seadex,
-            [
-                sonarr_ep(1, 1, size=200, release_group="Other"),
-                sonarr_ep(1, 2, size=200, release_group="Other"),
-            ],
-        )
+        seadex = {**self._listing(100, 200), "Other": _sonarr_group(u2=make_release(size=[200, 200]))}
+        title = [sonarr_ep(1, 1, size=200, release_group="Other"), sonarr_ep(1, 2, size=200, release_group="Other")]
 
-        assert item.to_grab is False
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_size_matched_episode_counts(self) -> None:
         # E02's file with no group is this group's by its listed size, so size 200 sits on two episodes.
-        no_group = sonarr_ep(1, 2, size=200, release_group=None)
+        title = [self._ours(1, 200), sonarr_ep(1, 2, size=200), self._ours(3, 300)]
 
-        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200), no_group, self._ours(3, 300)])
+        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_a_partial_swap_does_not_grab(self) -> None:
         # Episode 3 at its listed size means not every size differs, and a swap doubles no size.
-        arr_episodes = [self._ours(1, 200), self._ours(2, 100), self._ours(3, 300)]
+        title = [self._ours(1, 200), self._ours(2, 100), self._ours(3, 300)]
 
-        item = self._decide(self._listing(100, 200, 300), arr_episodes)
+        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_full_swap_marks_an_upgrade_not_a_plain_grab(self) -> None:
         # Every size differs from its placement, which marks an upgrade though no size sits on too many episodes.
-        item = self._decide(self._listing(100, 200), [self._ours(1, 200), self._ours(2, 100)])
+        title = [self._ours(1, 200), self._ours(2, 100)]
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        plan = make_planner().plan(self._listing(100, 200), arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_a_doubled_unlisted_size_does_not_grab(self) -> None:
         # 999 sits on two episodes, but no release lists it, and E01 at its listed size means not every size differs.
-        arr_episodes = [self._ours(1, 100), self._ours(2, 999), self._ours(3, 999)]
+        title = [self._ours(1, 100), self._ours(2, 999), self._ours(3, 999)]
 
-        item = self._decide(self._listing(100, 200, 300), arr_episodes)
+        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_private_doubled_release_is_skipped_rather_than_replaced_by_a_fallback(self) -> None:
         # A fallback never replaces the arr's copy of the preferred release, so the set warns that it is outdated.
         public = make_release(size=[100, 200], episodes=[_S1E1, _S1E2], is_fallback=True)
         seadex = {**self._listing(100, 200, is_public=False), "Fall": _sonarr_group(u2=public)}
+        title = [self._ours(1, 200), self._ours(2, 200)]
 
-        result = self._plan(seadex, [self._ours(1, 200), self._ours(2, 200)])
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert _grabs(result.seadex_dict) == {}
-        assert result.skips == PrivateOnlyNotices(
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.skips == PrivateOnlyNotices(
             warned=True, groups=["Era-Raws"], notices=[PrivateOnlyNotice(["Era-Raws"], _OUTDATED)], outdated=True
         )
 
@@ -1026,84 +1012,76 @@ class TestTorrentLeftForAHandImport:
         return {"Pack": _sonarr_group(u1=item), **siblings}
 
     @staticmethod
-    def _decide(seadex: dict[str, GroupReleases], title_episodes: list[SonarrEpisode]) -> Release:
-        """The torrent's release after the planner decides it against the window `title_episodes`."""
-
-        return make_planner().plan(seadex, arr_files(title_episodes), title_episodes).seadex_dict["Pack"].releases["u1"]
-
-    @staticmethod
     def _ours(episode: int, size: int) -> SonarrEpisode:
         """Special `episode` with the torrent's file at `size`."""
 
         return sonarr_ep(0, episode, size=size, release_group="Pack")
 
     def test_every_special_holding_a_torrent_file_is_in_place(self) -> None:
-        arr_episodes = [self._ours(n, size) for n, size in enumerate(self._SIZES, 1)]
+        title = [self._ours(n, size) for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(), arr_episodes)
+        plan = make_planner().plan(self._seadex(), arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
-    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT])
+    @pytest.mark.parametrize(
+        "skip_reason",
+        [
+            pytest.param(SkipReason.MISNUMBERED, id="misnumbered"),
+            pytest.param(SkipReason.EPISODE_TITLES_CONTRADICT, id="episode-titles-contradict"),
+        ],
+    )
     def test_an_empty_special_marks_the_torrent_to_grab_as_an_upgrade(self, skip_reason: SkipReason) -> None:
-        arr_episodes = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, episode_file_id=0)]
+        title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, episode_file_id=0)]
 
-        item = self._decide(self._seadex(skip_reason), arr_episodes)
+        plan = make_planner().plan(self._seadex(skip_reason), arr_files(title), title)
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_files_of_an_unlisted_group_mark_the_torrent_to_grab(self) -> None:
-        arr_episodes = [sonarr_ep(0, n, size=size, release_group="Other") for n, size in enumerate(self._SIZES, 1)]
+        title = [sonarr_ep(0, n, size=size, release_group="Other") for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(), arr_episodes)
+        plan = make_planner().plan(self._seadex(), arr_files(title), title)
 
-        assert (item.to_grab, item.is_upgrade) == (True, False)
+        assert _grabs(plan.seadex_dict) == {"u1": "grab"}
 
     def test_a_special_a_sibling_release_covers_is_in_place(self) -> None:
         sibling = _sonarr_group(u2=make_release(size=[999], episodes=[placed_episode(season=0, episode=3, size=999)]))
-        arr_episodes = [
-            self._ours(1, 100),
-            self._ours(2, 200),
-            sonarr_ep(0, 3, size=999, release_group="Sib"),
-        ]
+        title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, size=999, release_group="Sib")]
 
-        item = self._decide(self._seadex(Sib=sibling), arr_episodes)
+        plan = make_planner().plan(self._seadex(Sib=sibling), arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_file_with_no_group_at_a_listed_size_is_the_torrents(self) -> None:
         # A hand import whose names carry no group: the listed size still says whose file each special has.
-        arr_episodes = [sonarr_ep(0, n, size=size) for n, size in enumerate(self._SIZES, 1)]
+        title = [sonarr_ep(0, n, size=size) for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(), arr_episodes)
+        plan = make_planner().plan(self._seadex(), arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_special_another_release_of_the_group_placed_is_in_place(self) -> None:
         # The group's single-file release covers the third special, so the torrent has nothing left to cover there.
         covered = placed_episode(season=0, episode=3, size=999)
         seadex = self._seadex()
         seadex["Pack"] = _sonarr_group(**seadex["Pack"].releases, u2=make_release(size=[999], episodes=[covered]))
-        arr_episodes = [self._ours(1, 100), self._ours(2, 200), self._ours(3, 999)]
+        title = [self._ours(1, 100), self._ours(2, 200), self._ours(3, 999)]
 
-        item = self._decide(seadex, arr_episodes)
+        plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert item.to_grab is False
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_a_torrent_file_at_an_unlisted_size_marks_the_torrent_to_grab(self) -> None:
-        arr_episodes = [self._ours(1, 150), self._ours(2, 200), self._ours(3, 300)]
+        title = [self._ours(1, 150), self._ours(2, 200), self._ours(3, 300)]
 
-        item = self._decide(self._seadex(), arr_episodes)
+        plan = make_planner().plan(self._seadex(), arr_files(title), title)
 
-        assert (item.to_grab, item.is_upgrade) == (True, True)
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_a_file_with_no_group_at_an_unlisted_size_is_not_the_torrents(self) -> None:
         # The plan claims for the torrent no file it can't prove is the torrent's, so the import may replace it.
-        title = [
-            self._ours(1, 100),
-            self._ours(2, 200),
-            sonarr_ep(0, 3, size=150, ep_id=103),
-        ]
+        title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, size=150, ep_id=103)]
 
         plan = make_planner().plan(self._seadex(), arr_files(title), title)
 
