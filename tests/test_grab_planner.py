@@ -736,8 +736,7 @@ class TestListedSizeOnTooManyEpisodes:
         """One Era-Raws release of season 1 episodes 1..n at `sizes`, one placement per size given."""
 
         episodes = [placed_episode(season=1, episode=n, size=size) for n, size in enumerate(sizes, 1)]
-        item = make_release(size=list(sizes), episodes=episodes, infohash="h1", is_public=is_public)
-        return {"Era-Raws": rg_group({"u1": item})}
+        return {"Era-Raws": _sonarr_group(u1=make_release(size=list(sizes), episodes=episodes, is_public=is_public))}
 
     @staticmethod
     def _plan(seadex: dict[str, GroupReleases], title_episodes: list[SonarrEpisode]) -> GrabPlan:
@@ -811,7 +810,7 @@ class TestListedSizeOnTooManyEpisodes:
         # Other's release placed nowhere, so it blankets both episodes: its files are not this group's to count.
         seadex = {
             **self._listing(100, 200),
-            "Other": rg_group({"u2": make_release(url="https://nyaa.si/view/2", infohash="h2")}),
+            "Other": _sonarr_group(u2=make_release(size=[200, 200])),
         }
         item = self._decide(
             seadex,
@@ -857,20 +856,18 @@ class TestListedSizeOnTooManyEpisodes:
     def test_a_private_groups_doubled_size_reports_private_only(self) -> None:
         result = self._plan(self._listing(100, 200, is_public=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
-        assert (result.skips.warned, result.seadex_dict["Era-Raws"].releases["u1"].to_grab) == (True, False)
+        assert _grabs(result.seadex_dict) == {}
+        assert result.skips == PrivateOnlyNotices(
+            warned=True, groups=["Era-Raws"], notices=[PrivateOnlyNotice(["Era-Raws"], _PRIVATE_ONLY)]
+        )
 
     @staticmethod
     def _beside_public(*, is_fallback: bool) -> dict[str, GroupReleases]:
         """The private Era-Raws release of 100 and 200 beside a public group listing the same files."""
 
         episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
-        public = make_release(
-            url="https://nyaa.si/view/2", size=[100, 200], episodes=episodes, infohash="h2", is_fallback=is_fallback
-        )
-        return {
-            **TestListedSizeOnTooManyEpisodes._listing(100, 200, is_public=False),
-            "Pub": rg_group({"u2": public}),
-        }
+        public = make_release(size=[100, 200], episodes=episodes, is_fallback=is_fallback)
+        return {**TestListedSizeOnTooManyEpisodes._listing(100, 200, is_public=False), "Pub": _sonarr_group(u2=public)}
 
     def test_a_private_doubled_release_promotes_a_public_group_listing_the_same_files(self) -> None:
         result = self._plan(self._beside_public(is_fallback=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
