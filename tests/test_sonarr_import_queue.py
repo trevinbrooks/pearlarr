@@ -80,19 +80,6 @@ def _imported_episode() -> list[SonarrEpisode]:
     return [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
 
-def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A tracked pending import's strategy: the by-id fetch starts a ProcessMonitoredDownloads, later ones fail."""
-
-    strat, sonarr = _strategy([_blocked_row()], clock=clock)
-
-    def start_a_pass() -> None:
-        sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
-        sonarr.candidates_return = None
-
-    sonarr.on_fetch = start_a_pass
-    return strat, sonarr
-
-
 class TestQueueRecord:
     """The download's queue record decides whether an attempt leaves the import to Sonarr or posts it itself."""
 
@@ -576,54 +563,78 @@ class TestEpisodeReads:
         assert strat.import_progress(pending_import()) == NO_PROGRESS
 
 
-class TestKeptCandidates:
-    """A by-id fetch from a blocked poll serves the pending import's next poll, once."""
+def _strategy_whose_first_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
+    """A blocked download whose first fetch sees Sonarr start a pass, and whose every later fetch fails.
 
-    def test_blocked_poll_keeps_its_candidates_for_the_next_poll(self) -> None:
+    So its first poll is held, and only the fetch that poll kept can post the files later.
+    """
+
+    strat, sonarr = _strategy([_blocked_row()], clock=clock)
+
+    def start_a_pass() -> None:
+        sonarr.commands_return = [NEUTRAL_RESCAN, started_process_pass()]
+        sonarr.candidates_return = None
+        sonarr.on_fetch = None
+
+    sonarr.on_fetch = start_a_pass
+    return strat, sonarr
+
+
+class TestKeptFetch:
+    """A poll Sonarr holds keeps its fetch, and the pending import's next poll posts those files without fetching again.
+
+    The kept fetch serves one poll, under the same content path, within two poll intervals. A poll that finds no queue
+    record fetches afresh and drops it. A fetch that found no files is never kept.
+    """
+
+    @pytest.mark.parametrize(
+        ("seconds_later", "content_path", "posted"),
+        [
+            # Kept up to two poll intervals, so a late next poll still finds it.
+            pytest.param(50, "/d", _POSTED, id="a-late-next-poll"),
+            pytest.param(90, "/d", [], id="past-two-poll-intervals"),
+            pytest.param(30, "/elsewhere", [], id="another-content-path"),
+        ],
+    )
+    def test_the_next_poll_posts_the_kept_files_only_soon_enough_and_under_the_same_path(
+        self, seconds_later: int, content_path: str, posted: _Imports
+    ) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_first_fetch_meets_a_pass(clock)
         pending = pending_import()
 
-        blocked = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        held = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        sonarr.commands_return = [NEUTRAL_RESCAN]
+        clock.tick(seconds_later)
+        strat.import_completed(pending, content_path, AttemptKind.ORDINARY)
 
-        assert blocked.pause_reason is PauseReason.BUSY
-        assert len(sonarr.execute_calls) == 1
+        assert held.pause_reason is PauseReason.BUSY
+        assert posted_imports(sonarr) == posted
 
-    def test_empty_by_id_answer_is_never_kept(self) -> None:
+    def test_a_fetch_that_found_no_files_is_never_kept(self) -> None:
+        # The next poll fetches again and finds the files.
         clock = FakeClock()
         strat, sonarr = make_sonarr_for_import(candidates=[], queue=[_blocked_row()], clock=clock)
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
-
-        sonarr.on_fetch = start_a_pass
+        sonarr.on_fetch = _then_lists(sonarr, started_process_pass())
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.on_fetch = None
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        sonarr.candidates_return = [manual_candidate("/d/Show - 01 [1080p].mkv")]
+        sonarr.commands_return = [NEUTRAL_RESCAN]
+        sonarr.candidates_return = [manual_candidate(_FILE)]
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert len(sonarr.execute_calls) == 1
+        assert posted_imports(sonarr) == _POSTED
 
-    def test_a_fresh_fetch_discards_the_kept_candidates(self) -> None:
+    def test_a_poll_with_no_queue_record_drops_the_kept_fetch(self) -> None:
+        # Nothing is posted, then or on the poll after it, when the record is back and the kept fetch still fresh.
         clock = FakeClock()
-        strat, sonarr = _strategy([_blocked_row()], clock=clock)
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
-
-        sonarr.on_fetch = start_a_pass
+        strat, sonarr = _strategy_whose_first_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.on_fetch = None
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
+        sonarr.commands_return = [NEUTRAL_RESCAN]
         sonarr.queue_return = []
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -631,60 +642,21 @@ class TestKeptCandidates:
         clock.tick(25)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert len(sonarr.candidate_calls) == 3
-
-    def test_kept_candidates_are_not_used_without_a_queue_row(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.queue_return = []
-        sonarr.commands_return = [RESCAN_AFTER_ADD]
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
         assert sonarr.execute_calls == []
 
-    def test_kept_candidates_expire_after_two_poll_intervals(self) -> None:
+    def test_the_kept_fetch_serves_one_poll_only(self) -> None:
+        # The poll that takes it is held too, and the poll after it finds nothing kept.
         clock = FakeClock()
-        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
+        strat, sonarr = _strategy_whose_first_fetch_meets_a_pass(clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        clock.tick(90)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
-
-    def test_kept_candidates_are_not_used_under_another_content_path(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        clock.tick(30)
-        strat.import_completed(pending, "/elsewhere", AttemptKind.ORDINARY)
-
-        assert sonarr.execute_calls == []
-
-    def test_kept_candidates_serve_one_poll_only(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy_whose_fetch_meets_a_pass(clock)
-        pending = pending_import()
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        sonarr.on_queue = start_a_pass
+        sonarr.commands_return = [NEUTRAL_RESCAN]
+        sonarr.on_queue = _then_lists(sonarr, started_process_pass())
         clock.tick(30)
         taken = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.on_queue = None
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
+        sonarr.commands_return = [NEUTRAL_RESCAN]
         clock.tick(30)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
