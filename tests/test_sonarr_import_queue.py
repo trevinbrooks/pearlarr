@@ -74,8 +74,8 @@ def _then_fails(sonarr: HookedSonarrClient) -> Callable[[], None]:
     return fail
 
 
-def _episode_with_torrent_file() -> list[SonarrEpisode]:
-    """The pending import's one episode with this torrent's file."""
+def _imported_episode() -> list[SonarrEpisode]:
+    """Episode 101 holding this torrent's file."""
 
     return [sonarr_ep(1, 1, ep_id=101, release_group="SubGroup")]
 
@@ -517,24 +517,23 @@ class TestUnreadableSonarr:
 
 
 class TestEpisodeReads:
-    """Episode files read this poll decide what is imported, never the last known list."""
+    """The episode files read on this poll decide what is imported, and a failed read never reads as imported."""
 
     def test_files_a_pass_imports_during_the_fetch_read_as_imported(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
-        def import_torrent_file() -> None:
-            sonarr.episodes_return = _episode_with_torrent_file()
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
+        def import_the_file() -> None:
+            sonarr.episodes_return = _imported_episode()
+            sonarr.commands_return = [NEUTRAL_RESCAN, started_process_pass()]
 
-        sonarr.on_fetch = import_torrent_file
+        sonarr.on_fetch = import_the_file
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert result.all_done is True
-        assert result.imported_count == 1
+        assert (result.all_done, result.imported_count) == (True, 1)
         assert sonarr.execute_calls == []
 
-    def test_unreadable_episode_re_read_waits(self) -> None:
+    def test_an_episode_read_that_fails_after_the_fetch_waits(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
         def fail_the_next_read() -> None:
@@ -544,26 +543,24 @@ class TestEpisodeReads:
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert result.all_done is False
-        assert result.pause_reason is PauseReason.NONE
+        assert (result.all_done, result.pause_reason) == (False, PauseReason.NONE)
         assert sonarr.execute_calls == []
 
-    def test_stale_cache_never_reads_as_imported(self) -> None:
+    def test_a_failed_episode_read_never_reads_as_imported_from_the_last_one(self) -> None:
         strat, sonarr = _strategy([])
-        sonarr.episodes_return = _episode_with_torrent_file()
+        sonarr.episodes_return = _imported_episode()
         pending = pending_import()
 
         imported = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.episodes_return = None
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert imported.all_done is True
-        assert result.all_done is False
+        assert (imported.all_done, result.all_done) == (True, False)
         assert sonarr.execute_calls == []
 
-    def test_failed_read_keeps_the_last_read_counts(self) -> None:
+    def test_a_failed_episode_read_keeps_the_counts_of_the_last_one(self) -> None:
         strat, sonarr = _strategy([queue_record("ABC123", "downloading")])
-        sonarr.episodes_return = [*_episode_with_torrent_file(), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
+        sonarr.episodes_return = [*_imported_episode(), sonarr_ep(1, 2, ep_id=102, episode_file_id=0)]
         pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101], "Show - 02 [1080p].mkv": [102]})
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -572,7 +569,7 @@ class TestEpisodeReads:
 
         assert (result.imported_count, result.file_map_episode_count) == (1, 2)
 
-    def test_import_progress_is_indeterminate_on_a_failed_read(self) -> None:
+    def test_the_progress_on_a_failed_episode_read_is_indeterminate(self) -> None:
         strat, sonarr = _strategy([])
         sonarr.episodes_return = None
 
