@@ -652,11 +652,11 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         assert [claim.ordered_episode_ids for claim in pending.claims] == [(150,), (102,)]
 
     @pytest.mark.parametrize(
-        ("stored", "rows", "stamps"),
+        ("stored", "followed", "stamps"),
         [
             pytest.param(
                 _stored_on_the_first_row(tvdb_ids={101: 9001}),
-                (150,),
+                {"show - 01 [1080p].mkv": [150]},
                 {9: _STAMP, 22: None, 23: _STAMP},
                 id="one-series",
             ),
@@ -670,14 +670,14 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
                     seadex_files=list(_GRAB_FILES),
                     tvdb_ids={101: 9001, 201: 9101},
                 ),
-                (150, 250),
+                {"show - 01 [1080p].mkv": [150], "show - 02 [1080p].mkv": [250]},
                 {9: _STAMP, 22: None, 23: None},
                 id="two-series",
             ),
         ],
     )
     def test_a_followed_pending_import_is_saved_when_nothing_is_grabbed_and_its_titles_are_uncached(
-        self, stored: PendingImport, rows: tuple[int, ...], stamps: dict[int, str | None]
+        self, stored: PendingImport, followed: dict[str, list[int]], stamps: dict[int, str | None]
     ) -> None:
         store = _store_holding(stored)
         sonarr = PerSeriesSonarrClient(
@@ -691,9 +691,7 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         row = store.get_pending_import_row(Arr.SONARR, "h1")
         assert req.pending_import_updates == {}
         assert row is not None
-        assert row["file_episode_map"] == {
-            normalize_file_name(name): [ep] for name, ep in zip(_GRAB_FILES, rows, strict=False)
-        }
+        assert row["file_episode_map"] == followed
         assert _title_stamps(store) == stamps
 
     def test_a_stored_pending_import_that_cannot_be_followed_is_not_joined_and_its_torrent_is_unread(self) -> None:
@@ -2195,25 +2193,31 @@ class TestImportOnOwnOnlyRows:
     def test_files_on_such_rows_are_posted_on_them_and_the_pending_import_ends_once_they_are_in(self) -> None:
         # The aired opener 401 is two halves, rows 9001 and 9002, in the order Sonarr numbers the series by. The
         # first two files sit on the halves, outside the title's window, and the whole opener's row never gets one.
-        names = [f"Show - {n:02d} [1080p].mkv" for n in (1, 2, 3)]
+        names = ["Show - 01 [1080p].mkv", "Show - 02 [1080p].mkv", "Show - 03 [1080p].mkv"]
         pending = pending_import(
-            file_episode_map=dict(zip(names, [(9001,), (9002,), (402,)], strict=True)),
+            file_episode_map={names[0]: (9001,), names[1]: (9002,), names[2]: (402,)},
             seadex_files=names,
             ordered_episode_ids=(401, 402),
-            tvdb_ids={row: row for row in (9001, 9002, 401, 402)},
+            tvdb_ids={9001: 9001, 9002: 9002, 401: 401, 402: 402},
         )
         strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate(f"/d/{name}") for name in names])
+        third = sonarr_ep(1, 3, ep_id=402, tvdb_id=402, release_group="SubGroup")
+        opener = sonarr_ep(1, 21, ep_id=401, tvdb_id=401, episode_file_id=0)
 
-        def poll(*held: int) -> AttemptResult:
-            # One poll with a file of the pending import's group on each row in `held`.
-            sonarr.episodes_return = [
-                sonarr_ep(1, n, ep_id=row, tvdb_id=row, episode_file_id=int(row in held), release_group="SubGroup")
-                for n, row in ((1, 9001), (2, 9002), (3, 402), (21, 401))
-            ]
-            return strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        first = poll(402)
-        second = poll(9001, 9002, 402)
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=9001, tvdb_id=9001, episode_file_id=0),
+            sonarr_ep(1, 2, ep_id=9002, tvdb_id=9002, episode_file_id=0),
+            third,
+            opener,
+        ]
+        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        sonarr.episodes_return = [
+            sonarr_ep(1, 1, ep_id=9001, tvdb_id=9001, release_group="SubGroup"),
+            sonarr_ep(1, 2, ep_id=9002, tvdb_id=9002, release_group="SubGroup"),
+            third,
+            opener,
+        ]
+        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert posted_imports(sonarr) == [[(f"/d/{names[0]}", [9001]), (f"/d/{names[1]}", [9002])]]
         assert (first.all_done, first.imported_count, first.file_map_episode_count) == (False, 1, 3)
