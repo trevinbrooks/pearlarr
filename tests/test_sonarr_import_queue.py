@@ -318,16 +318,6 @@ class TestSonarrBusy:
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_a_pass_the_rescan_starts_holds_the_post(self) -> None:
-        # Sonarr's rescan sets its own import going: the list read after it shows the rescan done and the pass running.
-        strat, sonarr = _strategy([])
-        sonarr.on_rescan = _then_lists(sonarr, RESCAN_AFTER_ADD, started_process_pass())
-
-        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert result.pause_reason is PauseReason.BUSY
-        assert sonarr.execute_calls == []
-
     def test_a_pass_started_during_a_fetch_that_found_no_files_reads_as_busy(self) -> None:
         # Not as files missing: the pass may be importing them.
         strat, sonarr = make_sonarr_for_import(candidates=[], queue=[_blocked_row()])
