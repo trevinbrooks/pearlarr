@@ -328,10 +328,17 @@ def mapping_one_imdb_title(deps: ArrRunDeps, *, imdb_id: str, anilist_id: int) -
     return _mapping_only(deps, {"anilist_id": anilist_id, "imdb_id": imdb_id})
 
 
-def _mapping_only(deps: ArrRunDeps, row: AnimeIdsRawMapping) -> ArrRunDeps:
-    """`deps` whose mappings are the one Anime-IDs row `row`."""
+def mapping_one_ignored_imdb_title(deps: ArrRunDeps, *, imdb_id: str, anilist_id: int) -> ArrRunDeps:
+    """`deps` whose mappings map IMDb title `imdb_id` to AniList title `anilist_id`, which the ignore list names."""
+
+    return _mapping_only(deps, {"anilist_id": anilist_id, "imdb_id": imdb_id}, ignored={anilist_id})
+
+
+def _mapping_only(deps: ArrRunDeps, row: AnimeIdsRawMapping, ignored: set[int] | None = None) -> ArrRunDeps:
+    """`deps` whose mappings are the one Anime-IDs row `row`, with the titles in `ignored` on the ignore list."""
 
     mapped = MappingSources(anime={"Show": row}, anidb=False, anibridge=False)
     return replace(
-        deps, resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), web=deps.web, sources=mapped)
+        deps,
+        resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=ignored or set(), web=deps.web, sources=mapped),
     )
