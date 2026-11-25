@@ -461,9 +461,13 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
 
 NEUTRAL_RESCAN = CommandResource(
-    name="RefreshMonitoredDownloads", status="completed", started=datetime(2000, 1, 1, tzinfo=UTC)
+    id=1, name="RefreshMonitoredDownloads", status="completed", started=datetime(2000, 1, 1, tzinfo=UTC)
 )
-"""A completed rescan from long before any add: an idle Sonarr's command list."""
+"""A completed rescan from long before any add: an idle Sonarr's command list.
+
+Like every command the tests share, it has an id no other command has, as in Sonarr. The check before a post
+tells commands apart by id and status, so two under one id could hide a change.
+"""
 
 
 class FakeSonarrClient(AbstractSonarrClient):

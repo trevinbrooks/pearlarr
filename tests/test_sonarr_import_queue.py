@@ -387,7 +387,7 @@ class TestImportInFlight:
 
     def test_an_import_of_the_download_started_just_before_the_post_reads_as_pearlarrs_own(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
-        sonarr.on_languages = _then_lists(sonarr, inflight_manual_import("ABC123", command_id=77))
+        sonarr.on_languages = _then_lists(sonarr, inflight_manual_import("ABC123"))
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
