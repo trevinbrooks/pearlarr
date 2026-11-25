@@ -422,139 +422,63 @@ class TestGroupsCoveringTheSameFiles:
 
 
 class TestSameGroupDuplicateDedup:
-    """Within one group, releases to grab carrying the same files dedup to the first.
+    """Of one group's releases marked to grab, a cross-seed of the same files is dropped, told apart by file sizes."""
 
-    An unsized release never dedups (can't prove identity).
-    """
-
-    def test_identical_filesets_keep_first(self) -> None:
-        planner = make_planner()
+    @pytest.mark.parametrize(
+        ("first", "second", "grabs"),
+        [
+            pytest.param(
+                {"A - S01E01.mkv": 100},
+                {"Extras/A - s01e01.mkv": 100},
+                {"u1": "grab"},
+                id="a-cross-seed-nesting-its-file-in-a-folder",
+            ),
+            pytest.param(
+                {"S01/A - 01.mkv": 100},
+                {"S02/A - 01.mkv": 200},
+                {"u1": "grab", "u2": "grab"},
+                id="the-same-names-at-other-sizes",
+            ),
+            pytest.param(
+                {"A - 01.mkv": 100},
+                {"S01/A - 01.mkv": 100, "S02/A - 01.mkv": 100},
+                {"u1": "grab", "u2": "grab"},
+                id="a-second-file-at-the-same-size",
+            ),
+            pytest.param({}, {}, {"u1": "grab", "u2": "grab"}, id="neither-lists-its-files"),
+        ],
+    )
+    def test_only_a_cross_seed_of_the_same_files_is_dropped(
+        self, first: dict[str, int], second: dict[str, int], grabs: dict[str, Mark]
+    ) -> None:
+        # Names prove nothing: a cross-seed can nest its file in a folder, and two cours can name their episodes alike.
+        # A release that lists no files proves nothing either, so it is never dropped.
         seadex = {
             "A": rg_group(
                 {
-                    "u1": make_release(files=["A - S01E01.mkv"], size=[100], download=True),
-                    "u2": make_release(files=["A - S01E01.mkv"], size=[100], download=True),
-                },
+                    "u1": make_release(files=list(first), size=list(first.values()), download=True),
+                    "u2": make_release(files=list(second), size=list(second.values()), download=True),
+                }
             ),
         }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is False
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == grabs
 
     def test_promoted_duplicates_dedup(self) -> None:
-        # The promotion branch flips EVERY public release of the promoted group: two
-        # cross-seeded torrents of the same files must still yield a single grab.
-        planner = make_planner()
+        # Standing in for a private upgrade marks every public release of the group, two cross-seeds included.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
-            "Pub": rg_group(
-                {
-                    "u2": make_release(files=["P - S01E01.mkv"], size=[100], download=False, is_public=True),
-                    "u3": make_release(files=["P - S01E01.mkv"], size=[100], download=False, is_public=True),
-                },
-            ),
+            "Pub": rg_group({"u2": make_release(size=[100]), "u3": make_release(size=[100])}),
         }
-        skips = planner.reduce_overlapping_grabs(seadex)
-        assert seadex["Pub"].releases["u2"].to_grab is True
-        assert seadex["Pub"].releases["u3"].to_grab is False
-        assert seadex["Priv"].releases["u1"].to_grab is False
-        assert "grabbing public release Pub instead" in skips.notices[0].reason
 
-    def test_different_filesets_both_kept(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {
-                    "u1": make_release(files=["A - S01E01.mkv"], size=[100], download=True),
-                    "u2": make_release(files=["A - S02E01.mkv"], size=[200], download=True),
-                },
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is True
+        skips = _reduce(seadex)
 
-    def test_folder_nested_release_still_dedups(self) -> None:
-        # One release nests the file under a folder the other lists flat:
-        # still the same files cross-seeded, so identity compares sizes.
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {
-                    "u1": make_release(files=["A - S01E01.mkv"], size=[100], download=True),
-                    "u2": make_release(files=["Extras/A - s01e01.mkv"], size=[100], download=True),
-                },
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is False
-
-    def test_same_names_at_different_sizes_never_dedup(self) -> None:
-        # Two per-cour releases can name their episodes identically. They are
-        # DIFFERENT files, and only their sizes say so - collapsing them would
-        # silently drop a whole cour from the plan.
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {
-                    "u1": make_release(files=["S01/A - 01.mkv"], size=[100], download=True),
-                    "u2": make_release(files=["S02/A - 01.mkv"], size=[200], download=True),
-                },
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is True
-
-    def test_a_release_carrying_more_copies_never_dedups(self) -> None:
-        # A two-file release is not a duplicate of the one-file release whose
-        # size it shares: dropping its grab would silently drop half its content.
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {
-                    "u1": make_release(files=["A - 01.mkv"], size=[100], download=True),
-                    "u2": make_release(files=["S01/A - 01.mkv", "S02/A - 01.mkv"], size=[100, 100], download=True),
-                },
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is True
-
-    def test_unknown_filesets_both_kept(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {
-                    "u1": make_release(download=True),
-                    "u2": make_release(download=True),
-                },
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["A"].releases["u2"].to_grab is True
-
-    def test_identical_filesets_across_groups_never_dedup(self) -> None:
-        # The dedup's seen-set is rebuilt PER GROUP: two groups in different
-        # same-files sets carrying identical file lists both survive (a hoisted
-        # cross-group seen-set would silently drop B's coverage).
-        planner = make_planner()
-        seadex = {
-            "A": rg_group(
-                {"u1": make_release(files=["X - S01E01.mkv"], download=True)},
-                episodes=[placed_episode(season=1, episode=1, size=0)],
-            ),
-            "B": rg_group(
-                {"u2": make_release(files=["X - S01E01.mkv"], download=True)},
-                episodes=[placed_episode(season=2, episode=1, size=0)],
-            ),
-        }
-        planner.reduce_overlapping_grabs(seadex)
-        assert seadex["A"].releases["u1"].to_grab is True
-        assert seadex["B"].releases["u2"].to_grab is True
+        assert _grabs(seadex) == {"u2": "grab"}
+        assert skips == PrivateOnlyNotices(
+            notices=[PrivateOnlyNotice(["Priv"], "private-only; grabbing public release Pub instead", Severity.INFO)]
+        )
 
 
 class TestFilterByReleaseGroup:
