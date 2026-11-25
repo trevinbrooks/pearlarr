@@ -137,7 +137,7 @@ def _notifying_pipeline(torrents: FakeTorrents) -> GrabPipeline:
 
 
 def _release(n: int, *, skipped: SkipReason | None = None) -> Release:
-    """Release `n`, marked to grab: on Nyaa with hash `h<n>`, or skipped for `skipped` when given.
+    """Release `n`, marked to grab: at `https://nyaa.si/view/<n>` with hash `h<n>`, or skipped for `skipped` when given.
 
     `SkipReason.PRIVATE_ONLY` puts it on AnimeBytes, private and with no hash, as SeaDex lists one.
     `SkipReason.UNSUPPORTED_TRACKER` puts it on AniDex, which has no parser. Any other reason is its placement's.
