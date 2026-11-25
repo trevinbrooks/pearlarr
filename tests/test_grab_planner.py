@@ -7,7 +7,8 @@ groups cover the same files, one is grabbed, a public one over a private one, an
 is skipped with a notice.
 
 The same-files tests call `reduce_overlapping_grabs` on marks already set: the marks, and which of them are upgrades,
-are that step's whole input, and building each from the arr's files would bury it. A group built with `rg_group` and
+are that step's whole input, and building each from the arr's files would bury it. Marks no movie can leave are built
+through `plan` on a Sonarr title instead. A group built with `rg_group` and
 no episodes is a movie's, as Radarr sends it. A group's private release lists files its public releases lack: one
 whose files they cover is dropped before the planner sees it. The planner reads a release's sizes and placed
 episodes, never its file names.
@@ -159,19 +160,47 @@ class TestGroupsCoveringTheSameFiles:
             warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
         )
 
-    def test_private_only_set_with_a_fallback_not_to_grab_warns_plainly(self) -> None:
-        # The private grab is no upgrade, so nothing says the arr has an outdated copy: the plain warning.
+    @staticmethod
+    def _plan_beside_a_copy_the_arr_has(group: str, *, is_public: bool, other_is_fallback: bool) -> GrabPlan:
+        """The plan of `group`'s release on S01E01 and its private release that placed nothing, beside Other's on E01.
+
+        The title's files have no group: E01's is at the size of `group`'s release there, E02's at a size no release
+        lists. So the release that placed nothing is grabbed by group and size, while E01 holds `group`'s copy.
+        """
+
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
-            "Fall": rg_group({"u2": make_release(is_fallback=True)}),
+            group: _sonarr_group(
+                u1=make_release(size=[100], episodes=[_S1E1], is_public=is_public),
+                u2=make_release(size=[900], is_public=False),
+            ),
+            "Other": _sonarr_group(
+                u3=make_release(
+                    size=[150], episodes=[placed_episode(season=1, episode=1, size=150)], is_fallback=other_is_fallback
+                )
+            ),
         }
+        title = [sonarr_ep(1, 1, size=100), sonarr_ep(1, 2, size=555)]
+        return make_planner().plan(seadex, arr_files(title), title)
 
-        skips = _reduce(seadex)
+    @pytest.mark.parametrize(
+        "is_fallback", [pytest.param(True, id="beside-a-fallback"), pytest.param(False, id="beside-a-public-group")]
+    )
+    def test_a_private_grab_with_no_upgrade_is_skipped_with_the_plain_warning(self, is_fallback: bool) -> None:
+        # Nothing says the arr's copy is outdated, so no other group is grabbed in its place: the arr may have that
+        # group's files already, as it does here.
+        plan = self._plan_beside_a_copy_the_arr_has("Priv", is_public=False, other_is_fallback=is_fallback)
 
-        assert _grabs(seadex) == {}
-        assert skips == PrivateOnlyNotices(
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.skips == PrivateOnlyNotices(
             warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
         )
+
+    def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
+        # The same for a mixed group: it is kept, and the add skips its private release with a warning.
+        plan = self._plan_beside_a_copy_the_arr_has("Mixed", is_public=True, other_is_fallback=False)
+
+        assert _grabs(plan.seadex_dict) == {"u2": "grab"}
+        assert plan.skips == PrivateOnlyNotices()
 
     def test_keeper_prefers_fully_addable_group(self) -> None:
         # The mixed group comes first, but its private release would be skipped when added, losing what only it
@@ -293,24 +322,6 @@ class TestGroupsCoveringTheSameFiles:
         assert _grabs(seadex) == {"u3": "grab"}
         reason = "remaining files private-only; grabbing public release P instead"
         assert skips == PrivateOnlyNotices(notices=[PrivateOnlyNotice(["M"], reason, Severity.INFO)])
-
-    def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
-        # With no upgrade the grabs may be of files the arr lacks, and the public group not marked may be owned, so
-        # nothing stands in and the mixed group is kept.
-        seadex = {
-            "Mixed": rg_group(
-                {
-                    "u1": make_release(download=True, size=[100]),
-                    "u2": make_release(download=True, is_public=False, size=[200]),
-                }
-            ),
-            "P": rg_group({"u3": make_release()}),
-        }
-
-        skips = _reduce(seadex)
-
-        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
-        assert skips == PrivateOnlyNotices()
 
     def test_fallback_keeper_over_private_notices(self) -> None:
         # A fallback kept over a private preferred release gets a notice naming it, and nothing is skipped.
