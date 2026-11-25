@@ -7,7 +7,7 @@
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + item-id filters (no exemption for pearlarr's grabs), and the fail-open contract. Run-loop
-half (reusing `test_run_finalize`'s `_engine` harness): touched items flow into
+half (driven through `run_loop_fakes`' `make_engine`): touched items flow into
 `ArrRunServices._dirty_anilist_ids` (all items on a gap), the checkpoint is staged
 only on full-library runs with SeaDex reachable (kept drift signals replay on the next
 healthy run), and either config toggle disables the fetch entirely.
@@ -34,7 +34,7 @@ from pearlarr.mappings import TitleMapping
 
 from .builders import FakeCacheStore, make_config, make_logger
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
-from .test_run_finalize import _engine, _FakeGateway, _FinalizeRecorder
+from .run_loop_fakes import FakeGateway, FinalizeRecorder, make_engine
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
 
@@ -314,7 +314,7 @@ class TestRead:
 
 
 class TestRunLoopActivityWiring:
-    """The run loop's activity block, driven through the `_engine` harness."""
+    """The run loop's activity block, driven through the `make_engine` harness."""
 
     @staticmethod
     def _strategy(*, history: list[HistoryRecord] | None = None) -> FakeStrategy:
@@ -332,7 +332,7 @@ class TestRunLoopActivityWiring:
         item_id: int | None = None,
         config: AppConfig | None = None,
     ) -> ArrRunLoop:
-        engine = _engine(_FinalizeRecorder(), logger, config=config)
+        engine = make_engine(FinalizeRecorder(), logger, config=config)
         engine.run_arr(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine
 
@@ -346,7 +346,7 @@ class TestRunLoopActivityWiring:
     def test_pearlarrs_grab_import_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
         cache = FakeCacheStore()
         cache.put_pending_import_row(Arr.SONARR, "beef01", {"infohash": "beef01"})
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=cache)
+        engine = make_engine(FinalizeRecorder(), logger, cache_store=cache)
         strategy = self._strategy(history=[_rec(1, item_id=3, download_id="BEEF01")])
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
@@ -362,7 +362,7 @@ class TestRunLoopActivityWiring:
         # Same untouched history as above, but a checkpoint beyond the lookback:
         # broken coverage re-checks the whole library.
         strategy = self._strategy(history=[_rec(50, item_id=99)])
-        engine = _engine(_FinalizeRecorder(), logger)
+        engine = make_engine(FinalizeRecorder(), logger)
         stale = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10)
         engine.cache_store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(stale), 1))
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -383,9 +383,9 @@ class TestRunLoopActivityWiring:
 
     @staticmethod
     def _engine_with_seadex_unreachable(logger: logging.Logger, cache: FakeCacheStore) -> ArrRunLoop:
-        gateway = _FakeGateway()
+        gateway = FakeGateway()
         gateway.unreachable = True
-        return _engine(_FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
+        return make_engine(FinalizeRecorder(), logger, seadex=gateway, cache_store=cache)
 
     def test_unreachable_run_holds_the_checkpoint(self, logger: logging.Logger) -> None:
         # A SeaDex-unreachable run skips every lookup, so committing would consume
@@ -413,7 +413,7 @@ class TestRunLoopActivityWiring:
 
         # Healthy run over the SAME store: the kept cursor replays the same
         # records through the id dedup, re-derives the dirty mark, and commits.
-        healthy = _engine(_FinalizeRecorder(), logger, cache_store=cache)
+        healthy = make_engine(FinalizeRecorder(), logger, cache_store=cache)
         healthy.run_arr(
             self._strategy(history=[_rec(1, item_id=3, date="2026-07-06T10:00:00Z")]),
             item_id=None,

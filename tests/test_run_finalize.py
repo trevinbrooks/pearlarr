@@ -10,9 +10,9 @@ a future change can't silently double-finalize or skip the wait pass.
 A real run also commits after each item, so a stop keeps the items it finished.
 
 The strategy is the shared typed `FakeStrategy` (an `ArrStrategy` recording
-its `check_title` calls), the arr run loop's collaborators are small typed fakes,
-and `_finish_arr_run` is mostly replaced by a typed recorder - so the contracts are
-pinned by asserting recorded state.
+its `check_title` calls), the arr run loop's collaborators are the small typed
+fakes in `run_loop_fakes`, and `_finish_arr_run` is mostly replaced by a typed
+recorder - so the contracts are pinned by asserting recorded state.
 """
 
 import logging
@@ -21,19 +21,16 @@ from typing import override
 
 import pytest
 
-from pearlarr.anilist_gateway import AniListGateway
 from pearlarr.arr_models import HistoryRecord
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
-from pearlarr.arr_strategy import ImportCompleter
 from pearlarr.boot_flow import BootFlow
-from pearlarr.cache import AbstractCacheStore, CacheStore
+from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.import_wait import ImportWaitManager
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounter, TitleHeader
+from pearlarr.output import BootStepFinished, Diagnostic, Severity, TitleHeader
 from pearlarr.output.events import TitleState
 from pearlarr.progress import ProgressCallback
 from pearlarr.skyhook_gateway import SkyHookGateway
@@ -54,148 +51,15 @@ from .builders import (
     pending_import,
 )
 from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, RecordingHub, install_recording_hub
-
-
-class _FakeGateway:
-    """Stands in for the AniList/SeaDex gateways: a cache-warm no-op (0 fetched)."""
-
-    # The loop reads each gateway's unreachable flag. Never unreachable unless a test sets it.
-    unreachable: bool = False
-
-    def load_cache(self) -> None:
-        pass
-
-    def prefetch(
-        self,
-        ids: object,
-        *,
-        dry_run: bool = False,
-        progress: ProgressCallback | None = None,
-    ) -> int:
-        del ids, dry_run, progress
-        return 0
-
-
-class _FakeReporter:
-    """The arr run loop's log hooks the scan and the arr run tail drive (each just acknowledges)."""
-
-    def counts_mark(self) -> CountsMark:
-        return SeverityCounter().bound_mark()
-
-    def log_arr_start(self, arr: Arr, n_items: int) -> bool:
-        return True
-
-    def log_arr_item_start(self, arr: Arr, item_title: str, n_item: int, n_items: int) -> bool:
-        return True
-
-    def log_arr_item_unmonitored(self, state: ArrRunState, item_title: str) -> bool:
-        return True
-
-    def log_no_anilist_mappings(self, state: ArrRunState, title: str) -> bool:
-        return True
-
-    def log_no_seadex_releases(self, state: ArrRunState) -> bool:
-        return True
-
-    def scan_finished(self, arr: Arr) -> bool:
-        return True
-
-    def log_arr_run_summary(self, state: ArrRunState, *, dry_run: bool, has_client: bool) -> bool:
-        return True
-
-    def arr_run_finished(self, arr: Arr) -> bool:
-        return True
-
-
-class _FakeBound:
-    """A collaborator whose only arr run loop hook is the `bind_arr_run` state bind."""
-
-    def bind_arr_run(self, state: ArrRunState, strategy: ImportCompleter | None = None) -> None:
-        del state, strategy
-
-
-class _FinalizeRecorder:
-    """A typed fake of `ArrRunLoop._finish_arr_run` that counts its calls."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def __call__(self) -> None:
-        self.calls += 1
-
-
-def _services(*, qbit: object = None, **overrides: object) -> ArrRunServices:
-    """A bare real `ArrRunServices` whose per-title collaborators are state-bind fakes.
-
-    `qbit` set makes the run real.
-    """
-
-    return make_services(
-        qbit=qbit,
-        _filter=_FakeBound(),
-        _grab_pipeline=_FakeBound(),
-        _pending_imports=_FakeBound(),
-        _reporter=_FakeReporter(),
-        **overrides,
-    )
-
-
-def _engine(
-    finalize: _FinalizeRecorder | None,
-    logger: logging.Logger,
-    *,
-    config: AppConfig | None = None,
-    seadex: _FakeGateway | None = None,
-    cache_store: AbstractCacheStore | None = None,
-    anilist: AniListGateway | _FakeGateway | None = None,
-    services: ArrRunServices | None = None,
-    wait_manager: _FakeBound | ImportWaitManager | None = None,
-    skyhook: SkyHookGateway | None = None,
-) -> ArrRunLoop:
-    """A bare `ArrRunLoop` wired with typed fakes for the arr run loop's collaborators.
-
-    The strategy reaches `run_arr` typed (it's an `ArrStrategy`). The rest are
-    injected as bare attributes (the methods only read them), and `_finish_arr_run`
-    is shadowed by the recorder so the single finalize site is observable
-    (`None` keeps the real one). The `_services` object defaults to a dry-run
-    `_services()` (the loop reads its `arr`, `bind_arr_run`, `mark_dirty`,
-    `is_dry_run` and `pay_pause`). The `cache_store` backs the activity read's checkpoint.
-    `config` overrides the loop's config (the activity-read toggle tests).
-    `cache_store` shares one store across engines (the checkpoint replay tests).
-    `anilist` swaps in a real gateway (the AniList boot-note tests) or a fake that is unreachable (the selection
-    hash test).
-    `services` swaps the services (the commit tests make it real and share its store).
-    `wait_manager` swaps the state-bind wait manager (the contained-error commit test, the arr-run-start test).
-    `skyhook` swaps in a gateway over a failing client (the SkyHook unreachable tests).
-    """
-
-    config = config if config is not None else make_config()
-    store = cache_store if cache_store is not None else FakeCacheStore()
-    services = services if services is not None else _services()
-    shadowed = {} if finalize is None else {"_finish_arr_run": finalize}
-    return make_bare_instance(
-        ArrRunLoop,
-        qbit=services.qbit,
-        logger=logger,
-        _config=config,
-        _arr_config=config.for_arr(Arr.SONARR),
-        _anilist=anilist if anilist is not None else _FakeGateway(),
-        _seadex=seadex if seadex is not None else _FakeGateway(),
-        _skyhook=skyhook if skyhook is not None else SkyHookGateway(client=FakeSkyHookClient(), cache_store=store),
-        _reporter=_FakeReporter(),
-        _services=services,
-        _wait_manager=wait_manager if wait_manager is not None else _FakeBound(),
-        cache_store=store,
-        **shadowed,
-    )
+from .run_loop_fakes import FakeBound, FakeGateway, FinalizeRecorder, make_engine, make_engine_services
 
 
 class TestHeldTitleKeepsScanning:
     """A title held past the cap stops nothing: every item is scanned and the single finalize site runs once."""
 
     def test_held_title_keeps_scanning_and_finalizes_once(self, logger: logging.Logger) -> None:
-        finalize = _FinalizeRecorder()
-        engine = _engine(finalize, logger)
+        finalize = FinalizeRecorder()
+        engine = make_engine(finalize, logger)
         # Every title's grab is held by the cap, as the pipeline holds a grabbable release past it.
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
@@ -221,9 +85,9 @@ class TestPerTitleErrorContainment:
             anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)},
             process_raises_on=1,
         )
-        finalize = _FinalizeRecorder()
+        finalize = FinalizeRecorder()
         recording = install_recording_hub()
-        _engine(finalize, logger).run_arr(
+        make_engine(finalize, logger).run_arr(
             strategy,
             item_id=None,
             dry_run=True,
@@ -276,10 +140,10 @@ class TestPerItemErrorContainment:
             anilist_ids={5: TitleMapping(anilist_id=5)},
             raise_on_item=1,
         )
-        finalize = _FinalizeRecorder()
+        finalize = FinalizeRecorder()
         recording = install_recording_hub()
 
-        _engine(finalize, logger).run_arr(
+        make_engine(finalize, logger).run_arr(
             strategy,
             item_id=None,
             dry_run=True,
@@ -319,7 +183,7 @@ class _StagingStrategy(FakeStrategy):
         return item.id
 
 
-class _RaisingSnapshots(_FakeBound):
+class _RaisingSnapshots(FakeBound):
     """A wait manager whose per-item pending-import snapshot raises, after that item's titles staged their rows."""
 
     def report_imports_for_series(self, series_id: int) -> None:
@@ -367,8 +231,8 @@ class TestPerItemCommit:
 
     def test_a_stop_mid_item_keeps_the_finished_items(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
+        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
+        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
 
         # Stopped on item B's second title, after its first title's row was staged.
         with pytest.raises(SystemExit):
@@ -379,9 +243,9 @@ class TestPerItemCommit:
 
     def test_an_item_that_raised_still_commits_what_it_staged(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
-        engine = _engine(
-            _FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=_RaisingSnapshots()
+        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
+        engine = make_engine(
+            FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=_RaisingSnapshots()
         )
 
         # Item A's snapshot raises after its titles, a contained item-level error. B stops before reaching its own.
@@ -395,8 +259,8 @@ class TestPerItemCommit:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
         # Every title owes a pause. The second one slept is the one after item A's last title.
         clock = _StopOnSleepClock(stop_on=2)
-        services = _services(qbit=CLIENT_SENTINEL, cache_store=store, _clock=clock, sleep_time=1)
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
+        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store, _clock=clock, sleep_time=1)
+        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
 
         with pytest.raises(SystemExit):
             _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=None))
@@ -407,8 +271,8 @@ class TestPerItemCommit:
 
     def test_a_dry_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = _services(cache_store=store)
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services)
+        services = make_engine_services(cache_store=store)
+        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
 
         _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None))
         store.close()
@@ -420,8 +284,8 @@ class TestPerItemCommit:
         self, logger: logging.Logger, tmp_path: Path, qbit: object, kept: list[int]
     ) -> None:
         store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = _services(qbit=qbit, cache_store=store)
-        engine = _engine(None, logger, cache_store=store, services=services)
+        services = make_engine_services(qbit=qbit, cache_store=store)
+        engine = make_engine(None, logger, cache_store=store, services=services)
         # With no items, the arr run tail's save is the arr run's only commit.
         store.update_cached_title(Arr.SONARR, 1, {"name": "A"})
 
@@ -440,9 +304,9 @@ class TestArrRunStartKeepsPendingImports:
         store = FakeCacheStore()
         old = pending_import(infohash="h", series_id=1, added_at="2000-01-01 00:00:00")
         store.put_pending_import_row(Arr.SONARR, old.infohash, old.to_json())
-        services = _services(qbit=CLIENT_SENTINEL, cache_store=store)
+        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
         manager = make_import_wait_manager(cache_store=store)
-        engine = _engine(_FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=manager)
+        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=manager)
         recording = install_recording_hub()
 
         _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None), ImportWaitMode.BLOCKING)
@@ -453,7 +317,7 @@ class TestArrRunStartKeepsPendingImports:
         ]
 
 
-class _GrabRecorder(_FakeBound):
+class _GrabRecorder(FakeBound):
     """A fake grab pipeline that counts its `grab_and_cache` calls."""
 
     def __init__(self) -> None:
@@ -527,7 +391,7 @@ class TestBootNotes:
     def _run(
         logger: logging.Logger,
         *,
-        seadex: _FakeGateway | None = None,
+        seadex: FakeGateway | None = None,
         client: ScriptedAniListClient | None = None,
     ) -> RecordingHub:
         strategy = FakeStrategy(
@@ -536,7 +400,7 @@ class TestBootNotes:
         )
         anilist = make_anilist_gateway(client) if client is not None else None
         recording = install_recording_hub()
-        _engine(_FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_arr(
+        make_engine(FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_arr(
             strategy,
             item_id=None,
             dry_run=True,
@@ -547,7 +411,7 @@ class TestBootNotes:
     def test_seadex_unreachable_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
         # The prefetch "return" is how many ids NEEDED fetching. With SeaDex unreachable
         # none were actually fetched, so a count note would be a lie.
-        seadex = _FakeGateway()
+        seadex = FakeGateway()
         seadex.unreachable = True
 
         step = self._step(self._run(logger, seadex=seadex), "Fetching SeaDex entries")
@@ -584,7 +448,7 @@ class TestScanItemState:
             items=[FakeArrItem(item_id=1, title="A")],
             anilist_ids={1: TitleMapping(anilist_id=1)},
         )
-        engine = _engine(_FinalizeRecorder(), logger)
+        engine = make_engine(FinalizeRecorder(), logger)
         install_recording_hub()
 
         engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
@@ -614,12 +478,12 @@ class TestSelectionRecheck:
         stale: bool = False,
         item_id: int | None = None,
         config: AppConfig | None = None,
-        seadex: _FakeGateway | None = None,
-        anilist: _FakeGateway | None = None,
+        seadex: FakeGateway | None = None,
+        anilist: FakeGateway | None = None,
         cap_reached: bool = False,
     ) -> tuple[ArrRunLoop, RecordingHub]:
         recording = install_recording_hub()
-        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
+        engine = make_engine(FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=3, title="A")],
             anilist_ids={11: TitleMapping(anilist_id=11)},
@@ -683,7 +547,7 @@ class TestSelectionRecheck:
         assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
 
     def test_unreachable_run_does_not_store_the_selection_hash(self, logger: logging.Logger) -> None:
-        unreachable_gateway = _FakeGateway()
+        unreachable_gateway = FakeGateway()
         unreachable_gateway.unreachable = True
         engine, _ = self._run(logger, seadex=unreachable_gateway)
 
@@ -693,7 +557,7 @@ class TestSelectionRecheck:
         self, logger: logging.Logger
     ) -> None:
         # A title AniList left unread isn't cached, so AniList being unreachable keeps neither back.
-        unreachable_gateway = _FakeGateway()
+        unreachable_gateway = FakeGateway()
         unreachable_gateway.unreachable = True
         engine, _ = self._run(logger, anilist=unreachable_gateway)
 
@@ -738,7 +602,7 @@ def test_a_skyhook_unreachable_notes_unreachable_and_the_run_neither_stores_the_
     recording = install_recording_hub()
     store = FakeCacheStore()
     skyhook = SkyHookGateway(client=FakeSkyHookClient(failing=failing), cache_store=store)
-    engine = _engine(_FinalizeRecorder(), logger, cache_store=store, skyhook=skyhook)
+    engine = make_engine(FinalizeRecorder(), logger, cache_store=store, skyhook=skyhook)
 
     engine.run_arr(_OrderFetchingStrategy(skyhook), item_id=None, dry_run=True, boot=BootFlow())
 
