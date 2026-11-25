@@ -588,6 +588,14 @@ class TestConfiguredArrs:
         assert recording.of_type(Diagnostic) == []
 
 
+def _write_data_dir_config(body: str) -> None:
+    """Write `body` as the config in the test's data dir, where `resolve_paths` looks for it."""
+
+    paths = resolve_paths()
+    os.makedirs(paths.data_dir)
+    Path(paths.config_file).write_text(body, encoding="utf-8")
+
+
 # Mapping stanza shared by the runnable-config helpers: disabled sources keep
 # the resolver off the network, so a run gets past the shared-deps stage and
 # into the per-arr loop without any I/O.
@@ -597,11 +605,7 @@ _NO_MAPPINGS = "mappings:\n  anime_ids: false\n  anime_lists: false\n  anibridge
 def _write_runnable_config() -> None:
     """A config with Sonarr configured and every mapping source disabled."""
 
-    paths = resolve_paths()
-    os.makedirs(paths.data_dir)
-    Path(paths.config_file).write_text(
-        "sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS, encoding="utf-8"
-    )
+    _write_data_dir_config("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS)
 
 
 class TestRunFailuresAreCleanAndNonzero:
@@ -1001,18 +1005,12 @@ class TestLogLevelWiring:
         monkeypatch.setattr("pearlarr.bootstrap.apply_log_level", record)
         return calls
 
-    @staticmethod
-    def _write_config_with_level() -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("advanced:\n  log_level: ERROR\n", encoding="utf-8")
-
     def test_the_config_level_is_applied_to_a_run(
         self,
         applied: list[str],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        self._write_config_with_level()
+        _write_data_dir_config("advanced:\n  log_level: ERROR\n")
         # Nothing is configured, so the run refuses - but only after the level
         # is applied (the refusal itself must respect the configured level).
         assert run_single() is False
@@ -1024,7 +1022,7 @@ class TestLogLevelWiring:
         applied: list[str],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        self._write_config_with_level()
+        _write_data_dir_config("advanced:\n  log_level: ERROR\n")
         assert run_single(log_level=LogLevel.DEBUG) is False
         assert applied == [LogLevel.DEBUG]
         capsys.readouterr()
@@ -1130,19 +1128,13 @@ class TestLogFormatWiring:
         monkeypatch.setattr("pearlarr.cli.setup_logger", recorder)
         return recorder
 
-    @staticmethod
-    def _write_config_with_format() -> None:
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
-        Path(paths.config_file).write_text("advanced:\n  log_format: json\n", encoding="utf-8")
-
     def test_run_single_threads_the_config_format(
         self,
         setup_recorder: _SetupLoggerRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
-        self._write_config_with_format()
+        _write_data_dir_config("advanced:\n  log_format: json\n")
         assert run_single() is True
         assert setup_recorder.console_formats == ["json"]
         assert setup_recorder.bridge_installed_at_call == [True]  # hub+bridge first
@@ -1154,7 +1146,7 @@ class TestLogFormatWiring:
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
-        self._write_config_with_format()
+        _write_data_dir_config("advanced:\n  log_format: json\n")
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
         assert setup_recorder.console_formats == ["json"]
