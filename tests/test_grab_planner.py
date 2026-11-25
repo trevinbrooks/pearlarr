@@ -119,7 +119,7 @@ class TestGroupsCoveringTheSameFiles:
 
         assert _grabs(seadex) == {"u1": "grab"}
 
-    def test_prefers_public_keeper(self) -> None:
+    def test_a_public_group_is_kept_over_a_private_one(self) -> None:
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
             "Pub": rg_group({"u2": make_release(download=True)}),
@@ -191,14 +191,14 @@ class TestGroupsCoveringTheSameFiles:
             warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
         )
 
-    def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
+    def test_a_mixed_group_with_no_upgrade_is_kept(self) -> None:
         # The same for a mixed group: it is kept, and the add skips its private release with a warning.
         plan = self._plan_beside_a_copy_the_arr_has("Mixed", is_public=True, other_is_fallback=False)
 
         assert _grabs(plan.seadex_dict) == {"u2": "grab"}
         assert plan.skips == PrivateOnlyNotices()
 
-    def test_keeper_prefers_fully_addable_group(self) -> None:
+    def test_a_fully_public_group_is_kept_over_a_mixed_one_before_it(self) -> None:
         # The mixed group comes first, but its private release would be skipped when added, losing what only it
         # covers: the fully public group is kept.
         seadex = {
@@ -216,7 +216,7 @@ class TestGroupsCoveringTheSameFiles:
         assert _grabs(seadex) == {"u3": "grab"}
         assert skips == PrivateOnlyNotices()
 
-    def test_keeper_degrades_to_first_when_all_mixed(self) -> None:
+    def test_of_mixed_groups_only_the_first_is_kept(self) -> None:
         # With no fully public group the first is kept whole, and the add skips its private release with a warning.
         seadex = {
             "MixedA": rg_group(
@@ -237,7 +237,7 @@ class TestGroupsCoveringTheSameFiles:
 
         assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
 
-    def test_private_only_set_with_fallback_skips_on_size_mismatch(self) -> None:
+    def test_a_private_upgrade_beside_a_fallback_is_skipped_as_outdated(self) -> None:
         # The private grab is an upgrade, so the arr's copy of the preferred release is outdated, and a fallback never
         # replaces that copy: the set warns and is skipped rather than grabbing the fallback.
         seadex = {
@@ -252,7 +252,7 @@ class TestGroupsCoveringTheSameFiles:
             warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _OUTDATED)], outdated=True
         )
 
-    def test_promotion_prefers_fully_public_group(self) -> None:
+    def test_a_fully_public_group_stands_in_for_a_private_upgrade_before_a_mixed_one(self) -> None:
         # Only public releases are grabbed in a private upgrade's place, so a mixed group would leave its private
         # release's files ungrabbed: the fully public group stands in.
         seadex = {
@@ -268,7 +268,7 @@ class TestGroupsCoveringTheSameFiles:
             notices=[PrivateOnlyNotice(["Priv"], _grabbing_instead("Pub"), Severity.INFO)]
         )
 
-    def test_promotion_considers_preferred_public_group(self) -> None:
+    def test_a_public_group_not_marked_stands_in_for_a_private_upgrade(self) -> None:
         # A public group of the set not marked to grab stands in for a private upgrade, named as a public release.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
@@ -282,7 +282,7 @@ class TestGroupsCoveringTheSameFiles:
             notices=[PrivateOnlyNotice(["Priv"], _grabbing_instead("Pub"), Severity.INFO)]
         )
 
-    def test_degraded_keeper_skips_when_only_a_fallback_could_stand_in(self) -> None:
+    def test_a_mixed_group_with_a_private_upgrade_is_kept_when_only_a_fallback_could_stand_in(self) -> None:
         # M's public release, owned and not marked, makes M a public group, and no group is fully addable. The only
         # public group not marked to grab is a fallback, which never replaces M's outdated copy: M is kept, and the
         # outdated mark is set with no notice, since the add warns for the private release.
@@ -301,7 +301,7 @@ class TestGroupsCoveringTheSameFiles:
         assert _grabs(seadex) == {"u2": "upgrade"}
         assert skips == PrivateOnlyNotices(outdated=True)
 
-    def test_degraded_keeper_promotes_preferred_public_on_size_mismatch(self) -> None:
+    def test_a_public_group_stands_in_for_a_mixed_groups_private_upgrade(self) -> None:
         # The same mixed group, beside a public group that is no fallback: that group stands in.
         seadex = {
             "M": rg_group(
@@ -319,7 +319,7 @@ class TestGroupsCoveringTheSameFiles:
         reason = "remaining files private-only; grabbing public release P instead"
         assert skips == PrivateOnlyNotices(notices=[PrivateOnlyNotice(["M"], reason, Severity.INFO)])
 
-    def test_fallback_keeper_over_private_notices(self) -> None:
+    def test_a_fallback_kept_over_a_private_group_gets_a_notice(self) -> None:
         # A fallback kept over a private preferred release gets a notice naming it, and nothing is skipped.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False)}),
@@ -333,7 +333,7 @@ class TestGroupsCoveringTheSameFiles:
             notices=[PrivateOnlyNotice(["Priv"], "private-only; falling back to Fall", Severity.INFO)]
         )
 
-    def test_mixed_group_to_grab_never_promotes_itself(self) -> None:
+    def test_a_mixed_group_alone_with_a_private_upgrade_is_kept_whole(self) -> None:
         # Alone in its set with a private upgrade, the mixed group has no other public group to stand in: it is kept
         # whole, with no notice.
         seadex = {
@@ -350,7 +350,7 @@ class TestGroupsCoveringTheSameFiles:
         assert _grabs(seadex) == {"u_pub": "upgrade", "u_priv": "upgrade"}
         assert skips == PrivateOnlyNotices()
 
-    def test_promotes_mixed_group_not_to_grab_flipping_only_public_releases(self) -> None:
+    def test_a_mixed_group_stands_in_with_its_public_releases_only(self) -> None:
         # A mixed group is the only one that can stand in for the private upgrade: its public release is grabbed.
         seadex = {
             "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True)}),
@@ -459,7 +459,7 @@ class TestSameGroupDuplicateDedup:
 
         assert _grabs(seadex) == grabs
 
-    def test_promoted_duplicates_dedup(self) -> None:
+    def test_a_group_standing_in_grabs_one_of_its_cross_seeds(self) -> None:
         # Standing in for a private upgrade marks every public release of the group, two cross-seeds included.
         seadex = {
             "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
@@ -631,7 +631,7 @@ class TestAReleaseByEpisode:
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
-    def test_episode_groupless_zero_size_still_grabs(self) -> None:
+    def test_an_empty_file_with_no_group_is_no_copy(self) -> None:
         # An empty file proves nothing, even against a release that lists an empty file there: a failed copy stays
         # grabbable.
         placed = placed_episode(season=1, episode=1, size=0)
@@ -784,8 +784,8 @@ class TestListedSizeOnTooManyEpisodes:
 
         assert item.to_grab is False
 
-    def test_a_blanket_covered_group_at_a_listed_size_is_not_counted(self) -> None:
-        # Other's release placed nowhere, so it blankets both episodes: its files are not this group's to count.
+    def test_another_groups_files_at_a_listed_size_are_not_counted(self) -> None:
+        # Other's release placed nowhere, so it may hold either episode: its files are not this group's to count.
         seadex = {
             **self._listing(100, 200),
             "Other": _sonarr_group(u2=make_release(size=[200, 200])),
@@ -809,7 +809,7 @@ class TestListedSizeOnTooManyEpisodes:
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
     def test_a_partial_swap_does_not_grab(self) -> None:
-        # Episode 3 at its listed size keeps the all-sizes-differ check out of it, and a swap doubles no size.
+        # Episode 3 at its listed size means not every size differs, and a swap doubles no size.
         arr_episodes = [self._ours(1, 200), self._ours(2, 100), self._ours(3, 300)]
 
         item = self._decide(self._listing(100, 200, 300), arr_episodes)
@@ -817,14 +817,13 @@ class TestListedSizeOnTooManyEpisodes:
         assert item.to_grab is False
 
     def test_a_full_swap_marks_an_upgrade_not_a_plain_grab(self) -> None:
-        # Every size differs from its placement, so the existing all-sizes-differ check marks an upgrade. No size is
-        # doubled, and this rule would mark an upgrade too: the two agree.
+        # Every size differs from its placement, which marks an upgrade though no size sits on too many episodes.
         item = self._decide(self._listing(100, 200), [self._ours(1, 200), self._ours(2, 100)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
     def test_a_doubled_unlisted_size_does_not_grab(self) -> None:
-        # A doubled unlisted size is the outdated-copy check's business, which one listed match stops.
+        # 999 sits on two episodes, but no release lists it, and E01 at its listed size means not every size differs.
         arr_episodes = [self._ours(1, 100), self._ours(2, 999), self._ours(3, 999)]
 
         item = self._decide(self._listing(100, 200, 300), arr_episodes)
@@ -832,7 +831,7 @@ class TestListedSizeOnTooManyEpisodes:
         assert item.to_grab is False
 
     def test_a_private_doubled_release_is_skipped_rather_than_replaced_by_a_fallback(self) -> None:
-        # A fallback never replaces the Arr's copy of the preferred release: the doubled-size skip warns instead.
+        # A fallback never replaces the arr's copy of the preferred release, so the set warns that it is outdated.
         public = make_release(size=[100, 200], episodes=[_S1E1, _S1E2], is_fallback=True)
         seadex = {**self._listing(100, 200, is_public=False), "Fall": _sonarr_group(u2=public)}
 
@@ -847,7 +846,7 @@ class TestListedSizeOnTooManyEpisodes:
 class TestGroupGuardFacts:
     """What the plan tells the import: which groups' copies the arr has, which are outdated, and whose files lack a group."""
 
-    def test_episode_partly_outdated_group_exits_the_guard_without_a_grab(self) -> None:
+    def test_a_group_with_one_file_at_an_unlisted_size_is_outdated_but_not_grabbed(self) -> None:
         # One episode at an unlisted size is no upgrade of the whole release, but the import must be free to replace
         # that file.
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200], episodes=[_S1E1, _S1E2]))}
@@ -861,7 +860,7 @@ class TestGroupGuardFacts:
         assert _grabs(plan.seadex_dict) == {}
         assert plan.guards == OwnedAtGrab(stale_groups=("Era-Raws",))
 
-    def test_outdated_file_at_an_unlisted_episode_condemns_the_group(self) -> None:
+    def test_a_groups_file_on_an_episode_it_lists_nowhere_makes_it_outdated(self) -> None:
         # Y's copy is owned on the one episode Y lists, but the arr also has a Y file on an episode no Y release lists,
         # at a size none lists. Protecting Y would shield the very file X is grabbed to replace.
         x = make_release(
@@ -952,7 +951,9 @@ class TestDroppingAGroupNeverLosesAnEpisode:
             pytest.param("BA", {"b_pub": "grab", "b_priv": "grab", "a_pub": "grab"}, id="b-kept"),
         ],
     )
-    def test_losers_uncovered_public_release_is_rescued(self, order: str, grabs: dict[str, Mark]) -> None:
+    def test_a_dropped_groups_public_release_is_grabbed_for_the_episode_it_alone_brings(
+        self, order: str, grabs: dict[str, Mark]
+    ) -> None:
         # Neither group is fully addable, so the first is kept, and the other's public release still brings the one
         # episode it alone has.
         groups = {"A": self._mixed("a", _S1E1), "B": self._mixed("b", _S2E1)}
@@ -962,7 +963,7 @@ class TestDroppingAGroupNeverLosesAnEpisode:
 
         assert _grabs(seadex) == grabs
 
-    def test_covered_drop_stays_dropped(self) -> None:
+    def test_a_dropped_release_bringing_fewer_episodes_stays_dropped(self) -> None:
         # The dropped group's public release brings nothing the kept group doesn't: grabbing it would be a duplicate.
         seadex = {
             "A": _sonarr_group(a_pub=make_release(download=True, size=[100, 300], episodes=[_S1E1, _S2E1])),
@@ -973,7 +974,7 @@ class TestDroppingAGroupNeverLosesAnEpisode:
 
         assert _grabs(seadex) == {"a_pub": "grab"}
 
-    def test_equal_coverage_drop_stays_dropped(self) -> None:
+    def test_a_dropped_release_bringing_the_same_episodes_stays_dropped(self) -> None:
         # The same when it brings exactly what the kept group does.
         seadex = {
             "A": _sonarr_group(a_pub=make_release(download=True, size=[100], episodes=[_S1E1])),
@@ -984,7 +985,7 @@ class TestDroppingAGroupNeverLosesAnEpisode:
 
         assert _grabs(seadex) == {"a_pub": "grab"}
 
-    def test_rescue_accumulates_survivor_coverage(self) -> None:
+    def test_each_dropped_release_is_judged_against_every_release_grabbed_before_it(self) -> None:
         # A is kept with S01E01. B's public release alone brings S02E01, so it is grabbed. C's brings S01E01, which
         # A already does, and stays dropped.
         seadex = {"A": self._mixed("a", _S1E1), "B": self._mixed("b", _S2E1), "C": self._mixed("c", _S1E1)}
@@ -993,7 +994,7 @@ class TestDroppingAGroupNeverLosesAnEpisode:
 
         assert _grabs(seadex) == {"a_pub": "grab", "a_priv": "grab", "b_pub": "grab"}
 
-    def test_owned_public_release_never_resurrected(self) -> None:
+    def test_a_dropped_groups_public_release_the_arr_has_stays_ungrabbed(self) -> None:
         # B's public release is the arr's already, so it was never marked to grab, and dropping B leaves it that way
         # though no kept public release covers its episode.
         seadex = {
