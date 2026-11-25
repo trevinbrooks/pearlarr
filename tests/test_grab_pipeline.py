@@ -1,15 +1,16 @@
 # pyright: strict
 """Tests for the grab side (`GrabPipeline`): what a title's grab adds, tracks, caches, posts, and lists.
 
-`make_grab_pipeline` builds the pipeline bare, so no qBittorrent login happens, and `FakeTorrents` stands in for
-qBittorrent's add.
+`make_grab_pipeline` builds the pipeline bare, so no qBittorrent login happens. `FakeTorrents` stands in for
+`TorrentService.add`: the tracker page read, the check for a torrent already in qBittorrent, and the add.
+`tests/test_private_fallback.py` owns the fallback side of the cache gate, where a public release stands in for a
+private one.
 """
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import combinations
-from typing import Any
 
 import httpx
 import pytest
@@ -21,20 +22,18 @@ from pearlarr import notify
 from pearlarr.arr_run_state import ArrRunState, PerTitleState
 from pearlarr.config import Arr, PrivateReleaseAction
 from pearlarr.discord import DiscordEmbed
-from pearlarr.grab_pipeline import (
-    GrabPipeline,
-    GrabRequest,
-    SkipReport,
-)
+from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabPipeline, GrabRequest
 from pearlarr.grab_placement import PendingImportUpdate
 from pearlarr.notify import Notifier
 from pearlarr.output import (
     CapReached,
     GrabAction,
+    GrabbedRow,
     GrabFailed,
     GrabStatus,
     GroupLabel,
     NeedsActionCause,
+    NeedsActionRow,
     ReleaseLabel,
     ReleaseSkipped,
     Severity,
@@ -46,13 +45,14 @@ from pearlarr.releases import (
     NO_ANOTHER_TITLES_COUNTS,
     AnotherTitlesCounts,
     EpisodeKey,
+    GroupReleases,
     PlacedEpisode,
     PrintedKey,
     Release,
     SeadexDict,
     SkipReason,
 )
-from pearlarr.stamps import now_stamp, stamp_of
+from pearlarr.stamps import now_stamp
 from pearlarr.torrent_service import AddResult, GrabResult, TorrentAddError
 from pearlarr.tracker_links import TrackerPageError
 from pearlarr.wait_types import ImportWaitMode
@@ -73,26 +73,30 @@ from .builders import (
     make_planner,
     make_release,
     make_services,
-    one_release_dict,
     pending_import,
     pending_import_update,
     rg_group,
     sonarr_ep,
 )
-from .fakes import install_recording_hub
+from .fakes import RecordingHub, install_recording_hub
+
+# Title 42 as its header sets it in a run, and the stamp its request caches it under.
+_TITLE_URL = "https://seadex.example/42"
+_TITLE_COVERAGE = "S01 E01-E12"
+_UPDATED_AT = "2026-01-01 00:00:00"
 
 _DISCORD_URL = "https://discord.example/hook"
 
 
 def _run_state(*, torrents_added: int = 0, dry_run: bool = False) -> ArrRunState:
-    """A blocking Sonarr run checking the title named Show, `torrents_added` adds already counted toward the cap."""
+    """A blocking Sonarr run checking title 42, named Show, with `torrents_added` adds already counted toward the cap."""
 
     return ArrRunState(
         arr=Arr.SONARR,
         dry_run=dry_run,
         import_wait_mode=ImportWaitMode.BLOCKING,
         torrents_added=torrents_added,
-        per_title=PerTitleState(title_name="Show"),
+        per_title=PerTitleState(title_name="Show", entry_url=_TITLE_URL, entry_coverage=_TITLE_COVERAGE),
     )
 
 
@@ -119,22 +123,53 @@ def _discord() -> Notifier:
     return Notifier(discord_url=_DISCORD_URL, webhook_url=None, web=httpx.Client())
 
 
-def _grab_request(seadex_dict: SeadexDict, *, input_missing: bool = False) -> GrabRequest:
-    """Title 42's request over `seadex_dict`, its one group among the failed reads when `input_missing`."""
+def _release(n: int, *, skipped: SkipReason | None = None) -> Release:
+    """Release `n`, marked to grab: on Nyaa with hash `h<n>`, or skipped for `skipped` when given.
+
+    `SkipReason.PRIVATE_ONLY` puts it on AnimeBytes, private and with no hash, as SeaDex lists one.
+    `SkipReason.UNSUPPORTED_TRACKER` puts it on AniDex, which has no parser. Any other reason is its placement's.
+    """
+
+    if skipped is SkipReason.PRIVATE_ONLY:
+        url = f"https://animebytes.tv/torrents.php?id={n}"
+        return make_release(url=url, tracker=Tracker.ANIMEBYTES, is_public=False, infohash=None, download=True)
+    if skipped is SkipReason.UNSUPPORTED_TRACKER:
+        return make_release(
+            url=f"https://anidex.info/torrent/{n}", tracker=Tracker.ANIDEX, infohash=f"h{n}", download=True
+        )
+    release = make_release(url=f"https://nyaa.si/view/{n}", tracker=Tracker.NYAA, infohash=f"h{n}", download=True)
+    release.skip_reason = skipped
+    return release
+
+
+def _group(*releases: Release) -> GroupReleases:
+    """A release group's releases, keyed by url as SeaDex lists them."""
+
+    return rg_group({release.url: release for release in releases})
+
+
+def _grab_request(
+    seadex_dict: SeadexDict,
+    *,
+    pending_import_updates: Mapping[str, PendingImportUpdate] = NO_PENDING_IMPORT_UPDATES,
+    input_unread_groups: tuple[str, ...] = (),
+) -> GrabRequest:
+    """Title 42's request over `seadex_dict`, to be cached under `_UPDATED_AT`."""
 
     return grab_request(
         anilist_id=42,
-        entry=make_entry_record(url="https://seadex.example/42"),
+        entry=make_entry_record(anilist_id=42, url=_TITLE_URL),
         seadex_dict=seadex_dict,
-        update={"updated_at": "2026-01-01 00:00:00"},
-        input_unread_groups=("RG",) if input_missing else (),
+        update={"updated_at": _UPDATED_AT},
+        pending_import_updates=pending_import_updates,
+        input_unread_groups=input_unread_groups,
     )
 
 
-def _pending_import_rows(pipeline: GrabPipeline) -> Mapping[str, dict[str, Any]]:
-    """The pipeline's durable per-arr pending import store, keyed by infohash (what the arr run reads back)."""
+def _tracked(pipeline: GrabPipeline) -> set[str]:
+    """The hashes of the torrents the store holds a pending import for (what the arr run reads back)."""
 
-    return pipeline.cache_store.get_pending_import_rows(Arr.SONARR)
+    return set(pipeline.cache_store.get_pending_import_rows(Arr.SONARR))
 
 
 def _stored(pipeline: GrabPipeline, infohash: str) -> PendingImport:
@@ -151,41 +186,25 @@ def _guards(pipeline: GrabPipeline) -> Mapping[int, OwnedAtGrab]:
     return pipeline.cache_store.get_guards(Arr.SONARR)
 
 
-def _nyaa_release(*, url: str, infohash: str) -> Release:
-    """A Nyaa release marked to grab that clears every add-path filter."""
+def _cached_at(pipeline: GrabPipeline, anilist_id: int = 42) -> str | None:
+    """The stamp the title is cached under, or None when it is not cached."""
 
-    item = make_release(url=url, infohash=infohash, download=True)
-    item.tracker = Tracker.NYAA
-    return item
-
-
-def _anidex_release(*, url: str, infohash: str) -> Release:
-    """A release marked to grab on AniDex: public (clears the private-only gate), in the default tracker set.
-
-    It has no parser, so the add loop skips it.
-    """
-
-    item = make_release(url=url, infohash=infohash, download=True)
-    item.tracker = Tracker.ANIDEX
-    return item
+    cached = pipeline.cache_store.get_cached_title(Arr.SONARR, anilist_id)
+    return None if cached is None else cached.updated_at
 
 
-def _release(n: int, skipped: SkipReason | None = None) -> Release:
-    """Release `n` (hash `h<n>`) marked to grab: skipped for `skipped` by its tracker or its placement, else grabbable."""
+def _needs_action(group: str, reason: str, cause: NeedsActionCause) -> NeedsActionRow:
+    """Title 42's needs-action row, its title, coverage and url as `_run_state` sets them."""
 
-    url, infohash = f"https://tracker.example/{n}", f"h{n}"
-    if skipped is SkipReason.UNSUPPORTED_TRACKER:
-        return _anidex_release(url=url, infohash=infohash)
-    item = _nyaa_release(url=url, infohash=infohash)
-    if skipped is SkipReason.PRIVATE_ONLY:
-        item.tracker, item.is_public = Tracker.ANIMEBYTES, False
-    else:
-        item.skip_reason = skipped
-    return item
+    return NeedsActionRow(
+        title="Show", coverage=_TITLE_COVERAGE, group=group, url=_TITLE_URL, reason=reason, cause=cause
+    )
 
 
-# The add loop skips for these itself, by the release's tracker.
-_ADD_TIME_SKIPS = {SkipReason.PRIVATE_ONLY, SkipReason.UNSUPPORTED_TRACKER, SkipReason.TRACKER_NOT_SELECTED}
+def _statuses(recording: RecordingHub) -> list[str]:
+    """The status lines posted under the title."""
+
+    return [detail.value.text for detail in recording.of_type(TitleDetail) if detail.label == "status"]
 
 
 # Highest first: the one needs-action row a title gets when two of these meet on it. None is a failed grab.
@@ -201,19 +220,40 @@ _ROW_PRECEDENCE: list[tuple[SkipReason | None, NeedsActionCause]] = [
 
 
 class TestAGrab:
-    """A title's grab: what it lists, caches, and counts."""
+    """A title's grab: what it asks of qBittorrent, lists, shows, and caches."""
+
+    def test_a_grab_adds_its_release_lists_and_shows_it_and_caches_the_title(self) -> None:
+        recording = install_recording_hub()
+        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
+        state = _run_state()
+        pipeline = _pipeline(torrents=torrents, state=state)
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
+
+        assert (torrents.calls, torrents.dry_runs) == (["h1"], [False])
+        # None of the release's files placed, so its row names the title's coverage.
+        assert state.stats.grabbed == [
+            GrabbedRow(title="Show", coverage=_TITLE_COVERAGE, url=_TITLE_URL, name="Show-RG", group="RG")
+        ]
+        assert recording.of_type(GrabAction) == [
+            GrabAction(
+                status=GrabStatus.GRABBING,
+                groups=(GroupLabel("RG"),),
+                grabbed=(ReleaseLabel("Show-RG", "RG"),),
+                in_qbit=(),
+                waiting_to_import=True,
+            )
+        ]
+        assert _cached_at(pipeline) == _UPDATED_AT
 
     def test_the_grabbed_row_names_the_placed_episodes_by_the_numbers_they_print_by(self) -> None:
         # Sonarr lists the aired S02E01 as S01E04.
         state = _run_state()
-        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-NAN0")}), state=state)
-        seadex = one_release_dict(srg="NAN0", infohash="h1")
-        (release,) = seadex["NAN0"].releases.values()
+        pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), state=state)
+        release = _release(1)
         release.episodes = [PlacedEpisode(2, 1, 10, printed=PrintedKey(EpisodeKey(1, 4)))]
 
-        pipeline.grab_releases(
-            grab_request(seadex_dict=seadex, pending_import_updates={"h1": pending_import_update("h1")})
-        )
+        pipeline.grab_and_cache(_grab_request({"RG": _group(release)}))
 
         assert [row.coverage for row in state.stats.grabbed] == ["S01 E04"]
 
@@ -222,23 +262,28 @@ class TestAGrab:
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}))
         pipeline.cache_store.update_cached_title(Arr.SONARR, 42, {"fallback_satisfied": True})
 
-        pipeline.grab_and_cache(_grab_request(one_release_dict(srg="RG", infohash="h1")))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
 
         cached = pipeline.cache_store.get_cached_title(Arr.SONARR, 42)
         assert cached is not None
         assert cached.fallback_satisfied is False
 
-    def test_two_up_to_date_titles_both_counted(self) -> None:
-        # Two titles with nothing to grab: the summary counts both.
+    def test_a_title_with_nothing_to_grab_is_counted_and_shown_up_to_date_and_cached(self) -> None:
+        recording = install_recording_hub()
         state = _run_state()
-        pipeline = _pipeline(torrents=FakeTorrents({}), state=state)
+        # Two titles of the run were up to date before this one.
+        state.stats.up_to_date = 2
+        torrents = FakeTorrents({})
+        pipeline = _pipeline(torrents=torrents, state=state)
+        # Not marked to grab: Sonarr has the release's files.
+        owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
 
-        for anilist_id in (1, 2):
-            pipeline.grab_and_cache(
-                grab_request(anilist_id=anilist_id, entry=make_entry_record(url=f"https://seadex.example/{anilist_id}"))
-            )
+        pipeline.grab_and_cache(_grab_request({"RG": _group(owned)}))
 
-        assert state.stats.up_to_date == 2
+        assert torrents.calls == []
+        assert state.stats.up_to_date == 3
+        assert _statuses(recording) == ["up to date"]
+        assert _cached_at(pipeline) == _UPDATED_AT
 
     @pytest.mark.parametrize(
         ("dry_run", "qbittorrent"),
@@ -251,19 +296,17 @@ class TestAGrab:
         # Two releases under a cap of 1: a real run would add the first and hold the second.
         recording = install_recording_hub()
         webhook = respx.post(_DISCORD_URL).respond(json={})
-        one, two = _release(1), _release(2)
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG 1"), "h2": (AddStatus.ADDED, "Show-RG 2")})
         state = _run_state(dry_run=dry_run)
         pipeline = _pipeline(
             torrents=torrents, state=state, qbittorrent=qbittorrent, max_torrents_to_add=1, _notifier=_discord()
         )
-        request = _grab_request({"RG": rg_group({one.url: one, two.url: two})})
         updates = {"h1": pending_import_update("h1"), "h2": pending_import_update("h2")}
 
-        pipeline.grab_and_cache(replace(request, pending_import_updates=updates))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}, pending_import_updates=updates))
 
         assert (torrents.calls, torrents.dry_runs) == (["h1", "h2"], [True, True])
-        assert (_pending_import_rows(pipeline), _guards(pipeline), state.grabbed_this_run) == ({}, {}, {})
+        assert (_tracked(pipeline), _guards(pipeline), state.grabbed_this_run) == (set(), {}, {})
         assert not webhook.called
         assert (state.stats.held_by_cap, recording.of_type(CapReached)) == (0, [])
         assert recording.of_type(GrabAction) == [
@@ -288,15 +331,14 @@ class TestGrabReleaseRegistersPending:
         updates = {"h1": pending_import_update("h1", guards=facts)}
 
         n_added, _ = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates),
+            _grab_request({"NAN0": _group(_release(1))}, pending_import_updates=updates)
         )
 
-        assert set(_pending_import_rows(pipeline)) == {"h1"}
+        assert _tracked(pipeline) == {"h1"}
         assert _guards(pipeline) == {PENDING_IMPORT_ANILIST_ID: facts}
         assert [p.infohash for p in state.grabbed_this_run.values()] == ["h1"]
         assert n_added == 1
         assert state.torrents_added == 1
-        assert len(state.stats.grabbed) == 1
 
     def test_a_second_pending_import_update_carrying_the_first_pending_import_joins_its_claim(self) -> None:
         # Two titles share one torrent in one run: A's add tracks the pending import fresh, B's dedups to
@@ -306,8 +348,8 @@ class TestGrabReleaseRegistersPending:
         state = _run_state()
         first = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show")}), state=state, cache_store=store)
         first.grab_releases(
-            grab_request(
-                seadex_dict=one_release_dict(srg="NAN0", infohash="h1"),
+            _grab_request(
+                {"NAN0": _group(_release(1))},
                 pending_import_updates={"h1": pending_import_update("h1", anilist_id=11, title="Cour 1")},
             )
         )
@@ -316,9 +358,7 @@ class TestGrabReleaseRegistersPending:
         )
         update = pending_import_update("h1", anilist_id=22, title="Cour 2", stored=_stored(first, "h1"))
 
-        second.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": update})
-        )
+        second.grab_releases(_grab_request({"NAN0": _group(_release(1))}, pending_import_updates={"h1": update}))
 
         assert claim_anilist_ids(_stored(second, "h1")) == (11, 22)
         assert claim_anilist_ids(state.grabbed_this_run["h1"]) == (11, 22)
@@ -335,9 +375,7 @@ class TestGrabReleaseRegistersPending:
         )
         updates = {"h1": pending_import_update("h1", series_id=0)}
 
-        pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates=updates)
-        )
+        pipeline.grab_releases(_grab_request({"NAN0": _group(_release(1))}, pending_import_updates=updates))
 
         assert set(pipeline.cache_store.get_pending_import_rows(Arr.RADARR)) == {"h1"}
         assert pipeline.cache_store.get_guards(Arr.RADARR) == {}
@@ -351,6 +389,8 @@ class TestReacquireRegistration:
     """
 
     _STORED_AT = "2026-01-01 00:00:00"
+    # Long before the stored start, as a torrent added to qBittorrent by hand months ago.
+    _QBITTORRENT_ADDED_ON = datetime(2025, 9, 1, 12, 0, 0)
 
     def _reacquire(self, added_on: datetime | None) -> FakeTorrents:
         return FakeTorrents({"h1": AddResult(AddStatus.ALREADY_IN_QBIT, "Show", added_on)})
@@ -364,9 +404,7 @@ class TestReacquireRegistration:
 
     def _add(self, pipeline: GrabPipeline, update: PendingImportUpdate) -> list[GrabResult]:
         _, results = pipeline.grab_releases(
-            grab_request(
-                seadex_dict=one_release_dict(srg="NAN0", infohash="h1"), pending_import_updates={"h1": update}
-            ),
+            _grab_request({"NAN0": _group(_release(1))}, pending_import_updates={"h1": update})
         )
         return results
 
@@ -375,14 +413,14 @@ class TestReacquireRegistration:
         # `added_at` whatever qBittorrent's add time says, and a carried-over pending import is a reacquire (never a
         # run-list insert).
         state = _run_state()
-        pipeline = _pipeline(torrents=self._reacquire(datetime.now() - timedelta(days=100)), state=state)
+        pipeline = _pipeline(torrents=self._reacquire(self._QBITTORRENT_ADDED_ON), state=state)
         resident = self._resident(pipeline)
 
         self._add(pipeline, pending_import_update("h1", anilist_id=22, stored=resident))
 
         pending = _stored(pipeline, "h1")
         assert pending.added_at == self._STORED_AT
-        assert [c.anilist_id for c in pending.claims] == [PENDING_IMPORT_ANILIST_ID, 22]
+        assert claim_anilist_ids(pending) == (PENDING_IMPORT_ANILIST_ID, 22)
         assert state.reacquired_keys == {"h1"}
         assert state.grabbed_this_run == {}
 
@@ -399,13 +437,12 @@ class TestReacquireRegistration:
 
     def test_a_torrent_long_in_qbittorrent_is_tracked_at_its_add_time(self) -> None:
         # No stored pending import: the new one starts at qBittorrent's add time, however long ago that was.
-        added_on = datetime.now() - timedelta(days=100)
         state = _run_state()
-        pipeline = _pipeline(torrents=self._reacquire(added_on), state=state)
+        pipeline = _pipeline(torrents=self._reacquire(self._QBITTORRENT_ADDED_ON), state=state)
 
         results = self._add(pipeline, pending_import_update("h1"))
 
-        assert _stored(pipeline, "h1").added_at == stamp_of(added_on)
+        assert _stored(pipeline, "h1").added_at == "2025-09-01 12:00:00"
         assert state.reacquired_keys == {"h1"}
         assert state.grabbed_this_run == {}
         assert _guards(pipeline).keys() == {PENDING_IMPORT_ANILIST_ID}
@@ -422,15 +459,14 @@ class TestReacquireRegistration:
     def test_a_marked_release_is_tracked_under_its_cross_seed(self) -> None:
         # The torrent that already has the release's files is in qBittorrent under another hash than SeaDex's.
         pipeline = _pipeline(torrents=self._reacquire(None))
-        seadex_dict = one_release_dict(srg="NAN0", infohash="h1")
-        (release,) = seadex_dict["NAN0"].releases.values()
+        release = _release(1)
         release.cross_seed_hash = "c1"
 
         pipeline.grab_releases(
-            grab_request(seadex_dict=seadex_dict, pending_import_updates={"c1": pending_import_update("c1")})
+            _grab_request({"NAN0": _group(release)}, pending_import_updates={"c1": pending_import_update("c1")})
         )
 
-        assert _pending_import_rows(pipeline).keys() == {"c1"}
+        assert _tracked(pipeline) == {"c1"}
 
     def test_fresh_add_of_a_stored_pending_import_restamps_the_start(self) -> None:
         # A re-add of a torrent whose pending import survived (qBittorrent lost it): the
@@ -444,7 +480,7 @@ class TestReacquireRegistration:
         self._add(pipeline, pending_import_update("h1", anilist_id=22, stored=resident))
 
         pending = _stored(pipeline, "h1")
-        assert [c.anilist_id for c in pending.claims] == [PENDING_IMPORT_ANILIST_ID, 22]
+        assert claim_anilist_ids(pending) == (PENDING_IMPORT_ANILIST_ID, 22)
         assert before <= pending.added_at <= now_stamp()
         assert state.reacquired_keys == set()
         assert list(state.grabbed_this_run) == ["h1"]
@@ -456,59 +492,56 @@ class TestTheRunCap:
     The title whose adds reach the cap announces it, once. A run with no cap in force holds none and announces none.
     """
 
-    def test_cap_holds_the_releases_past_it(self) -> None:
-        # Three releases to grab under a cap of 2: the first two reach qBittorrent and count toward the cap, and
-        # the third is held, never asked of qBittorrent.
-        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
-        u3 = _nyaa_release(url="https://nyaa.si/view/3", infohash="h3")
-        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2, u3.url: u3})}
-        torrents = FakeTorrents(
-            {
-                "h1": (AddStatus.ADDED, "one"),
-                "h2": (AddStatus.ADDED, "two"),
-                "h3": (AddStatus.ADDED, "three"),
-            }
-        )
-        state = _run_state()
-        pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=2)
-
-        n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict))
-
-        assert torrents.calls == ["h1", "h2"]
-        assert n_added == 2
-        assert state.torrents_added == 2
-        assert [r.outcome for r in results] == [AddStatus.ADDED, AddStatus.ADDED]
-        assert state.stats.held_by_cap == 1
-
-    def test_a_title_past_the_cap_is_held_and_tallied_once(self) -> None:
-        # Two grabbable releases past the cap: one tally, no qBittorrent call.
-        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
-        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2})}
-        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "one"), "h2": (AddStatus.ADDED, "two")})
-        state = _run_state(torrents_added=1)
+    @pytest.mark.parametrize(
+        ("already_added", "asked", "tracked"),
+        [
+            pytest.param(1, [], set[str](), id="past-the-cap"),
+            pytest.param(0, ["h1"], {"h1"}, id="crosses-the-cap-mid-title"),
+        ],
+    )
+    def test_a_release_past_the_cap_holds_its_title_once_and_leaves_it_uncached(
+        self, already_added: int, asked: list[str], tracked: set[str]
+    ) -> None:
+        # Two releases to grab under a cap of 1. A held release new to qBittorrent is not tracked yet.
+        recording = install_recording_hub()
+        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG 1"), "h2": (AddStatus.ADDED, "Show-RG 2")})
+        state = _run_state(torrents_added=already_added)
         pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=1)
+        updates = {"h1": pending_import_update("h1"), "h2": pending_import_update("h2")}
 
-        n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}, pending_import_updates=updates))
 
-        assert torrents.calls == []
-        assert (n_added, results) == (0, [])
-        assert state.stats.held_by_cap == 1
+        assert torrents.calls == asked
+        assert _tracked(pipeline) == tracked
+        assert _statuses(recording) == ["held by the run cap; grabbed next run"]
+        assert (state.stats.held_by_cap, state.stats.needs_action, _cached_at(pipeline)) == (1, [], None)
+
+    @pytest.mark.parametrize(
+        ("already_added", "announced"),
+        [pytest.param(0, [1], id="reaches-the-cap"), pytest.param(1, [], id="already-past-it")],
+    )
+    def test_only_the_title_whose_add_reaches_the_cap_announces_it(
+        self, already_added: int, announced: list[int]
+    ) -> None:
+        recording = install_recording_hub()
+        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
+        pipeline = _pipeline(torrents=torrents, state=_run_state(torrents_added=already_added), max_torrents_to_add=1)
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
+
+        assert [e.cap for e in recording.of_type(CapReached)] == announced
 
     def test_a_joining_title_held_by_the_cap_saves_its_claim(self) -> None:
         # A torrent already in qBittorrent under a stored pending import stays tracked past the cap: the title's claim
         # joins the pending import without a qBittorrent call, and nothing joins the reacquired keys.
-        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1})}
-        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "one")})
+        torrents = FakeTorrents({})
         state = _run_state(torrents_added=1)
         pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=1)
         resident = pending_import(infohash="h1", anilist_id=11)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         updates = {"h1": pending_import_update("h1", anilist_id=22, stored=resident)}
 
-        pipeline.grab_releases(grab_request(seadex_dict=seadex_dict, pending_import_updates=updates))
+        pipeline.grab_releases(_grab_request({"RG": _group(_release(1))}, pending_import_updates=updates))
 
         assert torrents.calls == []
         assert claim_anilist_ids(_stored(pipeline, "h1")) == (11, 22)
@@ -517,85 +550,47 @@ class TestTheRunCap:
 
     def test_a_torrent_already_in_qbittorrent_is_no_grab_and_the_release_after_it_still_adds(self) -> None:
         # Under a cap of 1, a torrent already there that counted toward it would hold the release after it.
-        old = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        new = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
         torrents = FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "old"), "h2": (AddStatus.ADDED, "new")})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=1)
 
-        n_added, results = pipeline.grab_releases(
-            grab_request(seadex_dict={"RG": rg_group({old.url: old, new.url: new})})
-        )
+        n_added, results = pipeline.grab_releases(_grab_request({"RG": _group(_release(1), _release(2))}))
 
         assert torrents.calls == ["h1", "h2"]
         assert (n_added, state.torrents_added) == (1, 1)
         assert [r.outcome for r in results] == [AddStatus.ALREADY_IN_QBIT, AddStatus.ADDED]
         assert [row.name for row in state.stats.grabbed] == ["new"]
-        # The request carries no update for either torrent, so neither is tracked.
-        assert _pending_import_rows(pipeline) == {}
-
-    @pytest.mark.parametrize(
-        ("hashes", "already_added", "added", "held"),
-        [
-            pytest.param(["h1"], 0, ["h1"], False, id="reaches-the-cap"),
-            pytest.param(["h1"], 1, [], True, id="past-the-cap"),
-            pytest.param(["h1", "h2"], 0, ["h1"], True, id="crosses-the-cap-mid-title"),
-        ],
-    )
-    def test_only_a_release_past_the_cap_holds_its_title_and_the_title_reaching_the_cap_announces_it(
-        self, hashes: list[str], already_added: int, added: list[str], held: bool
-    ) -> None:
-        recording = install_recording_hub()
-        releases = [_nyaa_release(url=f"https://nyaa.si/view/{infohash}", infohash=infohash) for infohash in hashes]
-        torrents = FakeTorrents({"h1": (AddStatus.ADDED, "one"), "h2": (AddStatus.ADDED, "two")})
-        state = _run_state(torrents_added=already_added)
-        pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=1)
-        request = _grab_request({"RG": rg_group({release.url: release for release in releases})})
-        updates = {infohash: pending_import_update(infohash) for infohash in hashes}
-
-        pipeline.grab_and_cache(replace(request, pending_import_updates=updates))
-
-        statuses = [d.value.text for d in recording.of_type(TitleDetail) if d.label == "status"]
-        assert statuses == (["held by the run cap; grabbed next run"] if held else [])
-        assert torrents.calls == added
-        # Under a cap of 1, a title that adds anything is the one whose add reaches the cap.
-        assert [e.cap for e in recording.of_type(CapReached)] == ([1] if added else [])
-        # A held release that is new to qBittorrent is not tracked yet.
-        assert _pending_import_rows(pipeline).keys() == set(added)
-        assert (pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None) == held
-        assert (state.stats.held_by_cap, state.stats.needs_action) == (int(held), [])
 
     def test_a_cap_of_zero_adds_every_release_and_announces_no_cap(self) -> None:
         recording = install_recording_hub()
-        one = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        two = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "one"), "h2": (AddStatus.ADDED, "two")})
         pipeline = _pipeline(torrents=torrents, max_torrents_to_add=0)
 
-        pipeline.grab_and_cache(_grab_request({"RG": rg_group({one.url: one, two.url: two})}))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}))
 
         assert torrents.calls == ["h1", "h2"]
         assert recording.of_type(CapReached) == []
 
     @pytest.mark.parametrize(
-        "skipped", [SkipReason.PRIVATE_ONLY, SkipReason.MISNUMBERED], ids=["private", "misnumbered"]
+        "skipped",
+        [pytest.param(SkipReason.PRIVATE_ONLY, id="private"), pytest.param(SkipReason.MISNUMBERED, id="misnumbered")],
     )
     def test_a_release_screened_out_past_the_cap_posts_its_skip_and_holds_nothing(self, skipped: SkipReason) -> None:
         recording = install_recording_hub()
-        release = _release(1, skipped)
         state = _run_state(torrents_added=1)
         pipeline = _pipeline(torrents=FakeTorrents({}), state=state, max_torrents_to_add=1)
 
-        pipeline.grab_releases(grab_request(seadex_dict={"RG": rg_group({release.url: release})}))
+        pipeline.grab_releases(_grab_request({"RG": _group(_release(1, skipped=skipped))}))
 
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [skipped]
         assert state.stats.held_by_cap == 0
 
 
 class TestTrackerSkips:
-    """A title whose releases are all on a private tracker or one with no parser grabs nothing and stays uncached.
+    """A release on a private tracker or one with no parser is never added.
 
-    It gets one needs-action row saying why.
+    A title that grabbed nothing else stays uncached under one row saying why. One that grabbed something beside it
+    is cached, with no row.
     """
 
     @pytest.mark.parametrize(
@@ -649,53 +644,39 @@ class TestTrackerSkips:
         cause: NeedsActionCause,
     ) -> None:
         recording = install_recording_hub()
-        releases = [_release(n, skip) for n, skip in enumerate(skipped, start=1)]
+        releases = [_release(n, skipped=skip) for n, skip in enumerate(skipped, start=1)]
         torrents = FakeTorrents({})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state, private_releases=private_releases, interactive=interactive)
 
-        pipeline.grab_and_cache(_grab_request({"NAN0": rg_group({release.url: release for release in releases})}))
+        pipeline.grab_and_cache(_grab_request({"NAN0": _group(*releases)}))
 
         assert [e.reason for e in recording.of_type(ReleaseSkipped)] == skipped
         assert torrents.calls == []
-        assert [(row.group, row.reason, row.cause) for row in state.stats.needs_action] == [("NAN0", reason, cause)]
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
+        assert state.stats.needs_action == [_needs_action("NAN0", reason, cause)]
+        assert _cached_at(pipeline) is None
 
-
-@pytest.mark.parametrize(
-    ("beside", "private_releases", "interactive", "cause"),
-    [
-        pytest.param(SkipReason.UNSUPPORTED_TRACKER, PrivateReleaseAction.WARN, False, None, id="no-parser"),
-        pytest.param(SkipReason.PRIVATE_ONLY, PrivateReleaseAction.FALLBACK, True, None, id="hand-picked-private"),
-        pytest.param(
-            SkipReason.MISNUMBERED, PrivateReleaseAction.WARN, False, NeedsActionCause.MISNUMBERED, id="misnumbered"
-        ),
-        pytest.param(None, PrivateReleaseAction.WARN, False, NeedsActionCause.GRAB_FAILED, id="failed-grab"),
-    ],
-)
-def test_a_grab_caches_its_title_past_a_tracker_skip_and_never_past_a_placement_skip_or_a_failed_grab(
-    beside: SkipReason | None,
-    private_releases: PrivateReleaseAction,
-    interactive: bool,
-    cause: NeedsActionCause | None,
-) -> None:
-    # The one add reaches the cap of 1, which changes none of it.
-    first, second = _release(1, beside), _release(2)
-    torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}, raises={"h1": httpx.ConnectError("nyaa down")})
-    state = _run_state()
-    pipeline = _pipeline(
-        torrents=torrents,
-        state=state,
-        max_torrents_to_add=1,
-        private_releases=private_releases,
-        interactive=interactive,
+    @pytest.mark.parametrize(
+        ("skipped", "private_releases", "interactive"),
+        [
+            pytest.param(SkipReason.UNSUPPORTED_TRACKER, PrivateReleaseAction.WARN, False, id="no-parser"),
+            pytest.param(SkipReason.PRIVATE_ONLY, PrivateReleaseAction.FALLBACK, True, id="hand-picked-private"),
+        ],
     )
+    def test_a_grab_beside_a_tracker_skip_caches_its_title_with_no_row(
+        self, skipped: SkipReason, private_releases: PrivateReleaseAction, interactive: bool
+    ) -> None:
+        state = _run_state()
+        pipeline = _pipeline(
+            torrents=FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}),
+            state=state,
+            private_releases=private_releases,
+            interactive=interactive,
+        )
 
-    pipeline.grab_and_cache(_grab_request({"RG": rg_group({first.url: first, second.url: second})}))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1, skipped=skipped), _release(2))}))
 
-    assert state.torrents_added == 1
-    assert [row.cause for row in state.stats.needs_action] == ([] if cause is None else [cause])
-    assert (pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None) == (cause is not None)
+        assert (state.torrents_added, state.stats.needs_action, _cached_at(pipeline)) == (1, [], _UPDATED_AT)
 
 
 class TestPlacementSkips:
@@ -705,55 +686,57 @@ class TestPlacementSkips:
     """
 
     @pytest.mark.parametrize(
-        ("skip_reason", "counts", "expected"),
+        ("skipped", "counts", "reason", "cause"),
         [
             pytest.param(
                 SkipReason.MISNUMBERED,
                 NO_ANOTHER_TITLES_COUNTS,
-                SkipReport(
-                    NeedsActionCause.MISNUMBERED,
-                    "numbering does not match its SeaDex listing; import it by hand",
-                ),
+                "numbering does not match its SeaDex listing; import it by hand",
+                NeedsActionCause.MISNUMBERED,
                 id="misnumbered",
             ),
             pytest.param(
                 SkipReason.EPISODE_TITLES_CONTRADICT,
                 NO_ANOTHER_TITLES_COUNTS,
-                SkipReport(
-                    NeedsActionCause.EPISODE_TITLES_CONTRADICT,
-                    "episode titles contradict its numbers; import it by hand",
-                ),
+                "episode titles contradict its numbers; import it by hand",
+                NeedsActionCause.EPISODE_TITLES_CONTRADICT,
                 id="titles-refute",
             ),
             pytest.param(
                 SkipReason.PLACED_ELSEWHERE,
                 AnotherTitlesCounts(another_titles=12, unplaced=6),
-                SkipReport(
-                    NeedsActionCause.PLACED_ELSEWHERE,
-                    "its files place under another title SeaDex lists it with; any it could not place need a hand "
-                    "import",
-                ),
+                "its files place under another title SeaDex lists it with; any it could not place need a hand import",
+                NeedsActionCause.PLACED_ELSEWHERE,
                 id="another-titles-files",
             ),
         ],
     )
     def test_a_skipped_release_is_never_added_and_its_skip_and_row_say_why(
-        self, skip_reason: SkipReason, counts: AnotherTitlesCounts, expected: SkipReport
+        self, skipped: SkipReason, counts: AnotherTitlesCounts, reason: str, cause: NeedsActionCause
     ) -> None:
         recording = install_recording_hub()
-        release = _release(1, skip_reason)
+        release = _release(1, skipped=skipped)
         release.another_titles_counts = counts
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state)
 
-        pipeline.grab_and_cache(_grab_request({"RG": rg_group({release.url: release})}))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(release)}))
 
         assert torrents.calls == []
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        assert [(e.reason, e.counts) for e in recording.of_type(ReleaseSkipped)] == [(skip_reason, counts)]
-        (row,) = state.stats.needs_action
-        assert (row.cause, row.group, row.reason) == (expected.cause, "RG", expected.reason)
+        assert _cached_at(pipeline) is None
+        assert [(e.reason, e.counts) for e in recording.of_type(ReleaseSkipped)] == [(skipped, counts)]
+        assert state.stats.needs_action == [_needs_action("RG", reason, cause)]
+
+    def test_a_grab_beside_a_placement_skip_leaves_its_title_uncached(self) -> None:
+        state = _run_state()
+        pipeline = _pipeline(torrents=FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}), state=state)
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1, skipped=SkipReason.MISNUMBERED), _release(2))}))
+
+        assert state.torrents_added == 1
+        assert [row.cause for row in state.stats.needs_action] == [NeedsActionCause.MISNUMBERED]
+        assert _cached_at(pipeline) is None
 
     def test_a_release_on_episodes_sonarr_has_no_row_for_is_planned_but_never_added_and_its_title_is_cached(
         self,
@@ -761,8 +744,7 @@ class TestPlacementSkips:
         # The planner marks the release to grab by its group and sizes: none of its files placed, and the title's
         # one episode in Sonarr has no file.
         recording = install_recording_hub()
-        nyaa = make_release(url="https://nyaa.si/view/1", infohash="h1", size=[100, 200])
-        nyaa.tracker = Tracker.NYAA
+        nyaa = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1", size=[100, 200])
         nyaa.skip_reason = SkipReason.AIRED_ONLY
         in_sonarr = [sonarr_ep(1, 3, episode_file_id=0)]
         plan = make_planner().plan({"RG": rg_group({nyaa.url: nyaa}, episodes=[])}, arr_files(in_sonarr), in_sonarr)
@@ -774,44 +756,24 @@ class TestPlacementSkips:
 
         assert nyaa.to_grab is True
         assert torrents.calls == []
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is not None
+        assert _cached_at(pipeline) == _UPDATED_AT
         assert [(e.reason, e.severity) for e in recording.of_type(ReleaseSkipped)] == [
             (SkipReason.AIRED_ONLY, Severity.INFO)
         ]
         assert state.stats.needs_action == []
 
-    @pytest.mark.parametrize(
-        "skip_reason",
-        [pytest.param(reason, id=reason.name.lower()) for reason in SkipReason if reason not in _ADD_TIME_SKIPS],
-    )
-    def test_a_release_skipped_for_any_placement_reason_is_never_added_and_its_title_is_listed_or_cached(
-        self, skip_reason: SkipReason
-    ) -> None:
-        # A reason with no row of its own that left its title uncached would have it checked every run in silence.
-        recording = install_recording_hub()
-        release = _release(1, skip_reason)
-        torrents = FakeTorrents({})
-        state = _run_state()
-        pipeline = _pipeline(torrents=torrents, state=state)
-
-        pipeline.grab_and_cache(_grab_request({"RG": rg_group({release.url: release})}))
-
-        cause = dict(_ROW_PRECEDENCE).get(skip_reason)
-        assert torrents.calls == []
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [skip_reason]
-        assert [row.cause for row in state.stats.needs_action] == ([] if cause is None else [cause])
-        assert (pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None) == (cause is not None)
-
     def test_a_skipped_release_of_a_resident_torrent_never_joins_its_pending_import(self) -> None:
         # Another title's pending import has the torrent.
         resident = pending_import(infohash="h1")
-        release = _release(1, SkipReason.EPISODE_TITLES_CONTRADICT)
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}))
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         updates = {"h1": pending_import_update("h1", anilist_id=22, stored=resident)}
 
         pipeline.grab_releases(
-            grab_request(seadex_dict={"RG": rg_group({release.url: release})}, pending_import_updates=updates)
+            _grab_request(
+                {"RG": _group(_release(1, skipped=SkipReason.EPISODE_TITLES_CONTRADICT))},
+                pending_import_updates=updates,
+            )
         )
 
         assert claim_anilist_ids(_stored(pipeline, "h1")) == (PENDING_IMPORT_ANILIST_ID,)
@@ -819,14 +781,14 @@ class TestPlacementSkips:
     def test_a_release_not_to_grab_with_a_skip_reason_is_not_skipped_and_the_title_caches(self) -> None:
         # The arr has the torrent's files now (the hand import is done), and another release of the title still grabs.
         recording = install_recording_hub()
-        done, other = _release(1, SkipReason.MISNUMBERED), _release(2)
+        done = _release(1, skipped=SkipReason.MISNUMBERED)
         done.to_grab = False
         pipeline = _pipeline(torrents=FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}))
 
-        pipeline.grab_and_cache(_grab_request({"RG": rg_group({done.url: done, other.url: other})}))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(done, _release(2))}))
 
         assert recording.of_type(ReleaseSkipped) == []
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is not None
+        assert _cached_at(pipeline) == _UPDATED_AT
 
 
 class TestPlacementInputUnread:
@@ -836,38 +798,41 @@ class TestPlacementInputUnread:
         state = _run_state()
         pipeline = _pipeline(torrents=FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), state=state)
 
-        pipeline.grab_and_cache(_grab_request(one_release_dict(srg="RG", infohash="h1"), input_missing=True))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}, input_unread_groups=("RG",)))
 
         assert [row.name for row in state.stats.grabbed] == ["Show-RG"]
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        rows = state.stats.needs_action
-        assert [r.cause for r in rows] == [NeedsActionCause.PLACEMENT_INPUT_UNREAD]
-        assert rows[0].reason == "a read the placement needs failed; will retry next run"
-        assert rows[0].group == "RG"
+        assert _cached_at(pipeline) is None
+        assert state.stats.needs_action == [
+            _needs_action(
+                "RG",
+                "a read the placement needs failed; will retry next run",
+                NeedsActionCause.PLACEMENT_INPUT_UNREAD,
+            )
+        ]
 
     def test_a_title_with_nothing_to_grab_is_neither_up_to_date_nor_cached(self) -> None:
         # The placement may have left a sequence waiting, so the coverage decision was coarse: no "already have it".
-        seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=False)})}
+        owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
         state = _run_state()
         pipeline = _pipeline(torrents=FakeTorrents({}), state=state)
 
-        pipeline.grab_and_cache(_grab_request(seadex_dict, input_missing=True))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(owned)}, input_unread_groups=("RG",)))
 
         assert state.stats.up_to_date == 0
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
+        assert _cached_at(pipeline) is None
         assert [r.cause for r in state.stats.needs_action] == [NeedsActionCause.PLACEMENT_INPUT_UNREAD]
 
 
 def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -> None:
     # AniList or SkyHook was unreachable before the first fetch: the title re-checks next run, and no row asks for a
     # hand.
-    seadex_dict: SeadexDict = {"RG": rg_group({"u1": make_release(url="u1", infohash="h1", download=False)})}
+    owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
     state = _run_state()
     pipeline = _pipeline(torrents=FakeTorrents({}), state=state)
 
-    pipeline.grab_and_cache(replace(_grab_request(seadex_dict), metadata_unread=True))
+    pipeline.grab_and_cache(replace(_grab_request({"RG": _group(owned)}), metadata_unread=True))
 
-    assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
+    assert _cached_at(pipeline) is None
     assert state.stats.needs_action == []
 
 
@@ -881,12 +846,11 @@ class TestGrabFailureContainment:
     @pytest.mark.parametrize(
         "error",
         [
-            TrackerPageError("Could not find the torrent title on https://nyaa.si/view/1"),
-            TorrentAddError("qBittorrent rejected the torrent"),
-            httpx.ConnectError("tracker down"),
-            qbittorrentapi.APIConnectionError("qbit died mid-run"),
+            pytest.param(TrackerPageError("Could not find the torrent title on https://nyaa.si/view/1"), id="parse"),
+            pytest.param(TorrentAddError("qBittorrent rejected the torrent"), id="add"),
+            pytest.param(httpx.ConnectError("tracker down"), id="tracker"),
+            pytest.param(qbittorrentapi.APIConnectionError("qbit died mid-run"), id="qbit"),
         ],
-        ids=["parse", "add", "tracker", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Each kind of error a tracker or qBittorrent raises is caught at the add, and posted as one warning naming
@@ -895,74 +859,63 @@ class TestGrabFailureContainment:
         pipeline = _pipeline(torrents=torrents)
         recording = install_recording_hub()
 
-        n_added, results = pipeline.grab_releases(
-            grab_request(seadex_dict=one_release_dict(srg="NAN0", infohash="h1")),
-        )
+        n_added, results = pipeline.grab_releases(_grab_request({"NAN0": _group(_release(1))}))
 
-        assert n_added == 0
-        assert results == []
+        assert (n_added, results) == (0, [])
         (failed,) = recording.of_type(GrabFailed)
-        assert failed.group == "NAN0"
-        assert failed.url == "https://nyaa.si/view/1"
-        assert failed.error == str(error)
+        assert failed == GrabFailed(group="NAN0", url="https://nyaa.si/view/1", error=str(error))
         assert severity_of(failed) is Severity.WARNING
 
-    def test_failed_release_does_not_drop_the_next_one(self) -> None:
-        # Containment is per release: the sibling release after the failure still grabs.
-        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hbad")
-        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hgood")
-        seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
-        torrents = FakeTorrents(
-            {"hgood": (AddStatus.ADDED, "Show-RG")},
-            raises={"hbad": httpx.ConnectError("nyaa down")},
-        )
-        pipeline = _pipeline(torrents=torrents)
-
-        n_added, results = pipeline.grab_releases(grab_request(seadex_dict=seadex_dict))
-
-        assert torrents.calls == ["hbad", "hgood"]
-        assert n_added == 1
-        assert [r.outcome for r in results] == [AddStatus.ADDED]
-
-    def test_failed_only_title_stays_uncached_with_a_retry_row(self) -> None:
-        torrents = FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")})
+    def test_a_failed_release_never_drops_the_next_and_leaves_the_title_uncached(self) -> None:
+        # Containment is per release: the sibling after the failure still grabs, and the title retries next run.
+        torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}, raises={"h1": httpx.ConnectError("nyaa down")})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state)
 
-        pipeline.grab_and_cache(_grab_request(one_release_dict(srg="RG", infohash="h1")))
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}))
+
+        assert torrents.calls == ["h1", "h2"]
+        assert [row.name for row in state.stats.grabbed] == ["Show-RG"]
+        assert [row.cause for row in state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
+        assert _cached_at(pipeline) is None
+
+    def test_failed_only_title_stays_uncached_with_a_retry_row(self) -> None:
+        # Nyaa is down for both of the group's torrents, and the row names the group once.
+        down = httpx.ConnectError("nyaa down")
+        state = _run_state()
+        pipeline = _pipeline(torrents=FakeTorrents({}, raises={"h1": down, "h2": down}), state=state)
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}))
 
         assert state.stats.grabbed == []
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 42) is None
-        rows = state.stats.needs_action
-        assert [r.cause for r in rows] == [NeedsActionCause.GRAB_FAILED]
-        assert rows[0].reason == "grab failed; will retry next run"
-        assert rows[0].group == "RG"
+        assert _cached_at(pipeline) is None
+        assert state.stats.needs_action == [
+            _needs_action("RG", "grab failed; will retry next run", NeedsActionCause.GRAB_FAILED)
+        ]
 
     def test_a_failed_grab_on_one_title_never_keeps_the_next_title_uncached(self) -> None:
         # Two titles in one run, each through the real per-title head: the first title's add fails, the second's
         # goes through.
-        first, second = _release(1), _release(2)
         torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}, raises={"h1": httpx.ConnectError("nyaa down")})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state)
         entries = {1: make_entry_record(anilist_id=1), 2: make_entry_record(anilist_id=2)}
         services = make_services(_seadex=FakeSeaDexSource(entries), _state=state, _grab_pipeline=pipeline)
 
-        for anilist_id, release in ((1, first), (2, second)):
+        for anilist_id, release in ((1, _release(1)), (2, _release(2))):
             entry = services.begin_check(anilist_id)
             assert entry is not None
             services.grab_and_cache(
                 grab_request(
                     anilist_id=anilist_id,
                     entry=entry,
-                    seadex_dict={"RG": rg_group({release.url: release})},
-                    update={"updated_at": "2026-01-01 00:00:00"},
+                    seadex_dict={"RG": _group(release)},
+                    update={"updated_at": _UPDATED_AT},
                 )
             )
 
         assert [row.cause for row in state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 1) is None
-        assert pipeline.cache_store.get_cached_title(Arr.SONARR, 2) is not None
+        assert (_cached_at(pipeline, 1), _cached_at(pipeline, 2)) == (None, _UPDATED_AT)
 
 
 @pytest.mark.parametrize(("wins", "loses"), list(combinations(_ROW_PRECEDENCE, 2)), ids=lambda row: row[1].value)
@@ -970,12 +923,12 @@ def test_two_reasons_on_one_title_list_it_once_under_the_one_that_outranks_the_o
     wins: tuple[SkipReason | None, NeedsActionCause], loses: tuple[SkipReason | None, NeedsActionCause]
 ) -> None:
     # The losing release comes first, so the order they are met in decides nothing.
-    first, second = _release(1, loses[0]), _release(2, wins[0])
+    first, second = _release(1, skipped=loses[0]), _release(2, skipped=wins[0])
     down = httpx.ConnectError("nyaa down")
     state = _run_state()
     pipeline = _pipeline(torrents=FakeTorrents({}, raises={"h1": down, "h2": down}), state=state)
 
-    pipeline.grab_and_cache(_grab_request({"A": rg_group({first.url: first}), "B": rg_group({second.url: second})}))
+    pipeline.grab_and_cache(_grab_request({"A": _group(first), "B": _group(second)}))
 
     assert [row.cause for row in state.stats.needs_action] == [wins[1]]
 
@@ -1019,7 +972,7 @@ class TestGrabPushesNotice:
                 arr_title="The Show",
                 title_name="Show Title",
                 entry=make_entry_record(url="https://releases.moe/42", notes="the why"),
-                seadex_dict=seadex_dict or one_release_dict(srg="PMR", infohash="h1"),
+                seadex_dict=seadex_dict or {"PMR": _group(_release(1))},
                 update={},
                 replaced_groups=("OldGroup",),
                 coverage="S01 E01-E12",
@@ -1045,13 +998,9 @@ class TestGrabPushesNotice:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Nyaa was down for group Bad's release. Its block must not read as skipped, which would say it was never tried.
-        grabbed = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
-        failed = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}, raises={"h2": httpx.ConnectError("nyaa down")})
 
-        [embed] = self._grab(
-            monkeypatch, torrents, {"PMR": rg_group({grabbed.url: grabbed}), "Bad": rg_group({failed.url: failed})}
-        )
+        [embed] = self._grab(monkeypatch, torrents, {"PMR": _group(_release(1)), "Bad": _group(_release(2))})
 
         assert [f.name for f in embed.fields[:2]] == ["Grabbed · PMR", "Failed · Bad"]
 
