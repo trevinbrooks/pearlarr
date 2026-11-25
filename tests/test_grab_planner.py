@@ -13,7 +13,6 @@ whose files they cover is dropped before the planner sees it. The planner reads 
 episodes, never its file names.
 """
 
-import logging
 from typing import Literal
 
 import pytest
@@ -694,28 +693,18 @@ class TestAReleaseByEpisode:
         assert _grabs(plan.seadex_dict) == {"u1": "grab", "u2": "grab"}
 
 
-class TestFilterByReleaseGroup:
-    """`plan` skips a release whose group and size(s) already match what the arr has (case-insensitively), grabbing otherwise."""
+class TestDebugLines:
+    """The lines a check logs at debug, naming each episode as Sonarr lists it."""
 
     def test_debug_logging_path_does_not_crash(self) -> None:
-        # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
-        planner = make_planner()
-        planner.logger.setLevel(logging.DEBUG)
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"SubsPlease": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
-        # Reset so a later test doesn't inherit DEBUG from the shared logger
-        planner.logger.setLevel(logging.WARNING)
+        # At debug the planner names the group of the file it compared, and an episode with no file has none.
+        planner = make_planner(logger=debug_logger("pearlarr-planner-missing-file"))
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1]))}
+        title = [sonarr_ep(1, 1, episode_file_id=0)]
+
+        plan = planner.plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "grab"}
 
     def test_the_debug_lines_name_an_episode_by_the_number_sonarr_lists_it_under(
         self, caplog: pytest.LogCaptureFixture
