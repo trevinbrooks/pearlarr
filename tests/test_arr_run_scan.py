@@ -10,10 +10,14 @@ How the run ends once the scan is done is in `test_arr_run_finish`.
 from typing import override
 
 from pearlarr.arr_models import HistoryRecord, SonarrSeries
+from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
     ArrRunSummaryReady,
+    BootStepFinished,
     Diagnostic,
+    ItemStarted,
+    ScanStarted,
     Severity,
     TitleRow,
 )
@@ -29,27 +33,30 @@ from .wait_fakes import FakeQbit
 class _Library(FakeStrategy):
     """The arr's side of a scan over `items`, each mapping one title, whose AniList id is the item's id.
 
-    `checked` holds the item of each title the scan asked it to check, by the item's title.
+    `checked` holds the item of each title the scan asked it to check, by the item's title. The `unmapped` item maps
+    no title.
     """
 
-    def __init__(self, *items: FakeArrItem) -> None:
+    def __init__(self, *items: FakeArrItem, unmapped: str | None = None) -> None:
         super().__init__(items=list(items), anilist_ids={})
+        self._unmapped = unmapped
         self.checked: list[str] = []
 
     @override
     def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        return {item.id: TitleMapping(anilist_id=item.id)}
+        return {} if item.title == self._unmapped else {item.id: TitleMapping(anilist_id=item.id)}
 
     @override
     def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
         self.checked.append(item.title)
 
 
-def _scan(strategy: FakeStrategy) -> RecordingHub:
-    """One whole Sonarr run of `strategy`, and what it showed."""
+def _scan(strategy: FakeStrategy, *, item_id: int | None = None, ignore_unmonitored: bool = False) -> RecordingHub:
+    """One whole Sonarr run of `strategy`, and what it showed. `item_id` narrows it as `--tvdb-id` does."""
 
+    config = make_config(url="http://sonarr", api_key="key", ignore_unmonitored=ignore_unmonitored)
     recording = install_recording_hub()
-    drive_arr_run(make_run_deps(), lambda _: strategy)
+    drive_arr_run(make_run_deps(config=config), lambda _: strategy, item_id=item_id)
     return recording
 
 
@@ -57,6 +64,76 @@ def _rows(recording: RecordingHub) -> list[tuple[TitleState, str]]:
     """The one-line title rows the run showed, each by its state and label."""
 
     return [(row.state, row.label) for row in recording.of_type(TitleRow)]
+
+
+def test_the_scan_shows_its_item_total_and_each_items_place_in_it() -> None:
+    library = _Library(FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"))
+
+    recording = _scan(library)
+
+    assert recording.of_type(ScanStarted) == [ScanStarted(arr=Arr.SONARR, total=2)]
+    assert recording.of_type(ItemStarted) == [
+        ItemStarted(arr=Arr.SONARR, index=1, total=2, title="Frieren"),
+        ItemStarted(arr=Arr.SONARR, index=2, total=2, title="Dandadan"),
+    ]
+
+
+class TestWhichItemsAreChecked:
+    """Which of the library's items the scan asks to check.
+
+    An unmonitored item is checked like any other unless the run is set to ignore it. Then it is shown as
+    unmonitored and left out of the scan's checks and of the SeaDex fetch before them. A single-item run scans only
+    the item asked for, and an item with no AniList mapping is shown as having none.
+    """
+
+    def test_an_unmonitored_item_is_checked_by_default(self) -> None:
+        library = _Library(
+            FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan", monitored=False)
+        )
+
+        recording = _scan(library)
+
+        assert library.checked == ["Frieren", "Dandadan"]
+        assert _rows(recording) == []
+
+    def test_an_unmonitored_item_is_shown_and_left_unchecked_when_set_to_ignore_it(self) -> None:
+        library = _Library(
+            FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan", monitored=False)
+        )
+
+        recording = _scan(library, ignore_unmonitored=True)
+
+        assert library.checked == ["Frieren"]
+        assert _rows(recording) == [(TitleState.UNMONITORED, "Dandadan")]
+
+    def test_the_seadex_fetch_counts_only_the_monitored_items_when_set_to_ignore_the_rest(self) -> None:
+        library = _Library(
+            FakeArrItem(item_id=1, title="Frieren"),
+            FakeArrItem(item_id=2, title="Dandadan"),
+            FakeArrItem(item_id=3, title="Kaiju No. 8", monitored=False),
+        )
+
+        recording = _scan(library, ignore_unmonitored=True)
+
+        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching SeaDex entries"]
+        assert step.detail == "2 entries"
+
+    def test_a_single_item_run_scans_only_the_item_asked_for(self) -> None:
+        library = _Library(FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"))
+
+        recording = _scan(library, item_id=2)
+
+        assert library.checked == ["Dandadan"]
+        assert recording.of_type(ItemStarted) == [ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Dandadan")]
+
+    def test_an_item_with_no_anilist_mapping_is_shown_as_having_none(self) -> None:
+        library = _Library(
+            FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"), unmapped="Frieren"
+        )
+
+        recording = _scan(library)
+
+        assert _rows(recording) == [(TitleState.NO_MAPPING, "Frieren")]
 
 
 _FILE_IMPORTED = HistoryRecord(
