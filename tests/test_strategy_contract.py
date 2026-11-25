@@ -308,10 +308,8 @@ _STAMP = "2026-01-01 00:00:00"
 _SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
 """Series 7 as Sonarr lists it."""
 
-
 _STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
 """The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
-
 
 _LISTED_EP1 = _EP1.renumbered(season=1, episode=1, absolute=None)
 """Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
@@ -583,7 +581,6 @@ class TestSonarrCheckTitlePendingImportUpdates:
 
 _MOVED_SPECIAL = sonarr_ep(0, 1, ep_id=150, tvdb_id=9001, episode_file_id=0)
 """TVDB episode 9001 of series 7 as a special on row 150, after it left the season's first episode."""
-
 
 _SECOND_ROW = sonarr_ep(1, 2, ep_id=102, tvdb_id=9002, episode_file_id=0)
 """The season's second episode of series 7, on the row it was stored on."""
