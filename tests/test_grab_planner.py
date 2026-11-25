@@ -585,21 +585,18 @@ class TestAReleaseThatPlacedNothing:
         # The arr's E01 file is Left's, from some other release of the group, and its E02 file is Other's. Left's
         # listed release placed nothing. With no reason it may hold any episode, so Other isn't grabbed over E01.
         # Skipped because Sonarr has no row for its episodes, it holds none of the title's, and Other is grabbed.
-        planner = make_planner()
-        left = make_release(episodes=[], size=[500], infohash="h1")
+        left = make_release(size=[500])
         left.skip_reason = skip_reason
         placed = [placed_episode(season=1, episode=1, size=200), placed_episode(season=1, episode=2, size=300)]
-        other = make_release(url="https://nyaa.si/view/2", episodes=placed, size=[200, 300], infohash="h2")
-        seadex = {"Left": rg_group({"u1": left}), "Other": rg_group({"u2": other}, episodes=placed)}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Left": (100,), "Other": (300,)}),
-            title_episodes=[
-                sonarr_ep(1, 1, size=100, release_group="Left"),
-                sonarr_ep(1, 2, size=300, release_group="Other"),
-            ],
-        )
-        assert result.seadex_dict["Other"].releases["u2"].to_grab is grabbed
+        seadex = {
+            "Left": _sonarr_group(u1=left),
+            "Other": _sonarr_group(u2=make_release(size=[200, 300], episodes=placed)),
+        }
+        title = [sonarr_ep(1, 1, size=100, release_group="Left"), sonarr_ep(1, 2, size=300, release_group="Other")]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert plan.seadex_dict["Other"].releases["u2"].to_grab is grabbed
 
 
 class TestAReleaseByEpisode:
@@ -715,7 +712,7 @@ class TestDebugLines:
         (row,) = view.in_sonarr
         placed = PlacedEpisode(2, 1, 100, printed=PrintedKey.of(row))
         planner = make_planner(logger=debug_logger("pearlarr-planner-printed-numbers"))
-        seadex = {"RG": rg_group({"u1": make_release(episodes=[placed], infohash="h1")})}
+        seadex = {"RG": _sonarr_group(u1=make_release(size=[100], episodes=[placed]))}
 
         with caplog.at_level("DEBUG"):
             planner.plan(seadex_dict=seadex, arr_files=ArrFiles(), title_episodes=[row])
@@ -775,7 +772,7 @@ class TestListedSizeOnTooManyEpisodes:
     def test_a_listed_size_placed_on_no_episode_but_held_grabs(self) -> None:
         # File 999 is listed but placed nowhere, so the arr having it on E02 is one too many.
         episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
-        seadex = {"Era-Raws": rg_group({"u1": make_release(size=[100, 200, 999], episodes=episodes, infohash="h1")})}
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200, 999], episodes=episodes))}
 
         item = self._decide(seadex, [self._ours(1, 100, 11), self._ours(2, 999, 12)])
 
@@ -788,7 +785,7 @@ class TestListedSizeOnTooManyEpisodes:
             placed_episode(season=1, episode=1, size=150),
             placed_episode(season=1, episode=2, size=200),
         ]
-        seadex = {"Era-Raws": rg_group({"u1": make_release(size=[100, 150, 200], episodes=episodes, infohash="h1")})}
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 150, 200], episodes=episodes))}
 
         item = self._decide(seadex, [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
@@ -870,16 +867,21 @@ class TestListedSizeOnTooManyEpisodes:
     def test_a_private_doubled_release_promotes_a_public_group_listing_the_same_files(self) -> None:
         result = self._plan(self._beside_public(is_fallback=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
-        assert result.seadex_dict["Pub"].releases["u2"].to_grab is True
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
-        assert result.skips.warned is False
+        assert _grabs(result.seadex_dict) == {"u2": "grab"}
+        assert result.skips == PrivateOnlyNotices(
+            notices=[
+                PrivateOnlyNotice(["Era-Raws"], "private-only; grabbing public release Pub instead", Severity.INFO)
+            ]
+        )
 
     def test_a_private_doubled_release_is_skipped_rather_than_replaced_by_a_fallback(self) -> None:
         # A fallback never replaces the Arr's copy of the preferred release: the doubled-size skip warns instead.
         result = self._plan(self._beside_public(is_fallback=True), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
 
-        assert result.seadex_dict["Pub"].releases["u2"].to_grab is False
-        assert (result.skips.warned, result.skips.outdated) == (True, True)
+        assert _grabs(result.seadex_dict) == {}
+        assert result.skips == PrivateOnlyNotices(
+            warned=True, groups=["Era-Raws"], notices=[PrivateOnlyNotice(["Era-Raws"], _OUTDATED)], outdated=True
+        )
 
 
 class TestGroupGuardFacts:
