@@ -45,7 +45,7 @@ from pearlarr.cache import (
     selection_hash_key,
 )
 from pearlarr.clock import Clock
-from pearlarr.config import AppConfig, Arr
+from pearlarr.config import AppConfig, Arr, secret_value
 from pearlarr.episode_ids import is_row_id
 from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeStatuses, TrustedGroups
 from pearlarr.file_paths import normalize_file_name
@@ -774,6 +774,8 @@ def make_run_deps(
     *,
     config: AppConfig | None = None,
     cache_store: AbstractCacheStore | None = None,
+    qbit: qbittorrentapi.Client | None = None,
+    arr: Arr = Arr.SONARR,
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
     clock: Clock | None = None,
@@ -781,13 +783,21 @@ def make_run_deps(
     xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
 ) -> ArrRunDeps:
-    """A real `ArrRunDeps` over typed fakes, with a Sonarr url and api_key set and `qbit` None (dry run).
+    """A real `ArrRunDeps` for an `arr` run over typed fakes, built the way a run builds it.
 
+    With no `config`, the arr's url and api_key are set and nothing else. `qbit` is the run's qBittorrent client,
+    held by the deps and the torrent service both. None, the default, is a run with no qBittorrent configured (a
+    dry run). The notifier posts to the config's Discord and wait webhook URLs, a no-op when neither is set.
     Its AniList client is scripted and knows no title, and the reporter shares its gateway, as a run's does.
-    `categories` swaps in a resolver that reads Sonarr's clients, in place of the config passthrough.
+    `categories` swaps in a resolver that reads the arr's clients, in place of the config passthrough.
     """
 
-    config = config or make_config(url="http://sonarr", api_key="key")
+    if config is None:
+        config = (
+            make_config(radarr_url="http://radarr", radarr_api_key="key")
+            if arr is Arr.RADARR
+            else make_config(url="http://sonarr", api_key="key")
+        )
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
     anilist = AniListGateway(cache_store=cache_store, logger=logger, client=ScriptedAniListClient(title=None))
@@ -795,10 +805,10 @@ def make_run_deps(
     http = httpx.Client()
     # No transport: the config passthrough (no download-client fetch under test). Shared with
     # torrents below, matching production's single resolver instance.
-    categories = categories or make_categories(config)
+    categories = categories or make_categories(config, arr)
     return ArrRunDeps(
         config=config,
-        arr_config=config.for_arr(Arr.SONARR),
+        arr_config=config.for_arr(arr),
         # None: the strategies' require_connection binds one lazily, so the keys-missing
         # construction paths behave exactly as production's.
         arr_http=None,
@@ -807,7 +817,7 @@ def make_run_deps(
         web=http,
         parse_cache_rows=ParseCacheRows(cache_store),
         http=http,
-        qbit=None,
+        qbit=qbit,
         # A real resolver over empty in-memory mappings (no network). It carries a real (empty)
         # `anibridge` the strategy reads at construction.
         resolver=MappingResolver(
@@ -822,8 +832,14 @@ def make_run_deps(
         anilist=anilist,
         skyhook=SkyHookGateway(client=skyhook_client or FakeSkyHookClient(), cache_store=cache_store),
         xem=XemGateway(client=xem_client or FakeXemClient(), cache_store=cache_store),
-        torrents=_real_torrents(logger, http, categories),
-        notifier=Notifier(discord_url=None, webhook_url=None, web=http),
+        torrents=TorrentService(
+            qbit=qbit, web=http, categories=categories, tags=config.qbittorrent.tags, logger=logger
+        ),
+        notifier=Notifier(
+            discord_url=secret_value(config.notifications.discord_url),
+            webhook_url=secret_value(config.notifications.wait_webhook_url),
+            web=http,
+        ),
         planner=make_planner(),
         reporter=_real_reporter(cache_store, anilist),
     )
