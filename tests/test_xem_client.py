@@ -8,11 +8,11 @@ import pytest
 import respx
 from respx.models import Call
 
-from pearlarr.output import Diagnostic, Severity
+from pearlarr.output import Severity
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.xem_client import XEM_URL, XemClient, XemNoReply
 
-from .fakes import FakeXemClient, RecordingHub, install_recording_hub
+from .fakes import FakeXemClient, diagnostic_messages, install_recording_hub
 from .http_mock import xem_fixture
 
 _SERIES = 79214
@@ -40,10 +40,6 @@ def _client() -> XemClient:
     """A real client over respx, backoffs stubbed out."""
 
     return XemClient(client=httpx.Client(), sleep=lambda _s: None)
-
-
-def _warnings(recording: RecordingHub) -> list[str]:
-    return [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 def _read(tvdb_id: int, body: object) -> tuple[SceneMapping, ...] | XemNoReply:
@@ -87,7 +83,7 @@ def test_a_row_with_no_scene_side_is_dropped() -> None:
 
     # Every row of the reply maps its episode to another site only.
     assert _read(80900, xem_fixture("tvdb_80900.json")) == ()
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @pytest.mark.parametrize(
@@ -97,7 +93,7 @@ def test_a_failure_thexem_has_for_a_series_without_mappings_reads_as_no_mappings
     recording = install_recording_hub()
 
     assert _read(70350, body) == ()
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @pytest.mark.parametrize(
@@ -117,7 +113,7 @@ def test_a_failure_worded_another_way_leaves_the_series_unread_and_is_quoted_on_
     reply = _read(_SERIES, {"result": "failure", "data": [], "message": message})
 
     assert reply is XemNoReply.UNUSABLE
-    assert _warnings(recording) == [_unusable(said)]
+    assert diagnostic_messages(recording, Severity.WARNING) == [_unusable(said)]
 
 
 @pytest.mark.parametrize(
@@ -145,7 +141,7 @@ def test_one_row_with_a_number_that_does_not_read_leaves_the_series_unread(
     reply = _read(_SERIES, _success(good, {"scene": scene, "tvdb": tvdb}))
 
     assert reply is XemNoReply.UNUSABLE
-    assert _warnings(recording) == [_unusable("its mappings failed validation")]
+    assert diagnostic_messages(recording, Severity.WARNING) == [_unusable("its mappings failed validation")]
 
 
 @pytest.mark.parametrize(
@@ -161,7 +157,7 @@ def test_json_that_is_not_a_mappings_reply_leaves_the_series_unread(body: object
     reply = _read(_SERIES, body)
 
     assert reply is XemNoReply.UNUSABLE
-    assert _warnings(recording) == [_unusable(detail)]
+    assert diagnostic_messages(recording, Severity.WARNING) == [_unusable(detail)]
 
 
 @pytest.mark.parametrize(
@@ -197,7 +193,7 @@ def test_thexem_stays_unreachable_and_later_reads_send_nothing(answer: httpx.Res
 
     assert first is second is XemNoReply.UNREACHABLE
     assert client.unreachable is True
-    assert _warnings(recording) == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         f"TheXEM failed ({detail} for TVDB {_SERIES}) - keeping the scene numbers already stored until it answers"
     ]
 
