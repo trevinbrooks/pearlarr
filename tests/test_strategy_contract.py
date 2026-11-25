@@ -356,12 +356,15 @@ class TestSonarrCheckTitleBeforeTheGrab:
     episodes are shown.
     """
 
-    def test_sonarr_no_seadex_entry_stops_at_begin_check(self) -> None:
+    def test_sonarr_title_with_no_seadex_entry_grabs_nothing_and_owes_no_pause(self) -> None:
         run = FakeRunServices()
         strat = sonarr_checking(run)
 
         strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+
+        # The run reports the missing entry under the title's id.
         assert run.anilist_id_prologue_calls == [5]
+        assert (run.grab_requests, run.pauses_owed) == ([], 0)
 
     @pytest.mark.parametrize(
         ("mapping", "warned"),
@@ -1080,12 +1083,15 @@ class TestSonarrCheckTitleMetadataUnread:
 class TestRadarrCheckTitle:
     """A movie's check stops on no SeaDex entry, a cached title or no releases. A grab carries its files to the plan."""
 
-    def test_radarr_no_seadex_entry_stops_at_begin_check(self) -> None:
+    def test_radarr_title_with_no_seadex_entry_grabs_nothing_and_owes_no_pause(self) -> None:
         run = FakeRunServices()
         strat = radarr_checking(run)
 
         strat.check_title(RadarrMovie(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+
+        # The run reports the missing entry under the title's id.
         assert run.anilist_id_prologue_calls == [5]
+        assert (run.grab_requests, run.pauses_owed) == ([], 0)
 
     def test_a_cached_title_stops_with_an_empty_coverage_backfill(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
