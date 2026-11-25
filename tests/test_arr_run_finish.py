@@ -16,9 +16,6 @@ from typing import cast, override
 import pytest
 import respx
 
-from pearlarr.arr_run_loop import ArrRunLoop
-from pearlarr.arr_run_services import ArrRunServices
-from pearlarr.boot_flow import BootFlow
 from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
@@ -27,7 +24,7 @@ from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, Wa
 from pearlarr.pending_import import PendingImport
 from pearlarr.wait_types import ImportProgress, ImportWaitMode
 
-from .builders import attempt_result, make_config, make_run_deps, pending_import
+from .builders import attempt_result, drive_arr_run, make_config, make_run_deps, pending_import
 from .fakes import FakeArrItem, FakeClock, RecordingHub, install_recording_hub
 from .wait_fakes import TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStrategy
 
@@ -92,8 +89,7 @@ def _run(
     try:
         client = None if qbit is None else qbit.client()
         deps = make_run_deps(config=config, cache_store=store, qbit=client, arr=arr, clock=FakeClock(step=30))
-        loop = ArrRunLoop(deps, ArrRunServices(deps, arr))
-        loop.run_arr(strategy, item_id=None, dry_run=dry_run, import_wait_mode=mode, boot=BootFlow())
+        drive_arr_run(deps, lambda _: strategy, arr=arr, dry_run=dry_run, import_wait_mode=mode)
     finally:
         store.close()
 
