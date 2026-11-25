@@ -657,11 +657,19 @@ def _real_reporter(cache_store: AbstractCacheStore, anilist: AniListGateway) -> 
     return RunReporter(emit=emit_to_hub, counts=lambda: counts, cache_store=cache_store, anilist=anilist)
 
 
-def make_categories(config: AppConfig | None = None, arr: Arr = Arr.SONARR) -> ArrCategoryResolver:
-    """A fetchless category resolver (no sources: config values pass through, omitted stays blank)."""
+def make_categories(
+    config: AppConfig | None = None,
+    arr: Arr = Arr.SONARR,
+    *,
+    sources: CategorySources | None = None,
+) -> ArrCategoryResolver:
+    """A category resolver, fetchless by default (no sources: config values pass through, omitted stays blank).
+
+    `sources` binds a real transport and a qBittorrent stub, so the arr's clients are read live.
+    """
 
     config = config or AppConfig()
-    return ArrCategoryResolver(arr, config.for_arr(arr), None)
+    return ArrCategoryResolver(arr, config.for_arr(arr), sources)
 
 
 def make_fetched_categories(

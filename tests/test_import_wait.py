@@ -25,17 +25,21 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from typing import Any, cast, override
 
+import httpx
 import pytest
 import qbittorrentapi
+import respx
 
+from pearlarr.arr_categories import ArrCategoryResolver, CategorySources
 from pearlarr.arr_models import HistoryRecord
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_state import ArrRunState
-from pearlarr.config import Arr
+from pearlarr.config import AppConfig, Arr
 from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitKind, WaitSnapshot
 from pearlarr.pending_follow import follow
 from pearlarr.pending_import import PendingImport
+from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import (
     NO_ATTEMPT,
     PENDING_IMPORT_STATE_FOR_OUTCOME,
@@ -57,18 +61,25 @@ from .builders import (
     CLIENT_SENTINEL,
     SEP,
     FakeCacheStore,
+    FakeTorrents,
     attempt_result,
+    download_client_json,
     files_left_for_hand_import,
+    grab_request,
     make_bare_instance,
     make_categories,
     make_config,
     make_fetched_categories,
+    make_grab_pipeline,
     make_import_wait_manager,
     make_logger,
     make_radarr_sync,
     make_services,
+    one_release_dict,
     order_only_hand_import_files,
     pending_import,
+    pending_import_update,
+    sonarr_client_fields,
     sonarr_ep,
     title_claim,
     two_claim_pending_import,
@@ -78,6 +89,7 @@ from .fakes import (
     FakeClock,
     FakeRadarrClient,
     FakeStrategy,
+    bind_arr_http,
     diagnostic_messages,
     install_recording_hub,
 )
@@ -215,6 +227,16 @@ def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
     """A fake as the SDK client it stands in for (the sanctioned leaf-client hatch: no interface to subclass)."""
 
     return cast("qbittorrentapi.Client", qbit)
+
+
+_ARR_URL = "http://arr.test"
+
+
+def _reading_sonarrs_clients(config: AppConfig, qbit: FakeQbit) -> ArrCategoryResolver:
+    """A resolver reading Sonarr's download clients from `_ARR_URL`, with no retry inside a read, like a run's."""
+
+    http, _ = bind_arr_http(_ARR_URL)
+    return make_categories(config, sources=CategorySources(replace(http, retries=0), _sdk_client(qbit)))
 
 
 def make_pollers(qbit: FakeQbit | None) -> WaitPollers:
@@ -600,6 +622,41 @@ class TestReportImportsForSeries:
         assert [(c.state, c.coverage, c.url) for c in reporter.snapshot_calls] == [
             (PendingImportState.DOWNLOADING, "S02 E01-E12", "https://releases.moe/22"),
         ]
+
+
+class TestRegisteredGrabSurvivesTheSeriesReport:
+    """A torrent the grab finds already in qBittorrent skips the series report and imports in the end-of-run wait."""
+
+    def test_a_torrent_found_already_in_qbittorrent_is_left_to_the_end_pass_and_imports_there(self) -> None:
+        # The grab starts its pending import and its title block reports it, so the series report leaves it be.
+        state = ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
+        store = FakeCacheStore()
+        pipeline = make_grab_pipeline(
+            _torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}), cache_store=store, _state=state
+        )
+        reporter = _RecordingReporter()
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h1": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=_RecordingStrategy(completed=attempt_result(all_done=True)),
+            reporter=reporter,
+            store=store,
+            state=state,
+            clock=FakeClock(step=30),
+        )
+
+        pipeline.grab_releases(
+            grab_request(
+                seadex_dict=one_release_dict(srg="NAN0", infohash="h1"),
+                pending_import_updates={"h1": pending_import_update("h1", series_id=7)},
+            ),
+        )
+        mgr.report_imports_for_series(7)
+        result = mgr.run_blocking(view=RecordingWaitView())
+
+        assert reporter.snapshot_calls == []
+        assert result is not None
+        assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.IMPORTED, True)]
+        assert store.get_pending_import_rows(Arr.SONARR) == {}
 
 
 def _report_series_7(mgr: ImportWaitManager) -> None:
@@ -2222,25 +2279,31 @@ class TestRemoveFromQueue:
 
 
 class TestCleanupCategoryResolve:
-    """clean_up_and_drop resolves no post-import category when there is no qBittorrent client."""
+    """The cleanup reads the post-import category once, and the move and the queue removal both act on that read."""
 
-    def test_no_client_with_a_configured_category_still_runs_the_explicit_close(self) -> None:
-        # qbit None resolves NO category at all: a configured unwatched category
-        # must not make the close skip on is_unwatched when no move can run.
-        strategy = _RecordingStrategy()
-        pending = pending_import(infohash="h")
+    @respx.mock
+    def test_a_failed_client_read_moves_nothing_and_the_queue_removal_still_runs(self) -> None:
+        # Sonarr answers a second read, naming a post-import category it doesn't watch. Had the removal read
+        # again, it would skip for a move that never ran.
+        respx.get(f"{_ARR_URL}/api/v3/downloadclient").mock(
+            side_effect=[httpx.Response(500), httpx.Response(200, json=[download_client_json(sonarr_client_fields())])]
+        )
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit(_COMPLETE)
+        store = FakeCacheStore()
         mgr = make_orchestration_manager(
-            qbit=None,
+            qbit=qbit,
             strategy=strategy,
-            stored_pending_imports=[pending],
-            torrent_category="tv-sonarr",
-            post_import_category="sonarr-done",
+            store=store,
+            stored_pending_imports=[pending_import(infohash="h", series_id=7)],
+            categories=_reading_sonarrs_clients(make_config(), qbit),
         )
 
-        assert mgr._cleanup.clean_up_and_drop(pending) is True
+        mgr.report_imports_for_series(7)
 
+        assert qbit.set_category_calls == []
         assert [c.infohash for c in strategy.close_calls] == ["h"]
-        assert mgr._pending_imports.rows() == {}
+        assert store.get_pending_import_rows(Arr.SONARR) == {}
 
 
 class TestCloseSkipOnMoveToUnwatched:
@@ -2383,6 +2446,30 @@ class TestMoveKeepsAnUnseenTorrentOut:
         retired, _ = self._try_clean_up(qbit, post_import="tv-sonarr/done")
 
         assert retired is True
+
+    @respx.mock
+    def test_unreadable_sonarr_clients_hold_the_move_for_a_later_run(self) -> None:
+        # Only Sonarr's clients say whether it watches `sonarr-done`. The configured grab category stands in
+        # for them at the queue removal, never at the move.
+        respx.get(f"{_ARR_URL}/api/v3/downloadclient").respond(status_code=500)
+        config = make_config(torrent_category="anime", post_import_category="sonarr-done")
+        strategy = _RecordingStrategy(progress=ImportProgress(1, 1, determinate=True))
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="manual")]})
+        store = FakeCacheStore()
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store=store,
+            stored_pending_imports=[pending_import(infohash="h", series_id=7)],
+            config=config,
+            categories=_reading_sonarrs_clients(config, qbit),
+        )
+
+        mgr.report_imports_for_series(7)
+
+        assert qbit.set_category_calls == []
+        assert strategy.close_calls == []
+        assert store.get_pending_import_rows(Arr.SONARR)["h"].get("awaiting_cleanup") is True
 
 
 class TestCloseRetrySchedule:
@@ -2632,8 +2719,18 @@ class TestCrossArrCategoryGate:
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert store.get_pending_import_rows(Arr.RADARR) == {}
 
-    @pytest.mark.parametrize("awaiting_cleanup", [False, True], ids=["first-import", "cleanup-finish"])
-    def test_radarr_on_the_torrent_holds_the_move_and_never_the_queue_removal(self, awaiting_cleanup: bool) -> None:
+    @pytest.mark.parametrize(
+        ("awaiting_cleanup", "radarr_awaiting_cleanup"),
+        [
+            pytest.param(False, False, id="first-import"),
+            pytest.param(True, False, id="cleanup-finish"),
+            # Radarr's import went through but its cleanup is still to finish, and that cleanup makes the move.
+            pytest.param(False, True, id="radarr-awaiting-its-own-cleanup"),
+        ],
+    )
+    def test_radarr_on_the_torrent_holds_the_move_and_never_the_queue_removal(
+        self, awaiting_cleanup: bool, radarr_awaiting_cleanup: bool
+    ) -> None:
         strategy = _RecordingStrategy(
             completed=attempt_result(all_done=True), progress=ImportProgress(1, 1, determinate=True)
         )
@@ -2646,7 +2743,8 @@ class TestCrossArrCategoryGate:
             stored_pending_imports=[pending_import(infohash="h", series_id=7, awaiting_cleanup=awaiting_cleanup)],
             post_import_category="pearlarr-done",
         )
-        store.put_pending_import_row(Arr.RADARR, "h", pending_import(infohash="h", series_id=0).to_json())
+        movie = pending_import(infohash="h", series_id=0, awaiting_cleanup=radarr_awaiting_cleanup)
+        store.put_pending_import_row(Arr.RADARR, "h", movie.to_json())
 
         mgr.report_imports_for_series(7)
         mgr.finish_cleanups()
