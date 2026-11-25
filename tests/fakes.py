@@ -1,5 +1,8 @@
 # pyright: strict
-"""Shared, strict-typed test doubles. A fake driven by a single test stays in that test."""
+"""Shared, strict-typed test doubles, and the small helpers tests share to build, feed and read what they check.
+
+A fake driven by a single test stays in that test.
+"""
 
 import io
 import logging
