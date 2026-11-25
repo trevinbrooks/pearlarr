@@ -311,7 +311,7 @@ class TestSonarrBusy:
         result = strat.import_completed(pending_import(), "/d", attempt_kind)
 
         assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 0, 1)
-        assert result.pause_reason is PauseReason.BUSY
+        assert (result.pause_reason, result.command_issued) == (PauseReason.BUSY, False)
         assert sonarr.execute_calls == []
 
     def test_a_pass_started_during_a_fetch_that_found_no_files_reads_as_busy(self) -> None:
