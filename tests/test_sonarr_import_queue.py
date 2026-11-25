@@ -403,9 +403,9 @@ class TestImportInFlight:
         assert sonarr.execute_calls == []
 
     def test_an_import_naming_the_file_by_sonarrs_path_holds_the_post_from_the_first_poll(self) -> None:
-        # Sonarr sees qBittorrent's /d as /remote/tv, and the import names the file by that path. The fetch reads the
-        # mapping, so the reads after it match the import on this first poll. Pearlarr didn't post it, so it isn't
-        # read as pearlarr's own.
+        # Sonarr sees qBittorrent's /d as /remote/tv, and the import names the file by that path. It is on episode 202,
+        # not the file's 101, so only the path can match it. The fetch reads the mapping, so the reads after it match
+        # the import on this first poll. Pearlarr didn't post it, so it isn't read as pearlarr's own.
         strat, sonarr = make_sonarr_for_import(candidates=None)
         sonarr.history_page_return = closed_history()
         sonarr.folder_candidates_return = [manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")]
@@ -436,14 +436,14 @@ class TestImportInFlight:
         sonarr.path_mappings_return = []
         pending = pending_import()
 
-        posting = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        posting = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         sonarr.commands_return = [
             NEUTRAL_RESCAN,
             CommandResource.model_validate(
                 {"id": 42, "name": "ManualImport", "status": "started", "body": {"files": [{"path": _FILE}]}}
             ),
         ]
-        in_flight = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        in_flight = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert (posting.pause_reason, posting.command_issued) == (PauseReason.ISSUED, True)
         assert (in_flight.pause_reason, in_flight.command_issued) == (PauseReason.IMPORT, True)
