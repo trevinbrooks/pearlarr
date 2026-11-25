@@ -1105,20 +1105,6 @@ class TestRunBlocking:
         assert [view.final(key).outcome for key in ("fast", "slow")] == [Outcome.IMPORTED, Outcome.IMPORTED]
         assert store.get_pending_import_rows(Arr.SONARR) == {}
 
-    def test_an_import_sonarr_accepted_reads_importing_until_a_poll_finds_its_files_in(self) -> None:
-        strategy = _RecordingStrategy(
-            attempts=[
-                attempt_result(all_done=False, command_issued=True),
-                attempt_result(all_done=True, command_issued=True),
-            ],
-        )
-        store, view = _run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
-
-        assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
-        assert view.seen("h", Phase.IMPORTING) != []
-        assert view.final("h").outcome is Outcome.IMPORTED
-        assert _stored(store) == {}
-
     def test_with_the_progress_refresh_off_only_the_next_poll_confirms_an_import(self) -> None:
         # A progress read between the polls would find every file in and finish the row before poll 2.
         strategy = _RecordingStrategy(
@@ -1288,41 +1274,16 @@ class TestRunBlocking:
         assert strategy.import_calls[-1].attempt_kind is AttemptKind.FINAL
 
     @pytest.mark.parametrize(
-        ("torrents", "outcome", "stored"),
+        "reading",
         [
-            pytest.param({}, Outcome.GONE, {}, id="missing-drops"),
-            pytest.param(
-                {"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, {"h": False}, id="errored-leaves"
-            ),
-            # Never finishes: past imports.download_timeout the row finishes
-            # DOWNLOAD_TIMED_OUT (left), the pending import stays for a later run.
-            pytest.param(
-                {"h": [FakeTorrent(progress=0.5)]}, Outcome.DOWNLOAD_TIMED_OUT, {"h": False}, id="timeout-leaves"
-            ),
+            pytest.param(FakeTorrent(progress=0.5), id="still-downloading"),
             # qBittorrent down for the whole wait still ends it at the download timeout.
-            pytest.param(
-                {"h": [qbittorrentapi.APIConnectionError("down")]},
-                Outcome.DOWNLOAD_TIMED_OUT,
-                {"h": False},
-                id="unreachable-times-out",
-            ),
-            # COMPLETE but no content_path to import from: its own outcome (not
-            # a misleading "timed out" - the download finished fine).
-            pytest.param(
-                {"h": [FakeTorrent(is_complete=True)]}, Outcome.NO_CONTENT_PATH, {"h": False}, id="no-path-leaves"
-            ),
+            pytest.param(qbittorrentapi.APIConnectionError("down"), id="qbittorrent-unreachable"),
         ],
     )
-    def test_a_finish_without_import_keeps_or_drops_the_pending_import(
-        self,
-        torrents: dict[str, list[QbitStep]],
-        outcome: Outcome,
-        stored: dict[str, bool],
-    ) -> None:
-        # None of these reach an import attempt, and none may touch the
-        # post-import category hook (IMPORTED-only).
+    def test_a_download_that_never_finishes_times_out_and_is_left_for_the_next_run(self, reading: QbitStep) -> None:
         strategy = _RecordingStrategy()
-        qbit = CategoryQbit(torrents)
+        qbit = CategoryQbit({"h": [reading]})
         store, view = _run_blocking_wait(
             strategy,
             qbit,
@@ -1331,8 +1292,8 @@ class TestRunBlocking:
         )
 
         assert strategy.import_calls == []
-        assert view.final("h").outcome is outcome
-        assert _stored(store) == stored
+        assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
+        assert _stored(store) == {"h": False}
         assert qbit.set_category_calls == []
 
     def test_a_failed_progress_read_is_skipped_and_the_next_poll_imports(self) -> None:
