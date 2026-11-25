@@ -40,10 +40,10 @@ from pearlarr.anilist_client import (
     media_from_body,
 )
 from pearlarr.log import LOG_NAME
-from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
-from .fakes import RecordingHub
+from .fakes import RecordingHub, install_recording_hub
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -371,14 +371,6 @@ def _warnings(recording: RecordingHub) -> list[Diagnostic]:
     return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
-def _recording() -> RecordingHub:
-    """Install a recording hub (conftest teardown restores the default)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)
-    return recording
-
-
 _DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
 _DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
 _SKIPPING = "skipping further lookups this run"
@@ -389,7 +381,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never marks AniList unreachable."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
+    recording = install_recording_hub()
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
     route.side_effect = [
@@ -422,7 +414,7 @@ def test_give_up_marks_anilist_unreachable(
     """Exhausting the retries warns ONCE and marks AniList unreachable: later calls never touch the wire."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    recording = _recording()
+    recording = install_recording_hub()
     client = _client()
     route = respx.post(API_URL).mock(side_effect=[effect] * (MAX_RETRIES + 1))
 
@@ -468,7 +460,7 @@ def test_dataless_answer_marks_anilist_unreachable_once(
 ) -> None:
     """Any dataless answer marks AniList unreachable on the first request: one warning, the body still returned, then no traffic."""
 
-    recording = _recording()
+    recording = install_recording_hub()
     client = _client()
     route = respx.post(API_URL).mock(return_value=response)
 
@@ -487,7 +479,7 @@ def test_dataless_answer_marks_anilist_unreachable_once(
 def test_refusal_message_is_collapsed_and_clamped() -> None:
     """The quoted message is whitespace-collapsed and clamped, so the warning stays one readable line."""
 
-    recording = _recording()
+    recording = install_recording_hub()
     ragged = "down\n  for\t maintenance " + "x" * 200
     body: dict[str, object] = {"errors": [{"message": ragged, "status": 403}], "data": None}
     respx.post(API_URL).respond(status_code=403, json=body)
@@ -504,7 +496,7 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 def test_unknown_id_404_is_an_ordinary_not_found() -> None:
     """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never marks it unreachable."""
 
-    recording = _recording()
+    recording = install_recording_hub()
     client = _client()
     not_found: dict[str, object] = {"data": {"Media": None}, "errors": [{"message": "Not Found.", "status": 404}]}
     route = respx.post(API_URL).respond(status_code=404, json=not_found)
