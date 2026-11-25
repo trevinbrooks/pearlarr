@@ -59,7 +59,7 @@ from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPolle
 from pearlarr.library_read import LibraryRead
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
-from pearlarr.output import SeverityCounter, emit_to_hub
+from pearlarr.output import emit_to_hub, hub_counts
 from pearlarr.parse_cache import ParseCacheRows
 from pearlarr.pending_follow import PendingFollower
 from pearlarr.pending_import import (
@@ -664,10 +664,12 @@ def make_torrent_record(
 
 
 def _real_reporter(cache_store: AbstractCacheStore, anilist: AniListGateway) -> RunReporter:
-    """A real `RunReporter` over the given cache store and AniList gateway (composite-with-faked-leaf)."""
+    """A real `RunReporter` over the given cache store and AniList gateway (composite-with-faked-leaf).
 
-    counts = SeverityCounter()
-    return RunReporter(emit=emit_to_hub, counts=lambda: counts, cache_store=cache_store, anilist=anilist)
+    It emits to the process hub and counts what the hub counts, as a run's reporter does.
+    """
+
+    return RunReporter(emit=emit_to_hub, counts=hub_counts, cache_store=cache_store, anilist=anilist)
 
 
 def make_categories(
