@@ -369,6 +369,38 @@ class TestGroupsCoveringTheSameFiles:
 
         assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
 
+    def test_groups_that_placed_nothing_are_each_kept(self) -> None:
+        # Nothing shows what a group covers when none of its files placed on the title, so a duplicate grab is
+        # better than dropping files the title lacks.
+        seadex = {
+            "A": _sonarr_group(u1=make_release(download=True, size=[100])),
+            "B": _sonarr_group(u2=make_release(download=True, size=[200])),
+        }
+
+        _reduce(seadex)
+
+        assert _grabs(seadex) == {"u1": "grab", "u2": "grab"}
+
+    def test_a_private_group_the_arr_has_is_no_skip(self) -> None:
+        # Nothing of the set is marked to grab, so there is nothing to warn about and the title can be cached.
+        seadex = {"Priv": rg_group({"u1": make_release(is_public=False)})}
+
+        assert _reduce(seadex) == PrivateOnlyNotices()
+
+    def test_a_private_group_never_stands_in_for_a_private_upgrade(self) -> None:
+        # Only a public group is grabbed in a private upgrade's place, so beside another private group the set warns.
+        seadex = {
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Other": rg_group({"u2": make_release(is_public=False)}),
+        }
+
+        skips = _reduce(seadex)
+
+        assert _grabs(seadex) == {}
+        assert skips == PrivateOnlyNotices(
+            warned=True, groups=["Priv"], notices=[PrivateOnlyNotice(["Priv"], _PRIVATE_ONLY)]
+        )
+
     def test_an_outdated_skip_survives_a_later_plain_skip(self) -> None:
         # Two sets in one title: an outdated skip, then a plain one. Each adds its groups and its notice, and the
         # second leaves the first's outdated mark.
