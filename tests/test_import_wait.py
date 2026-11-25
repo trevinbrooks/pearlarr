@@ -35,7 +35,7 @@ from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.arr_strategy import ImportCompleter
 from pearlarr.config import AppConfig, Arr
-from pearlarr.import_wait import ImportWaitManager, WaitPass, WaitPollers
+from pearlarr.import_wait import ImportWaitManager
 from pearlarr.output import (
     SPARK_SAMPLES,
     Diagnostic,
@@ -43,7 +43,6 @@ from pearlarr.output import (
     Severity,
     TitleHeader,
     TorrentView,
-    WaitKind,
     WaitSnapshot,
 )
 from pearlarr.output.events import TitleState
@@ -56,7 +55,6 @@ from pearlarr.wait_types import (
     PENDING_IMPORT_STATE_FOR_OUTCOME,
     AttemptKind,
     AttemptResult,
-    DownloadProgress,
     EffectStatus,
     ImportProgress,
     ImportWaitMode,
@@ -149,8 +147,8 @@ class FakeTorrent:
         self.hash = torrent_hash
 
 
-type QbitStep = FakeTorrent | Exception
-"""One scripted qBittorrent reading: an info row, or an error instance to raise."""
+type QbitStep = FakeTorrent | BaseException
+"""One scripted qBittorrent reading: an info row, or an error to raise (a KeyboardInterrupt is a Ctrl-C landing there)."""
 
 
 class FakeQbit:
@@ -195,7 +193,7 @@ class FakeQbit:
         i = index.get(key, 0)
         index[key] = i + 1
         step = steps[min(i, len(steps) - 1)]
-        if isinstance(step, Exception):
+        if isinstance(step, BaseException):
             raise step
         return step
 
@@ -389,19 +387,18 @@ def _run_blocking_wait(
     import_timeout: int = 600,
     progress_poll_interval: int = 5,
     post_import_category: str | None = None,
-) -> tuple[ImportWaitManager, RecordingWaitView]:
-    """Drive `run_blocking` to completion over one fresh-grab pending import on hash "h".
+) -> tuple[FakeCacheStore, RecordingWaitView]:
+    """Drive `run_blocking` to completion over this run's one grab, on hash "h", polled every 30s.
 
-    The pending import is both a this-run grab and stored (the common blocking-wait
-    shape). The poll interval is fixed at 30; the knob defaults mirror
-    the plain-config shape the class's tests share.
+    Returns the store the wait wrote and the view it pushed to.
     """
 
-    pending = pending_import(infohash="h")
+    store = FakeCacheStore()
     mgr = make_orchestration_manager(
         qbit=qbit,
         strategy=strategy,
-        grabbed=[pending],
+        store=store,
+        grabbed=[pending_import(infohash="h")],
         download_timeout=download_timeout,
         import_timeout=import_timeout,
         import_poll_interval=30,
@@ -411,50 +408,7 @@ def _run_blocking_wait(
     )
     view = RecordingWaitView()
     mgr.run_blocking(view=view)
-    return mgr, view
-
-
-def make_pollers(qbit: FakeQbit) -> WaitPollers:
-    """Bare `WaitPollers` wired only with the `qbit` the polls read (the ctor takes a real client only)."""
-
-    return make_bare_instance(WaitPollers, _qbit=qbit, _logger=make_logger(), strategy=None)
-
-
-class TestPollDownloadProgress:
-    """poll_download_progress: ONE batched, read-only info call for the wait region refresh."""
-
-    def test_empty_set_makes_no_call(self) -> None:
-        qbit = FakeQbit({})
-        pollers = make_pollers(qbit)
-
-        assert pollers.poll_download_progress([]) == {}
-        assert qbit.calls == 0
-
-    def test_transient_error_yields_nothing(self) -> None:
-        # The rows just keep their last download progress until the next poll.
-        pollers = make_pollers(FakeQbit(download_progress={"h": [qbittorrentapi.APIConnectionError("boom")]}))
-
-        assert pollers.poll_download_progress(["h"]) == {}
-
-    def test_each_asked_hash_gets_its_own_reading(self) -> None:
-        qbit = FakeQbit(
-            download_progress={
-                "a": [FakeTorrent(progress=0.2, dlspeed=10)],
-                "b": [FakeTorrent(progress=0.8, dlspeed=20)],
-            }
-        )
-
-        assert make_pollers(qbit).poll_download_progress(["a", "b"]) == {
-            "a": DownloadProgress(0.2, 10, None, None, None),
-            "b": DownloadProgress(0.8, 20, None, None, None),
-        }
-
-    def test_unasked_rows_are_ignored(self) -> None:
-        # The batch answers for "h" with a row whose hash reads back "other" -
-        # poll_download_progress must drop what it can't key back to an asked hash.
-        pollers = make_pollers(FakeQbit(download_progress={"h": [FakeTorrent(torrent_hash="other", progress=0.4)]}))
-
-        assert pollers.poll_download_progress(["h"]) == {}
+    return store, view
 
 
 class TestReportImportsForSeries:
@@ -883,7 +837,7 @@ class TestUnmatchedRowFinish:
     def test_run_blocking_finishes_unmatched_on_the_first_poll(self) -> None:
         # The result ends the wait on the poll that establishes it: no final attempt, no import clock.
         strategy = self._strategy()
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=600,
@@ -894,7 +848,7 @@ class TestUnmatchedRowFinish:
         assert final.left_for_hand_import.names == self._NAMES
         assert final.phase_elapsed_s < 600
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY]
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
 
     def test_later_polls_never_re_poll_a_finished_row(self) -> None:
         # A slower sibling keeps the wait pass running past the first poll. The finished row is not asked again.
@@ -905,11 +859,12 @@ class TestUnmatchedRowFinish:
                 "slow": [FakeTorrent(progress=0.5), FakeTorrent(is_complete=True, content_path="/slow")],
             },
         )
-        pending_imports = [pending_import(infohash="h"), pending_import(infohash="slow")]
+        store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
-            grabbed=pending_imports,
+            store=store,
+            grabbed=[pending_import(infohash="h"), pending_import(infohash="slow")],
             download_timeout=3600,
             import_timeout=600,
             import_poll_interval=30,
@@ -922,7 +877,7 @@ class TestUnmatchedRowFinish:
         assert [call.infohash for call in strategy.import_calls] == ["h", "slow"]
         assert view.final("h").outcome is Outcome.NOTHING_PLACED
         assert view.final("slow").outcome is Outcome.NOTHING_PLACED
-        assert set(mgr._pending_imports.rows()) == {"h", "slow"}
+        assert _stored(store) == {"h": False, "slow": False}
 
 
 class TestLeftForHandImportRowFinish:
@@ -1031,37 +986,22 @@ class _StopSleepClock(FakeClock):
         raise SystemExit(0)
 
 
-class _InterruptOnHash(FakeQbit):
-    """Raises KeyboardInterrupt when the poll reaches the given hash.
-
-    Models a Ctrl-C landing mid-advance-loop, after earlier pending imports already advanced.
-    """
-
-    def __init__(self, torrents: dict[str, list[QbitStep]], *, interrupt_on: str) -> None:
-        super().__init__(torrents)
-        self._interrupt_on = interrupt_on.casefold()
-
-    @override
-    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
-        if isinstance(torrent_hashes, str) and torrent_hashes.casefold() == self._interrupt_on:
-            raise KeyboardInterrupt
-        return super().torrents_info(torrent_hashes=torrent_hashes)
-
-
-class _ExplodingDropStore(FakeCacheStore):
-    """A store whose pending import drop always fails, for the finished-ordering pin."""
+class _InterruptedDropStore(FakeCacheStore):
+    """A store where a Ctrl-C lands in the pending import drop."""
 
     @override
     def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
-        raise RuntimeError("drop boom")
+        raise KeyboardInterrupt
 
 
-class _ExplodingPutStore(FakeCacheStore):
-    """A store whose pending import upsert always fails, for the keep-path ordering pin."""
+class _InterruptedPutStore(FakeCacheStore):
+    """A store where a Ctrl-C lands in the write that marks a pending import awaiting cleanup."""
 
     @override
     def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
-        raise RuntimeError("put boom")
+        if row.get("awaiting_cleanup"):
+            raise KeyboardInterrupt
+        super().put_pending_import_row(arr, infohash, row)
 
 
 class TestBlockingWaitRowDiscriminator:
@@ -1082,9 +1022,11 @@ class TestBlockingWaitRowDiscriminator:
                 "c": [FakeTorrent(is_complete=True, content_path="/c")],
             },
         )
+        run = ArrRunState(arr=Arr.SONARR)
         mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
+            state=run,
             stored_pending_imports=[carried],
             grabbed=[fresh],
             clock=FakeClock(step=30),
@@ -1099,8 +1041,8 @@ class TestBlockingWaitRowDiscriminator:
         }
         # Imported rows leave the store, so neither converts to a pending import state, and
         # the `imported` bump stays _finish_arr_run's.
-        assert mgr._state.pending_import_states == {}
-        assert mgr._state.stats.imported == 0
+        assert run.pending_import_states == {}
+        assert run.stats.imported == 0
 
 
 class TestRunBlocking:
@@ -1140,12 +1082,12 @@ class TestRunBlocking:
                 attempt_result(all_done=True, command_issued=True),
             ],
         )
-        mgr, view = _run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
+        store, view = _run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
 
         assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
         assert view.seen("h", Phase.IMPORTING) != []
         assert view.final("h").outcome is Outcome.IMPORTED
-        assert mgr._pending_imports.rows() == {}
+        assert _stored(store) == {}
 
     def test_with_the_progress_refresh_off_only_the_next_poll_confirms_an_import(self) -> None:
         # A progress read between the polls would find every file in and finish the row before poll 2.
@@ -1177,7 +1119,7 @@ class TestRunBlocking:
                 ImportProgress(3, 3, determinate=True),  # all done -> promote
             ],
         )
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             step=5,
@@ -1193,7 +1135,7 @@ class TestRunBlocking:
             for t in snap.torrents
         )
         assert view.final("h").outcome is Outcome.IMPORTED
-        assert mgr._pending_imports.rows() == {}
+        assert _stored(store) == {}
 
     def test_final_attempt_rescued_by_a_same_poll_rise(self) -> None:
         # The forced deadline attempt itself reports a fresh rise (0/3 -> 1/3 at
@@ -1210,14 +1152,14 @@ class TestRunBlocking:
                 for done in (0, 0, 1)
             ],
         )
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
         # t=0/30 in-bound, t=60 forced-but-rescued, t=90 in-bound, t=120 forced.
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, False, True]
 
@@ -1234,14 +1176,14 @@ class TestRunBlocking:
                 attempt_result(all_done=True, command_issued=True),
             ],
         )
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.IMPORTED
-        assert mgr._pending_imports.rows() == {}
+        assert _stored(store) == {}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, True, True]
 
     def test_fresh_post_pauses_once_per_row(self) -> None:
@@ -1251,14 +1193,14 @@ class TestRunBlocking:
         strategy = _RecordingStrategy(
             attempts=[attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED)],
         )
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True]
 
     def test_pause_cap_reads_still_importing_for_an_import_pause(self) -> None:
@@ -1266,14 +1208,14 @@ class TestRunBlocking:
         # no command of pearlarr's, yet the label says "still importing", not "not
         # ready". Ready 60s + cap (6x) 360s -> finished by t=420.
         strategy = _RecordingStrategy(attempts=[attempt_result(all_done=False, pause_reason=PauseReason.IMPORT)])
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
         assert strategy.import_calls[-1].attempt_kind.at_deadline is True
         assert len(strategy.import_calls) == 15
 
@@ -1281,14 +1223,14 @@ class TestRunBlocking:
         # A foreign disk command holding the line to the cap: "sonarr busy",
         # left for the next run, never a false "still importing".
         strategy = _RecordingStrategy(attempts=[attempt_result(all_done=False, pause_reason=PauseReason.BUSY)])
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.SONARR_BUSY
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
 
     def test_a_progress_poll_rise_re_anchors_the_deadline(self) -> None:
         # The cheap progress poll sees a file get done (1/3 -> 2/3) even though the
@@ -1316,29 +1258,42 @@ class TestRunBlocking:
         assert strategy.import_calls[-1].attempt_kind is AttemptKind.FINAL
 
     @pytest.mark.parametrize(
-        ("torrents", "outcome", "kept"),
+        ("torrents", "outcome", "stored"),
         [
-            pytest.param({}, Outcome.GONE, False, id="missing-drops"),
-            pytest.param({"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, True, id="errored-leaves"),
+            pytest.param({}, Outcome.GONE, {}, id="missing-drops"),
+            pytest.param(
+                {"h": [FakeTorrent(is_errored=True)]}, Outcome.DOWNLOAD_ERRORED, {"h": False}, id="errored-leaves"
+            ),
             # Never finishes: past imports.download_timeout the row finishes
             # DOWNLOAD_TIMED_OUT (left), the pending import stays for a later run.
-            pytest.param({"h": [FakeTorrent(progress=0.5)]}, Outcome.DOWNLOAD_TIMED_OUT, True, id="timeout-leaves"),
+            pytest.param(
+                {"h": [FakeTorrent(progress=0.5)]}, Outcome.DOWNLOAD_TIMED_OUT, {"h": False}, id="timeout-leaves"
+            ),
+            # qBittorrent down for the whole wait still ends it at the download timeout.
+            pytest.param(
+                {"h": [qbittorrentapi.APIConnectionError("down")]},
+                Outcome.DOWNLOAD_TIMED_OUT,
+                {"h": False},
+                id="unreachable-times-out",
+            ),
             # COMPLETE but no content_path to import from: its own outcome (not
             # a misleading "timed out" - the download finished fine).
-            pytest.param({"h": [FakeTorrent(is_complete=True)]}, Outcome.NO_CONTENT_PATH, True, id="no-path-leaves"),
+            pytest.param(
+                {"h": [FakeTorrent(is_complete=True)]}, Outcome.NO_CONTENT_PATH, {"h": False}, id="no-path-leaves"
+            ),
         ],
     )
     def test_a_finish_without_import_keeps_or_drops_the_pending_import(
         self,
         torrents: dict[str, list[QbitStep]],
         outcome: Outcome,
-        kept: bool,
+        stored: dict[str, bool],
     ) -> None:
         # None of these reach an import attempt, and none may touch the
         # post-import category hook (IMPORTED-only).
         strategy = _RecordingStrategy()
         qbit = CategoryQbit(torrents)
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             qbit,
             post_import_category="pearlarr-done",
@@ -1347,7 +1302,7 @@ class TestRunBlocking:
 
         assert strategy.import_calls == []
         assert view.final("h").outcome is outcome
-        assert set(mgr._pending_imports.rows()) == ({"h"} if kept else set())
+        assert _stored(store) == stored
         assert qbit.set_category_calls == []
 
     def test_a_failed_progress_read_is_skipped_and_the_next_poll_imports(self) -> None:
@@ -1378,11 +1333,12 @@ class TestRunBlocking:
     def test_an_interrupted_wait_notes_what_is_left(
         self, clock: FakeClock, ending: AbstractContextManager[object]
     ) -> None:
-        pending = pending_import(infohash="h")
+        store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(progress=0.3)]}),
             strategy=_RecordingStrategy(),
-            grabbed=[pending],
+            store=store,
+            grabbed=[pending_import(infohash="h")],
             download_timeout=3600,
             import_timeout=600,
             import_poll_interval=30,
@@ -1394,33 +1350,30 @@ class TestRunBlocking:
         with ending:
             mgr.run_blocking(view=view)
 
-        assert set(mgr._pending_imports.rows()) == {"h"}
-        (note,) = recording.of_type(Diagnostic)
-        assert "1 left for the next run" in note.message
+        assert _stored(store) == {"h": False}
+        assert diagnostic_messages(recording) == ["Wait interrupted - 1 left for the next run"]
 
     def test_interrupt_mid_poll_still_finishes_that_polls_finished_rows(self) -> None:
         # A torrent that finished in the SAME poll the interrupt lands in
         # must still reach the view (the except handler pushes one final snapshot), so
         # the console tally/outcome lines can never undercount the returned WaitResult.
-        first = pending_import(infohash="h1")
-        second = pending_import(infohash="h2")
-        # h1 is unscripted -> gone -> MISSING finish on its first advance. The
-        # interrupt then lands on h2's poll, before that poll's snapshot push.
-        qbit = _InterruptOnHash({"h2": [FakeTorrent(progress=0.3)]}, interrupt_on="h2")
+        # h1 is gone, so it finishes on its first poll. The Ctrl-C lands on h2's poll, before that poll's push.
         mgr = make_orchestration_manager(
-            qbit=qbit,
+            qbit=FakeQbit({"h2": [KeyboardInterrupt()]}),
             strategy=_RecordingStrategy(),
-            grabbed=[first, second],
+            grabbed=[pending_import(infohash="h1"), pending_import(infohash="h2")],
             download_timeout=3600,
             import_timeout=600,
             import_poll_interval=30,
         )
         view = RecordingWaitView()
+        recording = install_recording_hub()
 
         result = mgr.run_blocking(view=view)  # must not raise
 
         assert result is not None and result.waited == 1
         assert view.final("h1").outcome is Outcome.GONE  # the interrupt-time push carried it
+        assert diagnostic_messages(recording) == ["Wait interrupted - 1 left for the next run"]
 
     def test_import_exception_is_swallowed_announced_and_pending_import_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate
@@ -1428,196 +1381,203 @@ class TestRunBlocking:
         # Diagnostic carrying its traceback and the pending import is left.
         strategy = _RecordingStrategy(attempts=[RuntimeError("boom")])
         recording = install_recording_hub()
-        mgr, view = _run_blocking_wait(
+        store, view = _run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
             import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
-        assert set(mgr._pending_imports.rows()) == {"h"}
+        assert _stored(store) == {"h": False}
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
         assert "Auto import failed" in error.message
         assert error.trace is not None
 
-    def test_failed_store_drop_leaves_no_result_row(self) -> None:
-        # The store drop precedes the result-row append: a drop that raises
-        # must not record a phantom IMPORTED row for _finish_arr_run to count.
-        strategy = _RecordingStrategy(
-            attempts=[attempt_result(all_done=True)],
-        )
+    @pytest.mark.parametrize(
+        ("store_type", "removals"),
+        [
+            pytest.param(_InterruptedDropStore, [EffectStatus.DONE], id="in-the-drop"),
+            # The queue removal fails, so the import is kept awaiting cleanup: that write is where the Ctrl-C lands.
+            pytest.param(_InterruptedPutStore, [EffectStatus.FAILED], id="in-the-awaiting-cleanup-write"),
+        ],
+    )
+    def test_a_ctrl_c_in_the_store_write_of_an_import_counts_no_import(
+        self, store_type: type[FakeCacheStore], removals: list[EffectStatus]
+    ) -> None:
+        # The run's tally counts the result rows, so an import counts only once its store write went through.
+        store = store_type()
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            strategy=strategy,
-            store=_ExplodingDropStore(),
-            clock=FakeClock(step=5),
+            strategy=_RecordingStrategy(attempts=[attempt_result(all_done=True)], removals=removals),
+            store=store,
+            stored_pending_imports=[pending_import(infohash="h")],
         )
-        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.BLOCKING)
+        view = RecordingWaitView()
 
-        with pytest.raises(RuntimeError, match="drop boom"):
-            wait_pass.run_poll()
+        result = mgr.run_blocking(view=view)
 
-        assert wait_pass.results == []
-        assert wait_pass.rows["h"].active
-
-    def test_failed_awaiting_cleanup_write_leaves_no_result_row(self) -> None:
-        # The keep path's twin: the awaiting-cleanup upsert precedes the result-row append
-        # exactly like the drop, so a raising put adds no phantom IMPORTED row.
-        strategy = _RecordingStrategy(
-            attempts=[attempt_result(all_done=True)],
-            removals=[EffectStatus.FAILED],
-        )
-        mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            strategy=strategy,
-            store=_ExplodingPutStore(),
-            clock=FakeClock(step=5),
-        )
-        wait_pass = WaitPass(mgr, [pending_import(infohash="h")], kind=WaitKind.BLOCKING)
-
-        with pytest.raises(RuntimeError, match="put boom"):
-            wait_pass.run_poll()
-
-        assert wait_pass.results == []
-        assert wait_pass.rows["h"].active
+        assert result is not None
+        assert result.rows == ()
+        assert view.final("h").outcome is None
+        assert _stored(store) == {"h": False}
 
 
-def _wait_pass(
-    qbit: FakeQbit,
-    pending: PendingImport,
-) -> WaitPass:
-    """A fresh `WaitPass` over one pending import, wired to a scripted qBittorrent."""
+@dataclass(frozen=True)
+class _Bar:
+    """A downloading row's download bar as the wait screen shows it."""
 
-    mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy(), clock=FakeClock(step=5))
-    return WaitPass(mgr, [pending], kind=WaitKind.BLOCKING)
+    fraction: float
+    speed_bps: int | None
+    eta_s: int | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+    speed_history: tuple[int, ...] = ()
 
 
-class TestBlockingWaitDownloadProgressRefresh:
-    """refresh_download_progress: the refresh between polls - download progress only, no outcomes."""
+def _bars(view: RecordingWaitView, key: str) -> list[_Bar]:
+    """The torrent's download bar in each pushed snapshot that showed it downloading, in push order."""
+
+    return [
+        _Bar(t.fraction, t.speed_bps, t.eta_s, t.bytes_done, t.bytes_total, t.speed_history)
+        for t in view.seen(key, Phase.DOWNLOADING)
+    ]
+
+
+_DONE = FakeTorrent(is_complete=True, content_path="/d", progress=1.0)
+"""A torrent's last reading: downloaded, ready to import."""
+
+
+class TestBlockingWaitDownloadBars:
+    """Each poll shows the downloading rows' bars, and a refresh between polls moves them and nothing else."""
+
+    _POLLED = FakeTorrent(progress=0.3, dlspeed=100, eta=130, completed=300, size=1000)
+    _POLLED_BAR = _Bar(0.3, 100, 130, 300, 1000, (100,))
 
     @pytest.mark.parametrize(
-        "wanted", [pytest.param(True, id="a-view-with-bars"), pytest.param(False, id="a-view-without-bars")]
+        ("wants_bars", "refreshed", "bars"),
+        [
+            pytest.param(
+                True,
+                FakeTorrent(progress=0.6, dlspeed=999, eta=40, completed=600, size=1000),
+                [_POLLED_BAR, _Bar(0.6, 999, 40, 600, 1000, (100,))],
+                id="moved",
+            ),
+            # Even at 100% the row stays downloading: only a poll finishes it.
+            pytest.param(
+                True,
+                FakeTorrent(progress=1.0, dlspeed=250, eta=5, completed=1000, size=1000),
+                [_POLLED_BAR, _Bar(1.0, 250, 5, 1000, 1000, (100,))],
+                id="moved-to-full",
+            ),
+            pytest.param(True, _POLLED, [_POLLED_BAR], id="unchanged"),
+            pytest.param(True, qbittorrentapi.APIConnectionError("down"), [_POLLED_BAR], id="the-read-fails"),
+            pytest.param(
+                False,
+                FakeTorrent(progress=0.6, dlspeed=999, eta=40, completed=600, size=1000),
+                [_POLLED_BAR],
+                id="a-view-without-bars",
+            ),
+        ],
     )
-    def test_progress_wait_drives_the_download_progress_refresh(self, wanted: bool) -> None:
-        # The wiring test: between polls, _sleep_between_polls's download progress refresh pushes
-        # a snapshot with fresh download progress (the row moves to 60% at
-        # 999 B/s well before the next poll). A view that shows no download progress is never refreshed.
-        strategy = _RecordingStrategy(
-            attempts=[attempt_result(all_done=True)],
-        )
-        pending = pending_import(infohash="h")
-        qbit = FakeQbit(
-            {
-                "h": [
-                    FakeTorrent(progress=0.3, dlspeed=100),
-                    FakeTorrent(is_complete=True, content_path="/d", progress=1.0),
-                ]
-            },
-            download_progress={"h": [FakeTorrent(progress=0.6, dlspeed=999)]},  # the batched read
-        )
+    def test_a_refresh_between_polls_moves_only_the_download_bar(
+        self, wants_bars: bool, refreshed: QbitStep, bars: list[_Bar]
+    ) -> None:
+        # The speed history is sampled once per poll, never by a refresh.
         mgr = make_orchestration_manager(
-            qbit=qbit,
-            strategy=strategy,
-            grabbed=[pending],
-            download_timeout=3600,
-            import_timeout=600,
+            qbit=FakeQbit({"h": [self._POLLED, _DONE]}, download_progress={"h": [refreshed]}),
+            strategy=_RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            grabbed=[pending_import(infohash="h")],
             import_poll_interval=30,
             progress_poll_interval=5,
             clock=FakeClock(step=5),
         )
         view = RecordingWaitView()
-        view.wants_download_progress = wanted
+        view.wants_download_progress = wants_bars
 
         mgr.run_blocking(view=view)
 
-        shown = any(
-            t.key == "h" and t.phase is Phase.DOWNLOADING and t.fraction == 0.6 and t.speed_bps == 999
-            for snap in view.snapshots
-            for t in snap.torrents
-        )
-        assert shown is wanted
+        assert _bars(view, "h") == bars
         assert view.final("h").outcome is Outcome.IMPORTED
 
-    _POLLED = FakeTorrent(progress=0.3, dlspeed=100, eta=130, completed=300, size=1000)
-
-    @pytest.mark.parametrize(
-        ("refreshed", "moved"),
-        [
-            pytest.param(_POLLED, False, id="unchanged"),
-            # Even at 100% the row stays downloading: only a poll finishes it.
-            pytest.param(FakeTorrent(progress=1.0, dlspeed=250, eta=5, completed=1000, size=1000), True, id="moved"),
-        ],
-    )
-    def test_a_refresh_between_polls_moves_the_bar_and_nothing_else(self, refreshed: FakeTorrent, moved: bool) -> None:
-        pending = pending_import(infohash="h")
-        qbit = FakeQbit({"h": [self._POLLED]}, download_progress={"h": [refreshed]})
-        wait_pass = _wait_pass(qbit, pending)
-        wait_pass.run_poll()
-
-        assert wait_pass.refresh_download_progress() is moved
-        view = wait_pass.rows["h"].view
-        assert (view.phase, view.fraction, view.speed_bps) == (Phase.DOWNLOADING, refreshed.progress, refreshed.dlspeed)
-        assert (view.eta_s, view.bytes_done, view.bytes_total) == (refreshed.eta, refreshed.completed, refreshed.size)
-        # The sparkline is sampled once per poll, never by the refresh.
-        assert view.speed_history == (100,)
-
-
-class TestBlockingWaitTransientPoll:
-    """A transient qBittorrent blip keeps the row's last real state on screen."""
-
-    def test_unobserved_poll_keeps_bar_and_history(self) -> None:
-        pending = pending_import(infohash="h")
-        qbit = FakeQbit(
-            {
-                "h": [
-                    FakeTorrent(progress=0.3, dlspeed=100),
-                    qbittorrentapi.APIConnectionError("blip"),
-                    FakeTorrent(progress=0.4, dlspeed=200),
-                ],
-            },
+    def test_a_refresh_moves_each_downloading_rows_own_bar(self) -> None:
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit(
+                {
+                    "a": [FakeTorrent(progress=0.3, dlspeed=100), _DONE],
+                    "b": [FakeTorrent(progress=0.3, dlspeed=100), _DONE],
+                },
+                download_progress={
+                    "a": [FakeTorrent(progress=0.6, dlspeed=999)],
+                    "b": [FakeTorrent(progress=0.8, dlspeed=500)],
+                },
+            ),
+            strategy=_RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            grabbed=[pending_import(infohash="a"), pending_import(infohash="b")],
+            import_poll_interval=30,
+            progress_poll_interval=5,
+            clock=FakeClock(step=5),
         )
-        wait_pass = _wait_pass(qbit, pending)
+        view = RecordingWaitView()
 
-        wait_pass.run_poll()
-        wait_pass.run_poll()  # the blip poll
-        assert wait_pass.rows["h"].view.fraction == 0.3  # last real reading kept, no 0% flash
-        wait_pass.run_poll()
+        mgr.run_blocking(view=view)
 
-        view = wait_pass.rows["h"].view
-        assert view.fraction == 0.4
-        # Only the two real readings are in the sparkline window - the blip never
-        # injected a fake stall sample.
-        assert view.speed_history == (100, 200)
+        assert _bars(view, "a") == [_Bar(0.3, 100, speed_history=(100,)), _Bar(0.6, 999, speed_history=(100,))]
+        assert _bars(view, "b") == [_Bar(0.3, 100, speed_history=(100,)), _Bar(0.8, 500, speed_history=(100,))]
 
+    def test_a_poll_qbittorrent_misses_keeps_the_last_bar_and_samples_no_speed(self) -> None:
+        # No 0% flash and no fake stall in the sparkline: the blip poll shows the last real reading again.
+        store, view = _run_blocking_wait(
+            _RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            FakeQbit(
+                {
+                    "h": [
+                        FakeTorrent(progress=0.3, dlspeed=100),
+                        qbittorrentapi.APIConnectionError("blip"),
+                        FakeTorrent(progress=0.4, dlspeed=200),
+                        _DONE,
+                    ]
+                }
+            ),
+            progress_poll_interval=0,
+        )
 
-class TestBlockingWaitSpeedHistory:
-    """The downloading rows' sparkline window: one sample per poll, bounded."""
+        assert _bars(view, "h") == [
+            _Bar(0.3, 100, speed_history=(100,)),
+            _Bar(0.3, 100, speed_history=(100,)),
+            _Bar(0.4, 200, speed_history=(100, 200)),
+        ]
+        assert _stored(store) == {}
 
     @pytest.mark.parametrize(
-        ("polls", "history"),
+        ("readings", "history"),
         [
-            pytest.param(3, (100, 0, 300), id="a-stall-is-a-zero"),
-            pytest.param(SPARK_SAMPLES + 3, (300,) * SPARK_SAMPLES, id="the-oldest-samples-fall-off"),
-        ],
-    )
-    def test_accumulates_per_poll_with_stalls_as_zero(self, polls: int, history: tuple[int, ...]) -> None:
-        pending = pending_import(infohash="h")
-        qbit = FakeQbit(
-            {
-                "h": [
+            pytest.param(
+                [
                     FakeTorrent(progress=0.1, dlspeed=100),
-                    FakeTorrent(progress=0.2),  # stalled (no speed) -> a 0 sample
+                    FakeTorrent(progress=0.2),
                     FakeTorrent(progress=0.3, dlspeed=300),
                 ],
-            },
+                (100, 0, 300),
+                id="a-stall-is-a-zero",
+            ),
+            pytest.param(
+                [FakeTorrent(progress=0.1, dlspeed=100), *[FakeTorrent(progress=0.3, dlspeed=300)] * SPARK_SAMPLES],
+                (300,) * SPARK_SAMPLES,
+                id="the-oldest-samples-fall-off",
+            ),
+        ],
+    )
+    def test_the_speed_sparkline_takes_one_sample_per_poll(
+        self, readings: list[QbitStep], history: tuple[int, ...]
+    ) -> None:
+        _, view = _run_blocking_wait(
+            _RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            FakeQbit({"h": [*readings, _DONE]}),
+            progress_poll_interval=0,
         )
-        wait_pass = _wait_pass(qbit, pending)
 
-        for _ in range(polls):
-            wait_pass.run_poll()
-
-        assert wait_pass.rows["h"].view.speed_history == history
+        assert _bars(view, "h")[-1].speed_history == history
 
 
 class _FinalizeReporter:
