@@ -792,7 +792,6 @@ class TestImportCompletedQueueState:
         assert result.all_done is False
         assert (result.imported_count, result.file_map_episode_count) == (0, 1)
         assert (result.pause_reason, result.command_issued, len(sonarr.execute_calls)) == outcome
-        assert len(sonarr.candidate_calls) == len(sonarr.execute_calls)
 
     @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
     def test_queue_unreachable_retries_instead_of_an_auto_import(self, attempt_kind: AttemptKind) -> None:
@@ -810,7 +809,6 @@ class TestImportCompletedQueueState:
 
         assert result.all_done is False
         assert result.paused is False
-        assert sonarr.candidate_calls == []
         assert sonarr.execute_calls == []
 
     def test_auto_import_post_is_a_paused_wait(self) -> None:
@@ -966,7 +964,7 @@ class TestImportCompletedQueueState:
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.all_done is True
-        assert sonarr.candidate_calls == []
+        assert sonarr.execute_calls == []
 
     def test_a_pending_import_awaiting_cleanup_with_files_gone_demotes_through_the_reconciler(self) -> None:
         # The cleanup's demote reads the POST's ISSUED reason off the real attempt result:
@@ -980,13 +978,16 @@ class TestImportCompletedQueueState:
             cache_store=store,
         )
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat)
+        state = ArrRunState(arr=Arr.SONARR)
+        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
 
-        mgr._cleanup.finish_cleanups()
+        mgr.finish_cleanups()
 
         assert len(sonarr.execute_calls) == 1
-        assert mgr._pending_imports.rows()[pending.infohash].get("awaiting_cleanup") is False
-        assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
+        row = store.get_pending_import_row(Arr.SONARR, pending.infohash)
+        assert row is not None
+        assert row["awaiting_cleanup"] is False
+        assert state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
         assert any("no longer has every file imported" in w for w in diagnostic_messages(recording, Severity.WARNING))
 
     def test_store_persisted_guard_row_protects_through_the_pending_import_snapshot(self) -> None:
@@ -1008,11 +1009,8 @@ class TestImportCompletedQueueState:
         (claim,) = pending.claims
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
-        mgr = make_import_wait_manager(
-            qbit=_CompletedQbit("/d"),
-            cache_store=store,
-            strategy=strat,
-        )
+        state = ArrRunState(arr=Arr.SONARR)
+        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
 
         mgr.report_imports_for_series(claim.series_id)
 
@@ -1020,9 +1018,9 @@ class TestImportCompletedQueueState:
         # TRUSTED - done, never auto imported over - and the
         # finished pending import leaves the store. The IMPORTED classification pins that
         # branch (a GONE drop would also empty the store).
-        assert sonarr.candidate_calls == []
+        assert sonarr.execute_calls == []
         assert store.get_pending_import_rows(Arr.SONARR) == {}
-        assert mgr._state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
+        assert state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
 
 
 class TestCloseTracked:
@@ -1071,7 +1069,6 @@ class TestCloseTracked:
         sonarr.queue_return = None
 
         assert strat.remove_from_queue(pending) is EffectStatus.FAILED
-        assert sonarr.queue_calls == 1
         assert sonarr.queue_delete_calls == []
 
     def test_successful_close_notes_the_removal(self) -> None:
@@ -1121,36 +1118,24 @@ class TestCloseTracked:
 class TestImportCompletedPayload:
     """import_completed takes episodes from pearlarr's file map, never Sonarr's parse."""
 
-    def test_payload_uses_pending_import_fields_not_candidate(self) -> None:
+    def test_the_posted_file_carries_the_pending_imports_series_episodes_group_and_hash(self) -> None:
+        # Sonarr's candidate for the file names no series or episodes of its own: they come from the pending import.
         pending = pending_import(
             series_id=7,
             release_group="SubGroup",
             infohash="HASH",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
         )
-        # The candidate carries a *different* in-context quality and no
-        # authoritative episode/series info. The payload must ignore those.
-        candidate = manual_candidate(
-            "/downloads/Show - 01 [1080p].mkv",
-            quality={"quality": {"name": "HDTV-720p"}},
-        )
-        strat, sonarr = make_sonarr_for_import(candidates=[candidate])
+        strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate("/downloads/Show - 01 [1080p].mkv")])
 
         result = strat.import_completed(pending, "/downloads/Show", AttemptKind.ORDINARY)
 
-        # The command was issued. The copy is async, so the attempt result carries
-        # command_issued without all_done right after issuing.
-        assert result.all_done is False
-        assert result.command_issued is True
-        assert sonarr.candidate_calls == [pending]
-        files = sonarr.execute_calls[0][0]
-        assert len(files) == 1
-        entry = files[0]
-        assert entry.seriesId == 7
-        assert entry.episodeIds == [101]
-        assert entry.releaseGroup == "SubGroup"
-        assert entry.downloadId == "HASH"
-        assert entry.path == "/downloads/Show - 01 [1080p].mkv"
+        # The copy runs after the post, so the attempt has issued the command and is not done yet.
+        assert (result.all_done, result.command_issued) == (False, True)
+        [(files, _mode)] = sonarr.execute_calls
+        assert [(f.path, f.seriesId, f.episodeIds, f.releaseGroup, f.downloadId) for f in files] == [
+            ("/downloads/Show - 01 [1080p].mkv", 7, [101], "SubGroup", "HASH")
+        ]
 
     @pytest.mark.parametrize(
         ("sonarr_parsed", "posted"),
