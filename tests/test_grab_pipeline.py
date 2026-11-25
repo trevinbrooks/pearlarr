@@ -72,9 +72,11 @@ from .builders import (
     make_grab_pipeline,
     make_planner,
     make_release,
+    make_release_filter,
     make_services,
     pending_import,
     pending_import_update,
+    placed_episode,
     rg_group,
     sonarr_ep,
 )
@@ -571,18 +573,14 @@ class TestTheRunCap:
         assert torrents.calls == ["h1", "h2"]
         assert recording.of_type(CapReached) == []
 
-    @pytest.mark.parametrize(
-        "skipped",
-        [pytest.param(SkipReason.PRIVATE_ONLY, id="private"), pytest.param(SkipReason.MISNUMBERED, id="misnumbered")],
-    )
-    def test_a_release_screened_out_past_the_cap_posts_its_skip_and_holds_nothing(self, skipped: SkipReason) -> None:
+    def test_a_release_screened_out_past_the_cap_posts_its_skip_and_holds_nothing(self) -> None:
         recording = install_recording_hub()
         state = _run_state(torrents_added=1)
         pipeline = _pipeline(torrents=FakeTorrents({}), state=state, max_torrents_to_add=1)
 
-        pipeline.grab_releases(_grab_request({"RG": _group(_release(1, skipped=skipped))}))
+        pipeline.grab_releases(_grab_request({"RG": _group(_release(1, skipped=SkipReason.MISNUMBERED))}))
 
-        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [skipped]
+        assert [e.reason for e in recording.of_type(ReleaseSkipped)] == [SkipReason.MISNUMBERED]
         assert state.stats.held_by_cap == 0
 
 
@@ -604,7 +602,8 @@ class TestTrackerSkips:
                 NeedsActionCause.UNSUPPORTED_TRACKER,
                 id="no-parser",
             ),
-            # The two reasons are either/or: private-only wins.
+            # One group with a public release keeps its private one marked to grab. The two reasons are either/or:
+            # private-only wins.
             pytest.param(
                 [SkipReason.PRIVATE_ONLY, SkipReason.UNSUPPORTED_TRACKER],
                 PrivateReleaseAction.WARN,
@@ -612,16 +611,6 @@ class TestTrackerSkips:
                 "private-only release; private releases not supported",
                 NeedsActionCause.PRIVATE_ONLY,
                 id="private-beside-no-parser",
-            ),
-            # Fallback mode and still nothing grabbable: no fallback covered the title's files. Its own cause keeps
-            # the summary tip from suggesting the fallback that's already on.
-            pytest.param(
-                [SkipReason.PRIVATE_ONLY],
-                PrivateReleaseAction.FALLBACK,
-                False,
-                "private-only release; no fallback covers these files",
-                NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
-                id="private-in-fallback-mode",
             ),
             # Interactive and fallback: the private release was picked by hand, and the cause stays the one whose
             # tip never suggests the fallback.
@@ -655,6 +644,37 @@ class TestTrackerSkips:
         assert torrents.calls == []
         assert state.stats.needs_action == [_needs_action("NAN0", reason, cause)]
         assert _cached_at(pipeline) is None
+
+    def test_a_title_whose_private_only_release_the_plan_dropped_is_neither_up_to_date_nor_cached(self) -> None:
+        # Not interactive, the plan drops a lone private group's grab and flags the title itself, so the pipeline
+        # meets a title with nothing to grab.
+        recording = install_recording_hub()
+        state = _run_state()
+        private = make_release(
+            url="https://animebytes.tv/torrents.php?id=1",
+            files=["Show - 01.mkv"],
+            size=[100],
+            tracker=Tracker.ANIMEBYTES,
+            is_public=False,
+            infohash=None,
+        )
+        in_sonarr = [sonarr_ep(1, 1, episode_file_id=0)]
+        plan = make_release_filter(state=state).plan_grabs(
+            {"RG": rg_group({private.url: private}, episodes=[placed_episode(1, 1, 100)])},
+            arr_files(in_sonarr),
+            in_sonarr,
+        )
+        pipeline = _pipeline(torrents=FakeTorrents({}), state=state, private_releases=PrivateReleaseAction.FALLBACK)
+
+        pipeline.grab_and_cache(_grab_request(plan.seadex_dict))
+
+        assert private.to_grab is False
+        assert (state.stats.up_to_date, _statuses(recording), _cached_at(pipeline)) == (0, [], None)
+        assert state.stats.needs_action == [
+            _needs_action(
+                "RG", "private-only release; no fallback covers these files", NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK
+            )
+        ]
 
     @pytest.mark.parametrize(
         ("skipped", "private_releases", "interactive"),
@@ -840,7 +860,8 @@ class TestGrabFailureContainment:
     """An expected external failure (tracker or qBittorrent unreachable or erroring) is contained at the add.
 
     One warning, no traceback: the release loop moves on, the title stays uncached (retried next run), and the summary
-    carries a GRAB_FAILED needs-action row instead of the title silently vanishing.
+    carries a GRAB_FAILED needs-action row instead of the title silently vanishing. Any other error is a bug, and gets
+    out.
     """
 
     @pytest.mark.parametrize(
@@ -893,6 +914,13 @@ class TestGrabFailureContainment:
             _needs_action("RG", "grab failed; will retry next run", NeedsActionCause.GRAB_FAILED)
         ]
 
+    def test_an_error_that_is_no_tracker_or_qbittorrent_failure_gets_out(self) -> None:
+        # Contained, a bug in the add would read as a failed grab, retried every run with no traceback.
+        pipeline = _pipeline(torrents=FakeTorrents({}, raises={"h1": RuntimeError("a bug in the add")}))
+
+        with pytest.raises(RuntimeError, match="a bug in the add"):
+            pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
+
     def test_a_failed_grab_on_one_title_never_keeps_the_next_title_uncached(self) -> None:
         # Two titles in one run, each through the real per-title head: the first title's add fails, the second's
         # goes through.
@@ -922,11 +950,12 @@ class TestGrabFailureContainment:
 def test_two_reasons_on_one_title_list_it_once_under_the_one_that_outranks_the_other(
     wins: tuple[SkipReason | None, NeedsActionCause], loses: tuple[SkipReason | None, NeedsActionCause]
 ) -> None:
-    # The losing release comes first, so the order they are met in decides nothing.
+    # The losing release comes first, so the order they are met in decides nothing. Interactive, so a private
+    # release reaches the add loop as a hand pick.
     first, second = _release(1, skipped=loses[0]), _release(2, skipped=wins[0])
     down = httpx.ConnectError("nyaa down")
     state = _run_state()
-    pipeline = _pipeline(torrents=FakeTorrents({}, raises={"h1": down, "h2": down}), state=state)
+    pipeline = _pipeline(torrents=FakeTorrents({}, raises={"h1": down, "h2": down}), state=state, interactive=True)
 
     pipeline.grab_and_cache(_grab_request({"A": _group(first), "B": _group(second)}))
 
