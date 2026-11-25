@@ -604,197 +604,97 @@ class TestAReleaseThatPlacedNothing:
         assert result.seadex_dict["Other"].releases["u2"].to_grab is grabbed
 
 
-class TestFilterByReleaseGroup:
-    """`plan` skips a release whose group and size(s) already match what the arr has (case-insensitively), grabbing otherwise."""
+class TestAReleaseByEpisode:
+    """A Sonarr release decided episode by episode, against the file Sonarr has on each episode it placed on."""
 
-    def test_one_placed_pending_import_keeps_the_per_episode_comparison(self) -> None:
-        # One file placed on the title, so the per-episode comparison decides: the
-        # title's copy is this group's at another size, an upgrade the
-        # group-and-size comparison (a listed size in the arr) would have read as owned.
-        planner = make_planner()
-        episodes = [placed_episode(season=1, episode=1, size=999)]
-        seadex = {"RG": rg_group({"u1": make_release(episodes=episodes, size=[100, 999], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"RG": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="RG")],
-        )
-        assert result.seadex_dict["RG"].releases["u1"].to_grab is True
-        assert result.seadex_dict["RG"].releases["u1"].is_upgrade is True
-
-    def test_episode_match_same_rg_and_size_no_grab(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
+    @pytest.mark.parametrize(
+        ("held", "grabs"),
+        [
+            pytest.param(sonarr_ep(1, 1, episode_file_id=0), {"u1": "grab"}, id="no-file"),
+            pytest.param(sonarr_ep(1, 1, size=100, release_group="Era-Raws"), {}, id="its-file"),
+            pytest.param(
+                sonarr_ep(1, 1, size=999, release_group="Era-Raws"), {"u1": "upgrade"}, id="its-group-at-another-size"
             ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Era-Raws": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
-
-    def test_episode_different_rg_grabs(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
+            pytest.param(
+                sonarr_ep(1, 1, size=100, release_group="SubsPlease"), {"u1": "grab"}, id="a-group-seadex-does-not-list"
             ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"SubsPlease": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
+            pytest.param(sonarr_ep(1, 1, size=100), {}, id="no-group-at-its-size"),
+            pytest.param(sonarr_ep(1, 1, size=555), {"u1": "grab"}, id="no-group-at-another-size"),
+        ],
+    )
+    def test_a_release_is_grabbed_unless_the_arr_has_its_file(
+        self, held: SonarrEpisode, grabs: dict[str, Mark]
+    ) -> None:
+        # A rename can strip the group from Sonarr's file, and a file at the size the release lists there is still
+        # its copy.
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1]))}
 
-    def test_episode_same_rg_all_sizes_differ_grabs(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=999)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Era-Raws": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
+        plan = make_planner().plan(seadex, arr_files([held]), [held])
 
-    def test_episode_groupless_file_at_exact_size_no_grab(self) -> None:
-        # A rename can strip the file's group: a positive exact-size match
-        # against the release's file still identifies the copy - no re-grab.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group=None)],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
+        assert _grabs(plan.seadex_dict) == grabs
 
-    def test_episode_groupless_file_at_other_size_grabs(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=555, release_group=None)],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
+    def test_a_release_with_one_file_placed_is_compared_by_episode(self) -> None:
+        # The release's other file placed nowhere on the title. Sonarr's copy is the group's at another size, an
+        # upgrade, though the group and its sizes alone would find the other listed size there and read it as owned.
+        placed = placed_episode(season=1, episode=1, size=999)
+        seadex = {"RG": _sonarr_group(u1=make_release(size=[100, 999], episodes=[placed]))}
+        title = [sonarr_ep(1, 1, size=100, release_group="RG")]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_episode_groupless_zero_size_still_grabs(self) -> None:
-        # 0 == 0 must not read as identity: a failed-copy stub against a
-        # zero-size listed file stays grabbable.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=0)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=0, release_group=None)],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
+        # An empty file proves nothing, even against a release that lists an empty file there: a failed copy stays
+        # grabbable.
+        placed = placed_episode(season=1, episode=1, size=0)
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[0], episodes=[placed]))}
+        title = [sonarr_ep(1, 1, size=0)]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "grab"}
 
     def test_episode_no_group_exact_size_never_masks_an_outdated_release(self) -> None:
-        # One file with no group identified by size must not speak for the release's
-        # OTHER episodes: its size matched by construction, so counting it in
-        # the outdated check would strand every outdated episode around it.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(
-                        episodes=[
-                            placed_episode(season=1, episode=1, size=100),
-                            placed_episode(season=1, episode=2, size=200),
-                        ],
-                        infohash="h1",
-                    ),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Era-Raws": (999,)}),
-            title_episodes=[
-                sonarr_ep(1, 1, size=100, release_group=None),
-                sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
-            ],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is True
-        assert result.seadex_dict["Era-Raws"].releases["u1"].is_upgrade is True
+        # A file with no group is the release's by its size, so it says nothing about whether the release is outdated.
+        # Counting it would hide that the group's file on the other episode is at an unlisted size.
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200], episodes=[_S1E1, _S1E2]))}
+        title = [sonarr_ep(1, 1, size=100), sonarr_ep(1, 2, size=999, release_group="Era-Raws")]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_episode_file_with_no_group_owns_the_episode_for_every_release(self) -> None:
-        # Ownership is a property of the FILE: the release whose size identified it
-        # drops its grab, and so must the sibling release covering the same
-        # episode - otherwise the title is re-grabbed from the other release.
-        planner = make_planner()
+        # Whose file it is doesn't depend on which release asks: the release whose size names it isn't grabbed, and
+        # neither is another group's release of the same episode.
+        other = make_release(size=[300], episodes=[placed_episode(season=1, episode=1, size=300)])
         seadex = {
-            "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
-                episodes=[placed_episode(season=1, episode=1, size=100)],
-            ),
-            "Other": rg_group(
-                {"u2": make_release(episodes=[placed_episode(season=1, episode=1, size=300)], infohash="h2")},
-                episodes=[placed_episode(season=1, episode=1, size=300)],
-            ),
+            "Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])),
+            "Other": _sonarr_group(u2=other),
         }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=101)],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
-        assert result.seadex_dict["Other"].releases["u2"].to_grab is False
-        # The plan reports the identified episode - with the size backing the
-        # claim - so the pending import updates protect exactly that file.
-        assert result.guards.owned_episodes == ((101, 100),)
+        title = [sonarr_ep(1, 1, size=100)]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {}
 
     def test_episode_blank_named_group_never_covers_a_file_with_no_group(self) -> None:
-        # PIN: a group whose name normalizes to None (a blank name) is indexed
-        # nowhere in the coverage index. The group of an arr file with no group also
-        # normalizes to None, so indexing the blank name would read the file as
-        # covered and silently suppress the real group's grab.
-        planner = make_planner()
+        # A blank group name is no name. A file with no group has none either, and the two must not read as a match
+        # that leaves the real group's release ungrabbed.
         seadex = {
-            "": rg_group({"u1": make_release(episodes=[], infohash="h1")}),
-            "Era-Raws": rg_group(
-                {"u2": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h2")},
-            ),
+            "": _sonarr_group(u1=make_release(size=[500])),
+            "Era-Raws": _sonarr_group(u2=make_release(size=[100], episodes=[_S1E1])),
         }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=999, release_group=None, ep_id=101)],
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u2"].to_grab is True
+        title = [sonarr_ep(1, 1, size=999)]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "grab", "u2": "grab"}
+
+
+class TestFilterByReleaseGroup:
+    """`plan` skips a release whose group and size(s) already match what the arr has (case-insensitively), grabbing otherwise."""
 
     def test_plan_drops_an_ownership_claim_with_no_real_episode_id(self) -> None:
         # PIN (intent, not a bug): the owned-episodes reduction keeps only episodes
@@ -860,22 +760,6 @@ class TestFilterByReleaseGroup:
         assert release.to_grab is False
         assert result.guards.entry_groups == ()
         assert result.guards.stale_groups == ("Era-Raws",)
-
-    def test_placed_episodes_but_no_title_episodes_skips(self) -> None:
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1"),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Era-Raws"].releases["u1"].to_grab is False
 
     def test_debug_logging_path_does_not_crash(self) -> None:
         # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
