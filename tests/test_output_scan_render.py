@@ -51,7 +51,7 @@ from pearlarr.output.scan_lines import (
     title_row_lines,
 )
 
-from .fakes import strip_ansi
+from .fakes import feed_renderer, strip_ansi
 from .scan_goldens import (
     ACTION_DOWNLOADING_NO_WAIT,
     ACTION_DOWNLOADING_NO_WAIT_LINES,
@@ -296,8 +296,7 @@ class TestRichRendererScanBranch:
 
     def test_renders_a_scan_sequence_in_order(self) -> None:
         renderer, stream = _renderer()
-        for event in (SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, CAP_REACHED):
-            renderer.handle(event, 0.0)
+        feed_renderer(renderer, SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, CAP_REACHED)
         assert _plain_lines(stream) == _expected_console(
             SCAN_STARTED_SONARR_LINES,
             ITEM_STARTED_SONARR_LINES,
@@ -308,7 +307,7 @@ class TestRichRendererScanBranch:
 
     def test_renders_the_summary_with_the_console_only_dry_note(self) -> None:
         renderer, stream = _renderer()
-        renderer.handle(SUMMARY_DRY_HAS_CLIENT, 0.0)
+        feed_renderer(renderer, SUMMARY_DRY_HAS_CLIENT)
         lines = _plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
         # The DRY RUN note the file log drops shows in the console title.
@@ -316,7 +315,7 @@ class TestRichRendererScanBranch:
 
     def test_renders_the_rich_summary(self) -> None:
         renderer, stream = _renderer()
-        renderer.handle(SUMMARY_RICH, 0.0)
+        feed_renderer(renderer, SUMMARY_RICH)
         assert _plain_lines(stream) == _expected_console(SUMMARY_RICH_LINES)
 
     def test_warning_level_suppresses_info_scan_lines(self) -> None:
@@ -324,8 +323,7 @@ class TestRichRendererScanBranch:
         # the console exactly as they vanish from the file.
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
-        for event in (SCAN_STARTED_SONARR, CHECKING_FULL, SUMMARY_RICH):
-            renderer.handle(event, 0.0)
+        feed_renderer(renderer, SCAN_STARTED_SONARR, CHECKING_FULL, SUMMARY_RICH)
         assert _plain_lines(stream) == []
 
     def test_warning_detail_renders_at_warning_level(self) -> None:
@@ -334,13 +332,12 @@ class TestRichRendererScanBranch:
         detail = TitleDetail(
             label="status", value=StyledValue("size mismatch", Accent.CAUTION), severity=Severity.WARNING
         )
-        renderer.handle(detail, 0.0)
+        feed_renderer(renderer, detail)
         assert _plain_lines(stream) == ["    status    size mismatch"]
 
     def test_without_a_console_scan_events_no_op(self) -> None:
         renderer = RichRenderer(lambda: None)
-        for event in (SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, SUMMARY_RICH):
-            renderer.handle(event, 0.0)
+        feed_renderer(renderer, SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, SUMMARY_RICH)
 
 
 class TestTitleIndentedDiagnostics:
@@ -352,14 +349,20 @@ class TestTitleIndentedDiagnostics:
     _TITLE_SCOPE = ScopeId(ScopeKind.TITLE, 1)
 
     def _open_item(self, renderer: RichRenderer) -> None:
-        renderer.handle(ScanStarted(arr=Arr.SONARR, total=1), 0.0)
-        renderer.handle(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"), 0.0)
+        feed_renderer(
+            renderer,
+            ScanStarted(arr=Arr.SONARR, total=1),
+            ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"),
+        )
 
     def test_diagnostic_indents_inside_an_open_title_block(self) -> None:
         renderer, stream = _renderer()
         self._open_item(renderer)
-        renderer.handle(ScopeOpened(scope=self._TITLE_SCOPE, label="entry"), 0.0)
-        renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
+        feed_renderer(
+            renderer,
+            ScopeOpened(scope=self._TITLE_SCOPE, label="entry"),
+            Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME),
+        )
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
     def test_diagnostic_indents_under_an_open_item_between_titles(self) -> None:
@@ -367,7 +370,7 @@ class TestTitleIndentedDiagnostics:
         # with the listing, not the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
-        renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
+        feed_renderer(renderer, Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
     def test_scan_finished_returns_diagnostics_to_column_zero(self) -> None:
@@ -375,9 +378,12 @@ class TestTitleIndentedDiagnostics:
         # after the listing sits back at the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
-        renderer.handle(ScopeOpened(scope=self._TITLE_SCOPE, label="entry"), 0.0)
-        renderer.handle(ScopeClosed(scope=self._TITLE_SCOPE), 0.0)
-        renderer.handle(ScanFinished(arr=Arr.SONARR), 0.0)
-        renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
+        feed_renderer(
+            renderer,
+            ScopeOpened(scope=self._TITLE_SCOPE, label="entry"),
+            ScopeClosed(scope=self._TITLE_SCOPE),
+            ScanFinished(arr=Arr.SONARR),
+            Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME),
+        )
         assert "⚠ tracker down" in _plain_lines(stream)
         assert "  ⚠ tracker down" not in _plain_lines(stream)

@@ -106,6 +106,13 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[ConsoleLine]:
     return lines
 
 
+def feed_renderer(renderer: Renderer, *events: Event) -> None:
+    """Hand each event to `renderer` in order, all at time 0."""
+
+    for event in events:
+        renderer.handle(event, 0.0)
+
+
 def debug_logger(name: str) -> logging.Logger:
     """A logger `caplog` sees at DEBUG: no handlers of its own, propagating to the root."""
 
