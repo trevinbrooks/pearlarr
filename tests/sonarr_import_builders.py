@@ -27,11 +27,11 @@ from .fakes import NEUTRAL_RESCAN, FakeSonarrClient, HookedSonarrClient
 
 _RESCAN_NAME = "RefreshMonitoredDownloads"
 RESCAN_AFTER_ADD = CommandResource(
-    name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED + timedelta(days=1)
+    id=2, name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED + timedelta(days=1)
 )
 """A completed rescan that started a day after the pending import's torrent was added: Sonarr has looked since."""
 RESCAN_BEFORE_ADD = CommandResource(
-    name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED - timedelta(days=1)
+    id=3, name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED - timedelta(days=1)
 )
 """A completed rescan that started a day before the add, so no sign Sonarr has looked at the download."""
 
@@ -108,15 +108,15 @@ def make_sonarr_for_import(
 def started_process_pass() -> CommandResource:
     """Sonarr's own ProcessMonitoredDownloads command, executing right now."""
 
-    return CommandResource.model_validate({"name": "ProcessMonitoredDownloads", "status": "started"})
+    return CommandResource.model_validate({"id": 4, "name": "ProcessMonitoredDownloads", "status": "started"})
 
 
-def inflight_manual_import(infohash: str, *, status: str = "started", command_id: int = 0) -> CommandResource:
+def inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
     """A ManualImport command whose one file carries `infohash` as downloadId."""
 
     return CommandResource.model_validate(
         {
-            "id": command_id,
+            "id": 5,
             "name": "ManualImport",
             "status": status,
             "body": {"files": [{"downloadId": infohash, "episodeIds": [101]}]},
