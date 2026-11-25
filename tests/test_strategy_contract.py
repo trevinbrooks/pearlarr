@@ -48,7 +48,8 @@ from pearlarr.mappings import (
     MappingSource,
     TitleMapping,
 )
-from pearlarr.output import Accent, Severity, StyledValue, TitleDetail
+from pearlarr.output import Accent, Severity, StyledValue, TitleDetail, TitleRow
+from pearlarr.output.events import TitleState
 from pearlarr.pending_follow import PendingFollower
 from pearlarr.pending_import import (
     FileEpisodeMap,
@@ -140,6 +141,7 @@ from .title_check_builders import (
     FakeRunServices,
     ScriptedListings,
     ScriptedParse,
+    mapping_one_ignored_imdb_title,
     mapping_one_imdb_title,
     mapping_one_series,
     radarr_checking,
@@ -198,7 +200,7 @@ def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() ->
 
 
 class TestItemMappings:
-    """item_mappings finds an item's titles by every id the arr holds for it, its IMDb id included."""
+    """item_mappings finds an item's titles by every id the arr holds, and shows the ones the ignore list names."""
 
     def test_radarr_finds_a_movie_mapped_only_by_its_imdb_id(self) -> None:
         deps = mapping_one_imdb_title(make_run_deps(), imdb_id="tt7", anilist_id=7)
@@ -215,6 +217,26 @@ class TestItemMappings:
         mappings = strat.item_mappings(SonarrSeries(tvdbId=99, imdbId="tt9"))
 
         assert mappings == {9: TitleMapping(anilist_id=9, imdb_id="tt9")}
+
+    def test_radarr_shows_a_title_on_the_ignore_list_and_leaves_it_out_of_the_check(self) -> None:
+        deps = mapping_one_ignored_imdb_title(make_run_deps(), imdb_id="tt7", anilist_id=7)
+        strat = RadarrStrategy(deps, ArrRunServices(deps, Arr.RADARR), FakeRadarrClient())
+        recording = install_recording_hub()
+
+        mappings = strat.item_mappings(RadarrMovie(tmdbId=42, imdbId="tt7"))
+
+        assert mappings == {}
+        assert recording.events == [TitleRow(state=TitleState.IGNORED, label="AniList #7", accent=Accent.DIM)]
+
+    def test_sonarr_shows_a_title_on_the_ignore_list_and_leaves_it_out_of_the_check(self) -> None:
+        deps = mapping_one_ignored_imdb_title(make_run_deps(), imdb_id="tt9", anilist_id=9)
+        strat = SonarrStrategy(deps, ArrRunServices(deps, Arr.SONARR), sonarr_client=FakeSonarrClient())
+        recording = install_recording_hub()
+
+        mappings = strat.item_mappings(SonarrSeries(tvdbId=99, imdbId="tt9"))
+
+        assert mappings == {}
+        assert recording.events == [TitleRow(state=TitleState.IGNORED, label="AniList #9", accent=Accent.DIM)]
 
 
 class TestFilterToSingle:
