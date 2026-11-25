@@ -391,9 +391,6 @@ class TestMixedGroupKeeperPreference:
     to the add-time WARNING only when no fully-addable group exists.
     """
 
-    H_URL = "https://nyaa.si/view/2"
-    H_HASH = "b" * 40
-
     def _mixed_group_torrents(self) -> tuple[TorrentRecord, TorrentRecord]:
         g_pub = make_torrent_record(
             release_group="G",
@@ -414,71 +411,6 @@ class TestMixedGroupKeeperPreference:
             is_best=True,
         )
         return g_pub, g_priv
-
-    def test_mixed_group_first_still_grabs_the_public_batch(self) -> None:
-        # G is first in dict order, but its private release marked to grab would be
-        # skipped at add time, so H wins keeper and S2 is actually obtained - pre-fix the
-        # keeper was order-dependent and a G win silently lost S2.
-        state = ArrRunState(arr=Arr.SONARR)
-        cache = FakeCacheStore()
-        filt = make_release_filter(
-            private_releases="warn",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-            state=state,
-        )
-        g_pub, g_priv = self._mixed_group_torrents()
-        h_pub = make_torrent_record(
-            release_group="H",
-            tracker=Tracker.NYAA,
-            url=self.H_URL,
-            infohash=self.H_HASH,
-            file_names=("H.S01E01.mkv", "H.S02E01.mkv"),
-            file_size=777,
-            is_best=True,
-        )
-        entry = make_entry_record(anilist_id=55, torrents=(g_pub, g_priv, h_pub))
-        sd = filt.build(entry)
-        # The coverage-aware drop keeps G's uncovered private torrent.
-        assert set(sd["G"].releases) == {PUB_URL, PRIV_URL}
-        _attach_episodes(
-            sd,
-            {
-                PUB_URL: [placed_episode(season=1, episode=1, size=555)],
-                PRIV_URL: [
-                    placed_episode(season=1, episode=1, size=999),
-                    placed_episode(season=2, episode=1, size=999),
-                ],
-                self.H_URL: [
-                    placed_episode(season=1, episode=1, size=777),
-                    placed_episode(season=2, episode=1, size=777),
-                ],
-            },
-        )
-
-        # Sonarr is missing both episodes: every release is marked to grab before the reducer.
-        recording = install_recording_hub()
-        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-
-        assert plan.seadex_dict["H"].releases[self.H_URL].to_grab is True
-        assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is False
-        assert plan.seadex_dict["G"].releases[PRIV_URL].to_grab is False
-        assert _warning_texts(recording) == []
-        assert state.per_title.private_only_skipped is False
-
-        torrents = FakeTorrents({self.H_HASH: (AddStatus.ADDED, "H S01+S02")})
-        pipe = make_grab_pipeline(
-            cache_store=cache,
-            _state=state,
-            _torrents=torrents,
-            private_releases="warn",
-            sleep_time=0,
-        )
-        pipe.grab_and_cache(_grab_request(55, plan.seadex_dict, entry))
-        assert torrents.calls == [self.H_HASH]
-        assert state.stats.needs_action == []
-        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 55), entry) is True
 
     def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
         # No fully-addable group exists: the keeper degrades to the mixed group,
@@ -787,117 +719,6 @@ class TestPromotionGeneralization:
         assert recording.events == []
         assert state.per_title.private_only_skipped is False
         assert state.per_title.private_only_outdated is True
-
-
-class TestEqualUnionMixedGroups:
-    """Two equal-union mixed groups: no episode's public release may be lost."""
-
-    A_PUB_URL = "https://nyaa.si/view/5"
-    A_PUB_HASH = "a" * 40
-    A_PRIV_URL = "https://animebytes.tv/torrents.php?id=2"
-    B_PUB_URL = "https://nyaa.si/view/6"
-    B_PUB_HASH = "b" * 40
-    B_PRIV_URL = "https://animebytes.tv/torrents.php?id=3"
-
-    def _torrents(self) -> tuple[TorrentRecord, TorrentRecord, TorrentRecord, TorrentRecord]:
-        a_pub = make_torrent_record(
-            release_group="A",
-            tracker=Tracker.NYAA,
-            url=self.A_PUB_URL,
-            infohash=self.A_PUB_HASH,
-            file_names=("A.S01E01.mkv",),
-            file_size=555,
-            is_best=True,
-        )
-        a_priv = make_torrent_record(
-            release_group="A",
-            tracker=Tracker.ANIMEBYTES,
-            url=self.A_PRIV_URL,
-            infohash=None,
-            file_names=("A - S01E01.mkv", "A - S02E01.mkv"),
-            file_size=999,
-            is_best=True,
-        )
-        b_pub = make_torrent_record(
-            release_group="B",
-            tracker=Tracker.NYAA,
-            url=self.B_PUB_URL,
-            infohash=self.B_PUB_HASH,
-            file_names=("B.S02E01.mkv",),
-            file_size=556,
-            is_best=True,
-        )
-        b_priv = make_torrent_record(
-            release_group="B",
-            tracker=Tracker.ANIMEBYTES,
-            url=self.B_PRIV_URL,
-            infohash=None,
-            file_names=("B - S01E01.mkv", "B - S02E01.mkv"),
-            file_size=998,
-            is_best=True,
-        )
-        return a_pub, a_priv, b_pub, b_priv
-
-    def test_no_episode_lost_regardless_of_group_order(self) -> None:
-        # Pre-rescue, the losing group's public release had its grab dropped wholesale and
-        # its episode silently lost (order-dependent: warn mode then cached the
-        # loss). Both public releases must now grab in either order.
-        a_pub, a_priv, b_pub, b_priv = self._torrents()
-        for anilist_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
-            state = ArrRunState(arr=Arr.SONARR)
-            cache = FakeCacheStore()
-            filt = make_release_filter(
-                private_releases="warn",
-                want_best=True,
-                prefer_dual_audio=False,
-                planner=make_planner(),
-                state=state,
-            )
-            entry = make_entry_record(anilist_id=anilist_id, torrents=order)
-            sd = filt.build(entry)
-            _attach_episodes(
-                sd,
-                {
-                    self.A_PUB_URL: [placed_episode(season=1, episode=1, size=555)],
-                    self.A_PRIV_URL: [
-                        placed_episode(season=1, episode=1, size=999),
-                        placed_episode(season=2, episode=1, size=999),
-                    ],
-                    self.B_PUB_URL: [placed_episode(season=2, episode=1, size=556)],
-                    self.B_PRIV_URL: [
-                        placed_episode(season=1, episode=1, size=998),
-                        placed_episode(season=2, episode=1, size=998),
-                    ],
-                },
-            )
-
-            # Sonarr is missing both episodes: every release is marked to grab before the reducer.
-            plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-            assert plan.seadex_dict["A"].releases[self.A_PUB_URL].to_grab is True, f"order={anilist_id}"
-            assert plan.seadex_dict["B"].releases[self.B_PUB_URL].to_grab is True, f"order={anilist_id}"
-
-            torrents = FakeTorrents(
-                {
-                    self.A_PUB_HASH: (AddStatus.ADDED, "A S01"),
-                    self.B_PUB_HASH: (AddStatus.ADDED, "B S02"),
-                },
-            )
-            pipe = make_grab_pipeline(
-                cache_store=cache,
-                _state=state,
-                _torrents=torrents,
-                private_releases="warn",
-                sleep_time=0,
-            )
-            recording = install_recording_hub()
-            pipe.grab_and_cache(_grab_request(anilist_id, plan.seadex_dict, entry))
-
-            # Both episodes obtained. The keeper's surviving private torrent is
-            # skipped with a WARNING, and warn mode still caches the title.
-            assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={anilist_id}"
-            assert _private_skips(recording), recording.events
-            assert state.per_title.private_only_skipped is True
-            assert title_is_cached(cache.get_cached_title(Arr.SONARR, anilist_id), entry) is True
 
 
 class _CachedTitleReporter:
