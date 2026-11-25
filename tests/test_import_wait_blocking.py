@@ -1,8 +1,8 @@
 # pyright: strict
 """Tests for the blocking end pass, which waits on and imports every pending import.
 
-They cover what moves its deadlines, how it ends without an import or on an interrupt, how its rows tell this
-run's grabs from carried-over ones, and the download bars it shows.
+They cover how an import is confirmed, what moves the import deadline, how a row ends without an import, an
+interrupt, how the rows tell this run's grabs from carried-over ones, and the download bars.
 """
 
 from contextlib import AbstractContextManager, nullcontext
@@ -32,42 +32,8 @@ from .wait_fakes import (
 )
 
 
-class _InterruptSleepClock(FakeClock):
-    """A clock whose sleep raises KeyboardInterrupt (Ctrl-C mid-wait)."""
-
-    @override
-    def sleep(self, seconds: float) -> None:
-        raise KeyboardInterrupt
-
-
-class _StopSleepClock(FakeClock):
-    """A clock whose sleep raises `SystemExit` (a SIGTERM stop mid-wait)."""
-
-    @override
-    def sleep(self, seconds: float) -> None:
-        raise SystemExit(0)
-
-
-class _InterruptedDropStore(FakeCacheStore):
-    """A store where a Ctrl-C lands in the pending import drop."""
-
-    @override
-    def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
-        raise KeyboardInterrupt
-
-
-class _InterruptedPutStore(FakeCacheStore):
-    """A store where a Ctrl-C lands in the write that marks a pending import awaiting cleanup."""
-
-    @override
-    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
-        if row.get("awaiting_cleanup"):
-            raise KeyboardInterrupt
-        super().put_pending_import_row(arr, infohash, row)
-
-
-class TestRunBlocking:
-    """run_blocking: interleaved, copy-aware wait+import over ALL pending imports."""
+class TestBlockingWaitImport:
+    """Each finished torrent imports from its own path, confirmed by a poll or by a progress read between polls."""
 
     def test_two_torrents_each_import_from_their_own_path(self) -> None:
         strategy = RecordingStrategy(attempts=[attempt_result(all_done=True)])
@@ -98,24 +64,6 @@ class TestRunBlocking:
         assert [view.final(key).outcome for key in ("fast", "slow")] == [Outcome.IMPORTED, Outcome.IMPORTED]
         assert store.get_pending_import_rows(Arr.SONARR) == {}
 
-    def test_with_the_progress_refresh_off_only_the_next_poll_confirms_an_import(self) -> None:
-        # A progress read between the polls would find every file in and finish the row before poll 2.
-        strategy = RecordingStrategy(
-            attempts=[
-                attempt_result(all_done=False, command_issued=True),
-                attempt_result(all_done=True, command_issued=True),
-            ],
-            progress=[ImportProgress(1, 1, determinate=True)],
-        )
-        _, view = run_blocking_wait(
-            strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            progress_poll_interval=0,
-        )
-
-        assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
-        assert view.final("h").outcome is Outcome.IMPORTED
-
     def test_progress_poll_fills_bar_and_promotes_before_the_next_poll(self) -> None:
         # Between polls the cheap progress poll fills the "files inserted" bar
         # as files get done and promotes the row to IMPORTED the instant all are done
@@ -140,6 +88,75 @@ class TestRunBlocking:
         assert [(t.import_done, t.import_total) for t in view.seen("h", Phase.IMPORTING)] == [(0, 3), (1, 3), (2, 3)]
         assert view.final("h").outcome is Outcome.IMPORTED
         assert stored_awaiting_cleanup(store) == {}
+
+    def test_with_the_progress_refresh_off_only_the_next_poll_confirms_an_import(self) -> None:
+        # A progress read between the polls would find every file in and finish the row before poll 2.
+        strategy = RecordingStrategy(
+            attempts=[
+                attempt_result(all_done=False, command_issued=True),
+                attempt_result(all_done=True, command_issued=True),
+            ],
+            progress=[ImportProgress(1, 1, determinate=True)],
+        )
+        _, view = run_blocking_wait(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            progress_poll_interval=0,
+        )
+
+        assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
+        assert view.final("h").outcome is Outcome.IMPORTED
+
+    def test_a_failed_progress_read_is_skipped_and_the_next_poll_imports(self) -> None:
+        strategy = RecordingStrategy(
+            attempts=[
+                attempt_result(all_done=False, command_issued=True),
+                attempt_result(all_done=True, command_issued=True),
+            ],
+            progress=[RuntimeError("progress boom"), NO_PROGRESS],
+        )
+        _, view = run_blocking_wait(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            step=5,
+            progress_poll_interval=5,
+        )
+
+        assert view.final("h").outcome is Outcome.IMPORTED
+        assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
+
+
+class TestBlockingWaitImportDeadline:
+    """What moves an importing row's deadline: a rise in done files moves it out, an import in flight pauses it.
+
+    A pause holds the deadline only up to a cap, and a row that ends there reads as what held it: still importing
+    or Sonarr busy.
+    """
+
+    def test_a_progress_poll_rise_re_anchors_the_deadline(self) -> None:
+        # The cheap progress poll sees a file get done (1/3 -> 2/3) even though the
+        # poll's counts stay indeterminate. That rise alone must push the
+        # deadline out one more poll (t=90, not t=60).
+        strategy = RecordingStrategy(
+            attempts=[attempt_result(all_done=False, command_issued=True)],
+            progress=[
+                ImportProgress(1, 3, determinate=True),
+                ImportProgress(2, 3, determinate=True),  # the rise, at t=10
+            ],
+        )
+        _, view = run_blocking_wait(
+            strategy,
+            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            step=5,
+            import_timeout=60,
+            progress_poll_interval=5,
+        )
+
+        assert view.final("h").outcome is Outcome.STILL_IMPORTING
+        # Polls at t=0/30/60/90: the t=60 poll is in-bound only because the
+        # t=10 progress-poll rise re-anchored the deadline to fire at t=70.
+        assert len(strategy.import_calls) == 4
+        assert strategy.import_calls[-1].attempt_kind is AttemptKind.FINAL
 
     def test_final_attempt_rescued_by_a_same_poll_rise(self) -> None:
         # The forced deadline attempt itself reports a fresh rise (0/3 -> 1/3 at
@@ -236,30 +253,9 @@ class TestRunBlocking:
         assert view.final("h").outcome is Outcome.SONARR_BUSY
         assert stored_awaiting_cleanup(store) == {"h": False}
 
-    def test_a_progress_poll_rise_re_anchors_the_deadline(self) -> None:
-        # The cheap progress poll sees a file get done (1/3 -> 2/3) even though the
-        # poll's counts stay indeterminate. That rise alone must push the
-        # deadline out one more poll (t=90, not t=60).
-        strategy = RecordingStrategy(
-            attempts=[attempt_result(all_done=False, command_issued=True)],
-            progress=[
-                ImportProgress(1, 3, determinate=True),
-                ImportProgress(2, 3, determinate=True),  # the rise, at t=10
-            ],
-        )
-        _, view = run_blocking_wait(
-            strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            step=5,
-            import_timeout=60,
-            progress_poll_interval=5,
-        )
 
-        assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        # Polls at t=0/30/60/90: the t=60 poll is in-bound only because the
-        # t=10 progress-poll rise re-anchored the deadline to fire at t=70.
-        assert len(strategy.import_calls) == 4
-        assert strategy.import_calls[-1].attempt_kind is AttemptKind.FINAL
+class TestBlockingWaitEndsWithoutAnImport:
+    """A download that never finishes or an attempt that raises ends its row, and the pending import stays stored."""
 
     @pytest.mark.parametrize(
         "reading",
@@ -284,23 +280,62 @@ class TestRunBlocking:
         assert stored_awaiting_cleanup(store) == {"h": False}
         assert qbit.set_category_calls == []
 
-    def test_a_failed_progress_read_is_skipped_and_the_next_poll_imports(self) -> None:
-        strategy = RecordingStrategy(
-            attempts=[
-                attempt_result(all_done=False, command_issued=True),
-                attempt_result(all_done=True, command_issued=True),
-            ],
-            progress=[RuntimeError("progress boom"), NO_PROGRESS],
-        )
-        _, view = run_blocking_wait(
+    def test_import_exception_is_swallowed_announced_and_pending_import_left(self) -> None:
+        # A failing import (e.g. malformed Sonarr response) must NOT propagate
+        # and abort _finish_arr_run's cache save: the failure lands as an ERROR
+        # Diagnostic carrying its traceback and the pending import is left.
+        strategy = RecordingStrategy(attempts=[RuntimeError("boom")])
+        recording = install_recording_hub()
+        store, view = run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            step=5,
-            progress_poll_interval=5,
+            import_timeout=60,
         )
 
-        assert view.final("h").outcome is Outcome.IMPORTED
-        assert [call.attempt_kind for call in strategy.import_calls] == [AttemptKind.ORDINARY, AttemptKind.ORDINARY]
+        assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
+        assert stored_awaiting_cleanup(store) == {"h": False}
+        (error,) = recording.of_type(Diagnostic)
+        assert error.severity is Severity.ERROR
+        assert "Auto import failed" in error.message
+        assert error.trace is not None
+
+
+class _InterruptSleepClock(FakeClock):
+    """A clock whose sleep raises KeyboardInterrupt (Ctrl-C mid-wait)."""
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise KeyboardInterrupt
+
+
+class _StopSleepClock(FakeClock):
+    """A clock whose sleep raises `SystemExit` (a SIGTERM stop mid-wait)."""
+
+    @override
+    def sleep(self, seconds: float) -> None:
+        raise SystemExit(0)
+
+
+class _InterruptedDropStore(FakeCacheStore):
+    """A store where a Ctrl-C lands in the pending import drop."""
+
+    @override
+    def drop_pending_import_row(self, arr: Arr, infohash: str) -> None:
+        raise KeyboardInterrupt
+
+
+class _InterruptedPutStore(FakeCacheStore):
+    """A store where a Ctrl-C lands in the write that marks a pending import awaiting cleanup."""
+
+    @override
+    def put_pending_import_row(self, arr: Arr, infohash: str, row: dict[str, Any]) -> None:
+        if row.get("awaiting_cleanup"):
+            raise KeyboardInterrupt
+        super().put_pending_import_row(arr, infohash, row)
+
+
+class TestBlockingWaitInterrupt:
+    """A Ctrl-C or a stop mid-wait notes what is left, and an import whose store write it cut off is not counted."""
 
     @pytest.mark.parametrize(
         ("clock_type", "ending"),
@@ -353,25 +388,6 @@ class TestRunBlocking:
         assert result is not None and result.waited == 1
         assert view.final("h1").outcome is Outcome.GONE  # the interrupt-time push carried it
         assert diagnostic_messages(recording) == ["Wait interrupted - 1 left for the next run"]
-
-    def test_import_exception_is_swallowed_announced_and_pending_import_left(self) -> None:
-        # A failing import (e.g. malformed Sonarr response) must NOT propagate
-        # and abort _finish_arr_run's cache save: the failure lands as an ERROR
-        # Diagnostic carrying its traceback and the pending import is left.
-        strategy = RecordingStrategy(attempts=[RuntimeError("boom")])
-        recording = install_recording_hub()
-        store, view = run_blocking_wait(
-            strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            import_timeout=60,
-        )
-
-        assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
-        assert stored_awaiting_cleanup(store) == {"h": False}
-        (error,) = recording.of_type(Diagnostic)
-        assert error.severity is Severity.ERROR
-        assert "Auto import failed" in error.message
-        assert error.trace is not None
 
     @pytest.mark.parametrize(
         ("store_type", "removals"),
