@@ -22,6 +22,7 @@ from pearlarr.aired_view import AiredSeries, aired_series
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.output import Severity
+from pearlarr.pending_import import OwnedAtGrab, SizeMatchedEpisode
 from pearlarr.planner import GrabPlan, GrabPlanner, PrivateOnlyNotice, PrivateOnlyNotices
 from pearlarr.releases import (
     GroupReleases,
@@ -696,71 +697,6 @@ class TestAReleaseByEpisode:
 class TestFilterByReleaseGroup:
     """`plan` skips a release whose group and size(s) already match what the arr has (case-insensitively), grabbing otherwise."""
 
-    def test_plan_drops_an_ownership_claim_with_no_real_episode_id(self) -> None:
-        # PIN (intent, not a bug): the owned-episodes reduction keeps only episodes
-        # with a real id - an id-0 claim could never be re-verified or POSTed
-        # at import time, so it must not go into the guards.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group=None, ep_id=0)],
-        )
-        assert result.guards.owned_episodes == ()
-
-    def test_plan_reports_no_owned_episode_for_a_tagged_file(self) -> None:
-        # A file that still carries a group is identified by name, never by
-        # size - reading it as owned would bypass the group guard entirely.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {"u1": make_release(episodes=[placed_episode(season=1, episode=1, size=100)], infohash="h1")},
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Other": (100,)}),
-            title_episodes=[sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101)],
-        )
-        assert result.guards.owned_episodes == ()
-
-    def test_episode_partly_outdated_group_exits_the_guard_without_a_grab(self) -> None:
-        # One episode at an unlisted size is not a whole-release upgrade (that
-        # needs every episode), but it does mean the copy is partly
-        # outdated - the group must exit the never-overwrite set so the import can
-        # replace the outdated file, and it is positively outdated.
-        planner = make_planner()
-        seadex = {
-            "Era-Raws": rg_group(
-                {
-                    "u1": make_release(
-                        episodes=[
-                            placed_episode(season=1, episode=1, size=100),
-                            placed_episode(season=1, episode=2, size=200),
-                        ],
-                        infohash="h1",
-                    ),
-                }
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Era-Raws": (100, 999)}),
-            title_episodes=[
-                sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
-                sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
-            ],
-        )
-        release = result.seadex_dict["Era-Raws"].releases["u1"]
-        assert release.to_grab is False
-        assert result.guards.entry_groups == ()
-        assert result.guards.stale_groups == ("Era-Raws",)
-
     def test_debug_logging_path_does_not_crash(self) -> None:
         # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
         planner = make_planner()
@@ -963,126 +899,93 @@ class TestListedSizeOnTooManyEpisodes:
 
 
 class TestGroupGuardFacts:
-    """The plan's guard facts: entry_groups (verified owned) and stale_groups."""
+    """What the plan tells the import: which groups' copies the arr has, which are outdated, and whose files lack a group."""
 
     def test_no_episode_mixed_sizes_exit_the_guard_without_a_grab(self) -> None:
-        # A partial size overlap is not a whole-release upgrade (no grab), but
-        # the copy is provably part-outdated: reading the total-disjoint check as
-        # "owned" would protect the outdated file forever.
-        planner = make_planner()
-        seadex = {"Blunt": rg_group({"u1": make_release(episodes=[], size=[100, 200], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Blunt": (100, 999)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Blunt"].releases["u1"].to_grab is False
-        assert result.guards.entry_groups == ()
-        assert result.guards.stale_groups == ("Blunt",)
+        # One of the movie's files is at a listed size and one isn't: no upgrade of the whole release, so nothing is
+        # grabbed, but the copy is partly outdated and the group is not protected.
+        seadex = {"Blunt": rg_group({"u1": make_release(size=[100, 200])})}
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Blunt": (100, 999)}))
+
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.guards == OwnedAtGrab(stale_groups=("Blunt",))
+
+    def test_episode_partly_outdated_group_exits_the_guard_without_a_grab(self) -> None:
+        # The same by episode: one episode at an unlisted size is no upgrade of the whole release, but the import
+        # must be free to replace that file.
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200], episodes=[_S1E1, _S1E2]))}
+        title = [
+            sonarr_ep(1, 1, size=100, release_group="Era-Raws"),
+            sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
+        ]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.guards == OwnedAtGrab(stale_groups=("Era-Raws",))
 
     def test_outdated_file_at_an_unlisted_episode_condemns_the_group(self) -> None:
-        # Group Y is owned on every episode it lists, but the arr also has
-        # a leftover of group Y at an episode NO Y release lists. Blanket protection
-        # would shield the very file the torrent was grabbed to replace.
-        planner = make_planner()
-        seadex = {
-            "Y": rg_group(
-                {
-                    "u1": make_release(
-                        episodes=[placed_episode(season=1, episode=1, size=100)], size=[100], infohash="h1"
-                    )
-                },
-            ),
-            "X": rg_group(
-                {
-                    "u2": make_release(
-                        episodes=[
-                            placed_episode(season=1, episode=1, size=300),
-                            placed_episode(season=1, episode=13, size=400),
-                        ],
-                        size=[300, 400],
-                        infohash="h2",
-                    ),
-                },
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Y": (100, 999)}),
-            title_episodes=[
-                sonarr_ep(1, 1, size=100, release_group="Y"),
-                sonarr_ep(1, 13, size=999, release_group="Y"),
-            ],
+        # Y's copy is owned on the one episode Y lists, but the arr also has a Y file on an episode no Y release lists,
+        # at a size none lists. Protecting Y would shield the very file X is grabbed to replace.
+        x = make_release(
+            size=[300, 400],
+            episodes=[placed_episode(season=1, episode=1, size=300), placed_episode(season=1, episode=13, size=400)],
         )
-        assert result.seadex_dict["X"].releases["u2"].to_grab is True
-        assert "Y" not in result.guards.entry_groups
-        assert result.guards.stale_groups == ("Y",)
+        seadex = {"Y": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "X": _sonarr_group(u2=x)}
+        title = [sonarr_ep(1, 1, size=100, release_group="Y"), sonarr_ep(1, 13, size=999, release_group="Y")]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u2": "grab"}
+        assert plan.guards == OwnedAtGrab(entry_groups=("X",), stale_groups=("Y",))
 
     def test_blind_release_never_reads_as_an_upgrade(self) -> None:
-        # A release with no sizes proves nothing: the arr's copy stands (no
-        # grab, no upgrade marker), and with every release blind the group is
-        # unverifiable - in NEITHER guard list.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {"Ember": rg_group({"u1": make_release(episodes=[], size=[], infohash="h1")})}
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Ember": (100,)}),
-            title_episodes=None,
-        )
-        release = result.seadex_dict["Ember"].releases["u1"]
-        assert release.to_grab is False
-        assert release.is_upgrade is False
-        assert result.guards.entry_groups == ()
-        assert result.guards.stale_groups == ()
+        # A release that lists no sizes proves nothing: the arr's copy stands, and with every release of the group
+        # blind the group is neither protected nor outdated.
+        seadex = {"Ember": rg_group({"u1": make_release(size=[])})}
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Ember": (100,)}))
+
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.guards == OwnedAtGrab()
 
     def test_blind_release_beside_a_sized_owned_one_keeps_the_group_protected(self) -> None:
-        # One blind cross-seed must not void the protection the sized release
-        # earned: blind releases contribute no evidence, in either direction.
-        planner = make_planner(arr=Arr.RADARR)
-        seadex = {
-            "Ember": rg_group(
-                {
-                    "u1": make_release(episodes=[], size=[100], infohash="h1"),
-                    "u2": make_release(episodes=[], size=[], infohash="h2"),
-                },
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(by_group={"Ember": (100,)}),
-            title_episodes=None,
-        )
-        assert result.seadex_dict["Ember"].releases["u2"].to_grab is False
-        assert result.guards.entry_groups == ("Ember",)
-        assert result.guards.stale_groups == ()
+        # A blind cross-seed takes nothing from the protection the sized release earned.
+        seadex = {"Ember": rg_group({"u1": make_release(size=[100]), "u2": make_release(size=[])})}
+
+        plan = make_planner(arr=Arr.RADARR).plan(seadex, ArrFiles(by_group={"Ember": (100,)}))
+
+        assert _grabs(plan.seadex_dict) == {}
+        assert plan.guards == OwnedAtGrab(entry_groups=("Ember",))
 
     def test_groups_with_no_files_in_the_arr_stay_protected(self) -> None:
-        # Vacuously owned: a group with no files in the arr is protected, so a
-        # copy of it imported mid-wait (new, preferred) is not overwritten.
-        planner = make_planner()
-        seadex = {
-            "RG": rg_group(
-                {
-                    "u1": make_release(
-                        episodes=[placed_episode(season=1, episode=1, size=100)], size=[100], infohash="h1"
-                    )
-                },
-            ),
-            "Kept": rg_group(
-                {
-                    "u2": make_release(
-                        episodes=[placed_episode(season=1, episode=1, size=300)], size=[300], infohash="h2"
-                    )
-                },
-            ),
-        }
-        result = planner.plan(
-            seadex_dict=seadex,
-            arr_files=ArrFiles(),
-            title_episodes=[sonarr_ep(1, 1, episode_file_id=0)],
-        )
-        assert set(result.guards.entry_groups) == {"RG", "Kept"}
-        assert result.guards.stale_groups == ()
+        # A group the arr has no file of is protected, so a copy of it imported while the grab waits is not overwritten.
+        kept = make_release(size=[300], episodes=[placed_episode(season=1, episode=1, size=300)])
+        seadex = {"RG": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "Kept": _sonarr_group(u2=kept)}
+        title = [sonarr_ep(1, 1, episode_file_id=0)]
+
+        plan = make_planner().plan(seadex, arr_files(title), title)
+
+        assert plan.guards == OwnedAtGrab(entry_groups=("RG", "Kept"))
+
+    @pytest.mark.parametrize(
+        ("held", "owned_episodes"),
+        [
+            pytest.param(sonarr_ep(1, 1, size=100, ep_id=101), (SizeMatchedEpisode(101, 100),), id="no-group"),
+            pytest.param(sonarr_ep(1, 1, size=100, release_group="Other", ep_id=101), (), id="another-groups-file"),
+        ],
+    )
+    def test_the_plan_names_each_episode_whose_file_with_no_group_is_at_a_listed_size(
+        self, held: SonarrEpisode, owned_episodes: tuple[SizeMatchedEpisode, ...]
+    ) -> None:
+        # The import checks each named file's size again before it trusts it. A file with a group is told by its
+        # group, never by its size, so naming it would let it past the group's guard.
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1]))}
+
+        plan = make_planner().plan(seadex, arr_files([held]), [held])
+
+        assert plan.guards.owned_episodes == owned_episodes
 
 
 class TestReduceDropRescue:
