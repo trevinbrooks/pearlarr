@@ -41,7 +41,7 @@ from pearlarr.output import (
 from pearlarr.output.hub import QUEUE_CAP
 from pearlarr.paths import resolve_paths
 
-from .fakes import RecordingHub, RecordingRenderer
+from .fakes import RecordingHub, RecordingRenderer, install_recording_hub
 
 _EVENT = PearlarrStarted(version="v1.0.0", data_dir="/data")
 
@@ -1147,8 +1147,7 @@ def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
 
 
 def test_hub_note_with_exc_captures_the_trace() -> None:
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = install_recording_hub()
     try:
         raise ValueError("boom")
     except ValueError as e:
@@ -1379,8 +1378,7 @@ def test_begin_run_applies_the_level_to_a_fresh_console_exactly_once() -> None:
 
 
 def test_hub_note_without_exc_keeps_the_trace_none() -> None:
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = install_recording_hub()
     hub_note("plain note")
 
     (note,) = recording.of_type(Diagnostic)
