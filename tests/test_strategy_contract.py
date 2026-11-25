@@ -485,7 +485,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         (update,) = req.pending_import_updates.values()
         assert update.pending_import == resident
         assert update.file_map == {normalize_file_name(_GRAB_FILES[1]): (102,)}
-        assert update.claim.anilist_id == 5
+        assert (update.claim.anilist_id, update.claim.series_id) == (5, 7)
         assert update.claim.ordered_episode_ids == (102,)
         pending = update.pending_import_at(_STAMP, restart=False)
         assert claim_anilist_ids(pending) == (22, 5)
