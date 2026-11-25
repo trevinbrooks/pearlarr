@@ -27,7 +27,9 @@ from pearlarr.arr_models import (
     MatchedEpisode,
     MovieFile,
     ParsedFileInfo,
+    Quality,
     QualityDefinition,
+    QualityModel,
     QueueRecord,
     RadarrItem,
     RadarrMovie,
@@ -1874,7 +1876,10 @@ class TestImportCompletedPayload:
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
-        assert posted_imports(sonarr) == [[(f"/d/{name}", [101])]]
+        ((files, _),) = sonarr.execute_calls
+        assert [(file.path, file.episodeIds, file.quality) for file in files] == [
+            (f"/d/{name}", [101], QualityModel(quality=Quality(id=0, name="Unknown", source="unknown", resolution=0)))
+        ]
         assert diagnostic_messages(recording, Severity.WARNING) == [
             "/d: could not confidently resolve quality for Show - 01.mkv - importing as Unknown (re-grab risk)"
         ]
