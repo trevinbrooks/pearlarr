@@ -7,10 +7,12 @@
 private one.
 """
 
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from itertools import combinations
+from typing import cast
 
 import httpx
 import pytest
@@ -18,10 +20,9 @@ import qbittorrentapi
 import respx
 from seadex import Tracker
 
-from pearlarr import notify
 from pearlarr.arr_run_state import ArrRunState, PerTitleState
+from pearlarr.boundary import Json
 from pearlarr.config import Arr, PrivateReleaseAction
-from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import NO_PENDING_IMPORT_UPDATES, GrabPipeline, GrabRequest
 from pearlarr.grab_placement import PendingImportUpdate
 from pearlarr.notify import Notifier
@@ -125,6 +126,16 @@ def _discord() -> Notifier:
     return Notifier(discord_url=_DISCORD_URL, webhook_url=None, web=httpx.Client())
 
 
+def _notifying_pipeline(torrents: FakeTorrents) -> GrabPipeline:
+    """A pipeline posting its grab notices to `_DISCORD_URL`, with AniList's cover and banner for title 42 alone."""
+
+    return _pipeline(
+        torrents=torrents,
+        _notifier=_discord(),
+        anilist_client=ScriptedAniListClient("Show Title", known=frozenset({42})),
+    )
+
+
 def _release(n: int, *, skipped: SkipReason | None = None) -> Release:
     """Release `n`, marked to grab: on Nyaa with hash `h<n>`, or skipped for `skipped` when given.
 
@@ -207,6 +218,15 @@ def _statuses(recording: RecordingHub) -> list[str]:
     """The status lines posted under the title."""
 
     return [detail.value.text for detail in recording.of_type(TitleDetail) if detail.label == "status"]
+
+
+def _posted_embed(webhook: respx.Route) -> dict[str, Json]:
+    """The embed of the one notice posted to `webhook`."""
+
+    assert webhook.call_count == 1
+    body = cast("dict[str, Json]", json.loads(webhook.calls.last.request.content))
+    (embed,) = cast("list[dict[str, Json]]", body["embeds"])
+    return embed
 
 
 # Highest first: the one needs-action row a title gets when two of these meet on it. None is a failed grab.
@@ -968,70 +988,58 @@ class TestGrabPushesNotice:
     A dry run posts none (`TestAGrab`).
     """
 
-    @staticmethod
-    def _grab(
-        monkeypatch: pytest.MonkeyPatch,
-        torrents: FakeTorrents,
-        seadex_dict: SeadexDict | None = None,
-    ) -> list[DiscordEmbed]:
-        """The embeds posted for title 42's grab of `seadex_dict` (group PMR's one release h1 when not given)."""
+    @respx.mock
+    def test_added_pushes_the_title_its_art_its_coverage_and_what_it_replaces(self) -> None:
+        webhook = respx.post(_DISCORD_URL).respond(json={})
+        pipeline = _notifying_pipeline(FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}))
 
-        embeds: list[DiscordEmbed] = []
-
-        def record(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-            del url, client
-            embeds.append(embed)
-
-        monkeypatch.setattr(notify, "discord_push", record)
-        pipeline = _pipeline(
-            torrents=torrents,
-            _notifier=Notifier(
-                discord_url="https://discord.example",
-                webhook_url=None,
-                web=httpx.Client(),
-            ),
-            # AniList knows the title, so its cover and banner frame the notice.
-            anilist_client=ScriptedAniListClient("Show Title"),
-        )
         pipeline.grab_and_cache(
             GrabRequest(
                 anilist_id=42,
-                # The library item's name must not prefix the AniList one, or the byline
-                # this class asserts on would (correctly) dedupe away.
+                # The library item's name must not prefix the AniList one, or the byline would (rightly) dedupe away.
                 arr_title="The Show",
                 title_name="Show Title",
-                entry=make_entry_record(url="https://releases.moe/42", notes="the why"),
-                seadex_dict=seadex_dict or {"PMR": _group(_release(1))},
+                entry=make_entry_record(anilist_id=42, url="https://releases.moe/42", notes="the why"),
+                seadex_dict={"PMR": _group(_release(1))},
                 update={},
                 replaced_groups=("OldGroup",),
                 coverage="S01 E01-E12",
-            ),
+            )
         )
-        return embeds
 
-    def test_added_pushes_the_resolved_notice(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        [embed] = self._grab(monkeypatch, FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}))
+        embed = _posted_embed(webhook)
+        assert cast("dict[str, Json]", embed["author"])["name"] == "Sonarr · SeaDex grab"
+        assert (embed["title"], embed["url"]) == ("Show Title", "https://releases.moe/42")
+        assert (embed["thumbnail"], embed["image"]) == ({"url": "https://img/large"}, {"url": "https://img/banner"})
+        # A single-group grab hoists its release into the description. The byline and notes trail as the nameless
+        # field.
+        assert embed["description"] == "**Grabbed · `PMR`**\n[Nyaa](https://nyaa.si/view/1)"
+        assert embed["fields"] == [
+            {"name": "Episodes", "value": "S01 E01-E12", "inline": True},
+            {"name": "Replacing", "value": "OldGroup", "inline": True},
+            {"name": "", "value": "-# The Show\n> the why", "inline": False},
+        ]
 
-        # The request's entry/coverage and AniList's art all reached the embed.
-        assert embed.title == "Show Title"
-        assert embed.url == "https://releases.moe/42"
-        assert embed.thumb_url == "https://img/large"
-        assert embed.image_url == "https://img/banner"
-        # A single-group grab hoists its release into the description. The
-        # subtitle/notes stack trails as the nameless (header-free) field.
-        assert embed.description == "**Grabbed · `PMR`**\n[Nyaa](https://nyaa.si/view/1)"
-        assert [f.name for f in embed.fields] == ["Episodes", "Replacing", ""]
-        assert embed.fields[-1].value == "-# The Show\n> the why"
-
-    def test_a_group_whose_add_failed_is_named_failed_beside_the_grabbed_one(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @respx.mock
+    def test_a_group_whose_add_failed_is_named_failed_beside_the_grabbed_one(self) -> None:
         # Nyaa was down for group Bad's release. Its block must not read as skipped, which would say it was never tried.
+        webhook = respx.post(_DISCORD_URL).respond(json={})
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}, raises={"h2": httpx.ConnectError("nyaa down")})
+        pipeline = _notifying_pipeline(torrents)
 
-        [embed] = self._grab(monkeypatch, torrents, {"PMR": _group(_release(1)), "Bad": _group(_release(2))})
+        pipeline.grab_and_cache(_grab_request({"PMR": _group(_release(1)), "Bad": _group(_release(2))}))
 
-        assert [f.name for f in embed.fields[:2]] == ["Grabbed · PMR", "Failed · Bad"]
+        embed = _posted_embed(webhook)
+        assert embed["fields"] == [
+            {"name": "Grabbed · PMR", "value": "[Nyaa](https://nyaa.si/view/1)", "inline": False},
+            {"name": "Failed · Bad", "value": "[Nyaa](https://nyaa.si/view/2)", "inline": False},
+        ]
 
-    def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert self._grab(monkeypatch, FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-PMR")})) == []
+    @respx.mock
+    def test_nothing_added_pushes_nothing(self) -> None:
+        webhook = respx.post(_DISCORD_URL).respond(json={})
+        pipeline = _notifying_pipeline(FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-PMR")}))
+
+        pipeline.grab_and_cache(_grab_request({"PMR": _group(_release(1))}))
+
+        assert not webhook.called
