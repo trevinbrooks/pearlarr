@@ -68,7 +68,7 @@ from pearlarr.pending_import import (
 from pearlarr.pending_import_store import PendingImportStore
 from pearlarr.placement_types import FetchedListings, TorrentListing, episode_index
 from pearlarr.planner import GrabPlan
-from pearlarr.radarr_strategy import _HISTORY_SKEW_HOURS, RadarrStrategy
+from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes
@@ -1607,7 +1607,8 @@ class TestRadarrImportCompletedHistory:
         pending = pending_import(infohash="h", added_at=long_ago)
         store.put_pending_import_row(Arr.RADARR, "h", pending.to_json())
         strat = make_radarr_sync(radarr=radarr, cache_store=store)
-        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=_HISTORY_SKEW_HOURS)
+        # Two hours under the cap, for a Radarr clock a little behind pearlarr's.
+        back = timedelta(days=HISTORY_MAX_LOOKBACK_DAYS, hours=2)
 
         earliest = format_history_date(datetime.now(UTC) - back)
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -1626,7 +1627,8 @@ class TestRadarrImportCompletedHistory:
 
         strat.import_completed(latest, "/d", AttemptKind.ORDINARY)
 
-        start = parse_stamp(older).astimezone(UTC) - timedelta(hours=_HISTORY_SKEW_HOURS)
+        # Two hours before the stamp, for a Radarr clock a little behind pearlarr's.
+        start = parse_stamp(older).astimezone(UTC) - timedelta(hours=2)
         assert radarr.history_calls == [format_history_date(start)]
 
     def test_pending_import_series_id_is_none(self) -> None:
