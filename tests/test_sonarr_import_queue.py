@@ -13,16 +13,8 @@ from pearlarr.arr_models import CommandResource, QueueRecord, RemotePathMapping,
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import NO_PROGRESS, AttemptKind, PauseReason
 
-from .builders import (
-    FakeCacheStore,
-    make_config,
-    make_sonarr_sync,
-    manual_candidate,
-    pending_import,
-    queue_record,
-    sonarr_ep,
-)
-from .fakes import NEUTRAL_RESCAN, FakeClock, FakeSonarrClient, HookedSonarrClient
+from .builders import manual_candidate, pending_import, queue_record, sonarr_ep
+from .fakes import NEUTRAL_RESCAN, FakeClock, HookedSonarrClient
 from .sonarr_import_builders import (
     RESCAN_AFTER_ADD,
     RESCAN_BEFORE_ADD,
@@ -156,162 +148,27 @@ class TestQueueRecord:
         assert posted_imports(sonarr) == _POSTED
 
 
-class TestImportCompletedRescan:
-    """A rescan counts once Sonarr completes it, and is asked for again when it never does or a restart orphans it.
+class TestRescan:
+    """An attempt asks Sonarr to rescan its downloads while Sonarr's view trails the download.
 
-    The throttle between two pending imports' rescans runs from the end of the last one, a rejected one included.
+    That is while there is no queue record, or one still downloading. A pending import gets one completed rescan a
+    run, again after Sonarr restarts, and none once Sonarr lists a rescan from after the add. Between pending
+    imports, a rescan waits a poll interval from the end of the last one.
     """
-
-    @pytest.mark.parametrize(
-        ("command_status", "command_status_script", "refresh_calls"),
-        [
-            pytest.param(
-                None,
-                [CommandResource(status="started"), CommandResource(status="completed")],
-                1,
-                id="slow-completes",
-            ),
-            pytest.param(CommandResource(status="started"), None, 2, id="never-completes"),
-        ],
-    )
-    def test_rescan_marker_lands_only_on_a_completed_rescan(
-        self,
-        command_status: CommandResource | None,
-        command_status_script: list[CommandResource] | None,
-        refresh_calls: int,
-    ) -> None:
-        clock = FakeClock()
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[],
-            command_status=command_status,
-            command_status_script=command_status_script,
-            clock=clock,
-        )
-        pending = pending_import(infohash="abc123")
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == refresh_calls
-
-    def test_rescan_asks_again_when_a_restart_orphans_it(self) -> None:
-        pending = pending_import(
-            infohash="abc123",
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            command_status_script=[CommandResource(status="orphaned")],
-        )
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == 2
-
-    def test_rescan_throttle_measures_from_the_rescan_end(self) -> None:
-        sonarr = FakeSonarrClient(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            command_status_script=[CommandResource(status="started")] * 3,
-            execute_command_id=42,
-        )
-        strat = make_sonarr_sync(
-            sonarr=sonarr,
-            config=make_config(),
-            cache_store=FakeCacheStore(),
-            clock=FakeClock(step=10),
-        )
-
-        strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.ORDINARY)
-        strat.import_completed(pending_import(infohash="def456"), "/e", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == 1
-
-    def test_rescan_throttle_holds_after_a_rejected_post(self) -> None:
-        # The stamp lands on every exit, a rejected rescan included, so the
-        # next pending import in the wait pass never retries it inside the window.
-        sonarr = FakeSonarrClient(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            execute_command_id=42,
-            refresh_count=None,
-        )
-        strat = make_sonarr_sync(
-            sonarr=sonarr,
-            config=make_config(),
-            cache_store=FakeCacheStore(),
-            clock=FakeClock(step=10),
-        )
-
-        strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.ORDINARY)
-        strat.import_completed(pending_import(infohash="def456"), "/e", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == 1
-
-
-class TestRescanOnce:
-    """A lagging view gets one rescan per pending import per run, and none once Sonarr provably looked."""
-
-    def test_proof_is_read_before_the_queue(self) -> None:
-        strat, sonarr = _strategy([])
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-
-        def rescan_meanwhile() -> None:
-            sonarr.commands_return = [RESCAN_AFTER_ADD]
-
-        sonarr.on_queue = rescan_meanwhile
-
-        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == 1
-
-    @pytest.mark.parametrize(
-        ("commands", "refresh_calls"),
-        [
-            pytest.param((RESCAN_AFTER_ADD,), 0, id="rescanned-after-the-add"),
-            pytest.param((RESCAN_BEFORE_ADD,), 1, id="not-since-the-add"),
-        ],
-    )
-    def test_pending_import_with_no_row_skips_the_rescan_when_sonarr_already_looked(
-        self, commands: tuple[CommandResource, ...], refresh_calls: int
-    ) -> None:
-        strat, sonarr = _strategy([])
-        sonarr.commands_return = list(commands)
-
-        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert sonarr.refresh_calls == refresh_calls
-
-    def test_restart_signature_resets_the_rescan_markers(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy([], clock=clock)
-        pending = pending_import()
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        first = sonarr.refresh_calls
-        sonarr.commands_return = []
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        restarted = sonarr.refresh_calls
-        sonarr.commands_return = [RESCAN_BEFORE_ADD]
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert (first, restarted, sonarr.refresh_calls) == (1, 2, 2)
 
     @pytest.mark.parametrize(
         ("state", "status"),
         [("importBlocked", "warning"), ("importPending", "ok"), ("importing", "ok")],
         ids=["blocked", "pending", "importing"],
     )
-    def test_tracked_row_gets_no_rescan(self, state: str, status: str) -> None:
+    def test_a_record_past_downloading_gets_no_rescan(self, state: str, status: str) -> None:
         strat, sonarr = _strategy([queue_record("ABC123", state, status=status)])
 
         strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 0
 
-    def test_in_motion_row_rescans_then_reads_the_queue_again(self) -> None:
+    def test_a_record_still_downloading_is_rescanned_and_the_attempt_goes_by_the_queue_after_it(self) -> None:
         strat, sonarr = _strategy([queue_record("ABC123", "downloading")])
 
         def block_the_import() -> None:
@@ -322,20 +179,117 @@ class TestRescanOnce:
         strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert sonarr.refresh_calls == 1
-        assert len(sonarr.execute_calls) == 1
+        assert posted_imports(sonarr) == _POSTED
 
-    def test_throttled_pending_import_keeps_its_turn(self) -> None:
+    @pytest.mark.parametrize(
+        ("rescan", "refresh_calls"),
+        [
+            pytest.param(RESCAN_AFTER_ADD, 0, id="rescanned-after-the-add"),
+            pytest.param(RESCAN_BEFORE_ADD, 1, id="not-since-the-add"),
+        ],
+    )
+    def test_a_download_with_no_record_is_rescanned_unless_sonarr_rescanned_since_the_add(
+        self, rescan: CommandResource, refresh_calls: int
+    ) -> None:
+        strat, sonarr = _strategy([], commands=[rescan])
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == refresh_calls
+
+    def test_a_rescan_completed_after_the_queue_read_is_no_proof(self) -> None:
+        # The queue is read after the command list, so a rescan the list shows completed is one the queue already
+        # reflects. This one completes after the queue read, so the attempt still asks for its own.
+        strat, sonarr = _strategy([])
+        sonarr.on_queue = _then_lists(sonarr, RESCAN_AFTER_ADD)
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == 1
+
+    def test_a_rescan_counts_once_sonarr_reports_it_completed(self) -> None:
+        clock = FakeClock()
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate(_FILE)],
+            command_status_script=[CommandResource(status="started"), CommandResource(status="completed")],
+            clock=clock,
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        clock.tick(30)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == 1
+
+    @pytest.mark.parametrize("status", ["failed", "started"], ids=["fails", "never-completes"])
+    def test_a_rescan_that_does_not_complete_is_asked_for_again_on_the_next_poll(self, status: str) -> None:
+        clock = FakeClock()
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate(_FILE)], command_status=CommandResource(status=status), clock=clock
+        )
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        clock.tick(30)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == 2
+
+    def test_a_rescan_a_restart_cuts_short_is_asked_for_again_at_once(self) -> None:
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate(_FILE)], command_status_script=[CommandResource(status="orphaned")]
+        )
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == 2
+
+    def test_after_sonarr_restarts_a_pending_import_is_rescanned_once_more(self) -> None:
         clock = FakeClock()
         strat, sonarr = _strategy([], clock=clock)
-        throttled = pending_import(infohash="def456")
+        pending = pending_import()
 
-        strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.ORDINARY)
-        strat.import_completed(throttled, "/e", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        before_the_restart = sonarr.refresh_calls
+        # A restarted Sonarr lists no completed rescan at all.
+        sonarr.commands_return = []
+        clock.tick(30)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        after_the_restart = sonarr.refresh_calls
+        sonarr.commands_return = [RESCAN_BEFORE_ADD]
+        clock.tick(30)
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert (before_the_restart, after_the_restart, sonarr.refresh_calls) == (1, 2, 2)
+
+    def test_the_next_pending_imports_rescan_waits_a_poll_interval_from_the_end_of_the_last(self) -> None:
+        # Sonarr answers "started" three times, and each wait for its next answer takes ten seconds here, so the
+        # first rescan ends a full poll interval after it began.
+        clock = FakeClock(step=10)
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate(_FILE)],
+            command_status_script=[CommandResource(status="started")] * 3,
+            clock=clock,
+        )
+        held = pending_import(infohash="def456")
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        strat.import_completed(held, "/e", AttemptKind.ORDINARY)
         inside_the_interval = sonarr.refresh_calls
         clock.tick(30)
-        strat.import_completed(throttled, "/e", AttemptKind.ORDINARY)
+        strat.import_completed(held, "/e", AttemptKind.ORDINARY)
 
         assert (inside_the_interval, sonarr.refresh_calls) == (1, 2)
+
+    def test_a_rescan_sonarr_rejects_still_holds_the_next_pending_imports_rescan(self) -> None:
+        strat, sonarr = _strategy([])
+        sonarr.refresh_count = None
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+        strat.import_completed(pending_import(infohash="def456"), "/e", AttemptKind.ORDINARY)
+
+        assert sonarr.refresh_calls == 1
 
 
 class TestSonarrBusy:

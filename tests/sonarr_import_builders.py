@@ -29,9 +29,11 @@ _RESCAN_NAME = "RefreshMonitoredDownloads"
 RESCAN_AFTER_ADD = CommandResource(
     name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED + timedelta(days=1)
 )
+"""A completed rescan that started a day after the pending import's torrent was added: Sonarr has looked since."""
 RESCAN_BEFORE_ADD = CommandResource(
     name=_RESCAN_NAME, status="completed", started=PENDING_IMPORT_ADDED - timedelta(days=1)
 )
+"""A completed rescan that started a day before the add, so no sign Sonarr has looked at the download."""
 
 
 FILELESS_EPISODES = [sonarr_ep(1, number, ep_id=100 + number, episode_file_id=0) for number in range(1, 10)]
