@@ -5,6 +5,8 @@ An attempt waits for Sonarr, asks it to rescan its downloads, or posts the impor
 Sonarr and is judged by its result and by what it posted.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from pearlarr.arr_models import CommandResource, QueueRecord, RemotePathMapping, SonarrEpisode
@@ -20,7 +22,7 @@ from .builders import (
     queue_record,
     sonarr_ep,
 )
-from .fakes import FakeClock, FakeSonarrClient, HookedSonarrClient
+from .fakes import NEUTRAL_RESCAN, FakeClock, FakeSonarrClient, HookedSonarrClient
 from .sonarr_import_builders import (
     RESCAN_AFTER_ADD,
     RESCAN_BEFORE_ADD,
@@ -31,34 +33,53 @@ from .sonarr_import_builders import (
     started_process_pass,
 )
 
+type _Imports = list[list[tuple[str, list[int]]]]
+"""The `(path, episode ids)` of every file in each import posted, as `posted_imports` reads them."""
+
+_FILE = "/d/Show - 01 [1080p].mkv"
+_POSTED: _Imports = [[(_FILE, [101])]]
+"""The import an attempt posts for the pending import: its one file, on episode 101."""
+
 _IMPORTING = [queue_record("ABC123", "importing")]
-
-
 _CLEAN_PENDING = [queue_record("ABC123", "importPending", status="ok")]
 
 
-def _strategy(queue: list[QueueRecord], clock: FakeClock | None = None) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A strategy and its hooked fake under `queue`, the by-id fetch serving the pending import's one file."""
+def _strategy(
+    queue: list[QueueRecord], *, commands: list[CommandResource] | None = None, clock: FakeClock | None = None
+) -> tuple[SonarrStrategy, HookedSonarrClient]:
+    """A strategy over a Sonarr that serves the pending import's one file by its download id and lists `commands`."""
 
-    return make_sonarr_for_import(candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")], queue=queue, clock=clock)
+    return make_sonarr_for_import(candidates=[manual_candidate(_FILE)], queue=queue, commands=commands, clock=clock)
 
 
 def _blocked_row() -> QueueRecord:
-    """The pending import's queue record in a state Sonarr won't progress."""
+    """The download's queue record in a state Sonarr won't progress, so the attempt posts the import itself."""
 
     return queue_record("ABC123", "importBlocked", status="warning")
 
 
-def _tv_mapping() -> RemotePathMapping:
-    """The incident-shaped mapping: qBittorrent's `/d` is Sonarr's `/remote/tv`."""
+def _completed_pass() -> CommandResource:
+    """Sonarr's own ProcessMonitoredDownloads command, finished, under a command id of its own."""
 
-    return RemotePathMapping.model_validate({"host": "seedbox", "remotePath": "/d/", "localPath": "/remote/tv/"})
+    return CommandResource.model_validate({"id": 9, "name": "ProcessMonitoredDownloads", "status": "completed"})
 
 
-def _process_pass(command_id: int, status: str) -> CommandResource:
-    """A ProcessMonitoredDownloads command with this id and status."""
+def _then_lists(sonarr: HookedSonarrClient, *commands: CommandResource) -> Callable[[], None]:
+    """A hook after which Sonarr lists `commands`, beside a rescan it completed long before the add."""
 
-    return CommandResource.model_validate({"id": command_id, "name": "ProcessMonitoredDownloads", "status": status})
+    def change() -> None:
+        sonarr.commands_return = [NEUTRAL_RESCAN, *commands]
+
+    return change
+
+
+def _then_fails(sonarr: HookedSonarrClient) -> Callable[[], None]:
+    """A hook after which Sonarr's command list can't be read."""
+
+    def fail() -> None:
+        sonarr.commands_return = None
+
+    return fail
 
 
 def _episode_with_torrent_file() -> list[SonarrEpisode]:
@@ -70,7 +91,7 @@ def _episode_with_torrent_file() -> list[SonarrEpisode]:
 def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy, HookedSonarrClient]:
     """A tracked pending import's strategy: the by-id fetch starts a ProcessMonitoredDownloads, later ones fail."""
 
-    strat, sonarr = _strategy([_blocked_row()], clock)
+    strat, sonarr = _strategy([_blocked_row()], clock=clock)
 
     def start_a_pass() -> None:
         sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
@@ -80,161 +101,59 @@ def _strategy_whose_fetch_meets_a_pass(clock: FakeClock) -> tuple[SonarrStrategy
     return strat, sonarr
 
 
-class TestImportCompletedQueueState:
-    """Sonarr's queue, its running commands and its settings decide whether an import attempt waits or posts."""
+class TestQueueRecord:
+    """The download's queue record decides whether an attempt leaves the import to Sonarr or posts it itself."""
 
     @pytest.mark.parametrize(
-        ("queue", "commands", "attempt_kind", "outcome"),
+        ("queue", "attempt_kind", "pause_reason", "posted"),
         [
             # Sonarr is copying this download. That is Sonarr's wait, so the clock pauses, and nothing is posted
             # over it even at the deadline.
-            pytest.param(_IMPORTING, [], AttemptKind.ORDINARY, (PauseReason.IMPORT, False, 0), id="importing"),
-            pytest.param(_IMPORTING, [], AttemptKind.FINAL, (PauseReason.IMPORT, False, 0), id="importing-final"),
+            pytest.param(_IMPORTING, AttemptKind.ORDINARY, PauseReason.IMPORT, [], id="importing"),
+            pytest.param(_IMPORTING, AttemptKind.FINAL, PauseReason.IMPORT, [], id="importing-final"),
             # Sonarr's view lags qBittorrent's "complete": the pending import's own wait, on a running clock.
             pytest.param(
-                [queue_record("ABC123", "downloading")],
-                [],
-                AttemptKind.ORDINARY,
-                (PauseReason.NONE, False, 0),
-                id="downloading",
+                [queue_record("ABC123", "downloading")], AttemptKind.ORDINARY, PauseReason.NONE, [], id="downloading"
             ),
             # A clean importPending is left to Sonarr until the final attempt, which posts the import itself.
-            pytest.param(_CLEAN_PENDING, [], AttemptKind.ORDINARY, (PauseReason.NONE, False, 0), id="clean-pending"),
-            pytest.param(
-                _CLEAN_PENDING, [], AttemptKind.FINAL, (PauseReason.ISSUED, True, 1), id="clean-pending-final"
-            ),
-            # Sonarr imports torrents one at a time. While its own pass runs, this download may be next in line,
-            # so the clock pauses and even the final attempt posts nothing past it.
-            pytest.param(
-                _CLEAN_PENDING,
-                [started_process_pass()],
-                AttemptKind.ORDINARY,
-                (PauseReason.BUSY, False, 0),
-                id="clean-pending-behind-a-running-pass",
-            ),
-            pytest.param(
-                _CLEAN_PENDING,
-                [started_process_pass()],
-                AttemptKind.FINAL,
-                (PauseReason.BUSY, False, 0),
-                id="clean-pending-behind-a-running-pass-final",
-            ),
-            pytest.param(
-                [], [started_process_pass()], AttemptKind.FINAL, (PauseReason.BUSY, False, 0), id="untracked-final"
-            ),
+            pytest.param(_CLEAN_PENDING, AttemptKind.ORDINARY, PauseReason.NONE, [], id="clean-pending"),
+            pytest.param(_CLEAN_PENDING, AttemptKind.FINAL, PauseReason.ISSUED, _POSTED, id="clean-pending-final"),
             # A warning on the importPending row is an import Sonarr tried and won't reliably retry.
             pytest.param(
                 [queue_record("ABC123", "importPending", status="warning")],
-                [],
                 AttemptKind.ORDINARY,
-                (PauseReason.ISSUED, True, 1),
+                PauseReason.ISSUED,
+                _POSTED,
                 id="pending-with-a-warning",
-            ),
-            # A ManualImport of this download is already running, as after a restart: no second one is stacked on
-            # it, and the wait reads as an import in flight. A finished one holds nothing back.
-            pytest.param(
-                [],
-                [inflight_manual_import("ABC123")],
-                AttemptKind.FINAL,
-                (PauseReason.IMPORT, True, 0),
-                id="its-own-import-running-final",
-            ),
-            pytest.param(
-                [],
-                [inflight_manual_import("abc123", status="completed")],
-                AttemptKind.ORDINARY,
-                (PauseReason.ISSUED, True, 1),
-                id="its-own-import-completed",
-            ),
-            pytest.param(
-                [],
-                [inflight_manual_import("OTHERHASH", status="queued")],
-                AttemptKind.ORDINARY,
-                (PauseReason.BUSY, False, 0),
-                id="another-downloads-import-queued",
             ),
         ],
     )
-    def test_the_queue_state_and_running_commands_decide_between_a_wait_and_an_auto_import(
+    def test_the_record_decides_between_a_wait_and_a_post(
         self,
         queue: list[QueueRecord],
-        commands: list[CommandResource],
         attempt_kind: AttemptKind,
-        outcome: tuple[PauseReason, bool, int],
+        pause_reason: PauseReason,
+        posted: _Imports,
     ) -> None:
-        # `outcome` is the pause the attempt asks for, whether an import command for this download is in flight,
-        # and how many imports were posted.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")], queue=queue, commands=commands
-        )
+        strat, sonarr = _strategy(queue)
 
-        result = strat.import_completed(pending, "/d", attempt_kind)
+        result = strat.import_completed(pending_import(), "/d", attempt_kind)
 
-        assert result.all_done is False
-        assert (result.imported_count, result.file_map_episode_count) == (0, 1)
-        assert (result.pause_reason, result.command_issued, len(sonarr.execute_calls)) == outcome
+        assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 0, 1)
+        assert result.pause_reason is pause_reason
+        assert posted_imports(sonarr) == posted
 
-    def test_a_clean_import_pending_is_imported_at_once_when_sonarr_imports_no_completed_download(self) -> None:
+    def test_a_clean_import_pending_is_posted_at_once_when_sonarr_imports_no_completed_download(self) -> None:
         # With completed download handling off, Sonarr leaves a finished download at importPending for good, so a
         # wait on it would only run out the deadline.
-        pending = pending_import(infohash="abc123")
         strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=_CLEAN_PENDING,
-            commands=[],
-            completed_download_handling=False,
+            candidates=[manual_candidate(_FILE)], queue=_CLEAN_PENDING, completed_download_handling=False
         )
 
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert (result.pause_reason, result.command_issued) == (PauseReason.ISSUED, True)
-        assert posted_imports(sonarr) == [[("/d/Show - 01 [1080p].mkv", [101])]]
-
-    @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
-    def test_queue_unreachable_retries_instead_of_an_auto_import(self, attempt_kind: AttemptKind) -> None:
-        # A failed queue read must never read as "not tracked" (an auto import would
-        # race an import Sonarr may be running). Waiting with the clock running
-        # fails closed on BOTH attempt kinds: the poll loop retries, and a queue that stays
-        # unreachable burns the import deadline so the pending import finishes still not imported.
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-        )
-        sonarr.queue_return = None
-
-        result = strat.import_completed(pending, "/d", attempt_kind)
-
-        assert result.all_done is False
-        assert result.paused is False
-        assert sonarr.execute_calls == []
-
-    def test_auto_import_post_is_a_paused_wait(self) -> None:
-        # The accepted POST is pearlarr's copy in flight (ISSUED, paused once by the
-        # wait pass), so a final auto import is not finished on the same poll. The
-        # next poll finds the command started under its issued id (IMPORT).
-        pending = pending_import(infohash="abc123")
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            cmd_id=42,
-        )
-
-        issued = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-        sonarr.commands_return = [
-            CommandResource.model_validate(
-                {
-                    "id": 42,
-                    "name": "ManualImport",
-                    "status": "started",
-                    "body": {"files": [{"path": "/d/Show - 01 [1080p].mkv"}]},
-                },
-            ),
-        ]
-        in_flight = strat.import_completed(pending, "/d", AttemptKind.FINAL)
-
-        assert (issued.command_issued, issued.pause_reason) == (True, PauseReason.ISSUED)
-        assert (in_flight.command_issued, in_flight.pause_reason) == (True, PauseReason.IMPORT)
-        assert len(sonarr.execute_calls) == 1
+        assert result.pause_reason is PauseReason.ISSUED
+        assert posted_imports(sonarr) == _POSTED
 
 
 class TestImportCompletedRescan:
@@ -333,24 +252,6 @@ class TestImportCompletedRescan:
 class TestRescanOnce:
     """A lagging view gets one rescan per pending import per run, and none once Sonarr provably looked."""
 
-    def test_a_pass_the_rescan_starts_blocks_the_auto_import(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy([], clock)
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_AFTER_ADD, started_process_pass()]
-
-        sonarr.on_rescan = start_a_pass
-        pending = pending_import()
-
-        first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        clock.tick(30)
-        second = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert (first.pause_reason, second.pause_reason) == (PauseReason.BUSY, PauseReason.BUSY)
-        assert sonarr.execute_calls == []
-        assert sonarr.refresh_calls == 1
-
     def test_proof_is_read_before_the_queue(self) -> None:
         strat, sonarr = _strategy([])
         sonarr.commands_return = [RESCAN_BEFORE_ADD]
@@ -383,7 +284,7 @@ class TestRescanOnce:
 
     def test_restart_signature_resets_the_rescan_markers(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy([], clock)
+        strat, sonarr = _strategy([], clock=clock)
         pending = pending_import()
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -425,7 +326,7 @@ class TestRescanOnce:
 
     def test_throttled_pending_import_keeps_its_turn(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy([], clock)
+        strat, sonarr = _strategy([], clock=clock)
         throttled = pending_import(infohash="def456")
 
         strat.import_completed(pending_import(infohash="abc123"), "/d", AttemptKind.ORDINARY)
@@ -437,126 +338,129 @@ class TestRescanOnce:
         assert (inside_the_interval, sonarr.refresh_calls) == (1, 2)
 
 
-class TestAutoImportGuard:
-    """The command list read before the fetch, right after it, and right before the POST."""
+class TestSonarrBusy:
+    """Sonarr's own disk work holds the post, at the deadline too, with the clock paused.
 
-    def test_pass_started_during_the_fetch_blocks_the_auto_import(self) -> None:
-        strat, sonarr = _strategy([_blocked_row()])
+    That is a pass or another download's import listed when the attempt starts, and any pass that starts or ends
+    after the attempt reads the command list again past the fetch, since its episode read may then miss what the
+    pass did. A pass that ended before that read holds nothing.
+    """
 
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, _process_pass(9, "started")]
+    @pytest.mark.parametrize(
+        ("queue", "commands", "attempt_kind"),
+        [
+            pytest.param(_CLEAN_PENDING, [started_process_pass()], AttemptKind.ORDINARY, id="a-pass"),
+            pytest.param(_CLEAN_PENDING, [started_process_pass()], AttemptKind.FINAL, id="a-pass-final"),
+            pytest.param(
+                [], [inflight_manual_import("OTHERHASH", status="queued")], AttemptKind.ORDINARY, id="another-import"
+            ),
+        ],
+    )
+    def test_a_disk_command_listed_when_the_attempt_starts_holds_it(
+        self, queue: list[QueueRecord], commands: list[CommandResource], attempt_kind: AttemptKind
+    ) -> None:
+        strat, sonarr = _strategy(queue, commands=commands)
 
-        sonarr.on_fetch = start_a_pass
+        result = strat.import_completed(pending_import(), "/d", attempt_kind)
+
+        assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 0, 1)
+        assert result.pause_reason is PauseReason.BUSY
+        assert sonarr.execute_calls == []
+
+    def test_a_pass_the_rescan_starts_holds_the_post(self) -> None:
+        # Sonarr's rescan sets its own import going: the list read after it shows the rescan done and the pass running.
+        strat, sonarr = _strategy([])
+        sonarr.on_rescan = _then_lists(sonarr, RESCAN_AFTER_ADD, started_process_pass())
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_started_during_an_empty_fetch_reads_busy(self) -> None:
+    def test_a_pass_started_during_a_fetch_that_found_no_files_reads_as_busy(self) -> None:
+        # Not as files missing: the pass may be importing them.
         strat, sonarr = make_sonarr_for_import(candidates=[], queue=[_blocked_row()])
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, _process_pass(9, "started")]
-
-        sonarr.on_fetch = start_a_pass
+        sonarr.on_fetch = _then_lists(sonarr, started_process_pass())
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert result.pause_reason is PauseReason.BUSY
 
-    def test_pass_completed_during_the_fetch_does_not_block_the_post(self) -> None:
+    def test_a_pass_that_completed_during_the_fetch_does_not_hold_the_post(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
-
-        def run_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, _process_pass(9, "completed")]
-
-        sonarr.on_fetch = run_a_pass
+        sonarr.on_fetch = _then_lists(sonarr, _completed_pass())
 
         strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert len(sonarr.execute_calls) == 1
+        assert posted_imports(sonarr) == _POSTED
 
-    def test_pass_run_during_the_episode_re_read_blocks_the_auto_import(self) -> None:
+    def test_a_pass_that_ends_while_the_episodes_are_read_again_holds_the_post(self) -> None:
+        # The episode read past the fetch was answered before the pass ended, so it may miss what the pass imported.
         strat, sonarr = _strategy([_blocked_row()])
-        reads = 0
 
-        def run_a_pass_on_the_re_read() -> None:
-            nonlocal reads
-            reads += 1
-            if reads == 2:
-                sonarr.commands_return = [RESCAN_BEFORE_ADD, _process_pass(9, "completed")]
+        def end_a_pass_on_the_next_episode_read() -> None:
+            sonarr.on_episodes = _then_lists(sonarr, _completed_pass())
 
-        sonarr.on_episodes = run_a_pass_on_the_re_read
+        sonarr.on_fetch = end_a_pass_on_the_next_episode_read
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_started_before_the_post_blocks_the_auto_import(self) -> None:
+    @pytest.mark.parametrize("command", [started_process_pass(), _completed_pass()], ids=["running", "ended"])
+    def test_a_pass_listed_just_before_the_post_holds_it(self, command: CommandResource) -> None:
         strat, sonarr = _strategy([_blocked_row()])
-
-        def start_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
-
-        sonarr.on_languages = start_a_pass
+        sonarr.on_languages = _then_lists(sonarr, command)
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert result.pause_reason is PauseReason.BUSY
         assert sonarr.execute_calls == []
 
-    def test_pass_completed_before_the_post_blocks_the_auto_import(self) -> None:
-        clock = FakeClock()
-        strat, sonarr = _strategy([_blocked_row()], clock)
 
-        def run_a_pass() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, _process_pass(9, "completed")]
+class TestImportInFlight:
+    """An import of this download that Sonarr is running holds the post, with the clock paused.
 
-        sonarr.on_languages = run_a_pass
-        pending = pending_import()
+    One that carries the download id, or whose command id pearlarr's post got back, reads as pearlarr's own.
+    """
 
-        blocked = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        posted_while_blocked = len(sonarr.execute_calls)
-        clock.tick(30)
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+    def test_an_import_of_the_download_running_when_the_attempt_starts_reads_as_pearlarrs_own(self) -> None:
+        # As after pearlarr restarts with its earlier post still running. Even the final attempt stacks no second
+        # import on it.
+        strat, sonarr = _strategy([], commands=[inflight_manual_import("ABC123")])
 
-        assert blocked.pause_reason is PauseReason.BUSY
-        assert (posted_while_blocked, len(sonarr.execute_calls)) == (0, 1)
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.FINAL)
 
-    def test_import_of_the_download_started_before_the_post_reads_as_an_auto_import(self) -> None:
+        assert (result.pause_reason, result.command_issued) == (PauseReason.IMPORT, True)
+        assert sonarr.execute_calls == []
+
+    def test_a_finished_import_of_the_download_holds_nothing_back(self) -> None:
+        strat, sonarr = _strategy([], commands=[inflight_manual_import("ABC123", status="completed")])
+
+        strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert posted_imports(sonarr) == _POSTED
+
+    def test_an_import_of_the_download_started_just_before_the_post_reads_as_pearlarrs_own(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
-
-        def start_an_import() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, inflight_manual_import("ABC123", command_id=77)]
-
-        sonarr.on_languages = start_an_import
+        sonarr.on_languages = _then_lists(sonarr, inflight_manual_import("ABC123", command_id=77))
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
-        assert result.pause_reason is PauseReason.IMPORT
-        assert result.command_issued is True
+        assert (result.pause_reason, result.command_issued) == (PauseReason.IMPORT, True)
         assert sonarr.execute_calls == []
 
-    def test_restart_before_the_post_waits(self) -> None:
-        strat, sonarr = _strategy([_blocked_row()])
-
-        def restart() -> None:
-            sonarr.commands_return = []
-
-        sonarr.on_languages = restart
-
-        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
-
-        assert result.pause_reason is PauseReason.NONE
-        assert sonarr.execute_calls == []
-
-    def test_folder_import_in_flight_matches_its_translated_path_on_the_first_poll(self) -> None:
+    def test_an_import_naming_the_file_by_sonarrs_path_holds_the_post_from_the_first_poll(self) -> None:
+        # Sonarr sees qBittorrent's /d as /remote/tv, and the import names the file by that path. The fetch reads the
+        # mapping, so the reads after it match the import on this first poll. Pearlarr didn't post it, so it isn't
+        # read as pearlarr's own.
         strat, sonarr = make_sonarr_for_import(candidates=None)
         sonarr.history_page_return = closed_history()
         sonarr.folder_candidates_return = [manual_candidate("/remote/tv/Show/Show - 01 [1080p].mkv")]
-        sonarr.path_mappings_return = [_tv_mapping()]
+        sonarr.path_mappings_return = [
+            RemotePathMapping.model_validate({"host": "seedbox", "remotePath": "/d/", "localPath": "/remote/tv/"})
+        ]
         folder_import = CommandResource.model_validate(
             {
                 "id": 7000,
@@ -565,19 +469,56 @@ class TestAutoImportGuard:
                 "body": {"files": [{"path": "/remote/tv/Show/Show - 01 [1080p].mkv", "episodeIds": [202]}]},
             },
         )
-
-        def start_a_folder_import() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD, folder_import]
-
-        sonarr.on_fetch = start_a_folder_import
+        sonarr.on_fetch = _then_lists(sonarr, folder_import)
 
         result = strat.import_completed(pending_import(), "/d/Show", AttemptKind.ORDINARY)
 
-        assert result.pause_reason is PauseReason.IMPORT
-        assert result.command_issued is False
+        assert (result.pause_reason, result.command_issued) == (PauseReason.IMPORT, False)
         assert sonarr.execute_calls == []
 
-    def test_unreadable_command_list_waits(self) -> None:
+    def test_the_next_poll_reads_pearlarrs_folder_import_as_its_own_by_the_command_id(self) -> None:
+        # Sonarr's history of the download is closed, so the post names the files by path with no download id. The
+        # command id the post got back is what marks the running import as pearlarr's. The copy runs on after the
+        # post, so the attempt that posts waits too, on a paused clock.
+        strat, sonarr = make_sonarr_for_import(candidates=None, cmd_id=42)
+        sonarr.history_page_return = closed_history()
+        sonarr.folder_candidates_return = [manual_candidate(_FILE)]
+        sonarr.path_mappings_return = []
+        pending = pending_import()
+
+        posting = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        sonarr.commands_return = [
+            NEUTRAL_RESCAN,
+            CommandResource.model_validate(
+                {"id": 42, "name": "ManualImport", "status": "started", "body": {"files": [{"path": _FILE}]}}
+            ),
+        ]
+        in_flight = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+
+        assert (posting.pause_reason, posting.command_issued) == (PauseReason.ISSUED, True)
+        assert (in_flight.pause_reason, in_flight.command_issued) == (PauseReason.IMPORT, True)
+        assert posted_imports(sonarr) == _POSTED
+
+
+class TestUnreadableSonarr:
+    """A failed read of Sonarr's queue or command list waits for the next poll and posts nothing.
+
+    So does a command list that shows Sonarr just restarted. None of these pauses the clock, so a Sonarr that stays
+    unreadable runs out the deadline with the download not imported.
+    """
+
+    @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
+    def test_an_unreadable_queue_waits(self, attempt_kind: AttemptKind) -> None:
+        # Never read as no record: a post could race an import Sonarr may be running.
+        strat, sonarr = _strategy([])
+        sonarr.queue_return = None
+
+        result = strat.import_completed(pending_import(), "/d", attempt_kind)
+
+        assert (result.all_done, result.pause_reason) == (False, PauseReason.NONE)
+        assert sonarr.execute_calls == []
+
+    def test_an_unreadable_command_list_waits_without_a_rescan(self) -> None:
         strat, sonarr = _strategy([])
         sonarr.commands_return = None
 
@@ -587,30 +528,33 @@ class TestAutoImportGuard:
         assert sonarr.execute_calls == []
         assert sonarr.refresh_calls == 0
 
-    def test_unreadable_command_list_after_the_fetch_waits(self) -> None:
+    def test_a_command_list_unreadable_after_the_fetch_waits(self) -> None:
+        # The list reads fine again just before the post, so only the failed read after the fetch holds it.
         strat, sonarr = _strategy([_blocked_row()])
-
-        def fail_the_next_read() -> None:
-            sonarr.commands_return = None
-
-        def recover() -> None:
-            sonarr.commands_return = [RESCAN_BEFORE_ADD]
-
-        sonarr.on_fetch = fail_the_next_read
-        sonarr.on_languages = recover
+        sonarr.on_fetch = _then_fails(sonarr)
+        sonarr.on_languages = _then_lists(sonarr)
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
         assert result.pause_reason is PauseReason.NONE
         assert sonarr.execute_calls == []
 
-    def test_unreadable_command_list_before_the_post_waits(self) -> None:
+    def test_a_command_list_unreadable_just_before_the_post_waits(self) -> None:
+        strat, sonarr = _strategy([_blocked_row()])
+        sonarr.on_languages = _then_fails(sonarr)
+
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
+
+        assert result.pause_reason is PauseReason.NONE
+        assert sonarr.execute_calls == []
+
+    def test_a_restart_just_before_the_post_waits(self) -> None:
         strat, sonarr = _strategy([_blocked_row()])
 
-        def fail_the_next_read() -> None:
-            sonarr.commands_return = None
+        def restart() -> None:
+            sonarr.commands_return = []
 
-        sonarr.on_languages = fail_the_next_read
+        sonarr.on_languages = restart
 
         result = strat.import_completed(pending_import(), "/d", AttemptKind.ORDINARY)
 
@@ -718,7 +662,7 @@ class TestKeptCandidates:
 
     def test_a_fresh_fetch_discards_the_kept_candidates(self) -> None:
         clock = FakeClock()
-        strat, sonarr = _strategy([_blocked_row()], clock)
+        strat, sonarr = _strategy([_blocked_row()], clock=clock)
 
         def start_a_pass() -> None:
             sonarr.commands_return = [RESCAN_BEFORE_ADD, started_process_pass()]
