@@ -11,6 +11,7 @@ passes, the carried-over tally, the arr run's finish, and the cleanup that moves
 queue record.
 """
 
+import copy
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
@@ -108,8 +109,8 @@ class FakeTorrent:
     The download progress fields (`dlspeed` / `eta` / `completed` / `size`) default
     to None so the common blocking-wait tests don't have to set them. `poll_torrent`
     reads them via `getattr` and sanitizes None to None. `hash` is only read
-    by the batched `poll_download_progress` (which keys its result off it), and a
-    `FakeQbit` download progress script fills it in from its script key.
+    by the batched `poll_download_progress` (which keys its result off it), and
+    `FakeQbit`'s batch read answers each row under the hash it was asked for.
     `category` is read by the post-import move alone, and blank is an
     uncategorized torrent, as qBittorrent reports one.
     """
@@ -149,11 +150,14 @@ class FakeQbit:
     ordered lifecycle of readings, and every single-hash `torrents_info` call
     advances THAT hash's script by one (clamping at the last, so a steady state
     repeats indefinitely). An unscripted hash reads as gone (`[]`). An
-    Exception step is raised to exercise the transient-error path. `download_progress`
-    separately scripts the batched download progress read the same way - a batch read never
-    consumes a poll script (and vice versa), so a test scripts torrent
-    lifecycles declaratively without caring which read comes first. Hashes with
-    no download progress script simply don't appear in a batch. Hash matching is
+    Exception step is raised to exercise the transient-error path.
+
+    The batched download progress read answers, as qBittorrent does, for every asked torrent the
+    fake holds, each row under the hash it was asked for. `download_progress` scripts that read
+    the same way. A held torrent with no such script reads as qBittorrent holds it now: its last
+    poll reading, or its first before any poll. One whose last poll step was an error is left out.
+    A batch read never consumes a poll script (and vice versa), so a test scripts torrent
+    lifecycles declaratively without caring which read comes first. Hash matching is
     case-insensitive on both reads (real qBittorrent is).
     """
 
@@ -164,13 +168,7 @@ class FakeQbit:
         download_progress: dict[str, list[QbitStep]] | None = None,
     ) -> None:
         self._torrents = {h.casefold(): list(steps) for h, steps in (torrents or {}).items()}
-        self._download_progress: dict[str, list[QbitStep]] = {}
-        for h, steps in (download_progress or {}).items():
-            for step in steps:
-                # Each row reads back its script key as its hash, as qBittorrent answers only the asked hashes.
-                if isinstance(step, FakeTorrent):
-                    step.hash = h
-            self._download_progress[h.casefold()] = list(steps)
+        self._download_progress = {h.casefold(): list(steps) for h, steps in (download_progress or {}).items()}
         self._heavy_index: dict[str, int] = {}
         self._batch_index: dict[str, int] = {}
 
@@ -185,6 +183,13 @@ class FakeQbit:
             raise step
         return step
 
+    def _held_now(self, key: str) -> FakeTorrent | None:
+        """Torrent `key` as its poll script last read it, or None when that read was an error."""
+
+        steps = self._torrents[key]
+        step = steps[min(max(self._heavy_index.get(key, 0) - 1, 0), len(steps) - 1)]
+        return step if isinstance(step, FakeTorrent) else None
+
     def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
         if isinstance(torrent_hashes, str):
             steps = self._torrents.get(torrent_hashes.casefold())
@@ -196,9 +201,18 @@ class FakeQbit:
             pytest.fail("qBittorrent was asked for torrents with an empty hash filter, which returns all of them")
         rows: list[FakeTorrent] = []
         for infohash in torrent_hashes:
-            steps = self._download_progress.get(infohash.casefold())
-            if steps is not None:
-                rows.append(self._next(steps, self._batch_index, infohash.casefold()))
+            key = infohash.casefold()
+            if key in self._download_progress:
+                reading = self._next(self._download_progress[key], self._batch_index, key)
+            elif key in self._torrents:
+                reading = self._held_now(key)
+            else:
+                # Not a torrent qBittorrent holds.
+                continue
+            if reading is not None:
+                row = copy.copy(reading)
+                row.hash = infohash
+                rows.append(row)
         return rows
 
 
@@ -1514,6 +1528,31 @@ class TestBlockingWaitDownloadBars:
 
         assert _bars(view, "a") == [_Bar(0.3, 100, speed_history=(100,)), _Bar(0.6, 999, speed_history=(100,))]
         assert _bars(view, "b") == [_Bar(0.3, 100, speed_history=(100,)), _Bar(0.8, 500, speed_history=(100,))]
+
+    def test_a_refresh_leaves_an_importing_rows_bar_alone(self) -> None:
+        # "imp" is importing with 1 file of 3 in while "dl" still downloads. qBittorrent reads "imp" at 100%,
+        # but an importing row's bar counts the files Sonarr has in.
+        importing = attempt_result(all_done=False, command_issued=True, imported_count=1, file_map_episode_count=3)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit(
+                {"dl": [FakeTorrent(progress=0.3, dlspeed=100), _DONE], "imp": [_DONE]},
+                download_progress={"dl": [FakeTorrent(progress=0.6, dlspeed=999)]},
+            ),
+            strategy=_RecordingStrategy(attempts=[importing, attempt_result(all_done=True)]),
+            grabbed=[pending_import(infohash="dl"), pending_import(infohash="imp")],
+            import_poll_interval=30,
+            progress_poll_interval=5,
+            clock=FakeClock(step=5),
+        )
+        view = RecordingWaitView()
+
+        mgr.run_blocking(view=view)
+
+        # The first poll's frame, then the one the refresh pushed when "dl"'s bar moved.
+        assert [(t.fraction, t.import_done, t.import_total) for t in view.seen("imp", Phase.IMPORTING)] == [
+            (1 / 3, 1, 3),
+            (1 / 3, 1, 3),
+        ]
 
     def test_a_poll_qbittorrent_misses_keeps_the_last_bar_and_samples_no_speed(self) -> None:
         # No 0% flash and no fake stall in the sparkline: the blip poll shows the last real reading again.
