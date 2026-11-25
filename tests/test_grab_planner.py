@@ -145,8 +145,8 @@ class TestGroupsCoveringTheSameFiles:
         # The fallback covers another episode, so it excuses nothing: the private set warns and keeps the title
         # uncached while the fallback is grabbed.
         seadex = {
-            "Priv": _sonarr_group(u1=make_release(download=True, is_public=False, episodes=[_S1E1])),
-            "Fall": _sonarr_group(u2=make_release(download=True, is_fallback=True, episodes=[_S1E2])),
+            "Priv": _sonarr_group(u1=make_release(download=True, is_public=False, size=[100], episodes=[_S1E1])),
+            "Fall": _sonarr_group(u2=make_release(download=True, is_fallback=True, size=[200], episodes=[_S1E2])),
         }
 
         skips = _reduce(seadex)
@@ -241,7 +241,7 @@ class TestGroupsCoveringTheSameFiles:
         # The private grab is an upgrade, so the arr's copy of the preferred release is outdated, and a fallback never
         # replaces that copy: the set warns and is skipped rather than grabbing the fallback.
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "Fall": rg_group({"u2": make_release(is_fallback=True)}),
         }
 
@@ -256,7 +256,7 @@ class TestGroupsCoveringTheSameFiles:
         # Only public releases are grabbed in a private upgrade's place, so a mixed group would leave its private
         # release's files ungrabbed: the fully public group stands in.
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "MixedPub": rg_group({"u2": make_release(is_public=False, size=[200]), "u3": make_release(size=[100])}),
             "Pub": rg_group({"u4": make_release()}),
         }
@@ -271,7 +271,7 @@ class TestGroupsCoveringTheSameFiles:
     def test_a_public_group_not_marked_stands_in_for_a_private_upgrade(self) -> None:
         # A public group of the set not marked to grab stands in for a private upgrade, named as a public release.
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "Pub": rg_group({"u2": make_release()}),
         }
 
@@ -353,7 +353,7 @@ class TestGroupsCoveringTheSameFiles:
     def test_a_mixed_group_stands_in_with_its_public_releases_only(self) -> None:
         # A mixed group is the only one that can stand in for the private upgrade: its public release is grabbed.
         seadex = {
-            "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True)}),
+            "P": rg_group({"p": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "M": rg_group({"m_pub": make_release(size=[100]), "m_priv": make_release(is_public=False, size=[200])}),
         }
 
@@ -383,7 +383,7 @@ class TestGroupsCoveringTheSameFiles:
     def test_a_private_group_never_stands_in_for_a_private_upgrade(self) -> None:
         # Only a public group is grabbed in a private upgrade's place, so beside another private group the set warns.
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "Other": rg_group({"u2": make_release(is_public=False)}),
         }
 
@@ -398,9 +398,11 @@ class TestGroupsCoveringTheSameFiles:
         # Two sets in one title: an outdated skip, then a plain one. Each adds its groups and its notice, and the
         # second leaves the first's outdated mark.
         seadex = {
-            "Priv1": _sonarr_group(u1=make_release(download=True, is_public=False, upgrade=True, episodes=[_S1E1])),
-            "Fall1": _sonarr_group(u2=make_release(is_fallback=True, episodes=[_S1E1])),
-            "Priv2": _sonarr_group(u3=make_release(download=True, is_public=False, episodes=[_S2E1])),
+            "Priv1": _sonarr_group(
+                u1=make_release(download=True, is_public=False, upgrade=True, size=[100], episodes=[_S1E1])
+            ),
+            "Fall1": _sonarr_group(u2=make_release(is_fallback=True, size=[100], episodes=[_S1E1])),
+            "Priv2": _sonarr_group(u3=make_release(download=True, is_public=False, size=[300], episodes=[_S2E1])),
         }
 
         skips = _reduce(seadex)
@@ -462,7 +464,7 @@ class TestSameGroupDuplicateDedup:
     def test_a_group_standing_in_grabs_one_of_its_cross_seeds(self) -> None:
         # Standing in for a private upgrade marks every public release of the group, two cross-seeds included.
         seadex = {
-            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True)}),
+            "Priv": rg_group({"u1": make_release(download=True, is_public=False, upgrade=True, size=[100])}),
             "Pub": rg_group({"u2": make_release(size=[100]), "u3": make_release(size=[100])}),
         }
 
