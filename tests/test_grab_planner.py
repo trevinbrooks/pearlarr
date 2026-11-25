@@ -283,7 +283,7 @@ class TestGroupsCoveringTheSameFiles:
         )
 
     def test_a_mixed_group_with_a_private_upgrade_is_kept_when_only_a_fallback_could_stand_in(self) -> None:
-        # M's public release, owned and not marked, makes M a public group, and no group is fully addable. The only
+        # M's public release, owned and not marked, makes M a public group, and no group is fully public. The only
         # public group not marked to grab is a fallback, which never replaces M's outdated copy: M is kept, and the
         # outdated mark is set with no notice, since the add warns for the private release.
         seadex = {
@@ -936,7 +936,7 @@ class TestDroppingAGroupNeverLosesAnEpisode:
     def test_a_dropped_groups_public_release_is_grabbed_for_the_episode_it_alone_brings(
         self, order: str, grabs: dict[str, Mark]
     ) -> None:
-        # Neither group is fully addable, so the first is kept, and the other's public release still brings the one
+        # Neither group is fully public, so the first is kept, and the other's public release still brings the one
         # episode it alone has.
         groups = {"A": self._mixed("a", _S1E1), "B": self._mixed("b", _S2E1)}
         seadex = {name: groups[name] for name in order}
