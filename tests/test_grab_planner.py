@@ -743,26 +743,15 @@ class TestListedSizeOnTooManyEpisodes:
         return cls._plan(seadex, title_episodes).seadex_dict["Era-Raws"].releases["u1"]
 
     @staticmethod
-    def _ours(episode: int, size: int, file_id: int) -> SonarrEpisode:
-        """Season 1 `episode` with Era-Raws' file `file_id` at `size`."""
+    def _ours(episode: int, size: int) -> SonarrEpisode:
+        """Season 1 `episode` with an Era-Raws file at `size`."""
 
-        return sonarr_ep(1, episode, size=size, release_group="Era-Raws", episode_file_id=file_id)
+        return sonarr_ep(1, episode, size=size, release_group="Era-Raws")
 
     def test_one_listed_file_on_two_episode_files_grabs(self) -> None:
-        # File 2 imported onto both episodes: episode 1 lacks its own file.
-        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
-
-        assert (item.to_grab, item.is_upgrade) == (True, True)
-
-    def test_one_episode_file_covering_two_episodes_at_a_size_listed_once_grabs(self) -> None:
-        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 200, 11)])
-
-        assert (item.to_grab, item.is_upgrade) == (True, True)
-
-    def test_a_twelve_file_torrent_with_one_file_on_two_episodes_grabs(self) -> None:
-        arr_episodes = [self._ours(n, 700 if n == 2 else 100 * n, 10 + n) for n in range(1, 13)]
-
-        item = self._decide(self._listing(*range(100, 1300, 100)), arr_episodes)
+        # File 2 imported onto both episodes: episode 1 lacks its own file. Sonarr's rows look the same whether one file
+        # sits on both episodes or each holds a copy.
+        item = self._decide(self._listing(100, 200), [self._ours(1, 200), self._ours(2, 200)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
@@ -771,7 +760,7 @@ class TestListedSizeOnTooManyEpisodes:
         episodes = [placed_episode(season=1, episode=1, size=100), placed_episode(season=1, episode=2, size=200)]
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200, 999], episodes=episodes))}
 
-        item = self._decide(seadex, [self._ours(1, 100, 11), self._ours(2, 999, 12)])
+        item = self._decide(seadex, [self._ours(1, 100), self._ours(2, 999)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
@@ -784,17 +773,20 @@ class TestListedSizeOnTooManyEpisodes:
         ]
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 150, 200], episodes=episodes))}
 
-        item = self._decide(seadex, [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+        item = self._decide(seadex, [self._ours(1, 200), self._ours(2, 200)])
 
         assert item.to_grab is False
 
-    def test_a_two_episode_listed_file_held_once_under_both_keys_does_not_grab(self) -> None:
-        item = self._decide(self._listing(300, 300), [self._ours(1, 300, 11), self._ours(2, 300, 11)])
+    def test_one_listed_file_placed_on_two_episodes_and_held_on_both_does_not_grab(self) -> None:
+        episodes = [placed_episode(season=1, episode=1, size=300), placed_episode(season=1, episode=2, size=300)]
+        seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[300], episodes=episodes))}
+
+        item = self._decide(seadex, [self._ours(1, 300), self._ours(2, 300)])
 
         assert item.to_grab is False
 
     def test_a_size_listed_twice_held_twice_does_not_grab(self) -> None:
-        item = self._decide(self._listing(300, 300), [self._ours(1, 300, 11), self._ours(2, 300, 12)])
+        item = self._decide(self._listing(300, 300), [self._ours(1, 300), self._ours(2, 300)])
 
         assert item.to_grab is False
 
@@ -807,8 +799,8 @@ class TestListedSizeOnTooManyEpisodes:
         item = self._decide(
             seadex,
             [
-                sonarr_ep(1, 1, size=200, release_group="Other", episode_file_id=11),
-                sonarr_ep(1, 2, size=200, release_group="Other", episode_file_id=12),
+                sonarr_ep(1, 1, size=200, release_group="Other"),
+                sonarr_ep(1, 2, size=200, release_group="Other"),
             ],
         )
 
@@ -816,15 +808,15 @@ class TestListedSizeOnTooManyEpisodes:
 
     def test_a_size_matched_episode_counts(self) -> None:
         # E02's file with no group is this group's by its listed size, so size 200 sits on two episodes.
-        no_group = sonarr_ep(1, 2, size=200, release_group=None, episode_file_id=12)
+        no_group = sonarr_ep(1, 2, size=200, release_group=None)
 
-        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200, 11), no_group, self._ours(3, 300, 13)])
+        item = self._decide(self._listing(100, 200, 300), [self._ours(1, 200), no_group, self._ours(3, 300)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
     def test_a_partial_swap_does_not_grab(self) -> None:
         # Episode 3 at its listed size keeps the all-sizes-differ check out of it, and a swap doubles no size.
-        arr_episodes = [self._ours(1, 200, 11), self._ours(2, 100, 12), self._ours(3, 300, 13)]
+        arr_episodes = [self._ours(1, 200), self._ours(2, 100), self._ours(3, 300)]
 
         item = self._decide(self._listing(100, 200, 300), arr_episodes)
 
@@ -833,20 +825,20 @@ class TestListedSizeOnTooManyEpisodes:
     def test_a_full_swap_marks_an_upgrade_not_a_plain_grab(self) -> None:
         # Every size differs from its placement, so the existing all-sizes-differ check marks an upgrade. No size is
         # doubled, and this rule would mark an upgrade too: the two agree.
-        item = self._decide(self._listing(100, 200), [self._ours(1, 200, 11), self._ours(2, 100, 12)])
+        item = self._decide(self._listing(100, 200), [self._ours(1, 200), self._ours(2, 100)])
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
     def test_a_doubled_unlisted_size_does_not_grab(self) -> None:
         # A doubled unlisted size is the outdated-copy check's business, which one listed match stops.
-        arr_episodes = [self._ours(1, 100, 11), self._ours(2, 999, 12), self._ours(3, 999, 13)]
+        arr_episodes = [self._ours(1, 100), self._ours(2, 999), self._ours(3, 999)]
 
         item = self._decide(self._listing(100, 200, 300), arr_episodes)
 
         assert item.to_grab is False
 
     def test_a_private_groups_doubled_size_reports_private_only(self) -> None:
-        result = self._plan(self._listing(100, 200, is_public=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+        result = self._plan(self._listing(100, 200, is_public=False), [self._ours(1, 200), self._ours(2, 200)])
 
         assert _grabs(result.seadex_dict) == {}
         assert result.skips == PrivateOnlyNotices(
@@ -862,7 +854,7 @@ class TestListedSizeOnTooManyEpisodes:
         return {**TestListedSizeOnTooManyEpisodes._listing(100, 200, is_public=False), "Pub": _sonarr_group(u2=public)}
 
     def test_a_private_doubled_release_promotes_a_public_group_listing_the_same_files(self) -> None:
-        result = self._plan(self._beside_public(is_fallback=False), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+        result = self._plan(self._beside_public(is_fallback=False), [self._ours(1, 200), self._ours(2, 200)])
 
         assert _grabs(result.seadex_dict) == {"u2": "grab"}
         assert result.skips == PrivateOnlyNotices(
@@ -873,7 +865,7 @@ class TestListedSizeOnTooManyEpisodes:
 
     def test_a_private_doubled_release_is_skipped_rather_than_replaced_by_a_fallback(self) -> None:
         # A fallback never replaces the Arr's copy of the preferred release: the doubled-size skip warns instead.
-        result = self._plan(self._beside_public(is_fallback=True), [self._ours(1, 200, 11), self._ours(2, 200, 12)])
+        result = self._plan(self._beside_public(is_fallback=True), [self._ours(1, 200), self._ours(2, 200)])
 
         assert _grabs(result.seadex_dict) == {}
         assert result.skips == PrivateOnlyNotices(
@@ -1068,13 +1060,13 @@ class TestTorrentLeftForAHandImport:
         return make_planner().plan(seadex, arr_files(title_episodes), title_episodes).seadex_dict["Pack"].releases["u1"]
 
     @staticmethod
-    def _ours(episode: int, size: int, file_id: int) -> SonarrEpisode:
-        """Special `episode` with the torrent's file `file_id` at `size`."""
+    def _ours(episode: int, size: int) -> SonarrEpisode:
+        """Special `episode` with the torrent's file at `size`."""
 
-        return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
+        return sonarr_ep(0, episode, size=size, release_group="Pack")
 
     def test_every_special_holding_a_torrent_file_is_in_place(self) -> None:
-        arr_episodes = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
+        arr_episodes = [self._ours(n, size) for n, size in enumerate(self._SIZES, 1)]
 
         item = self._decide(self._seadex(), arr_episodes)
 
@@ -1082,17 +1074,14 @@ class TestTorrentLeftForAHandImport:
 
     @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT])
     def test_an_empty_special_marks_the_torrent_to_grab_as_an_upgrade(self, skip_reason: SkipReason) -> None:
-        arr_episodes = [self._ours(1, 100, 11), self._ours(2, 200, 12), sonarr_ep(0, 3, episode_file_id=0)]
+        arr_episodes = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, episode_file_id=0)]
 
         item = self._decide(self._seadex(skip_reason), arr_episodes)
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
     def test_files_of_an_unlisted_group_mark_the_torrent_to_grab(self) -> None:
-        arr_episodes = [
-            sonarr_ep(0, n, size=size, release_group="Other", episode_file_id=10 + n)
-            for n, size in enumerate(self._SIZES, 1)
-        ]
+        arr_episodes = [sonarr_ep(0, n, size=size, release_group="Other") for n, size in enumerate(self._SIZES, 1)]
 
         item = self._decide(self._seadex(), arr_episodes)
 
@@ -1101,9 +1090,9 @@ class TestTorrentLeftForAHandImport:
     def test_a_special_a_sibling_release_covers_is_in_place(self) -> None:
         sibling = _sonarr_group(u2=make_release(size=[999], episodes=[placed_episode(season=0, episode=3, size=999)]))
         arr_episodes = [
-            self._ours(1, 100, 11),
-            self._ours(2, 200, 12),
-            sonarr_ep(0, 3, size=999, release_group="Sib", episode_file_id=13),
+            self._ours(1, 100),
+            self._ours(2, 200),
+            sonarr_ep(0, 3, size=999, release_group="Sib"),
         ]
 
         item = self._decide(self._seadex(Sib=sibling), arr_episodes)
@@ -1112,7 +1101,7 @@ class TestTorrentLeftForAHandImport:
 
     def test_a_file_with_no_group_at_a_listed_size_is_the_torrents(self) -> None:
         # A hand import whose names carry no group: the listed size still says whose file each special has.
-        arr_episodes = [sonarr_ep(0, n, size=size, episode_file_id=10 + n) for n, size in enumerate(self._SIZES, 1)]
+        arr_episodes = [sonarr_ep(0, n, size=size) for n, size in enumerate(self._SIZES, 1)]
 
         item = self._decide(self._seadex(), arr_episodes)
 
@@ -1123,14 +1112,14 @@ class TestTorrentLeftForAHandImport:
         covered = placed_episode(season=0, episode=3, size=999)
         seadex = self._seadex()
         seadex["Pack"] = _sonarr_group(**seadex["Pack"].releases, u2=make_release(size=[999], episodes=[covered]))
-        arr_episodes = [self._ours(1, 100, 11), self._ours(2, 200, 12), self._ours(3, 999, 13)]
+        arr_episodes = [self._ours(1, 100), self._ours(2, 200), self._ours(3, 999)]
 
         item = self._decide(seadex, arr_episodes)
 
         assert item.to_grab is False
 
     def test_a_torrent_file_at_an_unlisted_size_marks_the_torrent_to_grab(self) -> None:
-        arr_episodes = [self._ours(1, 150, 11), self._ours(2, 200, 12), self._ours(3, 300, 13)]
+        arr_episodes = [self._ours(1, 150), self._ours(2, 200), self._ours(3, 300)]
 
         item = self._decide(self._seadex(), arr_episodes)
 
@@ -1139,9 +1128,9 @@ class TestTorrentLeftForAHandImport:
     def test_a_file_with_no_group_at_an_unlisted_size_is_not_the_torrents(self) -> None:
         # The plan claims for the torrent no file it can't prove is the torrent's, so the import may replace it.
         title = [
-            self._ours(1, 100, 11),
-            self._ours(2, 200, 12),
-            sonarr_ep(0, 3, size=150, episode_file_id=13, ep_id=103),
+            self._ours(1, 100),
+            self._ours(2, 200),
+            sonarr_ep(0, 3, size=150, ep_id=103),
         ]
 
         plan = make_planner().plan(self._seadex(), arr_files(title), title)
