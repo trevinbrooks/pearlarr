@@ -43,7 +43,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
-from .fakes import RecordingHub, install_recording_hub
+from .fakes import diagnostic_messages, install_recording_hub
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -365,12 +365,6 @@ def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> No
 # --- retry narration and marking AniList unreachable --------------------------
 
 
-def _warnings(recording: RecordingHub) -> list[Diagnostic]:
-    """The WARNING Diagnostics only (the waiting notes log at INFO/DEBUG)."""
-
-    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-
-
 _DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
 _DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
 _SKIPPING = "skipping further lookups this run"
@@ -424,8 +418,8 @@ def test_give_up_marks_anilist_unreachable(
     assert client.query_batch([3, 4]) == {}
 
     assert route.call_count == MAX_RETRIES + 1
-    (warning,) = _warnings(recording)
-    assert warning.message == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
+    (warning,) = diagnostic_messages(recording, Severity.WARNING)
+    assert warning == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
 
 
 @respx.mock
@@ -471,8 +465,8 @@ def test_dataless_answer_marks_anilist_unreachable_once(
 
     assert body == returned
     assert route.call_count == 1
-    (warning,) = _warnings(recording)
-    assert warning.message == f"AniList {detail}, {_SKIPPING}"
+    (warning,) = diagnostic_messages(recording, Severity.WARNING)
+    assert warning == f"AniList {detail}, {_SKIPPING}"
 
 
 @respx.mock
@@ -486,8 +480,8 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 
     _client().query(1)
 
-    (warning,) = _warnings(recording)
-    quoted = warning.message.removeprefix("AniList rejected the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
+    (warning,) = diagnostic_messages(recording, Severity.WARNING)
+    quoted = warning.removeprefix("AniList rejected the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
     assert quoted.startswith("down for maintenance xxx")
     assert len(quoted) == 160
 
@@ -506,7 +500,7 @@ def test_unknown_id_404_is_an_ordinary_not_found() -> None:
 
     assert client.unreachable is False
     assert route.call_count == 2
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 # --- AniListMediaNode -----------------------------------------------------------

@@ -47,7 +47,15 @@ from .builders import (
     make_services,
     pending_import,
 )
-from .fakes import FakeArrItem, FakeClock, FakeSkyHookClient, FakeStrategy, RecordingHub, install_recording_hub
+from .fakes import (
+    FakeArrItem,
+    FakeClock,
+    FakeSkyHookClient,
+    FakeStrategy,
+    RecordingHub,
+    diagnostic_messages,
+    install_recording_hub,
+)
 from .run_loop_fakes import FakeBound, FakeGateway, FinalizeRecorder, make_engine, make_engine_services
 
 
@@ -369,9 +377,6 @@ class TestSelectionRecheck:
         engine.run_arr(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine, recording
 
-    def _notes(self, recording: RecordingHub) -> list[str]:
-        return [d.message for d in recording.of_type(Diagnostic)]
-
     def _vouched_any(self, engine: ArrRunLoop) -> bool:
         """Whether the arr run stored a selection hash at all (an alien hash then reads changed)."""
 
@@ -380,26 +385,26 @@ class TestSelectionRecheck:
     def test_selection_changed_is_announced(self, logger: logging.Logger) -> None:
         _, recording = self._run(logger, stale=True)
 
-        assert self._NOTE in self._notes(recording)
+        assert self._NOTE in diagnostic_messages(recording)
 
     def test_unchanged_selection_stays_quiet(self, logger: logging.Logger) -> None:
         _, recording = self._run(logger, stale=False)
 
-        assert self._NOTE not in self._notes(recording)
+        assert self._NOTE not in diagnostic_messages(recording)
 
     def test_single_item_run_does_not_announce(self, logger: logging.Logger) -> None:
         # A single-item run re-checks only its id and cannot store the selection hash, so the whole-
         # library note is suppressed (it would overstate the scan and recur).
         _, recording = self._run(logger, stale=True, item_id=3)
 
-        assert self._NOTE not in self._notes(recording)
+        assert self._NOTE not in diagnostic_messages(recording)
 
     def test_ignore_update_times_suppresses_the_announcement(self, logger: logging.Logger) -> None:
         # The ignore flag already re-checks everything. Announcing a selection
         # re-check on top would be noise.
         _, recording = self._run(logger, stale=True, config=make_config(ignore_seadex_update_times=True))
 
-        assert self._NOTE not in self._notes(recording)
+        assert self._NOTE not in diagnostic_messages(recording)
 
     def test_full_run_stores_the_current_selection_hash(self, logger: logging.Logger) -> None:
         engine, _ = self._run(logger)

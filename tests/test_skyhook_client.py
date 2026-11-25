@@ -7,10 +7,10 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.output import Diagnostic, Severity
+from pearlarr.output import Severity
 from pearlarr.skyhook_client import SKYHOOK_URL, SkyHookClient, SkyHookNoReply, SkyHookReply
 
-from .fakes import FakeSkyHookClient, RecordingHub, install_recording_hub
+from .fakes import FakeSkyHookClient, diagnostic_messages, install_recording_hub
 from .http_mock import skyhook_fixture
 
 _SERIES = 112961
@@ -25,10 +25,6 @@ def _client() -> SkyHookClient:
     """A real client over respx, backoffs stubbed out."""
 
     return SkyHookClient(client=httpx.Client(), sleep=lambda _s: None)
-
-
-def _warnings(recording: RecordingHub) -> list[str]:
-    return [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 def _reply(tvdb_id: int, order_type: str, body: object) -> SkyHookReply | SkyHookNoReply:
@@ -108,7 +104,7 @@ def test_a_reply_that_does_not_match_the_request_comes_back_empty(asked: int, or
 
     assert isinstance(reply, SkyHookReply)
     assert reply.episodes == ()
-    assert _warnings(recording) == [warning]
+    assert diagnostic_messages(recording, Severity.WARNING) == [warning]
 
 
 def test_a_reply_that_fails_validation_comes_back_empty_with_a_warning() -> None:
@@ -118,7 +114,7 @@ def test_a_reply_that_fails_validation_comes_back_empty_with_a_warning() -> None
 
     assert isinstance(reply, SkyHookReply)
     assert (reply.tvdb_id, reply.episodes, reply.season_types) == (_SERIES, (), ())
-    (warning,) = _warnings(recording)
+    (warning,) = diagnostic_messages(recording, Severity.WARNING)
     assert warning.startswith(f"SkyHook sent a malformed official order for TVDB {_SERIES} (")
 
 
@@ -130,7 +126,7 @@ def test_a_listed_order_with_no_rows_comes_back_empty_without_a_warning() -> Non
     assert isinstance(reply, SkyHookReply)
     assert reply.episodes == ()
     assert reply.lists("dvd")
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 def test_one_bad_row_empties_the_order_and_keeps_the_header() -> None:
@@ -151,7 +147,7 @@ def test_one_bad_row_empties_the_order_and_keeps_the_header() -> None:
     assert reply.episodes == ()
     assert reply.status == "Ended"
     assert [t.type for t in reply.season_types] == ["official", "dvd"]
-    assert _warnings(recording) == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         f"SkyHook sent a malformed dvd order for TVDB {_SERIES} (an episode row failed validation) - storing it empty"
     ]
 
@@ -190,7 +186,7 @@ def test_skyhook_stays_unreachable_and_later_fetches_send_nothing(
 
     assert first is second is SkyHookNoReply.UNREACHABLE
     assert client.unreachable is True
-    assert _warnings(recording) == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         f"SkyHook failed ({detail} for TVDB {_SERIES} official) - re-checking cached titles until it answers"
     ]
 
