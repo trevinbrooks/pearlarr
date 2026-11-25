@@ -31,6 +31,9 @@ from .wait_fakes import TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStra
 _ALL_IMPORTED = (attempt_result(),)
 """The arr's answer to every import it is asked for: all of the torrent's files are in."""
 
+_ALL_IN = (ImportProgress(1, 1, determinate=True),)
+"""The arr's answer to every import progress read: all of the torrent's files are in."""
+
 _FINISHED = FakeTorrent(is_complete=True, content_path="/downloads/done")
 """A torrent qBittorrent has finished downloading."""
 
@@ -210,7 +213,7 @@ class TestWhatARunCounts:
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b"), _pending("c"))
         qbit = FakeQbit({"a": [_FINISHED], "b": [_DOWNLOADING, _FINISHED], "c": [_DOWNLOADING]})
-        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=(ImportProgress(1, 1, determinate=True),))
+        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=_ALL_IN)
         recording = install_recording_hub()
 
         _run(cache, strategy, qbit, mode=ImportWaitMode.DEFERRED)
@@ -272,9 +275,10 @@ class TestWhatARunSaves:
         assert _saved_pending_imports(cache, Arr.SONARR) == set()
 
     def test_a_run_with_the_wait_off_leaves_its_pending_imports_alone(self, tmp_path: Path) -> None:
+        # Series 7 is in the library and the arr has all of "h" in, so any look at "h" would finish it.
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
-        strategy = RecordingStrategy(attempts=_ALL_IMPORTED)
+        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=_ALL_IN)
 
         _run(cache, strategy, FakeQbit(TORRENT_H_COMPLETE), mode=ImportWaitMode.OFF)
 
