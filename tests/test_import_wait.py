@@ -768,25 +768,22 @@ class TestRunDeferred:
             ),
         ],
     )
-    def test_the_pass_outcome_replaces_the_state_the_series_report_noted(
+    def test_each_reading_gives_the_outcome_and_the_state_the_tally_counts(
         self,
         torrent: QbitStep,
         attempts: list[AttemptResult | Exception],
         outcome: Outcome,
         state: PendingImportState,
     ) -> None:
-        # The tally buckets what the pass saw last. The download clock starts when the pass is built, so a
-        # deferred pass never applies the download timeout, however small it is and however much time passes.
+        # No series report read the pending import earlier this run.
         store = FakeCacheStore()
-        run = ArrRunState(arr=Arr.SONARR, pending_import_states={"h": PendingImportState.DOWNLOADING})
+        run = ArrRunState(arr=Arr.SONARR)
         mgr = make_orchestration_manager(
             qbit=FakeQbit({"h": [torrent]}),
             strategy=_RecordingStrategy(attempts=attempts),
             store=store,
             state=run,
             stored_pending_imports=[pending_import(infohash="h")],
-            download_timeout=1,
-            clock=_AutoTickClock(step=30),
         )
 
         result = mgr.run_deferred(view=RecordingWaitView())
@@ -795,6 +792,35 @@ class TestRunDeferred:
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(outcome, True)]
         assert run.pending_import_states == {"h": state}
         assert _stored(store) == {"h": False}
+
+    def test_the_end_pass_state_replaces_the_one_the_series_report_noted(self) -> None:
+        # The series report read the torrent still downloading, and it finished before the end pass.
+        run = ArrRunState(arr=Arr.SONARR, pending_import_states={"h": PendingImportState.DOWNLOADING})
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            strategy=_RecordingStrategy(attempts=[attempt_result(all_done=False)]),
+            state=run,
+            stored_pending_imports=[pending_import(infohash="h")],
+        )
+
+        mgr.run_deferred(view=RecordingWaitView())
+
+        assert run.pending_import_states == {"h": PendingImportState.DOWNLOADED}
+
+    def test_a_deferred_pass_never_times_out_a_download(self) -> None:
+        # The download clock starts when the pass is built, so a timeout here would only measure the pass.
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit({"h": [FakeTorrent(progress=0.5)]}),
+            strategy=_RecordingStrategy(),
+            stored_pending_imports=[pending_import(infohash="h")],
+            download_timeout=1,
+            clock=_AutoTickClock(step=30),
+        )
+
+        result = mgr.run_deferred(view=RecordingWaitView())
+
+        assert result is not None
+        assert [row.outcome for row in result.rows] == [Outcome.STILL_DOWNLOADING]
 
 
 class TestPendingImportStateConversion:
