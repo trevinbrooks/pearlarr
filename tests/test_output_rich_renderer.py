@@ -320,11 +320,13 @@ class TestRendering:
         assert sentinel not in out
 
     def test_messages_render_literally_never_as_markup(self) -> None:
+        # Rich reads a bracket that opens with a lowercase letter as a style tag, so a release group's tag is what
+        # markup would swallow.
         renderer, stream = rich_renderer()
 
-        feed_renderer(renderer, _warning("[1/182] Frieren [MARKED INCOMPLETE]"))
+        feed_renderer(renderer, _warning("[1/182] [sam] Sousou no Frieren [MARKED INCOMPLETE]"))
 
-        assert plain_lines(stream) == ["⚠ [1/182] Frieren [MARKED INCOMPLETE]"]
+        assert plain_lines(stream) == ["⚠ [1/182] [sam] Sousou no Frieren [MARKED INCOMPLETE]"]
 
     def test_badge_glyphs_per_severity(self) -> None:
         renderer, stream = rich_renderer()
