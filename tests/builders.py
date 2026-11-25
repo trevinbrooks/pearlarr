@@ -246,6 +246,7 @@ class ScriptedAniListClient(AniListClient):
 
     `title` names every known id (None: AniList knows none), an `absent` id answers the unknown-id
     body, and a request touching a `failing` id marks AniList unreachable, muting later calls like the real client.
+    `known`, when given, holds the only ids AniList knows.
     """
 
     def __init__(
@@ -254,16 +255,23 @@ class ScriptedAniListClient(AniListClient):
         *,
         absent: frozenset[int] = frozenset(),
         failing: frozenset[int] = frozenset(),
+        known: frozenset[int] | None = None,
     ) -> None:
         super().__init__(client=httpx.Client())
         self._title = title
         self._absent = absent
         self._failing = failing
+        self._known = known
         self.query_calls: list[int] = []
         self.batch_calls: list[list[int]] = []
 
     def _trip(self) -> None:
         self._note_unreachable(f"request failed after {MAX_RETRIES} retries")
+
+    def _is_absent(self, anilist_id: int) -> bool:
+        """Whether AniList answers the id with the unknown-id body: an `absent` id, or one outside `known`."""
+
+        return anilist_id in self._absent or (self._known is not None and anilist_id not in self._known)
 
     @override
     def query(self, anilist_id: int) -> dict[str, Any]:
@@ -273,7 +281,7 @@ class ScriptedAniListClient(AniListClient):
         if anilist_id in self._failing:
             self._trip()
             return {}
-        if self._title is None or anilist_id in self._absent:
+        if self._title is None or self._is_absent(anilist_id):
             return {"data": {"Media": None}}
         return anilist_body(anilist_id, self._title)
 
@@ -290,7 +298,7 @@ class ScriptedAniListClient(AniListClient):
         return {
             anilist_id: anilist_body(anilist_id, self._title)
             for anilist_id in anilist_ids
-            if anilist_id not in self._absent
+            if not self._is_absent(anilist_id)
         }
 
 
