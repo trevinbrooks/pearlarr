@@ -43,7 +43,6 @@ from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import ListedFile
 from pearlarr.import_quality import resolve_language_objects
 from pearlarr.mappings import (
-    ExternalIds,
     MappingSource,
     TitleMapping,
 )
@@ -56,6 +55,7 @@ from pearlarr.pending_import import (
     SizeMatchedEpisode,
     TvdbIds,
 )
+from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import EpisodeKey, OrderOnlyKey, PrintedKey, SeadexDict, SkipReason
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes
@@ -138,7 +138,7 @@ from .title_check_builders import (
     FakeRunServices,
     ScriptedListings,
     ScriptedParse,
-    TitleMappingsCall,
+    mapping_one_imdb_title,
     mapping_one_series,
     radarr_checking,
     seadex_groups,
@@ -195,27 +195,24 @@ def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() ->
     ]
 
 
-class TestItemMappingsDelegates:
-    """item_mappings resolves through the services it keeps, with arr-specific ids."""
+class TestItemMappings:
+    """item_mappings finds an item's titles by every id the arr holds for it, its IMDb id included."""
 
-    def test_radarr_uses_tmdb_and_imdb(self) -> None:
-        run = FakeRunServices(anilist_ids={7: TitleMapping(anilist_id=7)})
-        strat = radarr_checking(run)
+    def test_radarr_finds_a_movie_mapped_only_by_its_imdb_id(self) -> None:
+        deps = mapping_one_imdb_title(make_run_deps(), imdb_id="tt7", anilist_id=7)
+        strat = RadarrStrategy(deps, ArrRunServices(deps, Arr.RADARR), FakeRadarrClient())
 
-        result = strat.item_mappings(RadarrMovie(tmdbId=42, imdbId="tt7"), log_ignored=False)
+        mappings = strat.item_mappings(RadarrMovie(tmdbId=42, imdbId="tt7"))
 
-        assert result == {7: TitleMapping(anilist_id=7)}
-        assert run.title_mappings_calls == [
-            TitleMappingsCall(ExternalIds(tmdb_movie=42, imdb="tt7"), log_ignored=False)
-        ]
+        assert mappings == {7: TitleMapping(anilist_id=7, imdb_id="tt7")}
 
-    def test_sonarr_uses_tvdb_and_imdb(self) -> None:
-        run = FakeRunServices()
-        strat = sonarr_checking(run)
+    def test_sonarr_finds_a_series_mapped_only_by_its_imdb_id(self) -> None:
+        deps = mapping_one_imdb_title(make_run_deps(), imdb_id="tt9", anilist_id=9)
+        strat = SonarrStrategy(deps, ArrRunServices(deps, Arr.SONARR), sonarr_client=FakeSonarrClient())
 
-        strat.item_mappings(SonarrSeries(tvdbId=99, imdbId="tt9"))
+        mappings = strat.item_mappings(SonarrSeries(tvdbId=99, imdbId="tt9"))
 
-        assert run.title_mappings_calls == [TitleMappingsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
+        assert mappings == {9: TitleMapping(anilist_id=9, imdb_id="tt9")}
 
 
 class TestFilterToSingle:
