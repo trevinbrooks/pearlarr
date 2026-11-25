@@ -108,9 +108,8 @@ class FakeTorrent:
     The download progress fields (`dlspeed` / `eta` / `completed` / `size`) default
     to None so the common blocking-wait tests don't have to set them. `poll_torrent`
     reads them via `getattr` and sanitizes None to None. `hash` is only read
-    by the batched `poll_download_progress` (which keys its result off it). A blank
-    hash is filled in from the script key when served from a `FakeQbit`
-    download progress script, so only a deliberate-mismatch test needs to set it.
+    by the batched `poll_download_progress` (which keys its result off it), and a
+    `FakeQbit` download progress script fills it in from its script key.
     `category` is read by the post-import move alone, and blank is an
     uncategorized torrent, as qBittorrent reports one.
     """
@@ -126,7 +125,6 @@ class FakeTorrent:
         eta: int | None = None,
         completed: int | None = None,
         size: int | None = None,
-        torrent_hash: str = "",
         category: str = "",
     ) -> None:
         self.state_enum = FakeStateEnum(is_complete=is_complete, is_errored=is_errored)
@@ -137,7 +135,7 @@ class FakeTorrent:
         self.eta = eta
         self.completed = completed
         self.size = size
-        self.hash = torrent_hash
+        self.hash = ""
 
 
 type QbitStep = FakeTorrent | BaseException
@@ -169,9 +167,8 @@ class FakeQbit:
         self._download_progress: dict[str, list[QbitStep]] = {}
         for h, steps in (download_progress or {}).items():
             for step in steps:
-                # A blank row hash keys back to its script key, so common
-                # download progress scripts don't have to repeat the hash.
-                if isinstance(step, FakeTorrent) and not step.hash:
+                # Each row reads back its script key as its hash, as qBittorrent answers only the asked hashes.
+                if isinstance(step, FakeTorrent):
                     step.hash = h
             self._download_progress[h.casefold()] = list(steps)
         self._heavy_index: dict[str, int] = {}
