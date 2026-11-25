@@ -4,8 +4,8 @@
 # state. Strict re-flags that, and the repo disables reportPrivateUsage for tests.
 """Tests for the end-of-run import wait and the post-import cleanup.
 
-The wait manager is built by its real constructor over a scripted qBittorrent, a recording strategy and a
-`FakeClock`, so no wait sleeps for real. Each area drives a public entry and checks what reaches Sonarr and
+The shared builder makes the wait manager bare, without its constructor, over a scripted qBittorrent, a
+recording strategy and a `FakeClock`, so no wait sleeps for real. Each area drives a public entry and checks what reaches Sonarr and
 qBittorrent, what is stored, and what the user is shown: the series report, the deferred and blocking wait
 passes, the carried-over tally, the arr run's finish, and the cleanup that moves a torrent and removes its
 queue record.
@@ -833,11 +833,11 @@ class TestPendingImportStateConversion:
     """The pinned Outcome -> PendingImportState conversion a wait pass classifies stored pending imports through."""
 
     def test_conversion_covers_exactly_the_non_dropped_outcomes(self) -> None:
-        # IMPORTED and MISSING leave the store, so the conversion never sees them.
+        # IMPORTED and GONE leave the store, so the conversion never sees them.
         assert set(PENDING_IMPORT_STATE_FOR_OUTCOME) == {o for o in Outcome if not o.dropped}
 
 
-class TestUnmatchedRowFinish:
+class TestUnplacedRowFinish:
     """A result naming unplaced files finishes on the poll that returned it, in either wait mode, and stays stored."""
 
     _NAMES = ("a.mkv", "b.mkv")
@@ -846,7 +846,7 @@ class TestUnmatchedRowFinish:
     def _strategy(cls) -> _RecordingStrategy:
         return _RecordingStrategy(attempts=[attempt_result(all_done=False, unmatched_files=cls._NAMES)])
 
-    def test_run_deferred_finishes_unmatched_and_keeps_the_pending_import(self) -> None:
+    def test_run_deferred_finishes_unplaced_and_keeps_the_pending_import(self) -> None:
         strategy = self._strategy()
         store = FakeCacheStore()
         run = ArrRunState(arr=Arr.SONARR)
@@ -870,7 +870,7 @@ class TestUnmatchedRowFinish:
         assert run.pending_import_states == {"h": PendingImportState.DOWNLOADED}
         assert _stored(store) == {"h": False}
 
-    def test_run_blocking_finishes_unmatched_on_the_first_poll(self) -> None:
+    def test_run_blocking_finishes_unplaced_on_the_first_poll(self) -> None:
         # The result ends the wait on the poll that establishes it: no final attempt, no import clock.
         strategy = self._strategy()
         store, view = _run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
