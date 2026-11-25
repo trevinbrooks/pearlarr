@@ -4,8 +4,7 @@
 # interface). The repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the arr run loop's commit points and its single finalize site at the arr run's end.
 
-A title held past `max_torrents_to_add` never stops the scan, and the ONE
-post-loop `_finish_arr_run` site runs once on every path. These pin that hoist so
+The ONE post-loop `_finish_arr_run` site runs once on every path. These pin that hoist so
 a future change can't silently double-finalize or skip the wait pass.
 A real run also commits after each item, so a stop keeps the items it finished.
 

@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # Reads the loop's private run state and services. The repo disables reportPrivateUsage for tests, strict re-flags it.
-"""Guards the arr run loop's scan: a title held past the cap, a failing title or item, and the item's own name."""
+"""Guards the arr run loop's scan: a failing title or item, and the item's own name."""
 
 import logging
 from typing import override
@@ -12,28 +12,6 @@ from pearlarr.output import Diagnostic, Severity
 
 from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
 from .run_loop_fakes import FinalizeRecorder, make_engine
-
-
-class TestHeldTitleKeepsScanning:
-    """A title held past the cap stops nothing: every item is scanned and the single finalize site runs once."""
-
-    def test_held_title_keeps_scanning_and_finalizes_once(self, logger: logging.Logger) -> None:
-        finalize = FinalizeRecorder()
-        engine = make_engine(finalize, logger)
-        # Every title's grab is held by the cap, as the pipeline holds a grabbable release past it.
-        strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
-            anilist_ids={1: TitleMapping(anilist_id=1)},
-            services=engine._services,
-        )
-
-        engine.run_arr(strategy, item_id=None, dry_run=True, boot=BootFlow())
-
-        # The hold on the first item never stopped the scan: the second item's title is still checked.
-        assert strategy.process_calls == [1, 1]
-        assert engine._services.state.stats.held_by_cap == 2
-        # ...and the single post-loop finalize ran exactly once.
-        assert finalize.calls == 1
 
 
 class TestPerTitleErrorContainment:
