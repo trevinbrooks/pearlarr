@@ -11,7 +11,6 @@ boundaries). The pure boot step line builders are pinned directly. The file/plai
 renderers render the same events through the `output.line_renderers` grammar.
 """
 
-import io
 import logging
 
 import pytest
@@ -48,7 +47,7 @@ from pearlarr.output.boot_region import (
 from pearlarr.wait_types import OutcomeKind
 
 from .builders import SEP
-from .fakes import feed_renderer, rich_renderer, strip_ansi
+from .fakes import feed_renderer, plain_text, rich_renderer
 
 _BOOT_SCOPE = ScopeId(ScopeKind.BOOT, 900)
 _BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT, 901)
@@ -83,10 +82,6 @@ def _finished(
         detail=detail,
         elapsed_s=elapsed_s,
     )
-
-
-def _plain(stream: io.StringIO) -> str:
-    return strip_ansi(stream.getvalue()).replace("\r", "")
 
 
 # --- the shared boot step line grammar ----------------------------------------------
@@ -129,7 +124,7 @@ class TestBootRegion:
 
         feed_renderer(renderer, PearlarrStarted(version="v9.9.9", data_dir="/data/dir"))
 
-        lines = _plain(stream).splitlines()
+        lines = plain_text(stream).splitlines()
         assert "Pearlarr v9.9.9" in lines
         assert "  Data directory: /data/dir" in lines
 
@@ -153,7 +148,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE),
         )
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert f"  ✔ Reading config{SEP}config.yml{SEP}0.61s" in out
         assert f"  ⚠ Connecting to qBittorrent{SEP}not configured - dry run{SEP}0.05s" in out
         assert "  ready in 1.27s" in out
@@ -169,7 +164,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE),
         )
 
-        assert "[1/2] weird [bold]label[/bold]" in _plain(stream)
+        assert "[1/2] weird [bold]label[/bold]" in plain_text(stream)
 
     def test_slow_heads_up_prints_only_on_a_non_live_console(self) -> None:
         # width 20 < MIN_LIVE_WIDTH: a rich but non-live console degrades the way
@@ -185,7 +180,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE),
         )
 
-        assert "  Refreshing mappings…" in _plain(narrow).splitlines()
+        assert "  Refreshing mappings…" in plain_text(narrow).splitlines()
 
         live_renderer, wide = rich_renderer()
         feed_renderer(
@@ -198,7 +193,7 @@ class TestBootRegion:
         )
         # The live spinner shows liveness. No bare heads-up LINE lands in
         # scrollback (spinner frames carry a glyph + padding, never this form).
-        assert "  Refreshing mappings…" not in _plain(wide).splitlines()
+        assert "  Refreshing mappings…" not in plain_text(wide).splitlines()
 
     def test_scope_closed_tears_down_the_live_slot(self) -> None:
         renderer, stream = rich_renderer()
@@ -218,7 +213,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE_TWO),
         )
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert f"  ✔ One{SEP}0.61s" in out
         assert f"  ✔ Two{SEP}0.61s" in out
 
@@ -266,7 +261,7 @@ class TestBootRegion:
         renderer.close()
         assert renderer._boot._live is None and not second_arr_run_live.is_started
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert f"  ✔ Two{SEP}0.61s" in out  # arr run two's boot step lines rendered under the fresh Live
 
     def test_begin_run_and_close_stop_a_live_slot(self) -> None:
@@ -293,7 +288,7 @@ class TestBootRegion:
         feed_renderer(renderer, _opened(), _started("Fetching library"), BootReady(elapsed_s=0.61))
 
         assert renderer._boot._live is None
-        assert "ready in 0.61s" in _plain(stream)
+        assert "ready in 0.61s" in plain_text(stream)
 
     def test_progress_updates_never_raise_and_stay_transient(self) -> None:
         renderer, stream = rich_renderer()
@@ -308,7 +303,7 @@ class TestBootRegion:
         )
 
         # The durable line carries the final detail. The bar frames were transient.
-        assert f"  ✔ Refreshing mappings{SEP}1/2 MB{SEP}0.61s" in _plain(stream)
+        assert f"  ✔ Refreshing mappings{SEP}1/2 MB{SEP}0.61s" in plain_text(stream)
 
     def test_raised_level_silences_the_durable_boot_lines(self) -> None:
         # Parity with the logger-driven boot step lines: at level WARNING the INFO boot
@@ -326,7 +321,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE),
         )
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "Pearlarr" not in out
         assert "✔" not in out  # no finished boot step line (spinner frames may remain)
         assert "ready in" not in out
@@ -347,7 +342,7 @@ class TestBootRegion:
             ScopeClosed(scope=_BOOT_SCOPE),
         )
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "✔" not in out
         assert "Radarr not configured" in out
 
@@ -358,7 +353,7 @@ class TestBootRegion:
         renderer.set_level(logging.WARNING)
         feed_renderer(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_BOOT_SCOPE))
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "✔ One" in out
         assert "✔ Two" not in out
 

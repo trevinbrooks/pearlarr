@@ -83,6 +83,18 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
+def plain_text(stream: io.StringIO) -> str:
+    """What was written to `stream`, without ANSI codes or carriage returns."""
+
+    return strip_ansi(stream.getvalue()).replace("\r", "")
+
+
+def plain_lines(stream: io.StringIO) -> list[str]:
+    """`plain_text(stream)` split into lines."""
+
+    return plain_text(stream).splitlines()
+
+
 # `isinstance` raises on the `ScanEvent` alias. Keep the tuple unannotated so it narrows to exactly `ScanEvent`.
 SCAN_EVENT_TYPES = (
     ScanStarted,

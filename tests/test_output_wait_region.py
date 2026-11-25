@@ -42,7 +42,7 @@ from pearlarr.output.wait_lines import live_model
 from pearlarr.output.wait_region import WaitRegion, _LiveFrame
 from pearlarr.wait_types import Outcome
 
-from .fakes import CaptureHandler, feed_renderer, install_recording_hub, strip_ansi
+from .fakes import CaptureHandler, feed_renderer, install_recording_hub, plain_text, strip_ansi
 
 
 def _render_group(group: Group) -> str:
@@ -64,10 +64,6 @@ def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     # A frozen clock: the wait region's between-poll ticking stays deterministic.
     return RichRenderer(lambda: console, time_source=lambda: 0.0), stream
-
-
-def _plain(stream: io.StringIO) -> str:
-    return strip_ansi(stream.getvalue()).replace("\r", "")
 
 
 def _dl(label: str) -> TorrentView:
@@ -109,7 +105,7 @@ class TestWaitLiveRegionLifecycle:
         feed_renderer(
             renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=300, in_progress=0, kind=WaitKind.BLOCKING)
         )
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "✔ imported    Show A  (8 files · 5m 00s)" in out  # finished as durable scrollback
         assert "wait complete · 1 imported · 5m 00s" in out
 
@@ -130,7 +126,7 @@ class TestWaitLiveRegionLifecycle:
             renderer, WaitFinished(imported=1, left=0, failed=0, elapsed_s=150, in_progress=0, kind=WaitKind.BLOCKING)
         )
         assert renderer._wait._live is None and not live.is_started
-        assert "wait complete · 1 imported · 2m 30s" in _plain(stream)
+        assert "wait complete · 1 imported · 2m 30s" in plain_text(stream)
 
     def test_a_finish_with_no_rows_prints_no_tally(self) -> None:
         renderer, stream = _live_renderer()
@@ -142,7 +138,7 @@ class TestWaitLiveRegionLifecycle:
             WaitFinished(imported=0, left=0, failed=0, elapsed_s=120, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert renderer._wait._live is None
-        assert "wait complete" not in _plain(stream)
+        assert "wait complete" not in plain_text(stream)
 
     def test_begin_run_stops_the_live(self) -> None:
         renderer, _stream = _live_renderer()
@@ -175,7 +171,7 @@ class TestNonLiveProgressLine:
         )
         assert renderer._wait._live is None  # a non-live console never opens a Live
 
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "Waiting on 1 download to complete and import..." in out
         assert "still waiting" in out
         assert "5m 00s" in out
@@ -192,7 +188,7 @@ class TestNonLiveProgressLine:
             RowFinished(label="Show", outcome=Outcome.IMPORTED, files=1, waited_s=60),
             WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.BLOCKING),
         )
-        assert _plain(stream).strip() == ""
+        assert plain_text(stream).strip() == ""
         assert renderer._wait._live is None
 
     def test_failed_row_finish_survives_a_raised_level(self) -> None:
@@ -207,7 +203,7 @@ class TestNonLiveProgressLine:
             WaitStarted(total=1, progress_line_s=300.0, kind=WaitKind.BLOCKING),
             RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
         )
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "errored" in out and "Show" in out
         assert "Waiting on" not in out  # the INFO start line stayed suppressed
 
@@ -292,7 +288,7 @@ class TestOpenScopesTeardown:
             WaitFinished(imported=1, left=0, failed=0, elapsed_s=60, in_progress=0, kind=WaitKind.BLOCKING),
         )
         assert renderer._wait._live is None
-        out = _plain(stream)
+        out = plain_text(stream)
         assert "imported" not in out  # the durable outcome line + tally were suppressed
         assert "wait complete" not in out
 
