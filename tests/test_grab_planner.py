@@ -1071,9 +1071,9 @@ class TestTorrentLeftForAHandImport:
     ) -> dict[str, GroupReleases]:
         """The torrent left for a hand import for `skip_reason`, three files at `_SIZES` placed nowhere, beside `siblings`."""
 
-        item = make_release(size=list(cls._SIZES), episodes=[], infohash="h1")
+        item = make_release(size=list(cls._SIZES))
         item.skip_reason = skip_reason
-        return {"Pack": rg_group({"u1": item}), **siblings}
+        return {"Pack": _sonarr_group(u1=item), **siblings}
 
     @staticmethod
     def _decide(seadex: dict[str, GroupReleases], title_episodes: list[SonarrEpisode]) -> Release:
@@ -1087,11 +1087,10 @@ class TestTorrentLeftForAHandImport:
 
         return sonarr_ep(0, episode, size=size, release_group="Pack", episode_file_id=file_id)
 
-    @pytest.mark.parametrize("skip_reason", [SkipReason.MISNUMBERED, SkipReason.EPISODE_TITLES_CONTRADICT])
-    def test_every_special_holding_a_torrent_file_is_in_place(self, skip_reason: SkipReason) -> None:
+    def test_every_special_holding_a_torrent_file_is_in_place(self) -> None:
         arr_episodes = [self._ours(n, size, 10 + n) for n, size in enumerate(self._SIZES, 1)]
 
-        item = self._decide(self._seadex(skip_reason), arr_episodes)
+        item = self._decide(self._seadex(), arr_episodes)
 
         assert item.to_grab is False
 
@@ -1114,8 +1113,7 @@ class TestTorrentLeftForAHandImport:
         assert (item.to_grab, item.is_upgrade) == (True, False)
 
     def test_a_special_a_sibling_release_covers_is_in_place(self) -> None:
-        covered = placed_episode(season=0, episode=3, size=999)
-        sibling = rg_group({"u2": make_release(url="u2", infohash="h2", episodes=[covered])}, episodes=[covered])
+        sibling = _sonarr_group(u2=make_release(size=[999], episodes=[placed_episode(season=0, episode=3, size=999)]))
         arr_episodes = [
             self._ours(1, 100, 11),
             self._ours(2, 200, 12),
@@ -1138,10 +1136,7 @@ class TestTorrentLeftForAHandImport:
         # The group's single-file release covers the third special, so the torrent has nothing left to cover there.
         covered = placed_episode(season=0, episode=3, size=999)
         seadex = self._seadex()
-        seadex["Pack"] = rg_group(
-            {**seadex["Pack"].releases, "u2": make_release(url="u2", infohash="h2", episodes=[covered])},
-            episodes=[covered],
-        )
+        seadex["Pack"] = _sonarr_group(**seadex["Pack"].releases, u2=make_release(size=[999], episodes=[covered]))
         arr_episodes = [self._ours(1, 100, 11), self._ours(2, 200, 12), self._ours(3, 999, 13)]
 
         item = self._decide(seadex, arr_episodes)
@@ -1155,7 +1150,15 @@ class TestTorrentLeftForAHandImport:
 
         assert (item.to_grab, item.is_upgrade) == (True, True)
 
-    def test_no_episode_list_leaves_the_torrent_not_to_grab(self) -> None:
-        result = make_planner().plan(self._seadex(), ArrFiles(), None)
+    def test_a_file_with_no_group_at_an_unlisted_size_is_not_the_torrents(self) -> None:
+        # The plan claims for the torrent no file it can't prove is the torrent's, so the import may replace it.
+        title = [
+            self._ours(1, 100, 11),
+            self._ours(2, 200, 12),
+            sonarr_ep(0, 3, size=150, episode_file_id=13, ep_id=103),
+        ]
 
-        assert result.seadex_dict["Pack"].releases["u1"].to_grab is False
+        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+
+        assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
+        assert plan.guards == OwnedAtGrab(entry_groups=("Pack",))
