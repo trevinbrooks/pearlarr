@@ -62,8 +62,9 @@ def make_sonarr_for_import(
     cache_store: FakeCacheStore | None = None,
     clock: FakeClock | None = None,
     categories: ArrCategoryResolver | None = None,
+    completed_download_handling: bool = True,
 ) -> tuple[SonarrStrategy, HookedSonarrClient]:
-    """A bare `SonarrStrategy` plus its scripted `self.sonarr` `HookedSonarrClient`.
+    """A `SonarrStrategy` built by its constructor, plus the scripted `HookedSonarrClient` it talks to.
 
     The fake returns the given queue records, current episodes, ManualImport
     candidates, quality definitions, languages and an execute command id -
@@ -75,7 +76,8 @@ def make_sonarr_for_import(
     isn't tracking the download, so the strategy runs an auto import). `commands` lists the
     commands beside the fake's neutral rescan, so no list given here reads as a
     restart. The fake's refresh / command-status defaults resolve immediately so
-    the rescan never waits.
+    the rescan never waits. Sonarr imports its own completed downloads unless
+    `completed_download_handling` is off.
     """
 
     sonarr = HookedSonarrClient(
@@ -88,6 +90,7 @@ def make_sonarr_for_import(
         quality_defs=quality_defs,
         languages=languages,
         execute_command_id=cmd_id,
+        completed_download_handling=completed_download_handling,
     )
     overrides: dict[str, list[str] | str] = config_overrides or {}
     strat = make_sonarr_sync(
