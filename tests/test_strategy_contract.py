@@ -1357,7 +1357,7 @@ _CLEAN_PENDING = [queue_record("ABC123", "importPending", status="ok")]
 
 
 class TestImportCompletedQueueState:
-    """import_completed reads the queue + episode files before an auto import."""
+    """Sonarr's queue, commands, episode files and settings decide whether an import attempt waits, rescans or posts."""
 
     @pytest.mark.parametrize(
         ("queue", "commands", "attempt_kind", "outcome"),
@@ -1450,6 +1450,22 @@ class TestImportCompletedQueueState:
         assert result.all_done is False
         assert (result.imported_count, result.file_map_episode_count) == (0, 1)
         assert (result.pause_reason, result.command_issued, len(sonarr.execute_calls)) == outcome
+
+    def test_a_clean_import_pending_is_imported_at_once_when_sonarr_imports_no_completed_download(self) -> None:
+        # With completed download handling off, Sonarr leaves a finished download at importPending for good, so a
+        # wait on it would only run out the deadline.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=_CLEAN_PENDING,
+            commands=[],
+            completed_download_handling=False,
+        )
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert (result.pause_reason, result.command_issued) == (PauseReason.ISSUED, True)
+        assert posted_imports(sonarr) == [[("/d/Show - 01 [1080p].mkv", [101])]]
 
     @pytest.mark.parametrize("attempt_kind", [AttemptKind.ORDINARY, AttemptKind.FINAL])
     def test_queue_unreachable_retries_instead_of_an_auto_import(self, attempt_kind: AttemptKind) -> None:
