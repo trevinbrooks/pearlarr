@@ -36,12 +36,12 @@ from pearlarr.bootstrap import run_arrs
 from pearlarr.cache import CacheSchemaError
 from pearlarr.config import AppConfig, Arr, ArrTarget
 from pearlarr.mappings import MappingResolver, MappingSources
-from pearlarr.output import ArrRunFinished, Diagnostic, FileLogRenderer, Severity, install_bridge, install_hub
+from pearlarr.output import ArrRunFinished, Diagnostic, FileLogRenderer, Severity, install_bridge
 from pearlarr.paths import resolve_paths
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config
-from .fakes import RecordingHub
+from .fakes import RecordingHub, install_recording_hub
 
 # The message each scripted failure carries, so the adopted ERROR is identifiable
 # in the recorded stream (the clean handler logs `str(e)`, the traceback handler doesn't).
@@ -117,8 +117,7 @@ def _arm_failing_arr(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> Rec
     monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
     monkeypatch.setattr(ArrRunDeps, "build", _failing_build(exc))
 
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     install_bridge()
     return recording
 
@@ -284,8 +283,7 @@ def _run_completing_arr(
     monkeypatch.setattr("pearlarr.arr_run_loop.ArrRunLoop", _FakeRunLoop)
     monkeypatch.setattr("pearlarr.sonarr_strategy.SonarrStrategy", _FakeSonarrSync)
 
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     install_bridge()
     return _run_sonarr(app_logger), recording
 

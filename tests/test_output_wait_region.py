@@ -37,13 +37,12 @@ from pearlarr.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
-    install_hub,
 )
 from pearlarr.output.wait_lines import live_model
 from pearlarr.output.wait_region import WaitRegion, _LiveFrame
 from pearlarr.wait_types import Outcome
 
-from .fakes import CaptureHandler, RecordingHub, feed_renderer, install_recording_hub, strip_ansi
+from .fakes import CaptureHandler, feed_renderer, install_recording_hub, strip_ansi
 
 
 def _render_group(group: Group) -> str:
@@ -429,8 +428,7 @@ def test_a_raising_tick_emits_nothing_to_the_hub(app_logger: logging.Logger) -> 
     # reach the hub (hub.emit off a Console-lock-holding thread is the ABBA
     # topology the pin exists to prevent).
     del app_logger
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     console = Console(file=io.StringIO(), legacy_windows=False)
     frame = _LiveFrame(_boom)
 

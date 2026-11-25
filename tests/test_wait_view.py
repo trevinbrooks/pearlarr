@@ -31,14 +31,13 @@ from pearlarr.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
-    install_hub,
 )
 from pearlarr.output.console_text import STATE_WIDTH
 from pearlarr.wait_types import NO_HAND_IMPORT_FILES, LeftForHandImport, Outcome, OutcomeKind
 from pearlarr.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, make_wait_view, newly_finished
 
 from .builders import files_left_for_hand_import
-from .fakes import CaptureHandler, RecordingHub
+from .fakes import CaptureHandler, install_recording_hub
 
 
 def _logger_with_console(*, force_terminal: bool, width: int = 100) -> logging.Logger:
@@ -119,8 +118,7 @@ def test_factory_skips_download_progress_when_too_narrow() -> None:
 
 
 def test_factory_progress_line_interval_is_the_max_of_poll_and_setting_as_a_float() -> None:
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     logger = _quiet_logger()
 
     _make_view(logger, poll_s=600, progress_line_interval=300).update(WaitSnapshot(()))  # the poll floor rules
@@ -143,8 +141,7 @@ class TestHubWaitViewNarration:
         return HubWaitView(_quiet_logger(), progress_line_s=progress_line_s, wants_download_progress=True, kind=kind)
 
     def test_first_update_opens_starts_and_progresses_exactly_once(self) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         first = WaitSnapshot((_downloading("h1", "A"), _downloading("h2", "B")), elapsed_s=5)
 
@@ -165,8 +162,7 @@ class TestHubWaitViewNarration:
 
     @pytest.mark.parametrize("kind", WaitKind)
     def test_the_narrators_kind_is_on_the_start_and_the_finish(self, kind: WaitKind) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view(kind=kind)
 
         view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))
@@ -178,8 +174,7 @@ class TestHubWaitViewNarration:
         assert finished.kind is kind
 
     def test_row_finish_dedup_and_exact_field_mapping(self) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         done = _finished_view("h1", "Bocchi the Rock!", Outcome.IMPORTED, files=12, elapsed=192.0)
 
@@ -206,8 +201,7 @@ class TestHubWaitViewNarration:
         ]
 
     def test_row_finish_carries_the_unmatched_files(self) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         row = _finished_view(
             "h1",
             "A",
@@ -226,16 +220,14 @@ class TestHubWaitViewNarration:
         # A documented divergence, pinned deliberately: the old views
         # logged a first-snapshot finished row BEFORE their start line. The
         # narrator opens (ScopeOpened + WaitStarted) first.
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
 
         self._view().update(WaitSnapshot((_finished_view("h1", "A", Outcome.IMPORTED),), elapsed_s=10))
 
         assert [type(e) for e in recording.events] == [ScopeOpened, WaitStarted, RowFinished, WaitProgress]
 
     def test_close_finishes_with_the_tally_then_closes_the_scope(self) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         view.update(
             WaitSnapshot(
@@ -273,8 +265,7 @@ class TestHubWaitViewNarration:
 
     def test_zero_update_close_emits_nothing(self) -> None:
         # Never updated -> the region never opened, so there is nothing to close.
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
 
         self._view().close()
 
@@ -283,8 +274,7 @@ class TestHubWaitViewNarration:
     def test_zero_tally_close_still_emits_the_finish(self) -> None:
         # The renderers show nothing for an empty tally (the builders return []),
         # but the event MUST flow: the scope needs its close on every renderer.
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=42))
 
@@ -301,8 +291,7 @@ class TestHubWaitViewNarration:
     def test_finish_elapsed_is_the_last_snapshots(self) -> None:
         # The narrator has no clock: elapsed comes with the snapshots, so the tally
         # reports the LAST pushed elapsed_s (the Ctrl-C partial close relies on it).
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=30))
         view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=95))
@@ -316,8 +305,7 @@ class TestHubWaitViewNarration:
         # A KeyboardInterrupt inside finish's synchronous dispatch propagates
         # (never swallowed), but the wait scope still closes on the way out
         # (the finally), so the WAIT scope can't leak open behind the unwind.
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         real_emit = recording.hub.emit
 
         def interrupt_on_finish(event: Event) -> None:
@@ -338,8 +326,7 @@ class TestHubWaitViewNarration:
     def test_update_after_close_emits_nothing(self) -> None:
         # Defensive: the wait pass never updates a closed view, but a bug there must
         # not re-open the scope or emit past the finish.
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         view = self._view()
         view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))
         view.close()

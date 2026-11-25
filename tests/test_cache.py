@@ -31,7 +31,7 @@ from pearlarr.cache import (
 )
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output import Diagnostic, Severity
 from pearlarr.parse_cache import parse_from_json, parse_to_json
 from pearlarr.pending_import import OwnedAtGrab, PendingImport, SizeMatchedEpisode, TitleNames
 from pearlarr.scene_numbers import CachedSceneMappings, SceneMapping
@@ -40,7 +40,7 @@ from pearlarr.stamps import parse_stamp_or_none
 from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, EpisodeDetails, OrderRow, SeriesNumbering
 
 from .builders import claim_anilist_ids, make_entry_record, pending_import, title_claim, title_is_cached
-from .fakes import RecordingHub
+from .fakes import install_recording_hub
 
 # A placeholder config hash. `CacheStore` only stores and compares the
 # value it is handed. It never computes one, so any string works here.
@@ -339,8 +339,7 @@ class TestSchemaVersionGate:
         raw.execute("INSERT INTO entries (arr, al_id, name) VALUES ('sonarr', 7, 'Frieren')")
         raw.commit()
         raw.close()
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
 
         with _open(tmp_path) as store:
             cached = store.get_cached_title(Arr.SONARR, 7)
@@ -716,8 +715,7 @@ class TestSchemaVersionGate:
             rows = migrated.get_pending_import_rows(Arr.SONARR)
         assert _user_version(db) == SCHEMA_VERSION
 
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         with _open(tmp_path) as reopened:
             assert reopened.get_pending_import_rows(Arr.SONARR) == rows
         assert recording.of_type(Diagnostic) == []
@@ -1622,8 +1620,7 @@ class TestCorruptStore:
     def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         db.write_text("this is not a sqlite database")  # what a torn write can leave
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
 
         # Must NOT raise - fail open to a fresh store.
         with _open(tmp_path) as store:

@@ -21,7 +21,7 @@ from pearlarr.arr_models import ArrFiles
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail, install_hub, uninstall_hub
+from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail, uninstall_hub
 from pearlarr.releases import PlacedEpisode, SeadexDict, SkipReason
 
 from .builders import (
@@ -39,7 +39,7 @@ from .builders import (
     sonarr_ep,
     title_is_cached,
 )
-from .fakes import RecordingHub
+from .fakes import RecordingHub, install_recording_hub
 
 PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
 PUB_URL = "https://nyaa.si/view/1"
@@ -94,8 +94,7 @@ def _attach_episodes(sd: SeadexDict, mapping: dict[str, list[PlacedEpisode]]) ->
 def _record() -> Generator[RecordingHub]:
     """Record the events the filter/pipeline post via the reporter's process-hub interface."""
 
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     try:
         yield recording
     finally:

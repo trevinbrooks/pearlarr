@@ -10,9 +10,9 @@ from pydantic import ValidationError
 
 from pearlarr.arr_models import MovieFile, QueueRecord, SonarrSeries
 from pearlarr.boundary import BoundaryContractError, validate_each
-from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output import Diagnostic, Severity
 
-from .fakes import RecordingHub
+from .fakes import install_recording_hub
 
 # --- validate_each ------------------------------------------------------------
 
@@ -23,8 +23,7 @@ def test_validate_each_skips_bad_elements_and_scrubs_the_warning() -> None:
     It never includes the payload value itself (it may carry names/paths).
     """
 
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = install_recording_hub()
     records = validate_each(
         MovieFile,
         [{"releaseGroup": "SubsPlease", "size": 1}, {"size": "not-a-number-SECRET"}],
@@ -43,8 +42,7 @@ def test_validate_each_skips_bad_elements_and_scrubs_the_warning() -> None:
 def test_validate_each_empty_list_is_empty() -> None:
     """An empty payload validates to an empty list (an empty library is legal)."""
 
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
+    recording = install_recording_hub()
     assert validate_each(MovieFile, []) == []
     assert recording.of_type(Diagnostic) == []
 

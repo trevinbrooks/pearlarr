@@ -33,18 +33,15 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     install_bridge,
-    install_hub,
 )
 from pearlarr.wait_types import OutcomeKind
 
 from .builders import make_bare_instance, make_config
-from .fakes import FakeClock, RecordingHub
+from .fakes import FakeClock, RecordingHub, install_recording_hub
 
 
 def _flow(data_dir: str = "/data/dir") -> tuple[BootFlow, RecordingHub, FakeClock]:
-    # conftest's autouse teardown uninstalls the hub after every test.
-    recording = RecordingHub()
-    install_hub(recording.hub)
+    recording = install_recording_hub()
     clock = FakeClock()
     return BootFlow(data_dir, clock=clock), recording, clock
 
@@ -240,8 +237,7 @@ def test_ready_line_gate_survives_a_hub_swap_mid_boot() -> None:
 
     with flow.step("Reading config"):
         clock.tick(0.02)
-    swapped = RecordingHub()
-    install_hub(swapped.hub)  # conftest teardown uninstalls
+    swapped = install_recording_hub()
     swapped.emit(_error("unrelated error on the new hub"))
     flow.end_boot()
 

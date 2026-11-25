@@ -16,7 +16,7 @@ from pearlarr import seadex_filter
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output import Diagnostic, Severity
 from pearlarr.radarr_strategy import RadarrStrategy
 
 from .builders import (
@@ -29,7 +29,7 @@ from .builders import (
     make_torrent_record,
     rg_group,
 )
-from .fakes import FakeRadarrClient, RecordingHub
+from .fakes import FakeRadarrClient, install_recording_hub
 
 
 def _torrent(
@@ -526,8 +526,7 @@ class TestInteractivePick:
             return "x"
 
         monkeypatch.setattr("builtins.input", fake_input)
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         result = filt.interactive_pick(seadex_dict, sd_entry)
         assert result == {}
         # The prompt rows are printed, not logged, so they stay visible even at
