@@ -121,6 +121,8 @@ class TestQueueRecord:
         assert (result.all_done, result.imported_count, result.file_map_episode_count) == (False, 0, 1)
         assert result.pause_reason is pause_reason
         assert posted_imports(sonarr) == posted
+        # A wait never claims the import as pearlarr's own. Only a post does.
+        assert result.command_issued is bool(posted)
 
     def test_a_clean_import_pending_is_posted_at_once_when_sonarr_imports_no_completed_download(self) -> None:
         # With completed download handling off, Sonarr leaves a finished download at importPending for good, so a
