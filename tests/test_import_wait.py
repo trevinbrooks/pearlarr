@@ -12,10 +12,10 @@ queue record.
 """
 
 import copy
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
-from typing import Any, cast, override
+from typing import Any, ClassVar, cast, override
 
 import httpx
 import pytest
@@ -249,6 +249,10 @@ class CategoryQbit(FakeQbit):
         if self._preferences_error is not None:
             raise self._preferences_error
         return {"use_subcategories": True}
+
+
+_COMPLETE: dict[str, list[QbitStep]] = {"h": [FakeTorrent(is_complete=True, content_path="/d")]}
+"""Torrent "h" complete in qBittorrent, as a `FakeQbit` script."""
 
 
 @dataclass(frozen=True)
@@ -586,6 +590,10 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
     """Dropping a pending import whose torrent left qBittorrent clears its titles' stamps: the next run checks them."""
 
     _CACHED_ON = "2021-06-05 00:00:00"
+    _ALL_CACHED: ClassVar[Mapping[int, str | None]] = {5: _CACHED_ON, 6: _CACHED_ON, 9: _CACHED_ON}
+    """Every title's stamp as `_store` writes it."""
+    _CLAIMING_CHECKED_AGAIN: ClassVar[Mapping[int, str | None]] = {5: None, 6: None, 9: _CACHED_ON}
+    """Titles 5 and 6, which claim the torrent, uncached. Title 9 never claimed it."""
 
     @classmethod
     def _store(cls) -> FakeCacheStore:
@@ -608,25 +616,25 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         return {anilist_id: cached.updated_at for anilist_id, cached in cached_titles.items() if cached is not None}
 
     @pytest.mark.parametrize(
-        ("in_qbittorrent", "awaiting_cleanup", "run", "checked_again"),
+        ("torrents", "awaiting_cleanup", "run", "stamps"),
         [
-            pytest.param(False, False, _report_series_7, True, id="gone-at-the-scan-report"),
-            pytest.param(False, False, _run_end_pass, True, id="gone-at-the-end-pass"),
-            pytest.param(True, False, _report_series_7, False, id="imported-at-the-scan-report"),
-            pytest.param(True, False, _run_end_pass, False, id="imported-at-the-end-pass"),
-            pytest.param(False, True, ImportWaitManager.finish_cleanups, False, id="gone-after-a-confirmed-import"),
+            pytest.param({}, False, _report_series_7, _CLAIMING_CHECKED_AGAIN, id="gone-at-the-scan-report"),
+            pytest.param({}, False, _run_end_pass, _CLAIMING_CHECKED_AGAIN, id="gone-at-the-end-pass"),
+            pytest.param(_COMPLETE, False, _report_series_7, _ALL_CACHED, id="imported-at-the-scan-report"),
+            pytest.param(_COMPLETE, False, _run_end_pass, _ALL_CACHED, id="imported-at-the-end-pass"),
+            pytest.param({}, True, ImportWaitManager.finish_cleanups, _ALL_CACHED, id="gone-after-a-confirmed-import"),
         ],
     )
     def test_a_drop_clears_the_claiming_titles_stamps_only_when_nothing_was_imported(
         self,
-        in_qbittorrent: bool,
+        torrents: dict[str, list[QbitStep]],
         awaiting_cleanup: bool,
         run: Callable[[ImportWaitManager], None],
-        checked_again: bool,
+        stamps: Mapping[int, str | None],
     ) -> None:
         store = self._store()
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]} if in_qbittorrent else {}),
+            qbit=FakeQbit(torrents),
             strategy=_RecordingStrategy(
                 attempts=[attempt_result(all_done=True)], progress=[ImportProgress(1, 1, determinate=True)]
             ),
@@ -637,9 +645,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         run(mgr)
 
         assert store.get_pending_import_rows(Arr.SONARR) == {}
-        claiming = None if checked_again else self._CACHED_ON
-        # Title 9 never claimed the torrent.
-        assert self._stamps(store) == {5: claiming, 6: claiming, 9: self._CACHED_ON}
+        assert self._stamps(store) == stamps
 
     def test_the_other_arrs_row_keeps_its_stamp(self) -> None:
         store = self._store()
@@ -1924,20 +1930,22 @@ class TestWaitSavesTheFollowedPendingImport:
         )
 
     @pytest.mark.parametrize(
-        ("all_done", "awaiting_cleanup"),
-        [pytest.param(True, True, id="failed-retire-keeps"), pytest.param(False, False, id="reissue-demotes")],
+        ("answer", "awaiting_cleanup"),
+        [
+            # Every file is still in, and the queue removal fails again.
+            pytest.param(attempt_result(all_done=True), True, id="failed-retire-keeps"),
+            pytest.param(
+                attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED),
+                False,
+                id="reissue-demotes",
+            ),
+        ],
     )
     def test_the_cleanup_pass_after_an_attempt_that_followed_keeps_the_followed_ids(
-        self, all_done: bool, awaiting_cleanup: bool
+        self, answer: AttemptResult, awaiting_cleanup: bool
     ) -> None:
         pending = _two_titles_stored(awaiting_cleanup=True)
-        result = attempt_result(
-            all_done=all_done,
-            command_issued=not all_done,
-            pause_reason=PauseReason.NONE if all_done else PauseReason.ISSUED,
-            pending=_followed(pending),
-            followed=True,
-        )
+        result = replace(answer, pending=_followed(pending), followed=True)
         strategy = _RecordingStrategy(attempts=[result], removals=[EffectStatus.FAILED])
         store = FakeCacheStore()
         mgr = self._manager(strategy, store, pending)
@@ -2005,10 +2013,6 @@ def test_dropping_a_pending_import_takes_it_out_of_the_store_and_the_run_list() 
 
     assert set(store.get_pending_import_rows(Arr.SONARR)) == {"keep"}
     assert state.grabbed_this_run == {"keep": keep}
-
-
-_COMPLETE: dict[str, list[QbitStep]] = {"h": [FakeTorrent(is_complete=True, content_path="/d")]}
-"""Torrent "h" complete in qBittorrent, as a `FakeQbit` script."""
 
 
 def _sdk_client(qbit: FakeQbit) -> qbittorrentapi.Client:
@@ -2235,20 +2239,27 @@ class TestCloseSkipOnMoveToUnwatched:
         )
 
     @pytest.mark.parametrize(
-        ("grab", "failed_moves", "moves", "closes", "kept"),
+        ("grab", "move_errors", "moves", "closes", "kept"),
         [
-            pytest.param("tv-sonarr", 0, [("sonarr-done", "h")], [], [], id="moved-out-of-sight"),
-            pytest.param("tv-sonarr", 3, [], [], ["h"], id="move-failed-this-run"),
+            pytest.param("tv-sonarr", [], [("sonarr-done", "h")], [], [], id="moved-out-of-sight"),
+            # The move fails on every retry.
+            pytest.param(
+                "tv-sonarr", [qbittorrentapi.APIConnectionError("down")] * 3, [], [], ["h"], id="move-failed-this-run"
+            ),
             # A blank category on Sonarr's client watches every category, so no move clears the queue record.
-            pytest.param(None, 0, [("sonarr-done", "h")], ["h"], [], id="sonarr-watches-every-category"),
+            pytest.param(None, [], [("sonarr-done", "h")], ["h"], [], id="sonarr-watches-every-category"),
         ],
     )
     def test_only_a_move_out_of_sonarrs_sight_takes_the_place_of_the_explicit_close(
-        self, grab: str | None, failed_moves: int, moves: list[tuple[str, str]], closes: list[str], kept: list[str]
+        self,
+        grab: str | None,
+        move_errors: list[Exception],
+        moves: list[tuple[str, str]],
+        closes: list[str],
+        kept: list[str],
     ) -> None:
         strategy = _RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)])
-        errors: list[Exception] = [qbittorrentapi.APIConnectionError("down")] * failed_moves
-        qbit = CategoryQbit(_COMPLETE, set_errors=errors)
+        qbit = CategoryQbit(_COMPLETE, set_errors=move_errors)
         store = FakeCacheStore()
         mgr = self._manager(grab=grab, post_import="sonarr-done", qbit=qbit, strategy=strategy, store=store)
 
@@ -2421,14 +2432,19 @@ class TestCleanupRetry:
     """Pending imports awaiting cleanup: the observe steps skip them, `finish_cleanups` finishes them once per run."""
 
     @pytest.mark.parametrize(
-        ("run2_close", "finished"),
+        ("run2_close", "stored", "notes"),
         [
-            pytest.param(EffectStatus.DONE, True, id="next-run-finishes"),
-            pytest.param(EffectStatus.FAILED, False, id="next-run-fails-again"),
+            pytest.param(
+                EffectStatus.DONE,
+                {},
+                [f"Finished the leftover post-import cleanup for Show{SEP}SubGroup"],
+                id="next-run-finishes",
+            ),
+            pytest.param(EffectStatus.FAILED, {"h": True}, [], id="next-run-fails-again"),
         ],
     )
     def test_keep_then_next_run_finishes_the_cleanup_or_keeps_again(
-        self, run2_close: EffectStatus, finished: bool
+        self, run2_close: EffectStatus, stored: dict[str, bool], notes: list[str]
     ) -> None:
         # Run 1: the import is confirmed but the close fails -> awaiting cleanup, still
         # counted IMPORTED this run. Run 2: finishing the cleanup closes and drops,
@@ -2458,18 +2474,16 @@ class TestCleanupRetry:
         recording = install_recording_hub()
         run2_strategy = _RecordingStrategy(removals=[run2_close])
         run2_state = ArrRunState(arr=Arr.SONARR)
-        # The same durable store, next run.
+        # The same durable store, next run. The torrent is gone from qBittorrent by then, the one case where the owed
+        # cleanup runs without a fresh files check.
         run2 = make_orchestration_manager(qbit=FakeQbit({}), strategy=run2_strategy, store=store, state=run2_state)
 
         run2.finish_cleanups()
         run2.tally_carried_over_into_stats()
 
         assert run2_strategy.removal_calls == ["h"]
-        assert (store.get_pending_import_rows(Arr.SONARR) == {}) is finished
-        assert (
-            any("Finished the leftover post-import cleanup" in m for m in diagnostic_messages(recording, Severity.INFO))
-            is finished
-        )
+        assert _stored(store) == stored
+        assert diagnostic_messages(recording, Severity.INFO) == notes
         # Run 1 counted the import, so run 2 counts nothing for it either way.
         stats = run2_state.stats
         assert (run2_state.pending_import_states, stats.downloading, stats.downloaded) == ({}, 0, 0)
