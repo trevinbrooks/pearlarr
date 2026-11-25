@@ -2487,54 +2487,46 @@ class TestRadarrCheckTitlePendingImportUpdates:
 
 
 class TestAutoImportWarningGating:
-    """An import warns of what is final and new, once per run. What is early or already reported is a debug line.
+    """An import warns of what is final and new, once per run. What is early or already reported is not warned of.
 
     An intended file absent on an early poll is expected (the copy hasn't finished), and a file the grab
     excluded was reported when it was set aside, so neither is warned of. A file that can't be placed is.
     """
 
-    def test_missing_off_deadline_is_debug_not_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        # The file map intends a file that isn't on disk yet (only an unrelated file is).
-        pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101]})
-        strat, _ = make_sonarr_for_import(candidates=[manual_candidate("/d/Unrelated.mkv")])
-        # The absent-file line is the import executor's. caplog needs a propagating logger.
-        strat._executor.logger = debug_logger("pearlarr-warning-gating")
-        recording = install_recording_hub()
-
-        with caplog.at_level("DEBUG"):
-            result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert not any(
-            "not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING)
-        )
-        assert any("not visible to Sonarr" in r.message and r.levelname == "DEBUG" for r in caplog.records)
-
-    def test_missing_at_deadline_warns_loudly(self) -> None:
+    @pytest.mark.parametrize(
+        ("attempt_kind", "warned"),
+        [
+            pytest.param(AttemptKind.ORDINARY, False, id="before-the-deadline"),
+            pytest.param(AttemptKind.FINAL, True, id="at-the-deadline"),
+        ],
+    )
+    def test_a_file_not_on_disk_is_warned_of_only_at_the_deadline(
+        self, attempt_kind: AttemptKind, warned: bool
+    ) -> None:
+        # The file map intends a file that isn't on disk yet (only an unrelated file is). Early on the copy may
+        # just not have finished.
         pending = pending_import(file_episode_map={"Show - 01 [1080p].mkv": [101]})
         strat, _ = make_sonarr_for_import(candidates=[manual_candidate("/d/Unrelated.mkv")])
         recording = install_recording_hub()
 
-        result = strat.import_completed(pending, "/d", AttemptKind.FINAL)
+        result = strat.import_completed(pending, "/d", attempt_kind)
 
         assert result.all_done is False
-        assert any("not visible to Sonarr" in message for message in diagnostic_messages(recording, Severity.WARNING))
+        warnings = diagnostic_messages(recording, Severity.WARNING)
+        assert any("not visible to Sonarr" in message for message in warnings) is warned
 
     @staticmethod
     def _strat_with_unplaceable(*names: str) -> tuple[SonarrStrategy, FakeSonarrClient]:
         # The file map's file plus `names`, which the file map lacks, beside the empty file map episode.
-        strat, sonarr = make_sonarr_for_import(
+        return make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), *(manual_candidate(f"/d/{n}") for n in names)],
             episodes=[sonarr_ep(1, 1, ep_id=101, episode_file_id=0)],
         )
-        # The excluded-file note is the import executor's debug line. caplog needs a propagating logger.
-        strat._executor.logger = debug_logger("pearlarr-warning-gating")
-        return strat, sonarr
 
-    def test_grab_time_excluded_unplaceable_file_never_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_grab_time_excluded_unplaceable_file_never_warns(self) -> None:
         # A sibling pending import's part of a shared torrent was placed at grab time:
         # this pending import still imports its own file, and the unplaceable sibling
-        # file is a debug note, not a "could not be placed" warning.
+        # file was reported when the grab set it aside, so it is not a "could not be placed" warning.
         sibling = "Show - S00E01 [1080p].mkv"
         pending = pending_import(
             seadex_files=["Show - 01 [1080p].mkv", sibling], excluded_files=[normalize_file_name(sibling)]
@@ -2542,16 +2534,11 @@ class TestAutoImportWarningGating:
         strat, sonarr = self._strat_with_unplaceable(sibling)
         recording = install_recording_hub()
 
-        with caplog.at_level("DEBUG"):
-            result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert result.command_issued is True
         assert len(sonarr.execute_calls) == 1
         assert not any("could not be placed" in m for m in diagnostic_messages(recording, Severity.WARNING))
-        assert any(
-            "1 excluded file already reported when set aside" in r.message and r.levelname == "DEBUG"
-            for r in caplog.records
-        )
 
     def test_partial_exclusion_warns_the_remainder_once(self) -> None:
         # One excluded plus one genuinely unplaceable file: the warning names
@@ -2796,8 +2783,8 @@ class TestDefaultQualityWarning:
             "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition - ignoring it",
         ]
 
-        # The guard is per-run scratch: the arr run's start reset restarts it.
-        strat._executor.reset()
+        # The next arr run warns of it again.
+        strat.get_items()
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         assert len(self._default_quality_warnings(recording)) == 2
 
@@ -2907,43 +2894,33 @@ class TestFolderFetchFallback:
 
         assert [(files[0].downloadId, mode) for files, mode in sonarr.execute_calls] == posted
 
-    def test_history_closed_verdict_memoized_and_noted_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_a_closed_history_is_read_once_per_run(self) -> None:
+        # Kept for the run: a closed history doesn't reopen, and every poll would read it again.
         strat, sonarr = self._strat(
             history=closed_history(),
             folder_candidates=[manual_candidate("/d/Show/Show - 01 [1080p].mkv")],
         )
-        # The history-closed note is debug-level. caplog needs a propagating logger.
-        logger = debug_logger("pearlarr-dead-verdict")
-        strat._executor.candidate_fetcher.logger = logger
         pending = pending_import()
 
-        with caplog.at_level("DEBUG"):
-            strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-            strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
         assert sonarr.download_history_calls == ["abc123"]
-        notes = [r for r in caplog.records if "recorded this download as imported" in r.message]
-        assert len(notes) == 1
-        assert notes[0].levelname == "DEBUG"
 
-    def test_history_closed_empty_folder_warns_only_at_the_deadline(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_history_closed_empty_folder_warns_only_at_the_deadline(self) -> None:
         # An empty folder right after completion is expected (Sonarr's mount
-        # lags), so ordinary polls note it at debug; the genuinely stuck shape
+        # lags), so ordinary polls don't warn; the genuinely stuck shape
         # (a pending import with an empty file map, still empty at the deadline) warns once a run,
-        # restarted by reset. `closed_history()` carries no import rows, so the
+        # and again in the next run. `closed_history()` carries no import rows, so the
         # rebuild yields nothing and the file map stays empty.
         recording = install_recording_hub()
         strat, _ = self._strat(history=closed_history(), folder_candidates=[])
-        logger = debug_logger("pearlarr-folder-scan")
-        strat._executor.logger = logger
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101])
 
-        with caplog.at_level("DEBUG"):
-            strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-            strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
+        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
         assert diagnostic_messages(recording, Severity.WARNING) == []
-        assert [r.levelname for r in caplog.records if "found no files" in r.message] == ["DEBUG", "DEBUG"]
 
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
@@ -2951,7 +2928,7 @@ class TestFolderFetchFallback:
         assert len(warnings) == 1
         assert "/d/Show" in warnings[0]
 
-        strat._executor.reset()
+        strat.get_items()
         strat.import_completed(pending, "/d/Show", AttemptKind.FINAL)
         warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
         assert len(warnings) == 2
