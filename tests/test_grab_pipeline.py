@@ -230,6 +230,7 @@ def _posted_embed(webhook: respx.Route) -> dict[str, Json]:
 
 
 # Highest first: the one needs-action row a title gets when two of these meet on it. None is a failed grab.
+# Misnumbered above contradicting episode titles is what happens today, not a decision: both ask for a hand import.
 _ROW_PRECEDENCE: list[tuple[SkipReason | None, NeedsActionCause]] = [
     (SkipReason.PRIVATE_ONLY, NeedsActionCause.PRIVATE_ONLY),
     (SkipReason.UNSUPPORTED_TRACKER, NeedsActionCause.UNSUPPORTED_TRACKER),
@@ -537,6 +538,18 @@ class TestTheRunCap:
         assert _tracked(pipeline) == tracked
         assert _statuses(recording) == ["held by the run cap; grabbed next run"]
         assert (state.stats.held_by_cap, state.stats.needs_action, _cached_at(pipeline)) == (1, [], None)
+
+    def test_a_cap_above_one_counts_each_add_and_holds_the_release_past_it(self) -> None:
+        torrents = FakeTorrents(
+            {"h1": (AddStatus.ADDED, "one"), "h2": (AddStatus.ADDED, "two"), "h3": (AddStatus.ADDED, "three")}
+        )
+        state = _run_state()
+        pipeline = _pipeline(torrents=torrents, state=state, max_torrents_to_add=2)
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2), _release(3))}))
+
+        assert torrents.calls == ["h1", "h2"]
+        assert (state.torrents_added, state.stats.held_by_cap) == (2, 1)
 
     @pytest.mark.parametrize(
         ("already_added", "announced", "cached"),
