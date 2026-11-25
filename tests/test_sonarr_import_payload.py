@@ -21,7 +21,11 @@ from .sonarr_import_builders import make_sonarr_for_import, posted_imports
 
 
 class TestImportCompletedPayload:
-    """import_completed takes episodes from pearlarr's file map, never Sonarr's parse."""
+    """An import posts each file it finds on disk with the pending import's series, episodes, group and hash.
+
+    The episodes come from pearlarr's file map, never Sonarr's parse, and the languages from the release's audio.
+    A file Sonarr calls a sample is not sent.
+    """
 
     def test_the_posted_file_carries_the_pending_imports_series_episodes_group_and_hash(self) -> None:
         # Sonarr's candidate for the file names no series or episodes of its own: they come from the pending import.
@@ -53,6 +57,65 @@ class TestImportCompletedPayload:
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
         assert posted_imports(sonarr) == [[(f"/d/{name}", [101, 102])]]
+
+    def test_a_decomposed_disk_name_still_matches_its_composed_file_map_name(self) -> None:
+        # The file map holds the composed e-acute. A macOS mount hands the name back decomposed.
+        name = "Café - 01 [1080p].mkv"
+        composed, decomposed = unicodedata.normalize("NFC", name), unicodedata.normalize("NFD", name)
+        pending = pending_import(file_episode_map={composed: [101]}, seadex_files=[composed])
+        strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate(f"/d/{decomposed}")])
+
+        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert posted_imports(sonarr) == [[(f"/d/{decomposed}", [101])]]
+
+    def test_sample_candidate_is_skipped(self) -> None:
+        pending = pending_import(
+            file_episode_map={
+                "Show - 01 [1080p].mkv": [101],
+                "Show - 01 [1080p].sample.mkv": [101],
+            },
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 01 [1080p].sample.mkv"],
+        )
+        good = manual_candidate("/d/Show - 01 [1080p].mkv")
+        sample = manual_candidate(
+            "/d/Show - 01 [1080p].sample.mkv",
+            rejections=[{"reason": "Sample"}],
+        )
+        strat, sonarr = make_sonarr_for_import(candidates=[good, sample])
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        # The good file's import command was issued.
+        # The sample is never sent.
+        assert result.all_done is False
+        assert result.command_issued is True
+        paths = [f.path for f in sonarr.execute_calls[0][0]]
+        assert paths == ["/d/Show - 01 [1080p].mkv"]
+
+    def test_languages_follow_dual_audio_flag(self) -> None:
+        pending = pending_import(
+            is_dual_audio=True,
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+        )
+        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
+        languages = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[candidate],
+            languages=languages,
+            config_overrides={"import_languages_dual": ["Japanese", "English"]},
+        )
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert result.all_done is False
+        assert result.command_issued is True
+        names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
+        assert names == ["Japanese", "English"]
+
+
+class TestPostedQuality:
+    """The posted quality is Sonarr's parse, else the file name's, and Unknown with a warning when neither says one."""
 
     @pytest.mark.parametrize(
         ("sonarr_parsed", "posted"),
@@ -110,86 +173,6 @@ class TestImportCompletedPayload:
             "/d: could not confidently resolve quality for Show - 01.mkv - importing as Unknown (re-grab risk)"
         ]
 
-    def test_a_decomposed_disk_name_still_matches_its_composed_file_map_name(self) -> None:
-        # The file map holds the composed e-acute. A macOS mount hands the name back decomposed.
-        name = "Café - 01 [1080p].mkv"
-        composed, decomposed = unicodedata.normalize("NFC", name), unicodedata.normalize("NFD", name)
-        pending = pending_import(file_episode_map={composed: [101]}, seadex_files=[composed])
-        strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate(f"/d/{decomposed}")])
-
-        strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert posted_imports(sonarr) == [[(f"/d/{decomposed}", [101])]]
-
-    def test_a_failed_candidate_fetch_waits_and_calls_no_file_missing(self) -> None:
-        # A fetch that failed says nothing of the folder, where an empty answer says the file isn't there.
-        recording = install_recording_hub()
-        strat, sonarr = make_sonarr_for_import(candidates=None)
-
-        result = strat.import_completed(pending_import(), "/d", AttemptKind.FINAL)
-
-        assert (result.all_done, sonarr.execute_calls) == (False, [])
-        assert diagnostic_messages(recording, Severity.WARNING) == []
-
-    def test_sample_candidate_is_skipped(self) -> None:
-        pending = pending_import(
-            file_episode_map={
-                "Show - 01 [1080p].mkv": [101],
-                "Show - 01 [1080p].sample.mkv": [101],
-            },
-            seadex_files=["Show - 01 [1080p].mkv", "Show - 01 [1080p].sample.mkv"],
-        )
-        good = manual_candidate("/d/Show - 01 [1080p].mkv")
-        sample = manual_candidate(
-            "/d/Show - 01 [1080p].sample.mkv",
-            rejections=[{"reason": "Sample"}],
-        )
-        strat, sonarr = make_sonarr_for_import(candidates=[good, sample])
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        # The good file's import command was issued.
-        # The sample is never sent.
-        assert result.all_done is False
-        assert result.command_issued is True
-        paths = [f.path for f in sonarr.execute_calls[0][0]]
-        assert paths == ["/d/Show - 01 [1080p].mkv"]
-
-    def test_languages_follow_dual_audio_flag(self) -> None:
-        pending = pending_import(
-            is_dual_audio=True,
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        languages = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
-        strat, sonarr = make_sonarr_for_import(
-            candidates=[candidate],
-            languages=languages,
-            config_overrides={"import_languages_dual": ["Japanese", "English"]},
-        )
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-
-        assert result.all_done is False
-        assert result.command_issued is True
-        names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
-        assert names == ["Japanese", "English"]
-
-    def test_failed_execute_retries(self) -> None:
-        # Sonarr rejected the import command (busy / locked) -> retry, not give up.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
-        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        strat, sonarr = make_sonarr_for_import(candidates=[candidate], cmd_id=None)
-
-        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
-        assert result.all_done is False
-        assert result.command_issued is False
-        # The execute WAS attempted (Sonarr rejected it -> command_issued False).
-        # A regression returning early without even trying would still set False here.
-        assert len(sonarr.execute_calls) == 1
-
 
 class TestDefaultQualityWarning:
     """An unmatched `imports.default_quality` warns once per run, in the executor that uses it.
@@ -242,3 +225,32 @@ class TestDefaultQualityWarning:
 
         assert len(sonarr.execute_calls) == 1
         assert self._default_quality_warnings(recording) == []
+
+
+class TestImportCompletedFailures:
+    """A failed read of the download's files or a rejected post leaves the attempt waiting for the next one."""
+
+    def test_a_failed_candidate_fetch_waits_and_calls_no_file_missing(self) -> None:
+        # A fetch that failed says nothing of the folder, where an empty answer says the file isn't there.
+        recording = install_recording_hub()
+        strat, sonarr = make_sonarr_for_import(candidates=None)
+
+        result = strat.import_completed(pending_import(), "/d", AttemptKind.FINAL)
+
+        assert (result.all_done, sonarr.execute_calls) == (False, [])
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    def test_failed_execute_retries(self) -> None:
+        # Sonarr rejected the import command (busy / locked) -> retry, not give up.
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+        )
+        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
+        strat, sonarr = make_sonarr_for_import(candidates=[candidate], cmd_id=None)
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+        assert result.all_done is False
+        assert result.command_issued is False
+        # The execute WAS attempted (Sonarr rejected it -> command_issued False).
+        # A regression returning early without even trying would still set False here.
+        assert len(sonarr.execute_calls) == 1

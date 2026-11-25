@@ -2,23 +2,26 @@
 """Tests for which Sonarr rows an import posts each file on.
 
 A file goes under the series its claim names, on the row that holds its TVDB episode at that read, own-only rows
-included.
+included. A row that already holds a file gets this one only while it is still owed it.
 """
 
 from dataclasses import replace
+from typing import NamedTuple
 
 import pytest
 
 from pearlarr.arr_models import CommandResource, ManualImportCandidate, SonarrEpisode
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.output import Severity
-from pearlarr.pending_import import FileEpisodeMap, OwnedAtGrab, PendingImport, TvdbIds
-from pearlarr.wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportProgress, PauseReason
+from pearlarr.pending_import import FileEpisodeMap, OwnedAtGrab, PendingImport, SizeMatchedEpisode, TvdbIds
+from pearlarr.wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportProgress, PauseReason, PendingImportState
 
 from .builders import (
     FakeCacheStore,
     make_config,
+    make_import_wait_manager,
     make_sonarr_sync,
     manual_candidate,
     pending_import,
@@ -141,21 +144,6 @@ class TestMultiSeriesImport:
         assert second.all_done is True
         assert (second.imported_count, second.file_map_episode_count) == (2, 2)
         assert len(sonarr.execute_calls) == 1
-
-    def test_two_claims_on_one_series_each_judge_their_own_episode_by_their_own_guards(self) -> None:
-        # A's plan marked group G outdated and B's releases carry G. G files sit on both windows' episodes, so
-        # A's episode still needs importing while B's is done. The series' merged guards would trust G for both.
-        pending = pending_import(
-            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
-            claims=(
-                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
-                title_claim(anilist_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
-            ),
-        )
-        on_disk = [sonarr_ep(1, n, ep_id=100 + n, release_group="G") for n in (1, 2)]
-        strat, _ = make_sonarr_for_import(candidates=[], episodes=on_disk)
-
-        assert strat.import_progress(pending) == ImportProgress(1, 2, determinate=True)
 
 
 _TWO_EPISODES_STORED = pending_import(
@@ -301,3 +289,152 @@ class TestImportOnOwnOnlyRows:
         assert posted_imports(sonarr) == [[(f"/d/{names[0]}", [9001]), (f"/d/{names[1]}", [9002])]]
         assert (first.all_done, first.imported_count, first.file_map_episode_count) == (False, 1, 3)
         assert second.all_done is True
+
+
+class _QbitState(NamedTuple):
+    """The two `state_enum` booleans `poll_torrent` reads."""
+
+    is_complete: bool = True
+    is_errored: bool = False
+
+
+class _CompletedRow(NamedTuple):
+    """One complete qBittorrent info row (the fields `poll_torrent` reads)."""
+
+    content_path: str
+    state_enum: _QbitState = _QbitState()
+    progress: float = 1.0
+
+
+class _CompletedQbit:
+    """A qBittorrent stub whose poll always reads one complete torrent."""
+
+    def __init__(self, content_path: str) -> None:
+        self._row = _CompletedRow(content_path)
+
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[_CompletedRow]:
+        del torrent_hashes
+        return [self._row]
+
+
+class TestImportOverEpisodeFiles:
+    """Whether an episode that already holds a file is still owed this pending import's file.
+
+    An episode holding another episode's file, or a group its own claim calls outdated, is still owed. One holding
+    a file the guard trusts is not, whether the trust comes from a size matched at the grab or from guards stored
+    apart from the pending import. A pending import awaiting its cleanup whose files are gone is imported again.
+    """
+
+    def test_an_episode_holding_this_torrents_file_for_another_episode_is_imported_over(self) -> None:
+        # This torrent's E02 file (size 200) is filed on E01 as well. Both rows hold its group at a listed size,
+        # but E01's is not its own file, so E01 is still owed and its own file is posted onto it.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={FIRST_FILE: [101], SECOND_FILE: [102]},
+            seadex_files=[FIRST_FILE, SECOND_FILE],
+            release_sizes=[100, 200],
+            sizes_by_name={FIRST_FILE.casefold(): 100, SECOND_FILE.casefold(): 200},
+        )
+        strat, sonarr = make_sonarr_for_import(
+            candidates=both_files(),
+            episodes=[
+                sonarr_ep(1, n, ep_id=100 + n, episode_file_id=12, release_group="SubGroup", size=200) for n in (1, 2)
+            ],
+        )
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert posted_imports(sonarr) == [[(f"/d/{FIRST_FILE}", [101])]]
+        assert (result.imported_count, result.file_map_episode_count) == (1, 2)
+
+    def test_two_claims_on_one_series_each_judge_their_own_episode_by_their_own_guards(self) -> None:
+        # A's plan marked group G outdated and B's releases carry G. G files sit on both windows' episodes, so
+        # A's episode still needs importing while B's is done. The series' merged guards would trust G for both.
+        pending = pending_import(
+            file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
+            claims=(
+                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
+                title_claim(anilist_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
+            ),
+        )
+        on_disk = [sonarr_ep(1, n, ep_id=100 + n, release_group="G") for n in (1, 2)]
+        strat, _ = make_sonarr_for_import(candidates=[], episodes=on_disk)
+
+        assert strat.import_progress(pending) == ImportProgress(1, 2, determinate=True)
+
+    def test_file_map_episode_holding_a_file_with_no_group_pearlarr_size_matched_is_protected(self) -> None:
+        # The grab-time size match is carried on the pending import through to the
+        # import: a file with no group the planner named reads TRUSTED, so the
+        # torrent pearlarr grabbed for the REST of the season never copies over it. A download already in gets no
+        # command at all, not even a rescan.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 700),)),
+        )
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group=None, size=700)],
+        )
+
+        result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
+
+        assert result.all_done is True
+        assert (sonarr.execute_calls, sonarr.refresh_calls) == ([], 0)
+
+    def test_store_persisted_guard_row_protects_through_the_pending_import_snapshot(self) -> None:
+        # THE fix path end to end: the persisted blob carries NO guards - the
+        # title's guard_facts row alone must feed the loaded pending import's
+        # protection decision when the carried-over snapshot drives the import.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            guards=OwnedAtGrab(entry_groups=("SubGroup", "OtherPick")),
+        )
+        store = FakeCacheStore()
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[sonarr_ep(1, 1, ep_id=101, release_group="OtherPick")],
+            cache_store=store,
+        )
+        (claim,) = pending.claims
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
+        store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
+        state = ArrRunState(arr=Arr.SONARR)
+        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
+
+        mgr.report_imports_for_series(claim.series_id)
+
+        # The row's facts reached the decision: the on-disk OtherPick file reads
+        # TRUSTED - done, never auto imported over - and the
+        # finished pending import leaves the store. The IMPORTED classification pins that
+        # branch (a GONE drop would also empty the store).
+        assert sonarr.execute_calls == []
+        assert store.get_pending_import_rows(Arr.SONARR) == {}
+        assert state.pending_import_states[pending.infohash] is PendingImportState.IMPORTED
+
+    def test_a_pending_import_awaiting_cleanup_with_files_gone_demotes_through_the_reconciler(self) -> None:
+        # The cleanup's demote reads the POST's ISSUED reason off the real attempt result:
+        # a pending import awaiting cleanup whose files are gone re-imports and drops back to an
+        # ordinary carryover (the fix's wiring, not a scripted attempt result).
+        recording = install_recording_hub()
+        pending = pending_import(infohash="abc123", awaiting_cleanup=True)
+        store = FakeCacheStore()
+        strat, sonarr = make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            cache_store=store,
+        )
+        store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
+        state = ArrRunState(arr=Arr.SONARR)
+        mgr = make_import_wait_manager(qbit=_CompletedQbit("/d"), cache_store=store, strategy=strat, state=state)
+
+        mgr.finish_cleanups()
+
+        assert len(sonarr.execute_calls) == 1
+        row = store.get_pending_import_row(Arr.SONARR, pending.infohash)
+        assert row is not None
+        assert row["awaiting_cleanup"] is False
+        assert state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
+        assert any("no longer has every file imported" in w for w in diagnostic_messages(recording, Severity.WARNING))

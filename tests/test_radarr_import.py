@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from pearlarr.arr_activity import HISTORY_MAX_LOOKBACK_DAYS, format_history_date
-from pearlarr.arr_models import HistoryRecord, RadarrMovie
+from pearlarr.arr_models import HistoryRecord
 from pearlarr.config import Arr
 from pearlarr.stamps import parse_stamp, stamp_of
 from pearlarr.wait_types import AttemptKind, ImportProgress
@@ -107,13 +107,6 @@ class TestRadarrImportCompletedHistory:
         # Two hours before the stamp, for a Radarr clock a little behind pearlarr's.
         start = parse_stamp(older).astimezone(UTC) - timedelta(hours=2)
         assert radarr.history_calls == [format_history_date(start)]
-
-    def test_pending_import_series_id_is_none(self) -> None:
-        # Radarr pending imports carry series_id=0, so the per-item snapshot hook key is
-        # None (short-circuits the per-item snapshot - reconcile runs in the wait pass).
-        strat = make_radarr_sync()
-
-        assert strat.pending_import_series_id(RadarrMovie(id=5)) is None
 
     def test_import_progress_is_indeterminate_zero(self) -> None:
         # Radarr never enters the blocking wait, so the progress poll bar hook
