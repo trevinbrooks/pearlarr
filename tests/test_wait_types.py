@@ -19,8 +19,7 @@ from pearlarr.wait_types import (
     download_progress_of,
 )
 
-from .builders import order_only_hand_import_files
-from .test_pending_import import HALVES
+from .builders import HALVES, order_only_hand_import_files
 
 
 class TestPendingImportStateAndAttemptResult:
