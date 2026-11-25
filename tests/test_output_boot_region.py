@@ -15,7 +15,6 @@ import io
 import logging
 
 import pytest
-from rich.console import Console
 from rich.live import Live
 
 from pearlarr.config import Arr
@@ -49,7 +48,7 @@ from pearlarr.output.boot_region import (
 from pearlarr.wait_types import OutcomeKind
 
 from .builders import SEP
-from .fakes import feed_renderer, strip_ansi
+from .fakes import feed_renderer, rich_renderer, strip_ansi
 
 _BOOT_SCOPE = ScopeId(ScopeKind.BOOT, 900)
 _BOOT_SCOPE_TWO = ScopeId(ScopeKind.BOOT, 901)
@@ -84,14 +83,6 @@ def _finished(
         detail=detail,
         elapsed_s=elapsed_s,
     )
-
-
-def _renderer(*, width: int = 100) -> tuple[RichRenderer, io.StringIO]:
-    # legacy_windows pinned: Windows CI auto-detects a legacy console, which
-    # would drop the features to ASCII glyphs and break the unicode assertions.
-    stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
-    return RichRenderer(lambda: console), stream
 
 
 def _plain(stream: io.StringIO) -> str:
@@ -134,7 +125,7 @@ class TestBootRegion:
     """Boot region: steps finish as durable lines. The Live slot tears down at every scope/process/run boundary."""
 
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, PearlarrStarted(version="v9.9.9", data_dir="/data/dir"))
 
@@ -143,7 +134,7 @@ class TestBootRegion:
         assert "  Data directory: /data/dir" in lines
 
     def test_finished_steps_become_durable_scrollback_lines(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -168,7 +159,7 @@ class TestBootRegion:
         assert "  ready in 1.27s" in out
 
     def test_labels_render_literally_never_as_markup(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -183,7 +174,7 @@ class TestBootRegion:
     def test_slow_heads_up_prints_only_on_a_non_live_console(self) -> None:
         # width 20 < MIN_LIVE_WIDTH: a rich but non-live console degrades the way
         # LogBootView did - the heads-up line carries liveness instead of a spinner.
-        renderer, narrow = _renderer(width=20)
+        renderer, narrow = rich_renderer(width=20)
 
         feed_renderer(
             renderer,
@@ -196,7 +187,7 @@ class TestBootRegion:
 
         assert "  Refreshing mappings…" in _plain(narrow).splitlines()
 
-        live_renderer, wide = _renderer()
+        live_renderer, wide = rich_renderer()
         feed_renderer(
             live_renderer,
             _opened(),
@@ -210,7 +201,7 @@ class TestBootRegion:
         assert "  Refreshing mappings…" not in _plain(wide).splitlines()
 
     def test_scope_closed_tears_down_the_live_slot(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("One"), _finished("One"))
         live = renderer._boot._live
@@ -234,7 +225,7 @@ class TestBootRegion:
     def test_scan_started_tears_down_the_live_slot(self) -> None:
         # The trap: ScanStarted evicts the boot scope from the open scopes WITHOUT
         # any ScopeClosed. The spinner must not survive over the scan output.
-        renderer, _stream = _renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("Fetching library"))
         live = renderer._boot._live
@@ -246,7 +237,7 @@ class TestBootRegion:
     def test_process_and_scheduled_run_boundaries_tear_down_the_live_slot(self) -> None:
         # Teardown keys on the boot scope leaving the open scopes, not on WHICH event caused it.
         for boundary in (PearlarrStarted(version="v9.9.9", data_dir="/data"), ScheduledRunStarted(number=2)):
-            renderer, _stream = _renderer()
+            renderer, _stream = rich_renderer()
             feed_renderer(renderer, _opened(), _started("Fetching library"))
             live = renderer._boot._live
             assert live is not None and live.is_started
@@ -258,7 +249,7 @@ class TestBootRegion:
         # begin_run). The arr run's close must evict the boot Live so the next arr run's boot
         # scope starts a FRESH slot - a leaked Live would be reused (leftover region,
         # nested on rich's live stack), so the load-bearing pin is object identity.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("One"))
         first_arr_run_live = renderer._boot._live
@@ -279,7 +270,7 @@ class TestBootRegion:
         assert f"  ✔ Two{SEP}0.61s" in out  # arr run two's boot step lines rendered under the fresh Live
 
     def test_begin_run_and_close_stop_a_live_slot(self) -> None:
-        renderer, _stream = _renderer()
+        renderer, _stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("One"))
         renderer.begin_run()
@@ -297,7 +288,7 @@ class TestBootRegion:
             raise RuntimeError("live stop exploded")
 
         monkeypatch.setattr(Live, "stop", exploding_stop)
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("Fetching library"), BootReady(elapsed_s=0.61))
 
@@ -305,7 +296,7 @@ class TestBootRegion:
         assert "ready in 0.61s" in _plain(stream)
 
     def test_progress_updates_never_raise_and_stay_transient(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(
             renderer,
@@ -322,7 +313,7 @@ class TestBootRegion:
     def test_raised_level_silences_the_durable_boot_lines(self) -> None:
         # Parity with the logger-driven boot step lines: at level WARNING the INFO boot
         # lines never rendered under the old logger gate, so the region mirrors it.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
 
         feed_renderer(
@@ -344,7 +335,7 @@ class TestBootRegion:
         # The two gates stay distinct at configured WARNING: the boot step lines
         # vanish (logger parity, above) while a first-party INFO diagnostic
         # keeps rendering (diagnostic_threshold's console INFO floor).
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
 
         feed_renderer(
@@ -361,7 +352,7 @@ class TestBootRegion:
         assert "Radarr not configured" in out
 
     def test_level_source_is_live_not_a_construction_snapshot(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
 
         feed_renderer(renderer, _opened(), _started("One"), _finished("One"))
         renderer.set_level(logging.WARNING)

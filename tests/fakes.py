@@ -12,6 +12,7 @@ from typing import cast, final, override
 import httpx
 import pytest
 import qbittorrentapi
+from rich.console import Console
 
 from pearlarr.aired_view import NoView
 from pearlarr.arr_http import ArrHttp, DeleteOutcome
@@ -49,6 +50,7 @@ from pearlarr.output import (
     OutputHub,
     ReleaseSkipped,
     Renderer,
+    RichRenderer,
     ScanStarted,
     Severity,
     TitleDetail,
@@ -104,6 +106,17 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[ConsoleLine]:
         if isinstance(event, SCAN_EVENT_TYPES):
             lines.extend(scan_event_lines(event))
     return lines
+
+
+def rich_renderer(*, width: int = 100) -> tuple[RichRenderer, io.StringIO]:
+    """A `RichRenderer` on an in-memory terminal `width` columns wide, and the stream it writes to.
+
+    `legacy_windows` is pinned off: Windows CI detects a legacy console, which would drop the glyphs to ASCII.
+    """
+
+    stream = io.StringIO()
+    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
+    return RichRenderer(lambda: console), stream
 
 
 def feed_renderer(renderer: Renderer, *events: Event) -> None:

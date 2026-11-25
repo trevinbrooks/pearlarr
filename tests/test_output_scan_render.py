@@ -12,8 +12,6 @@ rule for diagnostics.
 import io
 import logging
 
-from rich.console import Console
-
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
@@ -51,7 +49,7 @@ from pearlarr.output.scan_lines import (
     title_row_lines,
 )
 
-from .fakes import feed_renderer, strip_ansi
+from .fakes import feed_renderer, rich_renderer, strip_ansi
 from .scan_goldens import (
     ACTION_DOWNLOADING_NO_WAIT,
     ACTION_DOWNLOADING_NO_WAIT_LINES,
@@ -258,12 +256,6 @@ class TestBuilders:
 _WIDTH = 100
 
 
-def _renderer(width: int = _WIDTH) -> tuple[RichRenderer, io.StringIO]:
-    stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
-    return RichRenderer(lambda: console), stream
-
-
 def _plain_lines(stream: io.StringIO) -> list[str]:
     return strip_ansi(stream.getvalue()).replace("\r", "").splitlines()
 
@@ -295,7 +287,7 @@ class TestRichRendererScanBranch:
     """The RichRenderer scan branch matches the golden lines, honors level gating, and no-ops without a console."""
 
     def test_renders_a_scan_sequence_in_order(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, CAP_REACHED)
         assert _plain_lines(stream) == _expected_console(
             SCAN_STARTED_SONARR_LINES,
@@ -306,7 +298,7 @@ class TestRichRendererScanBranch:
         )
 
     def test_renders_the_summary_with_the_console_only_dry_note(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SUMMARY_DRY_HAS_CLIENT)
         lines = _plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
@@ -314,20 +306,20 @@ class TestRichRendererScanBranch:
         assert "Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)" in lines
 
     def test_renders_the_rich_summary(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer(width=_WIDTH)
         feed_renderer(renderer, SUMMARY_RICH)
         assert _plain_lines(stream) == _expected_console(SUMMARY_RICH_LINES)
 
     def test_warning_level_suppresses_info_scan_lines(self) -> None:
         # LOGGER parity: at configured WARNING the INFO scan lines vanish from
         # the console exactly as they vanish from the file.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
         feed_renderer(renderer, SCAN_STARTED_SONARR, CHECKING_FULL, SUMMARY_RICH)
         assert _plain_lines(stream) == []
 
     def test_warning_detail_renders_at_warning_level(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         renderer.set_level(logging.WARNING)
         detail = TitleDetail(
             label="status", value=StyledValue("size mismatch", Accent.CAUTION), severity=Severity.WARNING
@@ -356,7 +348,7 @@ class TestTitleIndentedDiagnostics:
         )
 
     def test_diagnostic_indents_inside_an_open_title_block(self) -> None:
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         self._open_item(renderer)
         feed_renderer(
             renderer,
@@ -368,7 +360,7 @@ class TestTitleIndentedDiagnostics:
     def test_diagnostic_indents_under_an_open_item_between_titles(self) -> None:
         # Import-flow lines fire between a series' title blocks: they indent
         # with the listing, not the run margin.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         self._open_item(renderer)
         feed_renderer(renderer, Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
         assert "  ⚠ tracker down" in _plain_lines(stream)
@@ -376,7 +368,7 @@ class TestTitleIndentedDiagnostics:
     def test_scan_finished_returns_diagnostics_to_column_zero(self) -> None:
         # ScanFinished evicts the item (and any title under it): a diagnostic
         # after the listing sits back at the run margin.
-        renderer, stream = _renderer()
+        renderer, stream = rich_renderer()
         self._open_item(renderer)
         feed_renderer(
             renderer,
