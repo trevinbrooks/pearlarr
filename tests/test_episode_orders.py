@@ -73,6 +73,7 @@ from .fakes import (
     diagnostic_messages,
     install_recording_hub,
 )
+from .wait_fakes import FakeQbit
 
 _DVD = (OrderRow(1, 1, 9002, None), OrderRow(1, 2, 9001, None))
 """The dvd order of a two-episode season that swaps its episodes."""
@@ -1209,8 +1210,9 @@ def _run_deps(
 ) -> ArrRunDeps:
     """What a whole run over `cache` is built from, with activity detection off.
 
-    Each of `_SEASON_TITLES` has its SeaDex entry (`_entry`), its AniList answer and its season of TVDB series 50.
-    TheXEM is `xem` and SkyHook is `skyhook`, each one that has no series when left out.
+    qBittorrent is configured, so it is a real run, which saves what it stores for the next. Each of `_SEASON_TITLES`
+    has its SeaDex entry (`_entry`), its AniList answer and its season of TVDB series 50. TheXEM is `xem` and SkyHook
+    is `skyhook`, each one that has no series when left out.
     """
 
     seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in _SEASON_TITLES})
@@ -1220,7 +1222,13 @@ def _run_deps(
         for season, (anilist_id, name) in enumerate(_SEASON_TITLES.items(), start=1)
     }
     deps = make_run_deps(
-        config=config, cache_store=cache, seadex=seadex, xem_client=xem, skyhook_client=skyhook, anime_ids=seasons
+        config=config,
+        cache_store=cache,
+        qbit=FakeQbit().client(),
+        seadex=seadex,
+        xem_client=xem,
+        skyhook_client=skyhook,
+        anime_ids=seasons,
     )
     for anilist_id, name in _SEASON_TITLES.items():
         deps.anilist.answers[anilist_id] = anilist_body(anilist_id, name)
