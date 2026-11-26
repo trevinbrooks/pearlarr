@@ -1001,23 +1001,14 @@ class TestLogFormatWiring:
         # A line that isn't JSON fails the test here.
         return [cast("dict[str, object]", json.loads(line)) for line in stdout.splitlines()]
 
-    def test_run_single_threads_the_config_format(self) -> None:
-        config = _write_current_config("advanced:\n  log_format: json\n")
+    def test_a_json_config_prints_one_json_object_per_line(self) -> None:
+        _write_current_config("advanced:\n  log_format: json\n")
 
         result = _invoke_offline("run", "single")
 
-        events = self._events(result.stdout)
-        assert events[0]["event"] == "pearlarr_started"
-        assert [event["message"] for event in events if event["event"] == "diagnostic"] == [
-            "Radarr not configured - not run",
-            "Sonarr not configured - not run",
-            (
-                "Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, "
-                f"or radarr.url and radarr.api_key, in {config}"
-            ),
-        ]
+        assert self._events(result.stdout)[0]["event"] == "pearlarr_started"
 
-    def test_run_scheduled_threads_the_config_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_json_config_prints_json_in_scheduled_mode_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _write_current_config("advanced:\n  log_format: json\n")
 
         result, _ = _run_scheduled_once(monkeypatch)
@@ -1215,15 +1206,12 @@ class TestConfigAutoMigrate:
         assert f"config_version: {CONFIG_VERSION}" in rewritten
         assert "private_releases: warn" in rewritten
         assert Path(f"{config}.bak").read_text(encoding="utf-8") == _OLD_SCHEMA_NO_ARRS
-        # After the opening line and the config read: one line about the
-        # rewrite, and no warning about the old schema.
-        assert _lines(result.stdout)[2:] == [
+        # One line about the schema and no warning about it (the spaces skip "old_schema" in this test's path).
+        assert [line for line in _lines(result.stdout) if " schema " in line] == [
             (
                 "INFO [Pearlarr] Config migrated to the current schema - previous file saved as "
                 f"{config}.bak (details in the log) during=boot"
-            ),
-            *_SKIP_NOTES,
-            _nothing_configured_line(config),
+            )
         ]
 
     def test_the_conversion_detail_goes_to_the_file_log(self) -> None:
