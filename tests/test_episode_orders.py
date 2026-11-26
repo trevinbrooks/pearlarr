@@ -554,6 +554,21 @@ def test_rows_out_of_step_are_warned_of_once_for_the_import_and_the_check_togeth
     assert diagnostic_messages(recording, Severity.WARNING) == [_OUT_OF_STEP]
 
 
+def test_a_series_with_no_view_for_the_rest_of_the_run_keeps_none_once_the_import_reads_its_rows_in_step() -> None:
+    # Sonarr renumbered the series as aired part way through the run. Its titles checked from here on are left for
+    # the next run, which reads the series afresh.
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
+    reads = _reads([_series(1, 50)], cache, _skyhook(_ORDERS), sonarr=sonarr)
+    reads.aired_series(1)
+    sonarr.episodes_return = list(_ROWS)
+
+    in_step = reads.read_episodes(1)
+
+    assert (in_step, reads.aired_series(1)) == (_ROWS, NoView.READ_FAILED)
+
+
 def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
     # The stored aired order numbers the two episodes the other way round. Nothing is tested against it.
     cache = FakeCacheStore()
