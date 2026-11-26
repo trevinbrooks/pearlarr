@@ -31,6 +31,7 @@ from pearlarr.output import (
     ItemStarted,
     ScanStarted,
     ScopeClosed,
+    ScopeKind,
     ScopeOpened,
     Severity,
     TitleRow,
@@ -308,11 +309,11 @@ class TestBootNotes:
 
 
 def test_the_boot_view_closes_on_its_ready_line_before_the_scan_starts() -> None:
-    # The renderers draw the boot steps in a live view, and a scan row shown while it is open reflows above an old
+    # The console's live boot view draws the boot steps, and a scan row shown while it is open reflows above an old
     # spinner.
     recording = _scan(_Library())
 
-    (boot,) = {opened.scope for opened in recording.of_type(ScopeOpened) if opened.label == "boot"}
+    (boot,) = [opened.scope for opened in recording.of_type(ScopeOpened) if opened.scope.kind is ScopeKind.BOOT]
     order = [
         type(event)
         for event in recording.events
