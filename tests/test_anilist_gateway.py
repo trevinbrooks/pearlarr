@@ -208,36 +208,33 @@ class TestMediaResolution:
         assert gateway.banner(42) == "https://img/banner"
         assert gateway.media_format(42) == "TV"
         assert gateway.episode_count(42) == 12
-        # The first resolver fetched and stored the raw body. The other four
+        assert gateway.airing(42) == AniListAiring(
+            start=date(2020, 1, 4), end=date(2020, 3, 21), episodes=12, duration=24
+        )
+        # The first resolver fetched and stored the raw body. The other five
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
         assert 42 in gateway.answers
 
-    def test_airing_reads_the_dates_count_and_episode_length(self) -> None:
-        gateway = make_anilist_gateway()
-        gateway.answers = {
-            1: anilist_body(1),
-            2: {"data": {"Media": {"id": 2, "episodes": 12}}},
-        }
+    @pytest.mark.parametrize(
+        ("english", "romaji", "titles"),
+        [
+            pytest.param("E", "R", ("E", "R"), id="two-names"),
+            pytest.param("Same", "Same", ("Same",), id="one-name-twice"),
+            pytest.param(None, "R", ("R",), id="no-english-name"),
+        ],
+    )
+    def test_titles_list_english_then_romaji_once_each(
+        self, english: str | None, romaji: str, titles: tuple[str, ...]
+    ) -> None:
+        body = anilist_body(1)
+        body["data"]["Media"]["title"] = {"english": english, "romaji": romaji}
+        store = FakeCacheStore()
+        store.put_anilist_meta(1, {"fetched_at": _stamp(days_ago=1), "data": body})
+        gateway = make_anilist_gateway(store=store)
+        gateway.load_cache()
 
-        assert gateway.airing(1) == AniListAiring(
-            start=date(2020, 1, 4), end=date(2020, 3, 21), episodes=12, duration=24
-        )
-        assert gateway.airing(2) == AniListAiring(start=None, end=None, episodes=12, duration=None)
-
-    def test_titles_list_english_then_romaji_once_each(self) -> None:
-        gateway = make_anilist_gateway()
-        gateway.answers = {
-            1: {"data": {"Media": {"id": 1, "title": {"english": "E", "romaji": "R"}}}},
-            2: {"data": {"Media": {"id": 2, "title": {"english": "Same", "romaji": "Same"}}}},
-            3: {"data": {"Media": {"id": 3, "title": {"romaji": "R"}}}},
-            4: {"data": {"Media": {"id": 4}}},
-        }
-
-        assert gateway.titles(1) == ("E", "R")
-        assert gateway.titles(2) == ("Same",)
-        assert gateway.titles(3) == ("R",)
-        assert gateway.titles(4) == ()
+        assert gateway.titles(1) == titles
 
     def test_definite_not_found_is_remembered_for_the_run(self) -> None:
         # AniList answered with no Media: the id is unknown, so no later accessor asks again.
