@@ -34,7 +34,6 @@ from pearlarr.mappings import (
     AnimeIdsByName,
     AnimeIdsRawMapping,
     ExternalIds,
-    MappingKind,
     MappingResolver,
     MappingSource,
     MappingSources,
@@ -42,9 +41,9 @@ from pearlarr.mappings import (
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
-from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
+from pearlarr.sonarr_episodes import check_ep_by_anibridge
 
-from .builders import make_sonarr_episodes, sonarr_ep
+from .builders import sonarr_ep
 from .fakes import RecordingProgress, debug_logger, diagnostic_messages, install_recording_hub
 
 _ANIBRIDGE = MappingSource.ANIBRIDGE
@@ -447,22 +446,13 @@ class TestAniBridgeTitleWithoutTvdbRanges:
 
         assert mappings == {600: TitleMapping(600, tvdb_season=0, imdb_id="tt600")}
 
-    def test_imdb_only_mapping_without_tvdb_mappings_makes_sonarr_skip(self) -> None:
-        # With no Kometa record the title keeps AniBridge's mapping, and the series covers none of its episodes
-        # rather than every season.
+    def test_with_no_kometa_record_the_title_keeps_anibridges_mapping_without_ranges(self) -> None:
+        # test_mapping_episodes shows such a mapping resolves to no episodes.
         resolver = _resolver(anibridge={"anilist:500": {"imdb_show:tt500": {}}})
 
         mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
 
-        without_tvdb_mappings = mappings[500]
-        assert without_tvdb_mappings.source is MappingSource.ANIBRIDGE
-        assert without_tvdb_mappings.kind is MappingKind.SEASON_OFFSET
-        assert without_tvdb_mappings.tvdb_mappings is None
-
-        episodes = make_sonarr_episodes(series_episodes={777: [sonarr_ep(s, 1) for s in (1, 2, 3)]})
-        resolved = episodes.title_episodes(777, 500, without_tvdb_mappings)
-        assert isinstance(resolved, TitleEpisodes)
-        assert resolved.aired == ()
+        assert mappings == {500: TitleMapping(500, imdb_id="tt500", source=_ANIBRIDGE)}
 
 
 # --------------------------------------------------------------------------- #

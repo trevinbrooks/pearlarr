@@ -5,7 +5,8 @@ Pins the fix for the latent AniBridge bug: a mapping whose `tvdb_mappings` is an
 empty dict (AniBridge registered the series' TVDB id but parsed no usable per-season
 ranges) resolves to no episodes instead of silently selecting episodes. The caller
 (`check_title`) surfaces the visible NO_EPISODES row. The sibling `{season: []}`
-whole-season-covered case must NOT be treated as empty.
+whole-season-covered case must NOT be treated as empty. An AniBridge mapping with no
+TVDB ranges at all, found by another id, resolves to no episodes too.
 
 Also pins that the anime-ids path and `episode_count` resolve the AniList format /
 episode count through the gateway (whose retry log narrates backoffs), never the
@@ -24,7 +25,7 @@ from datetime import date
 
 from pearlarr.anilist_client import AniListAiring
 from pearlarr.arr_models import SonarrEpisode
-from pearlarr.mappings import TitleMapping
+from pearlarr.mappings import MappingSource, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.sonarr_episodes import SonarrEpisodes, TitleEpisodes, check_ep_by_anibridge, check_ep_by_anime_ids
 
@@ -156,6 +157,15 @@ def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
     result = _resolved(episodes, mapping)
 
     assert result == ()
+
+
+def test_an_anibridge_mapping_without_tvdb_ranges_resolves_to_no_episodes() -> None:
+    """AniBridge found the title by IMDb or TMDB, so its season reads as -1, every regular season: no episodes."""
+
+    sonarr = _FakeSonarr([sonarr_ep(1, 1)])
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=_RecordingAniList(), _resolver=_NoAniDbMappings())
+
+    assert _resolved(episodes, TitleMapping(anilist_id=123, source=MappingSource.ANIBRIDGE)) == ()
 
 
 def test_empty_map_is_distinct_from_whole_season_marker() -> None:
