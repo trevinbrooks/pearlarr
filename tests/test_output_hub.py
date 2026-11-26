@@ -125,6 +125,7 @@ class _GatedRenderer(_QuietRenderer):
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.ran_out = False
         self.log: list[str] = []
         self.threads: list[threading.Thread] = []
         self._armed = True
@@ -140,8 +141,9 @@ class _GatedRenderer(_QuietRenderer):
             self._armed = False
             self.entered.set()
             # The wait must outlast a CI scheduling stall, which can pass 5 seconds on a loaded Windows runner.
-            # A gate that runs out raises into the hub, which contains it, so that event never reaches the log.
-            assert self.release.wait(timeout=30.0), "gate never released"
+            # A raise here would be contained by the hub, so a gate that runs out is noted for `_release` instead.
+            if not self.release.wait(timeout=30.0):
+                self.ran_out = True
         self.log.append(type(event).__name__)
         self.threads.append(threading.current_thread())
 
@@ -370,11 +372,12 @@ def _emit_held_at(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
 
 
 def _release(gated: _GatedRenderer, drainer: threading.Thread) -> None:
-    """Open the gate and wait for the drainer thread to finish."""
+    """Open the gate and wait for the drainer thread to finish. Fails if the gate ran out before this opened it."""
 
     gated.release.set()
     drainer.join(timeout=30.0)
     assert not drainer.is_alive()
+    assert not gated.ran_out, "the gate ran out before it was opened: this thread was held up on the held renderer"
 
 
 def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
@@ -382,12 +385,10 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     hub = OutputHub([gated])
     drainer = _emit_held_at(hub, gated)
 
-    # This emit returns at once without dispatching: the drainer thread still holds the drain lock.
+    # This emit returns at once and leaves its event to the drainer thread, which still holds the drain lock.
     hub.emit(Diagnostic(severity=Severity.INFO, message="from main"))
-    assert gated.log == []
-
     _release(gated, drainer)
-    # The drainer delivered both. Had this thread's emit waited on the held renderer, the gate would have run out.
+
     assert gated.log == ["PearlarrStarted", "Diagnostic"]
     assert gated.threads == [drainer, drainer]
 
@@ -742,6 +743,7 @@ def test_a_lifecycle_call_waits_for_the_active_drain(call: Callable[[OutputHub],
 
     _release(gated, drainer)
     lifecycle.join(timeout=30.0)
+    assert not lifecycle.is_alive()
     assert gated.log == ["PearlarrStarted", *logged]
 
 
