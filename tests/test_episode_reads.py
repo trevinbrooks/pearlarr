@@ -115,6 +115,12 @@ _TWO_SERIES = _Run(series=(1, 2), titles={7: 1, 8: 2})
 """Two series of one title each, neither title checked before."""
 
 
+def _library(run: _Run) -> list[SonarrItem]:
+    """The run's library as Sonarr lists it, each series monitored unless the run says not."""
+
+    return [SonarrSeries(id=sid, tvdbId=sid, monitored=sid not in run.unmonitored) for sid in run.series]
+
+
 def _episodes(sonarr: _Sonarr, run: _Run) -> tuple[SonarrEpisodes, SeriesReads]:
     """The run's episode collaborator over `sonarr` and the reads it warms, built as a run builds them."""
 
@@ -130,12 +136,8 @@ def _episodes(sonarr: _Sonarr, run: _Run) -> tuple[SonarrEpisodes, SeriesReads]:
     )
     services = ArrRunServices(deps, Arr.SONARR)
     services.mark_dirty(run.files_changed)
-    reads = make_series_reads(sonarr)
+    reads = make_series_reads(sonarr, library=_library(run))
     return SonarrEpisodes(deps, sonarr, services, reads), reads
-
-
-def _library(run: _Run) -> list[SonarrItem]:
-    return [SonarrSeries(id=sid, tvdbId=sid, monitored=sid not in run.unmonitored) for sid in run.series]
 
 
 class TestPrefetchEpisodes:
@@ -234,7 +236,7 @@ class TestAiredSeriesRead:
 
     def test_second_call_serves_the_run_cache(self) -> None:
         sonarr = _Sonarr()
-        reads = make_series_reads(sonarr)
+        reads = make_series_reads(sonarr, library=[SonarrSeries(id=1)])
 
         reads.aired_series(1)
         view = reads.aired_series(1)
@@ -246,7 +248,7 @@ class TestAiredSeriesRead:
         # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
         sonarr = _Sonarr((1,))
-        reads = make_series_reads(sonarr)
+        reads = make_series_reads(sonarr, library=[SonarrSeries(id=1)])
 
         assert (reads.aired_series(1), reads.series_index(1), sonarr.reads) == (
             NoView.READ_FAILED,
