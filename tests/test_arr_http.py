@@ -520,6 +520,22 @@ def test_strict_get_retryable_status_retries_then_succeeds() -> None:
     assert recording.of_type(Diagnostic) == []
 
 
+# --- history_since() (the activity read both arr clients share) --------------
+
+
+@respx.mock
+def test_history_since_failure_returns_none_with_one_warning() -> None:
+    """A failed history read is None, never an empty window, and its one warning says what the run skips."""
+
+    respx.get(f"{_URL}/api/v3/history/since").respond(status_code=500)
+    http, recording = _bind()
+
+    assert http.history_since("2026-06-30T08:00:00Z", include_flags={}) is None
+    assert _one_warning(recording).message == (
+        "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
+    )
+
+
 def test_make_httpx_client_pins_the_transport_policy() -> None:
     """The factory pins no-redirects: the key must never follow one.
 

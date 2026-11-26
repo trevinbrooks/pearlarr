@@ -150,38 +150,6 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 
 @respx.mock
-def test_history_since_non_200_returns_none_and_warns() -> None:
-    """A non-200 history read returns None with a warning (fail-open)."""
-
-    respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    recording = install_recording_hub()
-    result = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert result is None
-    assert diagnostic_messages(recording, Severity.WARNING)
-
-
-@respx.mock
-def test_history_since_request_error_returns_none() -> None:
-    """A transient request error is swallowed to None (fail-open)."""
-
-    respx.get(f"{_BASE}/history/since").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().history_since("2026-06-30T08:00:00Z") is None
-
-
-@respx.mock
-def test_history_since_non_json_body_returns_none_and_warns() -> None:
-    """A 200 with a non-JSON body fails open to None (the shared-helper hardening)."""
-
-    respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = install_recording_hub()
-    result = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert result is None
-    assert diagnostic_messages(recording, Severity.WARNING)
-
-
-@respx.mock
 def test_trailing_slash_url_is_normalized() -> None:
     """A trailing-slash base url must not become a `//api` join (login redirect)."""
 
