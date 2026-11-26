@@ -20,7 +20,6 @@ from pearlarr.arr_run_services import ArrRunDeps
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
-from pearlarr.mappings import MappingResolver
 from pearlarr.output import (
     BootReady,
     BootStepFinished,
@@ -36,7 +35,7 @@ from pearlarr.output import (
 )
 from pearlarr.wait_types import OutcomeKind
 
-from .builders import make_bare_instance, make_config
+from .builders import make_config, make_resolver
 from .fakes import FakeClock, RecordingHub, install_recording_hub
 
 
@@ -311,14 +310,16 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
     # boot step lines must say so via a DEFERRED step instead of silently skipping
     # the qBittorrent step.
     flow, recording, _ = _flow()
+    config = make_config()  # no qbittorrent credentials
+    web = httpx.Client()
 
     deps = ArrRunDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("boot-flow-qbit"),
-        resolver=make_bare_instance(MappingResolver),
-        app_config=make_config(),  # no qbittorrent credentials
-        web=httpx.Client(),
+        resolver=make_resolver(config, web),
+        app_config=config,
+        web=web,
         boot=flow,
     )
     flow.close()
