@@ -3,39 +3,14 @@
 # A few tests reach private helpers. The repo already disables reportPrivateUsage
 # for all of tests/, but the strict directive above re-enables it, so restore the
 # repo's test policy here.
-"""Tests for the Pearlarr CLI commands.
+"""Tests for the Pearlarr CLI commands, checked by what a user sees.
 
-Pins the behaviors the commands must guarantee:
-
-* A corrupt / not-a-database `cache.db` is *reported*, never crashed on - the
-  `stats` and `check` diagnostics (and `backup`) return a clean False instead
-  of letting a `sqlite3` traceback escape. `check` exists to report
-  bad integrity, so it must survive the very corruption it diagnoses.
-* The destructive commands (`restore` / `remove`) take the single-instance run
-  lock first and refuse while a run is active, so they never unlink or replace the
-  live db out from under it.
-* Failure paths report cleanly (missing files echo one hint line, not a traceback),
-  failure text goes to stderr (so `pearlarr config show > cfg.yml` stays clean)
-  while success output stays on stdout, and a False return maps to exit code 1
-  through the Typer apps' result callback.
-* `config init` never overwrites a filled-in config.yml without `--force`.
-* `run single` with no selection flag runs every *configured* arr (scheduled-mode
-  symmetry). An explicit flag for an unconfigured arr refuses cleanly, an implicit
-  selection skips it with a dim note in the boot step lines - except a half-configured arr (url
-  without api_key), whose skip warns by name (`configured_arrs`).
-* The inspection commands (`config validate` / `config show`) never write the
-  template, and `show` masks secret-named values (plus the free-form
-  `qbittorrent.options` block and URL-embedded logins) while keeping unset
-  ones `null`.
-* `advanced.log_level` is applied to CLI runs as soon as the config is read,
-  and `--log-level` overrides it (cli > config).
-* A missing config exits 1 with the template written (no silent
-  skip-and-retry). An invalid config keeps the skip+retry contract in scheduled
-  mode. SIGTERM stops either run command with exit code 0.
-
-Each test points `resolve_paths()` at its own `tmp_path` via `PEARLARR_DATA_DIR`
-and calls the command functions directly (they return `bool`). The exit-code
-tests go through `CliRunner` since the callback only runs inside typer.
+Most tests run the real CLI through `CliRunner` and read its exit code, its
+stdout and stderr, the log file, and the files it writes or leaves alone. A run
+goes through `_invoke_offline`, which refuses every outbound request, so a run
+that gets past where it should stop fails instead of reaching the network. The
+cache and config commands are also called as plain functions, which return the
+bool the CLI turns into its exit code.
 """
 
 import json
