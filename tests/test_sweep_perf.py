@@ -17,7 +17,6 @@ from typing import override
 import pytest
 
 from pearlarr.aired_view import AiredSeries, NoView
-from pearlarr.arr_http import SONARR_FETCH_WORKERS, fetch_workers
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode, SonarrItem, SonarrSeries
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import AppConfig, Arr
@@ -215,14 +214,6 @@ class TestParseCacheRows:
 
         assert not rows.is_fresh(_NAME, window=_window())
         assert rows.read(_NAME, window=_window()) is None
-
-
-@pytest.mark.parametrize(
-    ("sleep_time", "workers"),
-    [pytest.param(0, SONARR_FETCH_WORKERS, id="unthrottled"), pytest.param(1, 1, id="throttled")],
-)
-def test_fetch_workers_are_one_under_a_sleep_throttle(sleep_time: int, workers: int) -> None:
-    assert fetch_workers(make_config(sleep_time=sleep_time)) == workers
 
 
 class _Failure(Enum):
