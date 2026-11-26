@@ -1708,7 +1708,7 @@ def radarr_history_record(download_id: str, *, event: str) -> HistoryRecord:
 
 
 def sonarr_file_imported(series_id: int) -> HistoryRecord:
-    """Sonarr's `/history/since` record of a file imported into `series_id` an hour ago, its first history record.
+    """Sonarr's `/history/since` record 2, of a file imported into `series_id` an hour ago.
 
     The date is read off the clock, as the run's activity read asks for the history since a date it reads off the
     clock too, and Sonarr sends no record from before that date.
@@ -1716,7 +1716,7 @@ def sonarr_file_imported(series_id: int) -> HistoryRecord:
 
     date = format_history_date(datetime.now(UTC) - timedelta(hours=1))
     return HistoryRecord.model_validate(
-        {"id": 1, "date": date, "seriesId": series_id, "eventType": "downloadFolderImported"}
+        {"id": 2, "date": date, "seriesId": series_id, "eventType": "downloadFolderImported"}
     )
 
 
