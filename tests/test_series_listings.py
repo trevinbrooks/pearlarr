@@ -229,9 +229,13 @@ class TestRead:
 
 
 def test_no_mapping_asks_nothing_of_the_real_resolver() -> None:
-    # Built over the real collaborator types: with no resolved mapping, every hash is listed nowhere and the
-    # resolver (bare, no Sonarr behind it) is never asked.
-    read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, _mappings())
+    # Over a run's real episodes: with no resolved mapping, every hash is listed nowhere and Sonarr is never asked
+    # for the series' episodes.
+    sonarr = FakeSonarrClient()
+    episodes = make_sonarr_episodes(sonarr=sonarr)
+
+    read = SeriesListings(FakeSeaDexSource(), episodes, frozenset(), _names).read(7, _mappings())
 
     assert read is not None
     assert read.listing(_H1) == EMPTY_LISTING
+    assert sonarr.episodes_calls == []
