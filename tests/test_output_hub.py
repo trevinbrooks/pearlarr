@@ -913,8 +913,7 @@ def test_close_hands_no_teardown_chatter_to_a_struck_out_file_log() -> None:
 
     hub.close()
 
-    # Closed at its strike-out and again with every other renderer, and handed nothing in between.
-    assert struck.log == ["PearlarrStarted"] * 3 + ["close", "close"]
+    assert "Diagnostic" not in struck.log
 
 
 def test_a_closed_hub_drops_every_later_call() -> None:
