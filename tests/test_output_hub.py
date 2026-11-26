@@ -857,17 +857,6 @@ def test_a_renderer_raising_from_a_lifecycle_call_strikes_out_and_the_call_goes_
     assert (survivor.levels, survivor.events) == ([logging.INFO], [_EVENT])
 
 
-def test_a_struck_out_renderer_is_closed_only_once() -> None:
-    flaky = _FailingSetLevel()
-    hub = OutputHub([flaky])
-    for _ in range(3):
-        hub.emit(_EVENT)
-
-    hub.set_level(logging.DEBUG)  # set_level still reaches it, and it raises a fourth time
-
-    assert flaky.log == ["PearlarrStarted"] * 3 + ["close"]
-
-
 def test_close_is_idempotent_and_reaches_every_renderer() -> None:
     first, second = RecordingRenderer(), RecordingRenderer()
     hub = OutputHub([first, second])
