@@ -727,14 +727,13 @@ class TestTrackerSkips:
             infohash=None,
         )
         in_sonarr = [sonarr_ep(1, 1, episode_file_id=0)]
-        plan = make_release_filter(state=state).plan_grabs(
+        config = make_config(private_releases=PrivateReleaseAction.FALLBACK)
+        plan = make_release_filter(config=config, state=state).plan_grabs(
             {"RG": rg_group({private.url: private}, episodes=[placed_episode(1, 1, 100)])},
             arr_files(in_sonarr),
             in_sonarr,
         )
-        pipeline = _pipeline(
-            FakeQbit(), state=state, config=make_config(private_releases=PrivateReleaseAction.FALLBACK)
-        )
+        pipeline = _pipeline(FakeQbit(), state=state, config=config)
 
         pipeline.grab_and_cache(_grab_request(plan.seadex_dict))
 
