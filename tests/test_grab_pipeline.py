@@ -318,7 +318,7 @@ class TestAGrab:
     ) -> None:
         # Two releases under a cap of 1: a real run would add the first and hold the second.
         recording = install_recording_hub()
-        webhook = respx.post(_DISCORD_URL).respond(json={})
+        webhook = respx.post(_DISCORD_URL).respond()
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG 1"), "h2": (AddStatus.ADDED, "Show-RG 2")})
         state = _run_state(dry_run=dry_run)
         pipeline = _pipeline(
@@ -1015,7 +1015,7 @@ class TestGrabPushesNotice:
 
     @respx.mock
     def test_added_pushes_the_title_its_art_its_coverage_and_what_it_replaces(self) -> None:
-        webhook = respx.post(_DISCORD_URL).respond(json={})
+        webhook = respx.post(_DISCORD_URL).respond()
         pipeline = _notifying_pipeline(FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}))
 
         pipeline.grab_and_cache(
@@ -1048,7 +1048,7 @@ class TestGrabPushesNotice:
     @respx.mock
     def test_a_group_whose_add_failed_is_named_failed_beside_the_grabbed_one(self) -> None:
         # Nyaa was down for group Bad's release. Its block must not read as skipped, which would say it was never tried.
-        webhook = respx.post(_DISCORD_URL).respond(json={})
+        webhook = respx.post(_DISCORD_URL).respond()
         torrents = FakeTorrents({"h1": (AddStatus.ADDED, "Show-PMR")}, raises={"h2": httpx.ConnectError("nyaa down")})
         pipeline = _notifying_pipeline(torrents)
 
@@ -1062,7 +1062,7 @@ class TestGrabPushesNotice:
 
     @respx.mock
     def test_nothing_added_pushes_nothing(self) -> None:
-        webhook = respx.post(_DISCORD_URL).respond(json={})
+        webhook = respx.post(_DISCORD_URL).respond()
         pipeline = _notifying_pipeline(FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show-PMR")}))
 
         pipeline.grab_and_cache(_grab_request({"PMR": _group(_release(1))}))
