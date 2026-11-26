@@ -44,7 +44,7 @@ class TestRadarrCheckTitle:
         assert coverage() == ""
 
     def test_no_releases_routes_to_shared_stop_with_movie_cache_details(self) -> None:
-        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        entry = make_entry_record(url="https://releases.moe/5")
         run = FakeRunServices(
             prologue_entry=entry,
             anilist_title="Movie Title",
@@ -63,7 +63,7 @@ class TestRadarrCheckTitle:
         assert run.grab_requests == []
 
     def test_a_grab_carries_the_movies_files_to_the_plan_and_every_group_they_are_of(self) -> None:
-        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        entry = make_entry_record()
         seadex_dict = seadex_groups("SubGroup")
         filtered = seadex_groups("SubGroup")
         run = FakeRunServices(
@@ -155,7 +155,7 @@ class TestRadarrCheckTitlePendingImportUpdates:
 
     def test_a_release_to_grab_is_stored_on_its_cross_seeds_pending_import(self) -> None:
         store = FakeCacheStore()
-        resident = pending_import(infohash="c1", anilist_id=9, series_id=0, title="Other Movie", file_episode_map={})
+        resident = pending_import(infohash="c1", series_id=0, file_episode_map={})
         store.put_pending_import_row(Arr.RADARR, "c1", resident.to_json())
 
         run = self._run_process(store=store, cross_seed="c1")
