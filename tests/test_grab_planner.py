@@ -398,8 +398,8 @@ class TestGroupsCoveringTheSameFiles:
         # Nothing shows what a group covers when none of its files placed on the title, so a duplicate grab is
         # better than dropping files the title lacks.
         seadex = {
-            "A": _sonarr_group(u1=make_release(download=True, size=[100])),
-            "B": _sonarr_group(u2=make_release(download=True, size=[200])),
+            "A": _sonarr_group(u1=make_release(download=True)),
+            "B": _sonarr_group(u2=make_release(download=True)),
         }
 
         _reduce(seadex)
