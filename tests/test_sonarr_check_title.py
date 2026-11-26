@@ -106,12 +106,8 @@ class TestSonarrCheckTitleBeforeTheGrab:
 
     def test_sonarr_all_unmonitored_episodes_stop_with_an_unmonitored_row(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        unmonitored = sonarr_ep(1, 1).model_copy(update={"monitored": False})
-        strat = sonarr_checking(
-            run,
-            ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])),
-            config=make_config(ignore_unmonitored=True),
-        )
+        sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1).model_copy(update={"monitored": False})])
+        strat = SonarrStrategy(make_run_deps(config=make_config(ignore_unmonitored=True)), run, sonarr_client=sonarr)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.unmonitored_titles == ["Title"]
@@ -120,12 +116,8 @@ class TestSonarrCheckTitleBeforeTheGrab:
 
     def test_sonarr_one_monitored_episode_keeps_the_title_going(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
-        window = [sonarr_ep(1, 1).model_copy(update={"monitored": False}), sonarr_ep(1, 2)]
-        strat = sonarr_checking(
-            run,
-            ScriptedEpisodes(FakeSonarrClient(episodes=window)),
-            config=make_config(ignore_unmonitored=True),
-        )
+        sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1).model_copy(update={"monitored": False}), sonarr_ep(1, 2)])
+        strat = SonarrStrategy(make_run_deps(config=make_config(ignore_unmonitored=True)), run, sonarr_client=sonarr)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.unmonitored_titles == []
@@ -133,8 +125,8 @@ class TestSonarrCheckTitleBeforeTheGrab:
 
     def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record())
-        window = [sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)]
-        strat = sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=window)))
+        sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)])
+        strat = SonarrStrategy(make_run_deps(), run, sonarr_client=sonarr)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.missing_episodes == ["S01 E02"]
