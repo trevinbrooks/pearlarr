@@ -616,7 +616,7 @@ def test_a_once_keyed_diagnostic_shed_at_the_cap_lands_when_emitted_again() -> N
 
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
-    keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
+    keyed = Diagnostic(severity=Severity.WARNING, message="once a run", once_key="once")
 
     drainer = _hold_full_queue(hub, gated)
     hub.emit(keyed)
@@ -629,11 +629,13 @@ def test_a_once_keyed_diagnostic_shed_at_the_cap_lands_when_emitted_again() -> N
 
 # --- once-keys -----------------------------------------------------------------------
 
+# Nothing in the package sets a once key today, so these show the hub's side of one on its own.
+
 
 def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
-    warning = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
+    warning = Diagnostic(severity=Severity.WARNING, message="once a run", once_key="once")
 
     hub.emit(warning)
     hub.emit(warning)  # the copy the key drops
@@ -647,13 +649,13 @@ def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
 def test_the_same_once_key_from_different_origins_both_pass() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
-    anilist = Diagnostic(severity=Severity.WARNING, message="a", origin="anilist", once_key="backoff")
-    seadex = Diagnostic(severity=Severity.WARNING, message="b", origin="seadex", once_key="backoff")
+    first = Diagnostic(severity=Severity.WARNING, message="a", origin="one.module", once_key="once")
+    second = Diagnostic(severity=Severity.WARNING, message="b", origin="another.module", once_key="once")
 
-    hub.emit(anilist)
-    hub.emit(seadex)
+    hub.emit(first)
+    hub.emit(second)
 
-    assert renderer.events == [anilist, seadex]
+    assert renderer.events == [first, second]
 
 
 # --- severity counts -------------------------------------------------------------------
