@@ -1,8 +1,8 @@
 # pyright: strict
-"""Tests for the Sonarr sweep speedups.
+"""The stored Sonarr `/parse` answers, and a run's parse of a release's files through them.
 
-Covers the parse cache rows (freshness, the leaf's reads and writes), the
-series-id hash, worker gating, and concurrent fresh episode prefetch.
+A name goes to Sonarr once. A later run reads its stored answer while it is fresh, one with no matched episodes only
+under the series hash of the library it was stored under.
 """
 
 from __future__ import annotations
