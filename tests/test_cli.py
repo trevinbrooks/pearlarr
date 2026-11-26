@@ -1,8 +1,8 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# `_schedule_hours` is a deliberately under-test private helper. The repo already
-# disables reportPrivateUsage for all of tests/, but the strict directive above
-# re-enables it, so restore the repo's test policy here.
+# A few tests reach private helpers. The repo already disables reportPrivateUsage
+# for all of tests/, but the strict directive above re-enables it, so restore the
+# repo's test policy here.
 """Tests for the Pearlarr CLI commands.
 
 Pins the behaviors the commands must guarantee:
@@ -46,10 +46,11 @@ import re
 import signal
 import ssl
 import sys
+import time
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, NoReturn, cast, override
+from typing import NoReturn, cast
 
 import httpx
 import pytest
@@ -67,7 +68,6 @@ from pearlarr.cli import (
     _console_renderer,
     _handle_sigterm,
     _run_format,
-    _schedule_hours,
     cache_backup,
     cache_check,
     cache_remove,
@@ -87,19 +87,14 @@ from pearlarr.console_features import DetectedFeatures
 from pearlarr.log import LOG_NAME, HubBridgeBase, LogLevel, RichConsoleHandler, apply_log_level, setup_logger
 from pearlarr.output import (
     Diagnostic,
-    Event,
     FileLogRenderer,
     ItemStarted,
-    NextRunScheduled,
     OutputHub,
     PearlarrStarted,
-    Renderer,
     RowFinished,
     ScanStarted,
-    ScheduledRunStarted,
     Severity,
     current_hub,
-    install_hub,
 )
 from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
@@ -1030,13 +1025,37 @@ class _SetupLoggerRecorder:
 
 
 class _StopScheduledLoop(Exception):
-    """Breaks `run_scheduled`'s infinite loop from a faked `run_arrs`."""
+    """Ends `run scheduled`'s endless loop from a faked step inside it."""
 
 
 def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
     """A fake `run_arrs` that breaks `run_scheduled`'s loop."""
 
     raise _StopScheduledLoop
+
+
+def _run_scheduled_once(
+    monkeypatch: pytest.MonkeyPatch, *args: str, schedule_time: str | None = None
+) -> tuple[Result, list[float]]:
+    """`pearlarr run scheduled` through its first run, offline, and the seconds it then went to sleep for.
+
+    `schedule_time` is the SCHEDULE_TIME the loop sees (None leaves it unset). The faked sleep ends the loop.
+    """
+
+    if schedule_time is None:
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+    else:
+        monkeypatch.setenv("SCHEDULE_TIME", schedule_time)
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> NoReturn:
+        slept.append(seconds)
+        raise _StopScheduledLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    result = _invoke_offline("run", "scheduled", *args)
+    assert isinstance(result.exception, _StopScheduledLoop)
+    return result, slept
 
 
 class _SignalRecorder:
@@ -1047,49 +1066,6 @@ class _SignalRecorder:
 
     def __call__(self, signum: int, handler: object) -> None:
         self.registered.append((signum, handler))
-
-
-class _RunStampingRenderer(Renderer):
-    """Records each hub event alongside how many `begin_run` calls preceded it.
-
-    Makes post-begin ordering assertable (ScheduledRunStarted lands in the fresh run).
-    """
-
-    writes_file_only: ClassVar[bool] = False
-
-    def __init__(self) -> None:
-        self.runs_begun = 0
-        self.events: list[tuple[Event, int]] = []
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        self.events.append((event, self.runs_begun))
-
-    @override
-    def begin_run(self) -> None:
-        self.runs_begun += 1
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
-
-
-def _install_run_recorder(monkeypatch: pytest.MonkeyPatch) -> _RunStampingRenderer:
-    """Swap `cli._install_output_hub` for a hub over one recording renderer."""
-
-    renderer = _RunStampingRenderer()
-
-    def install(paths: AppPaths) -> tuple[OutputHub, FileLogRenderer]:
-        hub = OutputHub([renderer])
-        install_hub(hub)  # emit_to_hub resolves this hub, conftest restores
-        return hub, FileLogRenderer(paths.log_dir)
-
-    monkeypatch.setattr("pearlarr.cli._install_output_hub", install)
-    return renderer
 
 
 class TestLogFormatWiring:
@@ -1659,24 +1635,20 @@ class TestScheduledLifecycle:
 
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
 
-    def test_invalid_config_still_skips_and_retries(self, logger: logging.Logger) -> None:
-        # Only the MISSING file exits: an invalid config is likely mid-edit, so
-        # scheduled mode must keep skipping + retrying, never raise out of the loop.
-        recording = install_recording_hub()
-        _write_data_dir_config("sonar:\n  url: x\n")
-        paths = resolve_paths()
+    def test_invalid_config_still_skips_and_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Only the missing file exits: an invalid config is likely mid-edit, so
+        # the loop reports it, skips the run and sleeps until the next one.
+        config = _write_current_config("sonar:\n  url: x\n")
 
-        result = run_arrs(
-            [ArrTarget(Arr.SONARR)],
-            paths=paths,
-            logger=logger,
-            file_log_renderer=FileLogRenderer(paths.log_dir),
-            retry_note="will retry in 6h (Ctrl-C to stop)",
-        )
+        result, slept = _run_scheduled_once(monkeypatch)
 
-        assert result is False
-        error = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR)
-        assert "will retry in 6h" in error.message
+        assert [line for line in _lines(result.stdout) if line.startswith("ERROR")] == [
+            (
+                f"ERROR [Pearlarr] Invalid configuration in {config}:\\n  - sonar: unknown key\\n"
+                "Fix the listed keys and re-run - skipping this run - will retry in 6h (Ctrl-C to stop) during=boot"
+            )
+        ]
+        assert slept == [6 * 3600]
 
     def test_an_old_schema_config_is_rewritten_and_still_loads(
         self,
@@ -1772,45 +1744,37 @@ class TestScheduledLifecycle:
 
         assert recorder.registered == [(signal.SIGTERM, signal.SIG_IGN)]
 
-    def test_scheduled_run_started_is_emitted_after_begin_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Post-begin (rotation): the boundary must land in the FRESH run's file.
-        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        renderer = _install_run_recorder(monkeypatch)
-
-        with pytest.raises(_StopScheduledLoop):
-            run_scheduled()
-
-        started = [(e, runs_begun) for e, runs_begun in renderer.events if isinstance(e, ScheduledRunStarted)]
-        assert [(e.number, runs_begun) for e, runs_begun in started] == [(1, 1)]
-
-    def test_next_run_scheduled_is_emitted_with_the_cadence_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # After a completed run the loop states the next run as a typed event
-        # (default cadence: 6h out on a missing config), then sleeps.
-        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
-        monkeypatch.setattr("pearlarr.cli.time.sleep", _stop_loop)
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        renderer = _install_run_recorder(monkeypatch)
-
+    def test_a_scheduled_run_states_its_number_and_the_next_run_time(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The number opens the console's lines, so it came after the run began
+        # and sits in this run's log file, not in the last run's.
+        _write_current_config()
         before = datetime.now().astimezone()
-        with pytest.raises(_StopScheduledLoop):
-            run_scheduled()
 
-        (scheduled,) = [e for e, _ in renderer.events if isinstance(e, NextRunScheduled)]
-        assert scheduled.at.tzinfo is not None  # aware: the serialized form carries its offset
-        assert abs((scheduled.at - (before + timedelta(hours=6))).total_seconds()) < 60
+        result, _ = _run_scheduled_once(monkeypatch)
+
+        lines = _lines(result.stdout)
+        assert lines[0] == "INFO [run] scheduled run started number=1"
+        prefix = "INFO [run] next run scheduled at="
+        assert lines[-1].startswith(prefix)
+        next_run = datetime.fromisoformat(lines[-1].removeprefix(prefix))
+        assert next_run.tzinfo is not None  # the time carries its UTC offset
+        assert abs((next_run - (before + timedelta(hours=6))).total_seconds()) < 60
+
+    def test_a_scheduled_run_asks_for_every_arr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write_current_config()
+
+        result, _ = _run_scheduled_once(monkeypatch)
+
+        assert [line for line in _lines(result.stdout) if "not configured - not run" in line] == [
+            "INFO [Pearlarr] Radarr not configured - not run during=boot",
+            "INFO [Pearlarr] Sonarr not configured - not run during=boot",
+        ]
 
     def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorder = _SignalRecorder()
         monkeypatch.setattr(signal, "signal", recorder)
-        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
 
-        with pytest.raises(_StopScheduledLoop):
-            run_scheduled()
+        _invoke_offline("run", "scheduled")  # a fresh data dir: the run stops at the missing config
 
         assert recorder.registered == [(signal.SIGTERM, _handle_sigterm)]
 
@@ -1858,98 +1822,61 @@ class TestRunLockContention:
         ]
 
 
-class TestScheduleHours:
-    """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6.
+_INTERVAL_2_5 = "schedule:\n  interval_hours: 2.5\n"
+_INTERVAL_INVALID = "schedule:\n  interval_hours: -1\n"  # fails validation
 
-    The SCHEDULE_TIME notices are first-party WARNING Diagnostics through the
-    hub (file line + console badge). Pinned here via a recording hub.
+
+class TestScheduleHours:
+    """How long the loop sleeps: a valid SCHEDULE_TIME (deprecated) > schedule.interval_hours > 6.
+
+    A bad SCHEDULE_TIME is named along with the hours actually used. A config
+    that won't load falls back to 6 without a warning of its own (the load reports it).
     """
 
-    @staticmethod
-    def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:
-        path = tmp_path / "config.yml"
-        body = "" if interval_hours is None else f"schedule:\n  interval_hours: {interval_hours}\n"
-        path.write_text(body)
-        return str(path)
-
-    def test_unset_env_and_missing_config_uses_the_default(
+    @pytest.mark.parametrize(
+        ("schedule_time", "body", "hours", "warning"),
+        [
+            pytest.param(None, "", 6, None, id="default"),
+            pytest.param(None, _INTERVAL_2_5, 2.5, None, id="config"),
+            pytest.param(
+                "0.5",
+                _INTERVAL_2_5,
+                0.5,
+                "SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead",
+                id="env-wins",
+            ),
+            *(
+                pytest.param(
+                    raw, _INTERVAL_2_5, 2.5, f"Invalid SCHEDULE_TIME {raw!r} - using 2.5 hours", id=f"bad-env-{raw}"
+                )
+                for raw in ["banana", "0", "-3", "inf", "nan"]
+            ),
+            pytest.param(
+                "banana",
+                _INTERVAL_INVALID,
+                6,
+                "Invalid SCHEDULE_TIME 'banana' - using 6 hours",
+                id="bad-env-bad-config",
+            ),
+            pytest.param(None, _INTERVAL_INVALID, 6, None, id="invalid-config"),
+            pytest.param(None, "schedule: [unclosed\n", 6, None, id="malformed-config"),
+        ],
+    )
+    def test_the_loop_sleeps_for_the_interval_that_wins(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        recording: RecordingHub,
-    ) -> None:
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        missing = tmp_path / "config.yml"
-        assert _schedule_hours(str(missing)) == 6.0
-        # No template-copy side effect: load_shared_config owns the first-run copy.
-        assert not missing.exists()
-        assert recording.of_type(Diagnostic) == []  # nothing to warn about without the env var
-
-    def test_unset_env_reads_the_config_value(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
-
-    def test_unreadable_config_falls_back_to_the_default(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        path = tmp_path / "config.yml"
-        path.write_text("schedule:\n  interval_hours: -1\n")  # fails validation
-        assert _schedule_hours(str(path)) == 6.0
-
-    def test_a_valid_env_value_wins_over_config_with_deprecation_warning(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        recording: RecordingHub,
-    ) -> None:
-        monkeypatch.setenv("SCHEDULE_TIME", "0.5")
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 0.5
-        (notice,) = recording.of_type(Diagnostic)
-        assert notice.severity is Severity.WARNING
-        assert notice.message == "SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead"
-
-    @pytest.mark.parametrize("raw", ["banana", "0", "-3", "inf", "nan"])
-    def test_bad_env_values_fall_through_to_config(
-        self,
-        raw: str,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        recording: RecordingHub,
-    ) -> None:
-        monkeypatch.setenv("SCHEDULE_TIME", raw)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
-        (notice,) = recording.of_type(Diagnostic)
-        assert notice.severity is Severity.WARNING
-        assert "Invalid SCHEDULE_TIME" in notice.message
-        # The notice reports the value actually used, not a claim about its source.
-        assert "using 2.5 hours" in notice.message
-
-    def test_bad_env_with_missing_config_reports_the_default(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        recording: RecordingHub,
-    ) -> None:
-        monkeypatch.setenv("SCHEDULE_TIME", "banana")
-        assert _schedule_hours(str(tmp_path / "config.yml")) == 6.0
-        assert any("using 6 hours" in d.message for d in recording.of_type(Diagnostic))
-
-    def test_malformed_yaml_falls_back_to_the_default(
-        self,
-        tmp_path: Path,
+        schedule_time: str | None,
+        body: str,
+        hours: float,
+        warning: str | None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        path = tmp_path / "config.yml"
-        path.write_text("schedule: [unclosed\n")
-        assert _schedule_hours(str(path)) == 6.0
+        _write_current_config(body)
+
+        result, slept = _run_scheduled_once(monkeypatch, schedule_time=schedule_time)
+
+        assert slept == [hours * 3600]
+        warnings = [line for line in _lines(result.stdout) if line.startswith("WARNING")]
+        assert warnings == ([] if warning is None else [f"WARNING [Pearlarr] {warning}"])
 
 
 def test_commands_verify_tls_against_the_os_trust_store() -> None:
