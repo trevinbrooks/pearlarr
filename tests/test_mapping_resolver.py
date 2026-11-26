@@ -74,7 +74,7 @@ GRAPH: AniBridgeGraph = {
         "tvdb_show:74796:s2": {"21-41": "1-21"},
         "tvdb_show:74796:s3": {"42-52": "1-9,11-12"},
         "anidb:1234": {},
-        "imdb_show:tt0269": {},
+        "imdb_movie:tt0269": {},
         # Providers a lookup doesn't read. Real graphs carry them.
         "mal:111": {},
         "tmdb_show:5000:s1": {"1-12": "1-12"},
@@ -82,18 +82,20 @@ GRAPH: AniBridgeGraph = {
     "anilist:270": {
         "tvdb_show:74796:s1": {},
         "tmdb_movie:888": {},
-        "tvdb_movie:999": {},
-    },
-    "anilist:271": {
-        "tvdb_show:600:s1": {"1-": "1-"},
     },
     "anilist:300": {
         "tvdb_show:111:s1": {"1-5": "1-5"},
-        "tvdb_show:222:s1": {"6-10": "1-5"},
-        "imdb_show:tt300": {},
+        "tvdb_show:222:s1": {"6-10": "3-7"},
     },
     "anilist:400": {
         "imdb_movie:tt0400": {},
+    },
+    # Several movies of each kind, as AniBridge's record for AniList 31 has.
+    "anilist:31": {
+        "tmdb_movie:21832": {},
+        "tmdb_movie:54270": {},
+        "imdb_movie:tt0169880": {},
+        "imdb_movie:tt13645944": {},
     },
 }
 
@@ -121,40 +123,37 @@ class TestAniBridgeLookup:
                 id="series",
             ),
             pytest.param(
-                ExternalIds(tvdb=600),
-                {271: TitleMapping(271, tvdb_mappings={1: [(1, None)]}, source=_ANIBRIDGE)},
-                id="series with an open-ended range",
+                ExternalIds(tvdb=111),
+                {300: TitleMapping(300, tvdb_mappings={1: [(1, 5)]}, source=_ANIBRIDGE)},
+                id="one of a title's two shows",
             ),
-            pytest.param(
-                ExternalIds(tvdb=111, imdb="tt300"),
-                {300: TitleMapping(300, tvdb_mappings={1: [(1, 5)]}, imdb_id="tt300", source=_ANIBRIDGE)},
-                id="series one of a title's two shows",
-            ),
-            pytest.param(
-                ExternalIds(tmdb_movie=888, imdb="tt0888888"),
-                {270: TitleMapping(270, tmdb_movie_id=888, source=_ANIBRIDGE)},
-                id="movie by its tmdb id",
-            ),
-            pytest.param(
-                ExternalIds(tmdb_movie=404, imdb="tt0400"),
-                {400: TitleMapping(400, imdb_id="tt0400", source=_ANIBRIDGE)},
-                id="movie by its imdb id",
-            ),
-            pytest.param(ExternalIds(tvdb=424242, imdb="tt0424242"), {}, id="unknown"),
         ],
     )
-    def test_a_lookup_finds_each_title_with_the_ranges_of_its_show(
+    def test_a_series_lookup_gives_each_title_the_ranges_of_that_show(
         self, ids: ExternalIds, expected: dict[int, TitleMapping]
     ) -> None:
         assert _resolver(anibridge=GRAPH).resolve(ids).kept == expected
+
+    @pytest.mark.parametrize(
+        ("ids", "found"),
+        [
+            pytest.param(ExternalIds(tmdb_movie=888, imdb="tt0888888"), [270], id="movie by its tmdb id"),
+            pytest.param(ExternalIds(tmdb_movie=404, imdb="tt0400"), [400], id="movie by its imdb id"),
+            pytest.param(ExternalIds(tmdb_movie=54270), [31], id="movie by the second of its tmdb ids"),
+            pytest.param(ExternalIds(imdb="tt13645944"), [31], id="movie by the second of its imdb ids"),
+            pytest.param(ExternalIds(tvdb=424242, imdb="tt0424242"), [], id="unknown"),
+        ],
+    )
+    def test_a_lookup_finds_every_title_mapped_to_its_ids(self, ids: ExternalIds, found: list[int]) -> None:
+        assert list(_resolver(anibridge=GRAPH).resolve(ids).kept) == found
 
     def test_the_library_filter_keeps_every_id_a_title_is_found_by(self) -> None:
         anibridge = _resolver(anibridge=GRAPH).anibridge
         assert anibridge is not None
 
-        assert anibridge.known_external_ids("tvdb_id") == {74796, 600, 111, 222}
-        assert anibridge.known_external_ids("tmdb_movie_id") == {888}
-        assert anibridge.known_external_ids("imdb_id") == {"tt0269", "tt300", "tt0400"}
+        assert anibridge.known_external_ids("tvdb_id") == {74796, 111, 222}
+        assert anibridge.known_external_ids("tmdb_movie_id") == {888, 21832, 54270}
+        assert anibridge.known_external_ids("imdb_id") == {"tt0269", "tt0400", "tt0169880", "tt13645944"}
 
 
 class TestAniBridgeRanges:
