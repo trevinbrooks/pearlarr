@@ -1,5 +1,5 @@
 # pyright: strict
-"""The arr-side activity read (`ArrActivityReader`), and what a run checks again by it.
+"""The arr-side activity read (`ArrActivityReader`).
 
 The reader asks the arr's history for the records since its checkpoint, from a little over a day before it, as the
 two clocks may differ. With no checkpoint it asks from as far back as it reaches. A checkpoint from further back
@@ -7,15 +7,11 @@ than that, or one it can't read, has it ask from there too and have every title 
 skips may hide a change. It skips the records it has already seen and names the items a file change touched,
 pearlarr's own grabs among them. A failed read names nothing and leaves the checkpoint as it was.
 
-The run half runs whole Sonarr runs over a library an earlier run cached unchanged, reading the titles the run
-showed unchanged and the note its activity read ended its boot step on. What a run stores of the read for the next
-run is in `test_arr_run_scan`.
+What a run checks again by the read, and stores of it for the next run, is in `test_arr_run_recheck`.
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import override
 
 import pytest
 
@@ -27,25 +23,14 @@ from pearlarr.arr_activity import (
     parse_history_date,
 )
 from pearlarr.arr_models import HistoryRecord
-from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import Arr
-from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, TitleHeader
-from pearlarr.output.events import TitleState
 
 from .builders import (
     FakeCacheStore,
-    FakeSeaDexSource,
-    drive_arr_run,
-    make_config,
-    make_entry_record,
     make_logger,
-    make_run_deps,
-    sonarr_file_imported,
 )
-from .fakes import CaptureHandler, FakeArrItem, FakeStrategy, RecordingHub, install_recording_hub
-from .wait_fakes import FakeQbit
+from .fakes import CaptureHandler
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
 
@@ -322,142 +307,3 @@ class TestRead:
         assert scan.touched == frozenset({5})
         activity.stage_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
-
-
-_ENTRIES = {anilist_id: make_entry_record(anilist_id=anilist_id) for anilist_id in (1, 2)}
-"""SeaDex's entries of the `_CachedLibrary` titles."""
-
-
-class _CachedLibrary(FakeStrategy):
-    """Sonarr's side of a library of series 1 and 2, each mapping one title, whose AniList id is the series' id.
-
-    Each title goes through the unchanged gate as both strategies send it, and is checked no further. `history` is
-    Sonarr's history, and the start-of-run hook names the titles in `check_again`.
-    """
-
-    def __init__(self, services: ArrRunServices, history: list[HistoryRecord], check_again: frozenset[int]) -> None:
-        super().__init__(items=[FakeArrItem(item_id=1), FakeArrItem(item_id=2)], anilist_ids={}, history=history)
-        self.check_again = set(check_again)
-        self._services = services
-
-    @override
-    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        return {item.id: TitleMapping(anilist_id=item.id)}
-
-    @override
-    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        entry = self._services.begin_check(anilist_id)
-        if entry is not None:
-            self._services.is_unchanged(anilist_id, entry, lambda: "")
-
-
-def _cache_left_unchanged(checkpoint: HistoryCheckpoint | None = None) -> FakeCacheStore:
-    """A cache an earlier run left both `_CachedLibrary` titles unchanged in, with `checkpoint` its activity read's.
-
-    Each row has the url a run writes, so the gate never fills one in as it does for an older row.
-    """
-
-    cache = FakeCacheStore()
-    for anilist_id, entry in _ENTRIES.items():
-        cache.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": entry.updated_at, "url": entry.url})
-    if checkpoint is not None:
-        cache.put_history_checkpoint(Arr.SONARR, checkpoint)
-    return cache
-
-
-def _shown_unchanged(recording: RecordingHub) -> list[int | None]:
-    """The titles the run showed as unchanged, so left unchecked."""
-
-    return [header.anilist_id for header in recording.of_type(TitleHeader) if header.state is TitleState.UNCHANGED]
-
-
-def _activity_note(recording: RecordingHub) -> str | None:
-    """The note the run's activity read ended its boot step on. None when the run showed no such step."""
-
-    notes = [step.detail for step in recording.of_type(BootStepFinished) if step.label == "Checking Sonarr activity"]
-    return notes[0] if notes else None
-
-
-@dataclass(frozen=True, kw_only=True)
-class _Situation:
-    """What a run over the `_CachedLibrary` meets.
-
-    `imported_into` is the series Sonarr's history shows a file imported into since `checkpoint`, None for no
-    history. The two settings are the config's, and `check_again` the titles the start-of-run hook names.
-    """
-
-    imported_into: int | None = 1
-    checkpoint: HistoryCheckpoint | None = None
-    detect_activity: bool = True
-    ignore_update_times: bool = False
-    check_again: frozenset[int] = frozenset()
-
-
-_GAP = HistoryCheckpoint("2020-01-01T00:00:00Z", 1)
-"""A checkpoint from further back than the history read reaches, so the history since it can't all be read.
-
-Its record 1 came before `sonarr_file_imported`'s.
-"""
-
-
-class TestWhatARunChecksAgain:
-    """A run checks again the cached titles Sonarr's history or the start-of-run hook names.
-
-    A title is named by a file change in its series since the last run, and every title is when that history can't
-    all be read. A history read that names no title leaves the hook's titles named. Either setting that turns the
-    history read off skips its boot step, and with the ignore flag every title is checked anyway.
-    """
-
-    @pytest.mark.parametrize(
-        ("situation", "unchanged", "note"),
-        [
-            pytest.param(_Situation(), [2], "1 title to check again", id="touched"),
-            pytest.param(_Situation(imported_into=99), [1, 2], "none", id="not-in-the-library"),
-            pytest.param(
-                _Situation(imported_into=99, checkpoint=_GAP),
-                [],
-                "history gap - checking every title again",
-                id="history-gap",
-            ),
-            pytest.param(_Situation(detect_activity=False), [1, 2], None, id="detection-off"),
-            pytest.param(_Situation(ignore_update_times=True), [], None, id="ignoring-update-times"),
-            pytest.param(
-                _Situation(imported_into=None, check_again=frozenset({2})), [1], "none", id="start-of-run-hook"
-            ),
-        ],
-    )
-    def test_a_run_checks_again_the_titles_its_history_read_and_start_of_run_hook_name(
-        self, situation: _Situation, unchanged: list[int], note: str | None
-    ) -> None:
-        config = make_config(
-            url="http://sonarr",
-            api_key="key",
-            detect_arr_activity=situation.detect_activity,
-            ignore_seadex_update_times=situation.ignore_update_times,
-        )
-        history = [] if situation.imported_into is None else [sonarr_file_imported(situation.imported_into)]
-        cache = _cache_left_unchanged(situation.checkpoint)
-        deps = make_run_deps(config=config, cache_store=cache, seadex=FakeSeaDexSource(_ENTRIES))
-        recording = install_recording_hub()
-
-        drive_arr_run(deps, lambda services: _CachedLibrary(services, history, situation.check_again))
-
-        assert _shown_unchanged(recording) == unchanged
-        assert _activity_note(recording) == note
-
-    def test_a_checkpoint_held_by_an_unreachable_seadex_replays_its_history_on_the_next_healthy_run(self) -> None:
-        # The run that found SeaDex unreachable checked nothing, so the file imported into series 1 still drives a
-        # check on the next run. Both are real runs, as only a real run's stores are saved.
-        cache = _cache_left_unchanged()
-        history = [sonarr_file_imported(1)]
-        unreachable = make_run_deps(
-            cache_store=cache, qbit=FakeQbit().client(), seadex=FakeSeaDexSource(unreachable=True)
-        )
-        drive_arr_run(unreachable, lambda services: _CachedLibrary(services, history, frozenset()))
-        recording = install_recording_hub()
-
-        healthy = make_run_deps(cache_store=cache, qbit=FakeQbit().client(), seadex=FakeSeaDexSource(_ENTRIES))
-        drive_arr_run(healthy, lambda services: _CachedLibrary(services, history, frozenset()))
-
-        assert _shown_unchanged(recording) == [2]
-        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, history[0].id)

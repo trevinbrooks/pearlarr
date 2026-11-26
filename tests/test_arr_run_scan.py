@@ -1,18 +1,17 @@
 # pyright: strict
 """Tests for an arr run up to the end of its scan.
 
-What the boot steps show, which library items the scan checks and what it shows for each, what the scan commits as
-it goes and the pause it keeps between titles, and what a full scan stores for the next run.
+What the boot steps show, which library items the scan checks and what it shows for each, and what the scan commits
+as it goes and the pause it keeps between titles.
 
 Each test runs a whole Sonarr run, the loop and its services built by their constructors. The arr's side is a
 strategy that lists a library and records each title the scan asks it to check, or the real Sonarr strategy where
 only it shows the outcome. The outcome is read off the events the run showed, the titles the scan asked to check,
 and the cache the run left, reopened where what a stop keeps is the point. How the run ends once the scan is done is
-in `test_arr_run_finish`.
+in `test_arr_run_finish`, and what a run checks again and stores for the next run in `test_arr_run_recheck`.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
@@ -57,7 +56,6 @@ from .fakes import (
     FakeSonarrClient,
     FakeStrategy,
     RecordingHub,
-    diagnostic_messages,
     install_recording_hub,
 )
 from .wait_fakes import FakeQbit
@@ -320,118 +318,6 @@ def test_the_boot_view_closes_on_its_ready_line_before_the_scan_starts() -> None
         if isinstance(event, BootReady | ScanStarted) or event == ScopeClosed(scope=boot)
     ]
     assert order == [BootReady, ScopeClosed, ScanStarted]
-
-
-_OLDER_SELECTION = "an-older-selection"
-"""The selection hash an earlier full run stored, under selection settings changed since."""
-
-
-class _Series3(FakeStrategy):
-    """A library of series 3 mapping title 11, its history the one import.
-
-    `services` holds each title past the cap, and with `fails` the title's check raises.
-    """
-
-    def __init__(self, services: ArrRunServices | None = None, *, fails: bool = False) -> None:
-        super().__init__(
-            items=[FakeArrItem(item_id=3)],
-            anilist_ids={11: TitleMapping(anilist_id=11)},
-            services=services,
-            history=[sonarr_file_imported(3)],
-        )
-        self._fails = fails
-
-    @override
-    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        if self._fails:
-            raise RuntimeError("check failed")
-        super().check_title(item, anilist_id, mapping)
-
-
-@dataclass(frozen=True, kw_only=True)
-class _Coverage:
-    """How far a run's scan covered the library.
-
-    That is its narrowing to one series, the sources unreachable or holding a title, and a failed check.
-    """
-
-    item_id: int | None = None
-    seadex_unreachable: bool = False
-    anilist_unreachable: bool = False
-    held_past_the_cap: bool = False
-    title_fails: bool = False
-
-
-class TestSelectionRecheck:
-    """A run over changed selection settings checks the cached titles again, and a full scan stores the new settings.
-
-    The note says why the titles are checked again. A single-item run checks only its series and can't store the
-    settings, so the note would overstate it and recur. With the ignore flag every title is checked anyway. The run's
-    activity checkpoint is stored with the settings or not at all.
-    """
-
-    _NOTE = "Selection settings changed - checking cached titles again"
-
-    @pytest.mark.parametrize(
-        ("changed", "item_id", "ignore_update_times", "announced"),
-        [
-            pytest.param(True, None, False, True, id="changed"),
-            pytest.param(False, None, False, False, id="unchanged"),
-            pytest.param(True, 3, False, False, id="single-item"),
-            pytest.param(True, None, True, False, id="ignoring-update-times"),
-        ],
-    )
-    def test_a_changed_selection_is_announced_only_on_a_full_run_that_reads_update_times(
-        self, changed: bool, item_id: int | None, ignore_update_times: bool, announced: bool
-    ) -> None:
-        config = make_config(url="http://sonarr", api_key="key", ignore_seadex_update_times=ignore_update_times)
-        cache = FakeCacheStore()
-        cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION if changed else config.selection_hash())
-        recording = install_recording_hub()
-
-        drive_arr_run(make_run_deps(config=config, cache_store=cache), lambda _: _Series3(), item_id=item_id)
-
-        assert (self._NOTE in diagnostic_messages(recording)) is announced
-
-    @pytest.mark.parametrize(
-        ("coverage", "stored"),
-        [
-            pytest.param(_Coverage(), True, id="full"),
-            pytest.param(_Coverage(item_id=3), False, id="single-item"),
-            pytest.param(_Coverage(seadex_unreachable=True), False, id="no-seadex"),
-            # A title AniList left unread isn't cached, so the next run checks it whatever this one stored.
-            pytest.param(_Coverage(anilist_unreachable=True), True, id="no-anilist"),
-            # So is a title held past the cap.
-            pytest.param(_Coverage(held_past_the_cap=True), True, id="held-past-the-cap"),
-            # And one whose check failed: blocking the stores, one flaky title would have the library checked again
-            # every run.
-            pytest.param(_Coverage(title_fails=True), True, id="a-title-failed"),
-        ],
-    )
-    def test_a_full_scan_seadex_answered_stores_the_selection_and_the_checkpoint(
-        self, coverage: _Coverage, stored: bool
-    ) -> None:
-        # Left unstored, the next run checks the cached titles again and replays the same activity. The run is a real
-        # one, as only a real run's stores are saved.
-        cache = FakeCacheStore()
-        cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION)
-        deps = make_run_deps(
-            cache_store=cache,
-            qbit=FakeQbit().client(),
-            seadex=FakeSeaDexSource(unreachable=coverage.seadex_unreachable),
-            anilist_client=ScriptedAniListClient(failing=frozenset({11} if coverage.anilist_unreachable else ())),
-        )
-
-        drive_arr_run(
-            deps,
-            lambda services: _Series3(services if coverage.held_past_the_cap else None, fails=coverage.title_fails),
-            item_id=coverage.item_id,
-        )
-
-        selection_stored = not cache.selection_changed(Arr.SONARR, deps.config.selection_hash())
-        checkpoint_stored = cache.get_history_checkpoint(Arr.SONARR) is not None
-        assert selection_stored is stored
-        assert checkpoint_stored is stored
 
 
 class _Staging(FakeStrategy):
