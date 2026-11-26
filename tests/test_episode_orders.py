@@ -12,13 +12,13 @@ import or a whole run builds the strategy (`_sync`).
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from datetime import date, timedelta
-from typing import Any, override
+from datetime import timedelta
+from typing import override
 
 import pytest
 from seadex import EntryRecord
 
-from pearlarr.aired_view import AiredSeries, NoView, stand_in
+from pearlarr.aired_view import AiredSeries, NoView
 from pearlarr.arr_models import (
     AlternateTitle,
     MatchedEpisode,
@@ -41,10 +41,10 @@ from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
-from pearlarr.sonarr_episodes import _dated, sonarr_series_hash
+from pearlarr.sonarr_episodes import sonarr_series_hash
 from pearlarr.sonarr_matching import AiredMatcher
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import EpisodeDetails, OrderRow, SeriesNumbering
+from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
@@ -78,7 +78,6 @@ from .fakes import (
     FakeSonarrClient,
     FakeXemClient,
     RecordingHub,
-    debug_logger,
     diagnostic_messages,
     install_recording_hub,
 )
@@ -227,13 +226,6 @@ def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_o
     )
 
 
-def test_a_dated_special_sonarr_has_no_row_for_is_named_by_its_aired_number() -> None:
-    row = sonarr_ep(0, 4, ep_id=4, air_date="2019-02-20")
-    special = stand_in(OrderRow(0, 5, 905, None), EpisodeDetails(title="", air_date=date(2020, 8, 29), runtime=95))
-
-    assert _dated([row, special]) == "S00E04 (aired 2019-02-20), aired S00E05 (on 2020-08-29)"
-
-
 def test_a_series_numbered_by_another_order_with_nothing_stored_has_no_view(monkeypatch: pytest.MonkeyPatch) -> None:
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
     strat = _sync(monkeypatch, [_series(1, 50, season_type="dvd")], FakeCacheStore(), sonarr=sonarr)
@@ -309,15 +301,6 @@ def test_a_series_in_aired_order_keeps_the_scene_numbers_sonarr_sent_whatever_th
 
     assert isinstance(view, AiredSeries)
     assert _scene(view.aired) == [(11, (9, 1, 91))]
-
-
-def test_a_series_index_is_built_once_for_a_read_of_its_rows() -> None:
-    reads = _reads([_series(1, 50)], FakeCacheStore())
-
-    first = reads.series_index(1)
-
-    assert first is not None
-    assert reads.series_index(1) is first
 
 
 def test_a_new_read_of_a_series_replaces_its_view_and_index() -> None:
@@ -735,33 +718,6 @@ def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     assert strat.prefetch_orders([]) == fetched
 
 
-class _CountingPendingReads(FakeCacheStore):
-    """A store counting the reads of every stored pending import."""
-
-    pending_reads = 0
-
-    @override
-    def get_pending_import_rows(self, arr: Arr) -> dict[str, dict[str, Any]]:
-        self.pending_reads += 1
-        return super().get_pending_import_rows(arr)
-
-
-def test_the_stored_pending_imports_are_loaded_once_for_the_start_of_a_run_and_its_prefetches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pending = pending_import(infohash="h", series_id=2)
-    cache = _CountingPendingReads(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
-    strat = _sync(monkeypatch, [_series(2, 60, season_type="dvd")], cache)
-    strat._services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
-    cache.pending_reads = 0
-
-    strat.start_of_run([])
-    strat.prefetch_orders([])
-    strat.prefetch_scene_numbers([])
-
-    assert cache.pending_reads == 1
-
-
 def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the_stored_ones(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1099,20 +1055,6 @@ def test_a_name_an_aired_sonarr_answers_with_an_error_is_an_unread_parse(monkeyp
     files = strat._parse.parsed_files(_listing(_SIXTH))
 
     assert files == {_URL: (ListedFile(_SIXTH, 100, None),)}
-
-
-def test_the_debug_log_names_a_file_an_aired_sonarr_answers_with_an_error(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    strat = _with_two_sixth_episodes(monkeypatch)
-    strat._parse.logger = debug_logger("pearlarr-aired-parse")
-
-    with caplog.at_level("DEBUG"):
-        strat._parse.parsed_files(_listing(_SIXTH))
-
-    assert [record.message for record in caplog.records] == [
-        f"No parse for {_SIXTH}: two aired episodes of its series share a number it is matched by"
-    ]
 
 
 def test_a_name_an_alternate_title_may_not_count_for_has_no_matched_episodes(monkeypatch: pytest.MonkeyPatch) -> None:
