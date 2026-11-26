@@ -175,22 +175,21 @@ def test_every_renderer_sees_every_event_in_order() -> None:
 
 
 class _FileLog(_QuietRenderer):
-    """A file log renderer: keeps each event it's handed until it's closed."""
+    """A file log renderer: keeps each event it's handed, and what it held at each close."""
 
     writes_file_only: ClassVar[bool] = True
 
     def __init__(self) -> None:
         self.events: list[Event] = []
-        self.closed = False
+        self.held_at_each_close: list[list[Event]] = []
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if not self.closed:
-            self.events.append(event)
+        self.events.append(event)
 
     @override
     def close(self) -> None:
-        self.closed = True
+        self.held_at_each_close.append(list(self.events))
 
 
 class _FailingFileLog(_FailingCloseRenderer):
@@ -869,28 +868,39 @@ def test_close_is_idempotent_and_reaches_every_renderer() -> None:
     assert (first.closes, second.closes) == (1, 1)
 
 
+_TEARDOWN_NOTE = Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True)
+
+
 class _NoisyCloser(_QuietRenderer):
     """Emits a file-only teardown note through the process hub from inside its own `close`."""
 
     @override
     def close(self) -> None:
-        emit_to_hub(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
+        emit_to_hub(_TEARDOWN_NOTE)
 
 
 def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
-    """The file renderers close last, so a note from another renderer's close still reaches the file.
-
-    Renderers that raise from close or handle along the way stop none of it.
-    """
+    """The file renderers close last, so a note from another renderer's close still reaches the file."""
 
     file_log = _FileLog()
-    hub = OutputHub([_FailingFileLog(), _FailingCloseRenderer(), _NoisyCloser(), file_log])
+    hub = OutputHub([file_log, _NoisyCloser()])
+    install_hub(hub)  # so the closer's note comes to this hub
+
+    hub.close()
+
+    assert file_log.held_at_each_close == [[_TEARDOWN_NOTE]]
+
+
+def test_a_renderer_raising_from_close_or_the_teardown_hand_off_never_stops_the_close() -> None:
+    file_log = _FileLog()
+    hub = OutputHub([_FailingCloseRenderer(), _FailingFileLog(), _NoisyCloser(), file_log])
     install_hub(hub)
 
     hub.close()
 
-    assert file_log.events == [Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True)]
-    assert file_log.closed
+    # Each raise comes ahead of the file log's turn: the first from a close, the next two from the failing file log
+    # as it's handed the note and as it's closed. The file log still gets both.
+    assert file_log.held_at_each_close == [[_TEARDOWN_NOTE]]
 
 
 def test_close_hands_no_teardown_chatter_to_a_struck_out_file_log() -> None:
