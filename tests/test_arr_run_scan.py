@@ -107,11 +107,7 @@ class TestWhichItemsAreChecked:
         assert _rows(recording) == [(TitleState.UNMONITORED, "Dandadan")]
 
     def test_the_seadex_fetch_counts_only_the_monitored_items_when_set_to_ignore_the_rest(self) -> None:
-        library = _Library(
-            FakeArrItem(item_id=1, title="Frieren"),
-            FakeArrItem(item_id=2, title="Dandadan"),
-            FakeArrItem(item_id=3, title="Kaiju No. 8", monitored=False),
-        )
+        library = _Library(FakeArrItem(item_id=1), FakeArrItem(item_id=2), FakeArrItem(item_id=3, monitored=False))
 
         recording = _scan(library, ignore_unmonitored=True)
 
@@ -119,7 +115,7 @@ class TestWhichItemsAreChecked:
         assert step.detail == "2 entries"
 
     def test_a_single_item_run_scans_only_the_item_asked_for(self) -> None:
-        library = _Library(FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"))
+        library = _Library(FakeArrItem(item_id=1), FakeArrItem(item_id=2, title="Dandadan"))
 
         recording = _scan(library, item_id=2)
 
@@ -127,9 +123,7 @@ class TestWhichItemsAreChecked:
         assert recording.of_type(ItemStarted) == [ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Dandadan")]
 
     def test_an_item_with_no_anilist_mapping_is_shown_as_having_none(self) -> None:
-        library = _Library(
-            FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2, title="Dandadan"), unmapped="Frieren"
-        )
+        library = _Library(FakeArrItem(item_id=1, title="Frieren"), FakeArrItem(item_id=2), unmapped="Frieren")
 
         recording = _scan(library)
 
