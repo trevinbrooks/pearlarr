@@ -46,8 +46,13 @@ from pearlarr.paths import PROJECT_URL
 from .fakes import diagnostic_messages, install_recording_hub
 
 
-def _no_sleep(_seconds: float) -> None:
-    """Replace `time.sleep` so the retry backoffs don't actually wait."""
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Each wait the client asks for, in order, in place of really sleeping."""
+
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    return waits
 
 
 def _client() -> AniListClient:
@@ -260,10 +265,9 @@ def test_retryable_constants() -> None:
 
 
 @respx.mock
-def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_returns_valid_200_body() -> None:
     """A single 200 with a valid body is returned verbatim after one request."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     expected: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
     route = respx.post(API_URL).respond(json=expected)
 
@@ -290,10 +294,10 @@ def test_every_post_carries_the_project_referer() -> None:
 
 
 @respx.mock
-def test_query_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("slept")
+def test_query_retries_after_http_429() -> None:
     """A 429 is retried. The following 200 succeeds, for two total requests."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
     route.side_effect = [
@@ -308,10 +312,10 @@ def test_query_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @respx.mock
-def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("slept")
+def test_query_retries_on_throttle_error_body() -> None:
     """A soft-throttle (HTTP 200 + throttle error payload) takes the same retry path as a 429."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     throttled: dict[str, object] = {
         "data": None,
         "errors": [{"message": "Too Many Requests", "status": 429}],
@@ -330,14 +334,13 @@ def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -
 
 
 @respx.mock
-def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_batch_reshapes_page_media_by_id() -> None:
     """A Page body is re-keyed to {id: single-id-shaped body}, so the results can populate the run cache directly.
 
     Junk, id-less and non-int-id elements in the media array are skipped (an id
     unknown to AniList is simply absent, never an error).
     """
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     page: dict[str, object] = {
         "data": {"Page": {"media": [{"id": 1, "episodes": 12}, "junk", {"episodes": 9}, {"id": "7", "episodes": 3}]}},
     }
@@ -350,10 +353,9 @@ def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) 
 
 
 @respx.mock
-def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_json_array_body_is_no_data() -> None:
     """A 200 whose body is a JSON *array* falls to the {} no-data branch instead of being laundered as a dict (which used to crash the callers' .get walks)."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     route = respx.post(API_URL).respond(json=[1, 2, 3])
 
     body = _client().query(1)
@@ -371,10 +373,10 @@ _SKIPPING = "skipping further lookups this run"
 
 
 @respx.mock
-def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("slept")
+def test_rate_limit_wait_is_narrated() -> None:
     """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never marks AniList unreachable."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = install_recording_hub()
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
@@ -395,6 +397,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @respx.mock
+@pytest.mark.usefixtures("slept")
 @pytest.mark.parametrize(
     ("effect", "returned"),
     [
@@ -402,12 +405,9 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.param(httpx.ConnectError("down"), {}, id="unreachable"),
     ],
 )
-def test_give_up_marks_anilist_unreachable(
-    monkeypatch: pytest.MonkeyPatch, effect: httpx.Response | Exception, returned: dict[str, object]
-) -> None:
+def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, returned: dict[str, object]) -> None:
     """Exhausting the retries warns ONCE and marks AniList unreachable: later calls never touch the wire."""
 
-    monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = install_recording_hub()
     client = _client()
     route = respx.post(API_URL).mock(side_effect=[effect] * (MAX_RETRIES + 1))
