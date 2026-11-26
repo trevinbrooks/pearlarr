@@ -840,21 +840,23 @@ class _FailingSetLevel(_FailingRenderer):
 @pytest.mark.parametrize(
     ("flaky_type", "call", "logged"),
     [
-        pytest.param(_FailingBeginRun, _begin_run, ["begin_run", "close"], id="begin_run"),
-        pytest.param(_FailingSetLevel, _set_level, ["close"], id="set_level"),
+        pytest.param(_FailingBeginRun, _begin_run, ["begin_run"], id="begin_run"),
+        pytest.param(_FailingSetLevel, _set_level, [], id="set_level"),
     ],
 )
-def test_a_renderer_raising_from_a_lifecycle_call_strikes_out_and_the_call_goes_on(
+def test_a_renderer_raising_from_a_lifecycle_call_takes_a_strike_and_the_call_goes_on(
     flaky_type: type[_FailingRenderer], call: Callable[[OutputHub], None], logged: list[str]
 ) -> None:
     flaky, survivor = flaky_type(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor], strike_limit=1)  # one strike is enough to see it
+    hub = OutputHub([flaky, survivor])
 
     call(hub)
-    hub.emit(_EVENT)
+    for _ in range(3):
+        hub.emit(_EVENT)
 
-    assert flaky.log == logged  # struck out and closed, so it never sees the event
-    assert (survivor.levels, survivor.events) == ([logging.INFO], [_EVENT])
+    # The call's failure is its first strike, so the second event is its third.
+    assert flaky.log == [*logged, "PearlarrStarted", "PearlarrStarted", "close"]
+    assert survivor.levels == [logging.INFO]
 
 
 def test_close_is_idempotent_and_reaches_every_renderer() -> None:
