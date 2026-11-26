@@ -6,6 +6,8 @@ typed error instead. Transient GET failures retry and others don't. A POST never
 could queue a command twice, and a DELETE leaves its retry to the caller's next run or poll. Repeat
 failures stay quiet, re-warn on a timer and end with a recovery note. The API key travels only in the
 `X-Api-Key` header, and a redirect is never followed, so a 3xx can't replay the key somewhere else.
+
+Also how many reads a run has under way at once (`fetch_workers`).
 """
 
 import json
