@@ -176,7 +176,7 @@ class TestReportImportsForSeries:
         # The grab starts its pending import and its title block reports it, so the series report leaves it be.
         state = ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
         store = FakeCacheStore()
-        qbit = FakeQbit({"h1": [FakeTorrent(is_complete=True, content_path="/d", name="Show")]})
+        qbit = FakeQbit({"h1": [FakeTorrent(is_complete=True, content_path="/d")]})
         pipeline = make_grab_pipeline(make_run_deps(cache_store=store, qbit=qbit.client()), state)
         mgr = make_orchestration_manager(
             qbit=qbit,
