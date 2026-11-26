@@ -20,9 +20,11 @@ import pytest
 
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
-from pearlarr.cache import CachedTitleUpdate
+from pearlarr.cache import CachedTitle, CachedTitleUpdate
 from pearlarr.config import Arr
+from pearlarr.output import Accent, StyledValue, TitleDetail
 from pearlarr.pending_import import TitleNames
+from pearlarr.tvdb_orders import AIRED_ORDER
 
 from .builders import (
     AddStatus,
@@ -32,11 +34,64 @@ from .builders import (
     ScriptedAniListClient,
     grab_request,
     make_anilist_gateway,
+    make_config,
     make_entry_record,
     make_grab_pipeline,
+    make_run_deps,
     make_services,
     one_release_dict,
 )
+from .fakes import install_recording_hub
+from .wait_fakes import FakeQbit
+
+_URL = "https://releases.moe/7"
+_COVERAGE = "S01 E01-E12"
+_CACHED_ON = datetime(2026, 1, 1)
+"""SeaDex's update time for title 7's entry, the one its row was cached under."""
+
+_SETTINGS = make_config()
+
+
+def _checked() -> CachedTitleUpdate:
+    """What a Sonarr check of title 7 gathers for its row, before the check's end adds the fallback mark.
+
+    Fresh each call, since the end writes into it.
+    """
+
+    return {
+        "updated_at": _CACHED_ON,
+        "name": "Show",
+        "url": _URL,
+        "coverage": _COVERAGE,
+        "season_type": AIRED_ORDER,
+        "series_row_count": 12,
+    }
+
+
+def _cached_row(*, fallback_satisfied: bool = False) -> CachedTitleUpdate:
+    """Title 7's row as a Sonarr check leaves it."""
+
+    row = _checked()
+    row["fallback_satisfied"] = fallback_satisfied
+    return row
+
+
+def _services(cache: FakeCacheStore) -> ArrRunServices:
+    """One run's services over the cache, built as bootstrap builds them for each run.
+
+    qBittorrent is set up, so the run is no dry run and what it caches is what the next run reads.
+    """
+
+    deps = make_run_deps(config=_SETTINGS, cache_store=cache, qbit=FakeQbit().client())
+    return ArrRunServices(deps, Arr.SONARR)
+
+
+def _holding(row: CachedTitleUpdate) -> FakeCacheStore:
+    """A cache holding title 7's row."""
+
+    cache = FakeCacheStore()
+    cache.update_cached_title(Arr.SONARR, 7, row)
+    return cache
 
 
 class _RecordingCacheStore(FakeCacheStore):
@@ -240,10 +295,6 @@ class TestIsUnchanged:
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
-_CACHED_ON = datetime(2026, 1, 1)
-"""SeaDex's update time for title 7's entry, the stamp its row carries while it is cached."""
-
-
 class TestACheckedTitleLosesItsStamp:
     """The gate clears the stamp of a title it sends on to a check: only a check that caches it writes it back."""
 
@@ -365,16 +416,6 @@ class TestFallbackSatisfiedResurfacing:
     def test_warn_mode_finds_an_unmarked_title_unchanged(self) -> None:
         assert self._skips(self._cache(marker=False), "warn") is True
 
-    def test_report_no_releases_clears_a_preseeded_marker(self) -> None:
-        # A title that stops yielding usable releases is never fallback-satisfied:
-        # the shared tail overwrites an old True.
-        cache = self._cache(marker=True)
-        run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
-        run.report_no_releases(7, {"name": "Title"})
-        cached = cache.get_cached_title(Arr.SONARR, 7)
-        assert cached is not None
-        assert cached.fallback_satisfied is False
-
 
 class _CtxBind:
     """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
@@ -406,33 +447,47 @@ class _TailReporter:
         return True
 
 
-class TestReportNoReleases:
-    """`report_no_releases` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
+_NO_RELEASES = TitleDetail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
 
-    def test_logs_persists_and_reports_not_grabbed(self) -> None:
-        # The real three-step tail (log + cache write + throttle). Its body
-        # previously had fake-only coverage: the interface tests script it, nothing
-        # drove the real thing.
+
+class TestATitleWithNoReleases:
+    """A check that finds no suitable releases on SeaDex says so, and caches what it found unless it was read short."""
+
+    def test_it_is_shown_and_cached_with_what_its_check_found(self) -> None:
+        recording = install_recording_hub()
         cache = FakeCacheStore()
-        reporter = _TailReporter()
-        run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
 
-        run.report_no_releases(7, {"name": "Title", "url": "u"})
+        _services(cache).report_no_releases(7, _checked())
 
-        persisted = cache.get_cached_title(Arr.SONARR, 7)
-        assert persisted is not None
-        assert (persisted.name, persisted.url) == ("Title", "u")
-        assert len(reporter.no_releases_ctxs) == 1
+        assert recording.of_type(TitleDetail) == [_NO_RELEASES]
+        assert cache.get_cached_title(Arr.SONARR, 7) == CachedTitle(
+            updated_at="2026-01-01 00:00:00",
+            name="Show",
+            url=_URL,
+            coverage=_COVERAGE,
+            fallback_satisfied=False,
+            season_type=AIRED_ORDER,
+            series_row_count=12,
+        )
+
+    def test_it_loses_the_mark_a_public_fallback_left(self) -> None:
+        # The write merges into the row, so the mark an earlier fallback grab left stays unless this end clears it.
+        cache = _holding(_cached_row(fallback_satisfied=True))
+
+        _services(cache).report_no_releases(7, _checked())
+
+        row = cache.get_cached_title(Arr.SONARR, 7)
+        assert row is not None
+        assert row.fallback_satisfied is False
 
     def test_a_title_read_without_its_metadata_is_logged_and_left_uncached(self) -> None:
+        recording = install_recording_hub()
         cache = FakeCacheStore()
-        reporter = _TailReporter()
-        run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
 
-        run.report_no_releases(7, {"name": "Title", "url": "u"}, metadata_unread=True)
+        _services(cache).report_no_releases(7, _checked(), metadata_unread=True)
 
+        assert recording.of_type(TitleDetail) == [_NO_RELEASES]
         assert cache.get_cached_title(Arr.SONARR, 7) is None
-        assert len(reporter.no_releases_ctxs) == 1
 
 
 class TestBeginCheck:
