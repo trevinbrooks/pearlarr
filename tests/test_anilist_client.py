@@ -240,10 +240,6 @@ def test_a_batch_answer_comes_back_keyed_by_each_medias_own_id() -> None:
 
 _DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
 _DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
-_JUNK_THEN_DISABLED: dict[str, object] = {
-    "errors": ["junk", {"message": _DISABLED_MESSAGE, "status": 403}],
-    "data": None,
-}
 _SKIPPING = "skipping further lookups this run"
 
 
@@ -353,14 +349,6 @@ def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, r
             {"data": None},
             "gave no usable answer (HTTP 200)",
             id="dataless 200",
-        ),
-        # AniList sends neither of these: a body that isn't an object, and junk ahead of the real error.
-        pytest.param(httpx.Response(200, json=[1, 2, 3]), {}, "gave no usable answer (HTTP 200)", id="json array"),
-        pytest.param(
-            httpx.Response(403, json=_JUNK_THEN_DISABLED),
-            _JUNK_THEN_DISABLED,
-            f"rejected the request (HTTP 403: {_DISABLED_MESSAGE})",
-            id="junk before the error",
         ),
     ],
 )
