@@ -14,6 +14,7 @@ coverage before.
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
@@ -32,8 +33,9 @@ from pearlarr.anibridge import (
     AniBridgeGraph,
     SpecialAliasing,
 )
-from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
+from pearlarr.mapping_store import AnimeIdRow, MappingStore
 from pearlarr.mappings import (
+    ANIDB_MAPPINGS_FILE,
     AnimeIdsByName,
     AnimeIdsRawMapping,
     ExternalIds,
@@ -49,7 +51,7 @@ from pearlarr.paths import resolve_paths
 from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, make_sonarr_episodes, sonarr_ep
-from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
+from .fakes import debug_logger, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
 _WEB = httpx.Client()
@@ -502,7 +504,7 @@ class TestAniBridgeTitleWithoutTvdbRanges:
 
 
 # --------------------------------------------------------------------------- #
-# anidb: contract change (anidb_episode_by_tvdb) edges
+# AniDB anime-lists
 # --------------------------------------------------------------------------- #
 
 ANIDB_XML = """<anime-list>
@@ -524,7 +526,7 @@ def _anidb_resolver() -> MappingResolver:
     return MappingResolver(
         refresh_days=1,
         ignore_anilist_ids=set(),
-        web=_WEB,
+        web=httpx.Client(),
         sources=MappingSources(
             anime=False,
             anidb=root,
@@ -542,20 +544,16 @@ class TestAnidbMappingDict:
 
     def test_season_scoped_mapping(self) -> None:
         resolver = _anidb_resolver()
-        try:
-            assert resolver.has_anidb
-            assert resolver.anidb_episode_by_tvdb(1, 1) == {1: {1: 1, 2: 2}}
-            assert resolver.anidb_episode_by_tvdb(1, 2) == {2: {1: 3, 2: 4}}
-        finally:
-            resolver.close()
+
+        assert resolver.has_anidb
+        assert resolver.anidb_episode_by_tvdb(1, 1) == {1: {1: 1, 2: 2}}
+        assert resolver.anidb_episode_by_tvdb(1, 2) == {2: {1: 3, 2: 4}}
 
     def test_missing_season_or_id_is_empty(self) -> None:
         resolver = _anidb_resolver()
-        try:
-            assert resolver.anidb_episode_by_tvdb(1, 5) == {}  # id known, season absent
-            assert resolver.anidb_episode_by_tvdb(404, 1) == {}  # id unknown
-        finally:
-            resolver.close()
+
+        assert resolver.anidb_episode_by_tvdb(1, 5) == {}  # id known, season absent
+        assert resolver.anidb_episode_by_tvdb(404, 1) == {}  # id unknown
 
     def test_repeated_season_is_last_wins(self) -> None:
         resolver = _anidb_resolver()
@@ -566,117 +564,94 @@ class TestAnidbMappingDict:
 
     def test_ambiguous_id_raises(self) -> None:
         resolver = _anidb_resolver()
-        try:
-            with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
-                resolver.anidb_episode_by_tvdb(2, 1)
-        finally:
-            resolver.close()
+
+        with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
+            resolver.anidb_episode_by_tvdb(2, 1)
 
     def test_disabled_source_is_empty_and_not_available(self) -> None:
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=False,
-                anidb=False,
-                anibridge=False,
-            ),
-        )
-        try:
-            assert not resolver.has_anidb
-            assert resolver.anidb_episode_by_tvdb(1, 1) == {}
-        finally:
-            resolver.close()
+        resolver = _resolver()
+
+        assert not resolver.has_anidb
+        assert resolver.anidb_episode_by_tvdb(1, 1) == {}
 
 
-_HEALTHY_ANIME = '<anime anidbid="1"><mapping-list><mapping tvdbseason="1">;1-1;</mapping></mapping-list></anime>'
+def _boot(data_dir: Path, sources: MappingSources, *, logger: logging.Logger | None = None) -> MappingResolver:
+    """A resolver booted as a run boots it, its source files and mappings.db in `data_dir`, refreshing daily."""
+
+    return MappingResolver(
+        refresh_days=1,
+        ignore_anilist_ids=set(),
+        sources=sources,
+        web=httpx.Client(),
+        mappings_db=str(data_dir / "mappings.db"),
+        logger=logger,
+    )
+
+
+def _untimed(messages: list[str]) -> list[str]:
+    """Log lines with each parse time read as 0.00s."""
+
+    return [re.sub(r"\d+\.\d\ds", "0.00s", message) for message in messages]
+
+
+_COWBOY_BEBOP = '<anime anidbid="23" tvdbid="76885" defaulttvdbseason="1"><name>Cowboy Bebop</name><mapping-list>'
+_ITS_SPECIALS = '<mapping anidbseason="0" tvdbseason="0">;1-1;</mapping></mapping-list></anime>'
+_ONE_PIECE = (
+    '<name>One Piece</name><mapping-list><mapping anidbseason="0" tvdbseason="0">;1-1;</mapping></mapping-list>'
+)
 
 
 class TestAnidbSkipTallies:
-    """`_anidb_rows` tallies what it skips, split by kind.
+    """The boot line for an anime-lists file counts what it skipped by kind, and the rest still maps.
 
-    Id-level drops (missing/non-int anidbid) are *malformed* - 0 on healthy
-    upstream data. Mapping-level drops are *unsupported* forms the parser
-    deliberately doesn't consume (the offset form's empty text, multi-episode
-    spans) - present in the hundreds on a healthy file. A healthy sibling anime
-    comes along in every case to pin that its rows survive the skip.
+    An anime with no usable AniDB id is malformed, which healthy upstream data never has. A mapping form the reader
+    doesn't take (the offset form, which has no text, or an AniDB episode spread over several TVDB ones) is
+    unsupported, and a healthy file has hundreds. Each skipped piece comes before a good one, so a skip that stopped
+    the read would show.
     """
 
-    @staticmethod
-    def _parse(*anime: str) -> m._AnidbParse:
-        xml = f"<anime-list>{''.join(anime)}{_HEALTHY_ANIME}</anime-list>"
-        return m._anidb_rows(ElementTree.fromstring(xml))
-
-    @staticmethod
-    def _assert_healthy_rows_only(parsed: m._AnidbParse) -> None:
-        assert parsed.rows == [AnidbMappingRow(1, 1, 1, 1)]
-        assert parsed.ambiguous == []
-
-    def test_missing_anidbid_is_malformed(self) -> None:
-        parsed = self._parse("<anime><mapping-list/></anime>")
-        assert (parsed.malformed, parsed.unsupported) == (1, 0)
-        self._assert_healthy_rows_only(parsed)
-
-    def test_non_int_anidbid_is_malformed(self) -> None:
-        parsed = self._parse('<anime anidbid="oops"><mapping-list/></anime>')
-        assert (parsed.malformed, parsed.unsupported) == (1, 0)
-        self._assert_healthy_rows_only(parsed)
-
-    def test_offset_form_empty_text_is_unsupported(self) -> None:
-        # The self-closing offset form (start/end/offset attributes, no text).
-        parsed = self._parse(
-            '<anime anidbid="2"><mapping-list>'
-            '<mapping tvdbseason="0" start="1" end="4" offset="10"/>'
-            "</mapping-list></anime>",
-        )
-        assert (parsed.malformed, parsed.unsupported) == (0, 1)
-        self._assert_healthy_rows_only(parsed)
-
-    def test_multi_episode_span_is_unsupported(self) -> None:
-        # The multi-episode form (;3-6+7;): int("6+7") fails, the mapping is skipped.
-        parsed = self._parse(
-            '<anime anidbid="2"><mapping-list><mapping tvdbseason="1">;3-6+7;</mapping></mapping-list></anime>',
-        )
-        assert (parsed.malformed, parsed.unsupported) == (0, 1)
-        self._assert_healthy_rows_only(parsed)
-
+    @pytest.mark.parametrize(
+        ("anime_list", "tally"),
+        [
+            pytest.param(
+                f'<anime tvdbid="81797">{_ONE_PIECE}</anime>{_COWBOY_BEBOP}{_ITS_SPECIALS}',
+                ", 1 malformed skipped",
+                id="missing anidbid",
+            ),
+            pytest.param(
+                f'<anime anidbid="69x" tvdbid="81797">{_ONE_PIECE}</anime>{_COWBOY_BEBOP}{_ITS_SPECIALS}',
+                ", 1 malformed skipped",
+                id="non-int anidbid",
+            ),
+            pytest.param(
+                f'{_COWBOY_BEBOP}<mapping anidbseason="1" tvdbseason="1" start="1" end="26" offset="0"/>{_ITS_SPECIALS}',
+                ", 1 unsupported mapping forms",
+                id="offset form",
+            ),
+            pytest.param(
+                f'{_COWBOY_BEBOP}<mapping anidbseason="1" tvdbseason="1">;3-6+7;</mapping>{_ITS_SPECIALS}',
+                ", 1 unsupported mapping forms",
+                id="multi-episode span",
+            ),
+        ],
+    )
     def test_summary_line_carries_nonzero_tallies_only(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, anime_list: str, tally: str
     ) -> None:
-        # File-based load (the hash-gated path): the DEBUG summary appends each
-        # tally only when nonzero - here 1 unsupported form, 0 malformed.
-        source = tmp_path / "anime-list.xml"
-        source.write_text(
-            "<anime-list>"
-            '<anime anidbid="2"><mapping-list><mapping tvdbseason="0" start="1" end="4"/></mapping-list></anime>'
-            f"{_HEALTHY_ANIME}</anime-list>",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(m, "ANIDB_MAPPINGS_FILE", str(source))
-        logger = logging.getLogger("pearlarr-test-anidb-summary")
-        logger.propagate = False
-        logger.setLevel(logging.DEBUG)
-        capture = CaptureHandler()
-        logger.addHandler(capture)
+        (tmp_path / ANIDB_MAPPINGS_FILE).write_text(f"<anime-list>{anime_list}</anime-list>", encoding="utf-8")
 
-        try:
-            MappingResolver(
-                refresh_days=1,
-                ignore_anilist_ids=set(),
-                web=_WEB,
-                sources=MappingSources(anime=False, anidb=None, anibridge=False),
-                mappings_db=str(tmp_path / "mappings.db"),
-                logger=logger,
-            ).close()
-        finally:
-            logger.removeHandler(capture)
+        with caplog.at_level("DEBUG"):
+            resolver = _boot(
+                tmp_path,
+                MappingSources(anime=False, anidb=None, anibridge=False),
+                logger=debug_logger("pearlarr-anidb-tallies"),
+            )
 
-        [summary] = [r.getMessage() for r in capture.records if r.getMessage().startswith("Indexed")]
-        assert summary.endswith(", 1 unsupported mapping forms)")
-        assert "malformed" not in summary  # zero tallies stay off the line
+        assert _untimed(caplog.messages) == [
+            "Parsing + indexing anime-lists ...",
+            f"Indexed anime-lists (1 mappings, 0.00s{tally})",
+        ]
+        assert resolver.anidb_episode_by_tvdb(23, 0) == {0: {1: 1}}
 
 
 # --------------------------------------------------------------------------- #
