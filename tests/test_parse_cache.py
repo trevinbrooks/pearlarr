@@ -44,20 +44,17 @@ _OTHER_NAME = "[X] Show - 02.mkv"
 _NO_SERIES = ParsedFileInfo()
 
 
-def _matched(season: int, episode: int) -> ParsedFileInfo:
-    """A parse Sonarr resolved to one series episode, its episode id left out."""
+def _of_series(series_id: int, episode: int = 1) -> ParsedFileInfo:
+    """A parse Sonarr matched to season 1 episode `episode` of the series with that id.
 
-    return ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=season, episode_number=episode),))
-
-
-def _of_series(series_id: int) -> ParsedFileInfo:
-    """A parse Sonarr matched to the first episode of the series with that id."""
+    Sonarr matches episodes only once it has matched a series, so every parse with matched episodes names one.
+    """
 
     return ParsedFileInfo(
         season_number=1,
-        episode_numbers=(1,),
+        episode_numbers=(episode,),
         series_title="Show",
-        matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=11),),
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=episode, id=episode),),
         series_id=series_id,
     )
 
@@ -119,12 +116,12 @@ class TestParseFreshness:
         ("row", "read_back"),
         [
             pytest.param(
-                _record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS - 1),
-                _matched(1, 1),
+                _record(_of_series(7), days_ago=SONARR_PARSE_CACHE_TTL_DAYS - 1),
+                _of_series(7),
                 id="matched-inside-the-ttl",
             ),
             pytest.param(
-                _record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1), None, id="matched-past-the-ttl"
+                _record(_of_series(7), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1), None, id="matched-past-the-ttl"
             ),
             pytest.param(
                 _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS - 1, series_hash="fp"),
@@ -190,7 +187,7 @@ class TestParseCacheRows:
         # it and validation is what misses.
         row: dict[str, object] = {
             "fetched_at": _stamp(1),
-            "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
+            "parse": {**parse_to_json(_of_series(7)), "episode_numbers": "one"},
         }
         store = FakeCacheStore(sonarr_parse={_NAME: row})
 
@@ -198,7 +195,7 @@ class TestParseCacheRows:
 
     def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
         # The model would read the missing title as "", so the key decides, inside the TTL.
-        store = FakeCacheStore(sonarr_parse={_NAME: _untitled(_matched(1, 1))})
+        store = FakeCacheStore(sonarr_parse={_NAME: _untitled(_of_series(7))})
         rows = ParseCacheRows(store)
 
         assert not rows.is_fresh(_NAME, window=_window())
@@ -231,7 +228,7 @@ class TestParsedFilesCache:
     @pytest.mark.parametrize(
         ("answer", "asked"),
         [
-            pytest.param(_matched(1, 1), [_NAME], id="matched"),
+            pytest.param(_of_series(1), [_NAME], id="matched"),
             pytest.param(_NO_SERIES, [_NAME], id="no-matched-episode"),
             pytest.param(None, [_NAME, _NAME], id="no-answer"),
         ],
@@ -252,7 +249,7 @@ class TestParsedFilesCache:
         days_ago = SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1
         cache = FakeCacheStore(
             sonarr_parse={
-                _NAME: _record(_matched(1, 1), days_ago=days_ago),
+                _NAME: _record(_of_series(1), days_ago=days_ago),
                 _OTHER_NAME: _record(_NO_SERIES, days_ago=days_ago, series_hash=_HASH),
             }
         )
@@ -264,13 +261,15 @@ class TestParsedFilesCache:
 
     def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
         # Video files only, each with its own listed size and its parse.
-        answers = {_NAME: _matched(1, 1), _OTHER_NAME: _matched(1, 2)}
+        answers = {_NAME: _of_series(1), _OTHER_NAME: _of_series(1, episode=2)}
         sonarr = FakeSonarrClient(parse_fn=answers.get)
         listing = _listing({_NAME: 100, "[X] Show - 01.ass": 1, "[X] OST - 01.flac": 2, _OTHER_NAME: 200})
 
         gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(listing)
 
-        assert gathered == {"u": (ListedFile(_NAME, 100, _matched(1, 1)), ListedFile(_OTHER_NAME, 200, _matched(1, 2)))}
+        assert gathered == {
+            "u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 200, _of_series(1, episode=2)))
+        }
 
     def test_names_not_yet_stored_go_to_sonarr_at_once(self) -> None:
         # Each answer waits, 30 seconds at most, for the other name to be asked, so asking one at a time fails.
@@ -279,10 +278,10 @@ class TestParsedFilesCache:
         def answer(name: str) -> ParsedFileInfo:
             del name
             both_asked.wait()
-            return _matched(1, 1)
+            return _of_series(1)
 
         sonarr = FakeSonarrClient(parse_fn=answer)
 
         gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
 
-        assert gathered == {"u": (ListedFile(_NAME, 100, _matched(1, 1)), ListedFile(_OTHER_NAME, 100, _matched(1, 1)))}
+        assert gathered == {"u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 100, _of_series(1)))}
