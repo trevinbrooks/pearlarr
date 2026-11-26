@@ -64,10 +64,8 @@ from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
-    _configured_format,
     _console_renderer,
     _handle_sigterm,
-    _run_format,
     cache_backup,
     cache_check,
     cache_remove,
@@ -78,13 +76,12 @@ from pearlarr.cli import (
     config_show,
     config_validate,
     pearlarr_cli,
-    run_scheduled,
     run_single,
 )
 from pearlarr.config import AppConfig, Arr, ArrTarget, LogFormat, template_path
 from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.console_features import DetectedFeatures
-from pearlarr.log import LOG_NAME, HubBridgeBase, LogLevel, RichConsoleHandler, apply_log_level, setup_logger
+from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     Diagnostic,
     FileLogRenderer,
@@ -100,8 +97,8 @@ from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
-from .builders import make_logger, write_cache_db
-from .fakes import RecordingHub, TtyStringIO, diagnostic_messages, install_recording_hub
+from .builders import write_cache_db
+from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
 from .scan_goldens import SUMMARY_MINIMAL
 
 
@@ -137,6 +134,22 @@ def _lines(text: str) -> list[str]:
     """A run's plain console or log file lines, without the timestamp each one starts with."""
 
     return [_TIMESTAMP.sub("", line) for line in text.splitlines()]
+
+
+# The notes a run that asked for both arrs prints when neither is configured.
+_SKIP_NOTES = [
+    "INFO [Pearlarr] Radarr not configured - not run during=boot",
+    "INFO [Pearlarr] Sonarr not configured - not run during=boot",
+]
+
+
+def _nothing_configured_line(config: Path) -> str:
+    """The plain line a run refuses with when `config` configures neither arr."""
+
+    return (
+        "ERROR [Pearlarr] Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, "
+        f"or radarr.url and radarr.api_key, in {config} during=boot"
+    )
 
 
 def _invoke_offline(*args: str) -> Result:
@@ -590,14 +603,7 @@ class TestConfiguredArrs:
         result = _invoke_offline("run", "single")
 
         assert result.exit_code == 1
-        assert _lines(result.stdout)[-3:] == [
-            "INFO [Pearlarr] Radarr not configured - not run during=boot",
-            "INFO [Pearlarr] Sonarr not configured - not run during=boot",
-            (
-                "ERROR [Pearlarr] Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, "
-                f"or radarr.url and radarr.api_key, in {config} during=boot"
-            ),
-        ]
+        assert _lines(result.stdout)[-3:] == [*_SKIP_NOTES, _nothing_configured_line(config)]
 
     def test_fully_configured_passes_through_unchanged(self, recording: RecordingHub) -> None:
         arrs: list[ArrTarget] = [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR, 7)]
@@ -940,98 +946,46 @@ class TestVersionAndHelp:
         assert "single" in result.output
 
 
-class TestApplyLogLevel:
-    """`apply_log_level` re-points the logger and its rich console threshold, including CRITICAL and DEBUG."""
-
-    def test_repoints_logger_and_console_thresholds(self) -> None:
-        # Forced rich: "auto" resolves to plain under pytest's non-TTY stdout
-        # (the plain twin of this pin lives in test_log_format.py).
-        logger = setup_logger(log_level="INFO", console_format="rich")
-        console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
-
-        # Raising the level quiets the file log but the console keeps INFO+
-        # (routine progress stays visible)...
-        apply_log_level(logger, "ERROR")
-        assert logger.level == logging.ERROR
-        assert console.level == logging.INFO
-
-        # ...while DEBUG and CRITICAL move the console threshold with the logger.
-        apply_log_level(logger, "DEBUG")
-        assert logger.level == logging.DEBUG
-        assert console.level == logging.DEBUG
-        apply_log_level(logger, "CRITICAL")
-        assert console.level == logging.CRITICAL
-
-
 class TestLogLevelWiring:
-    """The headline fix: `advanced.log_level` reaches CLI runs, `--log-level` wins.
+    """`advanced.log_level` applies once the config is read, and `--log-level` wins over it.
 
-    `apply_log_level` itself is pinned above. These pin that `run_arrs`
-    actually calls it once the config is readable, with cli > config precedence
-    (the original bug: the config level was dead on every CLI run).
+    The skip notes are INFO lines that come after the read, so a config at ERROR hides them.
     """
 
-    @pytest.fixture
-    def applied(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-        calls: list[str] = []
+    def test_the_config_level_is_applied_to_a_run(self) -> None:
+        config = _write_current_config("advanced:\n  log_level: ERROR\n")
 
-        def record(logger: logging.Logger, log_level: str) -> None:
-            calls.append(log_level)
+        result = _invoke_offline("run", "single")
 
-        monkeypatch.setattr("pearlarr.bootstrap.apply_log_level", record)
-        return calls
+        lines = _lines(result.stdout)
+        assert [line for line in lines if line in _SKIP_NOTES] == []
+        assert lines[-1] == _nothing_configured_line(config)
 
-    def test_the_config_level_is_applied_to_a_run(
-        self,
-        applied: list[str],
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        _write_data_dir_config("advanced:\n  log_level: ERROR\n")
-        # Nothing is configured, so the run refuses - but only after the level
-        # is applied (the refusal itself must respect the configured level).
-        assert run_single() is False
-        assert applied == ["ERROR"]
-        capsys.readouterr()  # swallow the boot banner + refusal line
+    def test_the_cli_override_wins_over_the_config(self) -> None:
+        _write_current_config("advanced:\n  log_level: ERROR\n")
 
-    def test_the_cli_override_wins_over_the_config(
-        self,
-        applied: list[str],
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        _write_data_dir_config("advanced:\n  log_level: ERROR\n")
-        assert run_single(log_level=LogLevel.DEBUG) is False
-        assert applied == [LogLevel.DEBUG]
-        capsys.readouterr()
+        result = _invoke_offline("run", "single", "--log-level", "info")
 
+        assert [line for line in _lines(result.stdout) if line in _SKIP_NOTES] == _SKIP_NOTES
 
-class _SetupLoggerRecorder:
-    """A fake `cli.setup_logger` recording each call's context.
+    def test_the_cli_override_wins_in_scheduled_mode_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write_current_config("advanced:\n  log_level: ERROR\n")
 
-    Captures the console_format it got and whether the output bridge was
-    already installed on the app logger AT CALL TIME (the install-order pin:
-    a record fired from inside setup_logger must reach the hub).
-    """
+        result, _ = _run_scheduled_once(monkeypatch, "--log-level", "info")
 
-    def __init__(self) -> None:
-        self.console_formats: list[LogFormat] = []
-        self.bridge_installed_at_call: list[bool] = []
+        assert [line for line in _lines(result.stdout) if line in _SKIP_NOTES] == _SKIP_NOTES
 
-    def __call__(self, log_level: str, console_format: LogFormat = "auto") -> logging.Logger:
-        self.console_formats.append(console_format)
-        self.bridge_installed_at_call.append(
-            any(isinstance(h, HubBridgeBase) for h in logging.getLogger(LOG_NAME).handlers),
-        )
-        return make_logger()
+    def test_the_cli_level_holds_from_the_first_line(self) -> None:
+        # The flag is known before the config is read, so the opening lines obey it too.
+        config = _write_current_config()
+
+        result = _invoke_offline("run", "single", "--log-level", "warning")
+
+        assert _lines(result.stdout) == [_nothing_configured_line(config)]
 
 
 class _StopScheduledLoop(Exception):
-    """Ends `run scheduled`'s endless loop from a faked step inside it."""
-
-
-def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
-    """A fake `run_arrs` that breaks `run_scheduled`'s loop."""
-
-    raise _StopScheduledLoop
+    """Ends `run scheduled`'s endless loop from its faked sleep."""
 
 
 def _run_scheduled_once(
@@ -1069,91 +1023,56 @@ class _SignalRecorder:
 
 
 class TestLogFormatWiring:
-    """`advanced.log_format` reaches `setup_logger` on both run commands.
+    """`advanced.log_format` is what both run commands print in, terminal or not.
 
-    The renderers themselves are pinned in test_log_format.py. These pin that
-    the run commands resolve the config format and thread `console_format`
-    through (scheduled mode re-resolves each run, before the logger is
-    rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
-    (an invalid-level complaint fired inside it must reach the
-    hub, never logging.lastResort).
+    json is one JSON object per line. rich is the indented console layout.
     """
 
-    @pytest.fixture
-    def setup_recorder(self, monkeypatch: pytest.MonkeyPatch) -> _SetupLoggerRecorder:
-        recorder = _SetupLoggerRecorder()
-        monkeypatch.setattr("pearlarr.cli.setup_logger", recorder)
-        return recorder
+    @staticmethod
+    def _events(stdout: str) -> list[dict[str, object]]:
+        # A line that isn't JSON fails the test here.
+        return [cast("dict[str, object]", json.loads(line)) for line in stdout.splitlines()]
 
-    def test_run_single_threads_the_config_format(
-        self,
-        setup_recorder: _SetupLoggerRecorder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
-        _write_data_dir_config("advanced:\n  log_format: json\n")
-        assert run_single() is True
-        assert setup_recorder.console_formats == ["json"]
-        assert setup_recorder.bridge_installed_at_call == [True]  # hub+bridge first
+    def test_run_single_threads_the_config_format(self) -> None:
+        config = _write_current_config("advanced:\n  log_format: json\n")
 
-    def test_run_scheduled_threads_the_config_format(
-        self,
-        setup_recorder: _SetupLoggerRecorder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
-        _write_data_dir_config("advanced:\n  log_format: json\n")
-        with pytest.raises(_StopScheduledLoop):
-            run_scheduled()
-        assert setup_recorder.console_formats == ["json"]
-        assert setup_recorder.bridge_installed_at_call == [True]  # installed pre-loop
+        result = _invoke_offline("run", "single")
 
+        events = self._events(result.stdout)
+        assert events[0]["event"] == "pearlarr_started"
+        assert [event["message"] for event in events if event["event"] == "diagnostic"] == [
+            "Radarr not configured - not run",
+            "Sonarr not configured - not run",
+            (
+                "Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, "
+                f"or radarr.url and radarr.api_key, in {config}"
+            ),
+        ]
 
-class TestConsoleFormat:
-    """`_configured_format`: a silent pre-logger peek reducing every failure to "auto"."""
+    def test_run_scheduled_threads_the_config_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write_current_config("advanced:\n  log_format: json\n")
 
-    def test_missing_config_reduces_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
-        missing = tmp_path / "config.yml"
-        assert _configured_format(str(missing)) == "auto"
-        # No template-copy side effect: load_shared_config owns the first-run copy.
-        assert not missing.exists()
+        result, _ = _run_scheduled_once(monkeypatch)
 
-    def test_reads_the_configured_format(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.yml"
-        # Case-folded by the config validator, like log_level.
-        path.write_text("advanced:\n  log_format: JSON\n", encoding="utf-8")
-        assert _configured_format(str(path)) == "json"
+        events = self._events(result.stdout)
+        assert (events[0]["event"], events[-1]["event"]) == ("scheduled_run_started", "next_run_scheduled")
 
-    def test_invalid_config_reduces_to_auto(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.yml"
-        path.write_text("advanced:\n  log_format: fancy\n", encoding="utf-8")
-        assert _configured_format(str(path)) == "auto"
+    def test_a_rich_config_prints_the_rich_layout_off_a_terminal(self) -> None:
+        # The runner's stdout is no terminal, so "auto" would have printed plain lines.
+        _write_current_config("advanced:\n  log_format: rich\n")
 
-    def test_malformed_yaml_reduces_to_auto(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.yml"
-        path.write_text("advanced: [unclosed\n", encoding="utf-8")
-        assert _configured_format(str(path)) == "auto"
+        result = _invoke_offline("run", "single")
 
+        assert "  Sonarr not configured - not run" in result.stdout.splitlines()
 
-class TestResolvedFormat:
-    """`_run_format` is the one "auto" conversion.
+    def test_a_rich_config_prints_the_rich_layout_in_scheduled_mode_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write_current_config("advanced:\n  log_format: rich\n")
 
-    The same resolved value feeds `setup_logger` and `hub.begin_run`, so the two can never disagree.
-    """
+        result, _ = _run_scheduled_once(monkeypatch)
 
-    def test_auto_converts_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sys, "stdout", io.StringIO())
-        assert _run_format(str(tmp_path / "config.yml")) == "plain"  # missing config -> auto -> plain
-
-    def test_auto_converts_to_rich_on_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sys, "stdout", TtyStringIO())
-        assert _run_format(str(tmp_path / "config.yml")) == "rich"
-
-    def test_a_configured_format_passes_through_unfolded(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.yml"
-        path.write_text("advanced:\n  log_format: json\n", encoding="utf-8")
-        assert _run_format(str(path)) == "json"
+        lines = result.stdout.splitlines()
+        assert "  Sonarr not configured - not run" in lines
+        assert lines[-1].startswith("Next scheduled run at ")
 
 
 def _drive_representative(hub: OutputHub) -> None:
@@ -1207,28 +1126,6 @@ class TestHubRenderers:
         assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR outcome line
         assert [line for line in file_lines if "forensic note" not in line] == stdout_lines
         assert sum("forensic note" in line for line in file_lines) == 1  # the sole carve-out
-
-    def test_json_stdout_is_one_json_object_per_event(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        hub, stream = self._with_console_renderer(tmp_path / "logs", "json", logging.INFO, monkeypatch)
-        _drive_representative(hub)
-        hub.close()
-
-        events = [cast("dict[str, object]", json.loads(line)) for line in stream.getvalue().splitlines()]
-        envelope = ["schema_version", "time", "event", "level", "message"]
-        assert [list(obj)[:5] for obj in events] == [envelope] * len(events)
-        # One object per EVENT, in emit order. The file_only diagnostic stays out.
-        assert [obj["event"] for obj in events] == [
-            "pearlarr_started",
-            "scan_started",
-            "item_started",
-            "diagnostic",
-            "wait_row_finished",
-            "arr_run_summary",
-        ]
 
 
 class TestMissingConfigExitsNonzero:
@@ -1765,10 +1662,7 @@ class TestScheduledLifecycle:
 
         result, _ = _run_scheduled_once(monkeypatch)
 
-        assert [line for line in _lines(result.stdout) if "not configured - not run" in line] == [
-            "INFO [Pearlarr] Radarr not configured - not run during=boot",
-            "INFO [Pearlarr] Sonarr not configured - not run during=boot",
-        ]
+        assert [line for line in _lines(result.stdout) if "not configured - not run" in line] == _SKIP_NOTES
 
     def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorder = _SignalRecorder()
