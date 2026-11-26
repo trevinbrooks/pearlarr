@@ -158,8 +158,9 @@ class TestPrefetchEpisodes:
         [
             pytest.param(_Run(), [1], id="a-title-never-checked"),
             pytest.param(_Run(unchanged=(7,)), [], id="its-title-unchanged"),
+            pytest.param(_Run(unchanged=(7,), files_changed=(7,)), [1], id="its-title-unchanged-but-its-files-changed"),
             pytest.param(_Run(titles={7: 1, 8: 1}, unchanged=(7,)), [1], id="one-of-its-two-titles-unchanged"),
-            pytest.param(_Run(titles={}), [], id="no-anilist-mapping"),
+            pytest.param(_Run(settings=make_config(ignore_anilist_ids=[7])), [], id="its-title-ignored"),
             pytest.param(_Run(without_entry=(7,)), [], id="no-seadex-entry"),
             pytest.param(
                 _Run(without_entry=(7,), settings=make_config(ignore_seadex_update_times=True)),
@@ -168,9 +169,14 @@ class TestPrefetchEpisodes:
             ),
             pytest.param(_Run(without_entry=(7,), files_changed=(7,)), [], id="no-seadex-entry-files-changed"),
             pytest.param(
-                _Run(unmonitored=(1,), settings=make_config(sonarr_ignore_unmonitored=True)),
-                [],
-                id="unmonitored-and-ignored",
+                _Run(
+                    series=(1, 2),
+                    titles={7: 1, 8: 2},
+                    unmonitored=(1,),
+                    settings=make_config(sonarr_ignore_unmonitored=True),
+                ),
+                [2],
+                id="unmonitored-and-ignored-beside-a-monitored-series",
             ),
             pytest.param(_Run(unmonitored=(1,)), [1], id="unmonitored-not-ignored"),
         ],
