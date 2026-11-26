@@ -10,10 +10,12 @@ from collections.abc import Set as AbstractSet
 from typing import override
 
 import httpx
+import pytest
 import respx
 
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import MovieFile, RadarrItem, RadarrMovie
+from pearlarr.boundary import BoundaryContractError
 from pearlarr.mapping_store import IdKind
 from pearlarr.mappings import KnownExternalIds
 from pearlarr.output import Severity
@@ -107,6 +109,15 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.tmdbId == 372058
     assert movie.imdbId == "tt5311514"
     assert movie.monitored is True
+
+
+@respx.mock
+def test_all_movies_all_invalid_payload_raises_contract_error() -> None:
+    """A movie list where nothing reads as a movie raises, so a broken answer never reads as an empty library."""
+
+    respx.get(f"{_BASE}/movie").respond(json=["junk", 42])
+    with pytest.raises(BoundaryContractError):
+        _make_client().all_movies()
 
 
 class _PresetIdSets(KnownExternalIds):
