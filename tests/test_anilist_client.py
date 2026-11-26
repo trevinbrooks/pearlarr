@@ -53,56 +53,37 @@ def _client() -> AniListClient:
     return AniListClient(client=httpx.Client())
 
 
-# --- reading a stored answer --------------------------------------------------------
+# --- what a query sends -----------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param(_NOT_FOUND, id="unknown id"),
-        # What `query` hands back when it gives up on a rate limit.
-        pytest.param(_THROTTLED, id="given up"),
-    ],
-)
-def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, object]) -> None:
-    recording = install_recording_hub()
+@respx.mock
+def test_every_post_carries_the_project_referer() -> None:
+    """AniList refuses a Referer-less request, so the single and batch POSTs both name the project."""
 
-    assert media_from_body(body) == AniListMediaNode()
-    assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.INFO] == []
+    route = respx.post(API_URL).respond(json=_FOUND)
 
+    client = _client()
+    client.query(1)
+    client.query_batch([1, 2])
 
-def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_warning() -> None:
-    """AniList's schema doesn't send a Media like this one.
-
-    If a Media ever doesn't fit the node, the user sees a warning in place of a failed run.
-    """
-
-    recording = install_recording_hub()
-
-    assert media_from_body({"data": {"Media": {"id": 1, "episodes": "twelve"}}}) == AniListMediaNode()
-    assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Ignoring malformed AniList Media node (episodes: int_parsing)"
-    ]
+    calls = cast("list[Call]", route.calls)
+    assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
 
 
-@pytest.mark.parametrize(
-    ("media", "lacks"),
-    [
-        pytest.param({"id": 7, "episodes": 12}, True, id="an id and no startDate key"),
-        # AniList answers a date it doesn't know with null parts, and the key is still there.
-        pytest.param({"id": 7, "startDate": {"year": None, "month": None, "day": None}}, False, id="null date parts"),
-        pytest.param(None, False, id="no such id"),
-    ],
-)
-def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(
-    media: dict[str, object] | None, lacks: bool
-) -> None:
-    """A Media stored by a query that didn't ask for air dates is asked for again, so its episodes can be dated."""
+@respx.mock
+def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
+    """A wrong id would read another title's answer as this one's."""
 
-    assert lacks_air_dates({"data": {"Media": media}}) is lacks
+    route = respx.post(API_URL).respond(json=_FOUND)
 
+    client = _client()
+    client.query(21)
+    client.query_batch([21, 22])
 
-# --- what the queries ask for -----------------------------------------------
+    single, batch = cast("list[Call]", route.calls)
+    assert str(single.request.url) == str(batch.request.url) == "https://graphql.anilist.co/"
+    assert json.loads(single.request.content) == {"query": QUERY, "variables": {"id": 21}}
+    assert json.loads(batch.request.content) == {"query": BATCH_QUERY, "variables": {"ids": [21, 22]}}
 
 
 # Compared as a plain object: the type checker reads `field.annotation is FuzzyDate` as always false.
@@ -149,7 +130,7 @@ def test_each_query_asks_for_everything_the_node_reads(query: str) -> None:
     assert _node_paths() - _selected_paths(query) == set()
 
 
-# --- AniListClient.query / query_batch (respx-faked httpx boundary) --------------------------
+# --- what each query hands back ---------------------------------------------------
 
 
 @respx.mock
@@ -175,33 +156,23 @@ def test_an_answer_with_data_comes_back_as_sent(status: int, body: dict[str, obj
 
 
 @respx.mock
-def test_every_post_carries_the_project_referer() -> None:
-    """AniList refuses a Referer-less request, so the single and batch POSTs both name the project."""
+def test_a_batch_answer_comes_back_keyed_by_each_medias_own_id() -> None:
+    """Each Media in a batch answer is filed under its own id, in the shape a single query answers with.
 
-    route = respx.post(API_URL).respond(json=_FOUND)
+    AniList leaves out an id it doesn't have, so the answer doesn't line up with the ids asked for, and filing
+    by position would read one title's answer as another's.
+    """
 
-    client = _client()
-    client.query(1)
-    client.query_batch([1, 2])
+    page: dict[str, object] = {"data": {"Page": {"media": [{"id": 1, "episodes": 12}, {"id": 3, "episodes": 24}]}}}
+    respx.post(API_URL).respond(json=page)
 
-    calls = cast("list[Call]", route.calls)
-    assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
+    assert _client().query_batch([1, 2, 3]) == {
+        1: {"data": {"Media": {"id": 1, "episodes": 12}}},
+        3: {"data": {"Media": {"id": 3, "episodes": 24}}},
+    }
 
 
-@respx.mock
-def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
-    """A wrong id would read another title's answer as this one's."""
-
-    route = respx.post(API_URL).respond(json=_FOUND)
-
-    client = _client()
-    client.query(21)
-    client.query_batch([21, 22])
-
-    single, batch = cast("list[Call]", route.calls)
-    assert str(single.request.url) == str(batch.request.url) == "https://graphql.anilist.co/"
-    assert json.loads(single.request.content) == {"query": QUERY, "variables": {"id": 21}}
-    assert json.loads(batch.request.content) == {"query": BATCH_QUERY, "variables": {"ids": [21, 22]}}
+# --- asking again ------------------------------------------------------------------
 
 
 @respx.mock
@@ -222,31 +193,6 @@ def test_a_rate_limit_or_server_error_is_asked_for_again(first: httpx.Response) 
 
     assert _client().query(1) == _FOUND
     assert route.call_count == 2
-
-
-@respx.mock
-def test_a_batch_answer_comes_back_keyed_by_each_medias_own_id() -> None:
-    """Each Media in a batch answer is filed under its own id, in the shape a single query answers with.
-
-    AniList leaves out an id it doesn't have, so the answer doesn't line up with the ids asked for, and filing
-    by position would read one title's answer as another's.
-    """
-
-    page: dict[str, object] = {"data": {"Page": {"media": [{"id": 1, "episodes": 12}, {"id": 3, "episodes": 24}]}}}
-    respx.post(API_URL).respond(json=page)
-
-    assert _client().query_batch([1, 2, 3]) == {
-        1: {"data": {"Media": {"id": 1, "episodes": 12}}},
-        3: {"data": {"Media": {"id": 3, "episodes": 24}}},
-    }
-
-
-# --- retry narration and marking AniList unreachable --------------------------
-
-
-_DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
-_DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
-_SKIPPING = "skipping further lookups this run"
 
 
 @respx.mock
@@ -303,6 +249,14 @@ def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -
     assert _client().query(1) == _FOUND
     assert [int(wait) for wait in slept] == [1]
     assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.INFO] == []
+
+
+# --- marking AniList unreachable ----------------------------------------------------
+
+
+_DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
+_DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
+_SKIPPING = "skipping further lookups this run"
 
 
 @respx.mock
@@ -398,7 +352,53 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
     assert len(quoted) == 160
 
 
-# --- AniListMediaNode -----------------------------------------------------------
+# --- reading an answer as a node ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_NOT_FOUND, id="unknown id"),
+        # What `query` hands back when it gives up on a rate limit.
+        pytest.param(_THROTTLED, id="given up"),
+    ],
+)
+def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, object]) -> None:
+    recording = install_recording_hub()
+
+    assert media_from_body(body) == AniListMediaNode()
+    assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.INFO] == []
+
+
+def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_warning() -> None:
+    """AniList's schema doesn't send a Media like this one.
+
+    If a Media ever doesn't fit the node, the user sees a warning in place of a failed run.
+    """
+
+    recording = install_recording_hub()
+
+    assert media_from_body({"data": {"Media": {"id": 1, "episodes": "twelve"}}}) == AniListMediaNode()
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Ignoring malformed AniList Media node (episodes: int_parsing)"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("media", "lacks"),
+    [
+        pytest.param({"id": 7, "episodes": 12}, True, id="an id and no startDate key"),
+        # AniList answers a date it doesn't know with null parts, and the key is still there.
+        pytest.param({"id": 7, "startDate": {"year": None, "month": None, "day": None}}, False, id="null date parts"),
+        pytest.param(None, False, id="no such id"),
+    ],
+)
+def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(
+    media: dict[str, object] | None, lacks: bool
+) -> None:
+    """A Media stored by a query that didn't ask for air dates is asked for again, so its episodes can be dated."""
+
+    assert lacks_air_dates({"data": {"Media": media}}) is lacks
 
 
 @pytest.mark.parametrize(
