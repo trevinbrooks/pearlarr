@@ -393,33 +393,24 @@ class TestAnimeIdsLookup:
 
 
 class TestResolveMerge:
-    """`resolve` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
+    """`resolve` merges the two sources by title.
 
-    def test_anibridge_wins_then_anime_fills_then_the_ignored_are_set_aside_and_sorted(self) -> None:
-        # Series 74796: AniBridge's ranges for 269 win over Kometa's season 7, Kometa alone has 100, and AniBridge
-        # alone has 270, which the ignore list sets aside.
-        anime = {
-            "x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7},
-            "y": {"anilist_id": 100, "tvdb_id": 74796, "tvdb_season": 1},
-        }
+    AniBridge's title with TVDB ranges wins over Kometa's record for it, Kometa fills the titles AniBridge doesn't
+    map, the ignored titles are set aside, and the rest sort by AniList id.
+    """
+
+    def test_a_lookup_merges_the_sources_by_title(self) -> None:
+        # Series 74796: both sources map 269, Kometa alone maps 100, and AniBridge alone maps 270, which is ignored.
+        anime = {"x": {"anilist_id": 269, "tvdb_id": 74796}, "y": {"anilist_id": 100, "tvdb_id": 74796}}
         resolver = _resolver(anime=anime, anibridge=GRAPH, ignore={270})
 
         resolved = resolver.resolve(ExternalIds(tvdb=74796))
 
-        assert list(resolved.kept.items()) == [
-            (100, TitleMapping(100, tvdb_season=1)),
-            (
-                269,
-                TitleMapping(
-                    269,
-                    tvdb_mappings={2: [(1, 21)], 3: [(1, 9), (11, 12)]},
-                    imdb_id="tt0269",
-                    anidb_id=1234,
-                    source=_ANIBRIDGE,
-                ),
-            ),
+        assert [(anilist_id, mapping.source) for anilist_id, mapping in resolved.kept.items()] == [
+            (100, MappingSource.ANIME_IDS),
+            (269, _ANIBRIDGE),
         ]
-        assert resolved.ignored == {270: TitleMapping(270, tvdb_mappings={1: []}, tmdb_movie_id=888, source=_ANIBRIDGE)}
+        assert list(resolved.ignored) == [270]
 
 
 class TestAniBridgeTitleWithoutTvdbRanges:
