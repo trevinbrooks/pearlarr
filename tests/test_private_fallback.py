@@ -1,12 +1,18 @@
 # pyright: strict
-"""End-to-end regressions for `seadex.private_releases: fallback`.
+"""Tests for `seadex.private_releases`: what a title shows when SeaDex prefers a private release.
 
-Drive the full build -> plan_grabs -> grab_and_cache path over one SeaDex
-entry, pinning the fallback contract: when a preferred release is private-only,
-grab the entry's best public fallback. Warn when no public fallback
-exists, or when the Arr owns the preferred private release at an outdated size (a
-fallback never replaces an owned copy). Regression coverage for the
-preferred-public size-mismatch promote and the coverage-blind per-group drop.
+A private release is never grabbed. In warn mode, the default, one nothing public replaces warns, and leaves its title
+uncached under a row saying why unless something else was grabbed for the title. In fallback mode the best public
+releases SeaDex doesn't prefer are offered beside a private one whose files no preferred public release covers, and
+grabbed in its place, but never in place of a copy the arr has at an outdated size. A private release nothing replaces
+there always leaves its title uncached.
+
+Each case checks a title the way a run does: the filter builds the entry's groups, the plan marks what to grab and
+posts its private-only notices, and the grab adds, warns, files the needs-action row and caches or not. The choice
+among groups covering the same files is `test_grab_planner.py`'s to prove, and the build `test_seadex_dict.py`'s.
+
+The cases set each release's episodes from the episodes its file names number, where a Sonarr run places them with
+the series, its orders and the name reader, none of which these cases are about.
 """
 
 import re
@@ -16,34 +22,30 @@ import pytest
 from seadex import EntryRecord, Tracker
 
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
+from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
-from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail
 from pearlarr.releases import PlacedEpisode, SeadexDict, SkipReason
 
 from .builders import (
     AddStatus,
     FakeCacheStore,
-    FakeSeaDexSource,
     FakeTorrents,
     arr_files,
     grab_request,
+    make_config,
     make_entry_record,
     make_grab_pipeline,
     make_planner,
     make_release_filter,
-    make_services,
+    make_run_deps,
     make_torrent_record,
     placed_episode,
     sonarr_ep,
     title_is_cached,
 )
-from .fakes import RecordingHub, install_recording_hub
-
-PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
-PUB_URL = "https://nyaa.si/view/1"
-PUB_HASH = "f" * 40
+from .fakes import install_recording_hub
 
 # What the plan's notices and the needs-action rows say of a private-only skip.
 PLAIN_NOTICE = "private-only (private releases not supported)"
@@ -55,62 +57,6 @@ NO_FALLBACK_ROW = "private-only release; no fallback covers these files"
 OUTDATED_ROW = (
     "private-only release; your copy is outdated (its file size no longer matches) and only a fallback covers it"
 )
-
-
-def _entry_private_preferred_plus_public_alt() -> EntryRecord:
-    """A SeaDex entry preferring a private-only release, with a public fallback."""
-
-    priv = make_torrent_record(
-        release_group="Priv",
-        tracker=Tracker.ANIMEBYTES,
-        url=PRIV_URL,
-        infohash=None,  # private torrents carry no infohash
-        file_names=("Show - S01E01.mkv",),
-        file_size=999,
-        is_best=True,
-    )
-    fall = make_torrent_record(
-        release_group="Fall",
-        tracker=Tracker.NYAA,
-        url=PUB_URL,
-        infohash=PUB_HASH,
-        file_names=("Show.S01E01.web.mkv",),
-        file_size=555,
-        is_best=False,
-    )
-    return make_entry_record(anilist_id=11, torrents=(priv, fall))
-
-
-def _attach_episodes(sd: SeadexDict, mapping: dict[str, list[PlacedEpisode]]) -> None:
-    """Mirror `attach_placements`: per-release episodes + the group union."""
-
-    for group_releases in sd.values():
-        all_eps: list[PlacedEpisode] = []
-        group_releases.episodes = all_eps
-        for url, item in group_releases.releases.items():
-            eps = list(mapping.get(url, []))
-            item.episodes = eps
-            all_eps.extend(eps)
-
-
-def _warning_texts(recording: RecordingHub) -> list[str]:
-    """The recorded detail texts at WARNING+ (the old `levelno >= WARNING` filter)."""
-
-    return [d.value.text for d in recording.of_type(TitleDetail) if d.severity >= Severity.WARNING]
-
-
-def _grab_request(anilist_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> GrabRequest:
-    """The per-title grab payload as the strategies assemble it."""
-
-    return GrabRequest(
-        anilist_id=anilist_id,
-        arr_title="Show",
-        title_name="Show",
-        entry=entry,
-        seadex_dict=seadex_dict,
-        update={"name": "Show", "updated_at": entry.updated_at},
-        replaced_groups=(),
-    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -245,13 +191,16 @@ def _place_by_name(seadex_dict: SeadexDict) -> None:
         group_releases.episodes = group_episodes
 
 
-def _outcome(entry: EntryRecord, library: _Library, *, private_releases: str) -> _Outcome:
+def _outcome(
+    entry: EntryRecord, library: _Library, *, private_releases: str, cache: FakeCacheStore | None = None
+) -> _Outcome:
     """The outcome of a run's check of `entry`'s title against `library` under `private_releases`.
 
-    qBittorrent adds every public release asked for.
+    qBittorrent adds every public release asked for. The run stores the title's row in `cache`, for a later run to
+    read.
     """
 
-    cache = FakeCacheStore()
+    cache = cache if cache is not None else FakeCacheStore()
     recording = install_recording_hub()
     state = ArrRunState(arr=library.arr)
     release_filter = make_release_filter(
@@ -454,104 +403,17 @@ class TestTheArrHasACopyOfThePrivateRelease:
         )
 
 
-class _CachedTitleReporter:
-    """Just enough reporter surface for `is_unchanged`'s logging tail."""
+def test_a_title_cached_by_a_fallback_grab_is_checked_again_by_a_warn_mode_run() -> None:
+    """Switched to warn straight after a fallback's grab, a run checks the title again.
 
-    def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
-        del state, anilist_id
-
-
-class TestModeSwitchResurfacesFallbackSatisfied:
-    """A fallback-satisfied title resurfaces under warn mode, and only there.
-
-    The marker exists so warn's "warn every run" contract survives a spell in
-    fallback mode: without it, the fallback-satisfied title stays cache-skipped
-    until SeaDex updates the entry.
+    The title's private-only warning can come back only if the run checks it.
     """
 
-    def test_fallback_marker_resurfaces_under_warn_and_persists(self) -> None:
-        # 1) fallback run: Sonarr misses the episode, the keeper flow grabs the
-        # public fallback, and the title caches with the marker set.
-        state = ArrRunState(arr=Arr.SONARR)
-        cache = FakeCacheStore()
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-            state=state,
-        )
-        entry = _entry_private_preferred_plus_public_alt()
-        sd = filt.build(entry)
-        _attach_episodes(
-            sd,
-            {
-                PRIV_URL: [placed_episode(season=1, episode=1, size=999)],
-                PUB_URL: [placed_episode(season=1, episode=1, size=555)],
-            },
-        )
-        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1)])
-        assert plan.seadex_dict["Fall"].releases[PUB_URL].to_grab is True
+    entry = _entry(_private("Priv", "S01E01", size=999), _public("Fall", "S01E01", size=555, preferred=False))
+    cache = FakeCacheStore()
+    _outcome(entry, _sonarr(_missing(1, 1)), private_releases="fallback", cache=cache)
+    warn_run = ArrRunServices(make_run_deps(config=make_config(private_releases="warn"), cache_store=cache), Arr.SONARR)
 
-        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "Fall S01")})
-        pipe = make_grab_pipeline(
-            cache_store=cache,
-            _state=state,
-            _torrents=torrents,
-            private_releases="fallback",
-            sleep_time=0,
-        )
-        pipe.grab_and_cache(_grab_request(11, plan.seadex_dict, entry))
-        cached = cache.get_cached_title(Arr.SONARR, 11)
-        assert cached is not None
-        assert cached.fallback_satisfied is True
+    unchanged = warn_run.is_unchanged(entry.anilist_id, entry, lambda: "")
 
-        # 2) a later fallback-mode run skips the marked title as cached: the marker
-        # re-opens nothing there.
-        seadex = FakeSeaDexSource({11: entry})
-        fallback_run = make_services(
-            cache_store=cache,
-            _seadex=seadex,
-            _reporter=_CachedTitleReporter(),
-            private_releases="fallback",
-        )
-        assert fallback_run.title_needs_check(11) is False
-        assert fallback_run.is_unchanged(11, entry, lambda: "") is True
-
-        # 3) warn services over the same cache: BOTH gates re-process the title
-        # (prefetch warming and the loop's skip must agree).
-        warn_run = make_services(
-            cache_store=cache,
-            _seadex=seadex,
-            _reporter=_CachedTitleReporter(),
-            private_releases="warn",
-        )
-        assert warn_run.title_needs_check(11) is True
-        assert warn_run.is_unchanged(11, entry, lambda: "") is False
-
-        # 4) the warn-mode reprocess warns and skips: the private release is all
-        # that's offered (the Arr owns the grabbed fallback's file), nothing is
-        # cached, and the marker persists for the next run.
-        warn_state = ArrRunState(arr=Arr.SONARR)
-        warn_filt = make_release_filter(
-            private_releases="warn",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-            state=warn_state,
-        )
-        sd_warn = warn_filt.build(entry)
-        assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
-        _attach_episodes(sd_warn, {PRIV_URL: [placed_episode(season=1, episode=1, size=999)]})
-        title_episodes = [sonarr_ep(1, 1, size=555, release_group="Fall")]
-        recording = install_recording_hub()
-        warn_plan = warn_filt.plan_grabs(sd_warn, ArrFiles(by_group={"Fall": (555,)}), title_episodes)
-        warnings = _warning_texts(recording)
-        assert any("private-only (private releases not supported)" in m for m in warnings), warnings
-
-        warn_pipe = make_grab_pipeline(cache_store=cache, _state=warn_state, private_releases="warn", sleep_time=0)
-        warn_pipe.grab_and_cache(_grab_request(11, warn_plan.seadex_dict, entry))
-        assert [n.cause for n in warn_state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
-        persisted = cache.get_cached_title(Arr.SONARR, 11)
-        assert persisted is not None
-        assert persisted.fallback_satisfied is True  # the skip left the marker alone
+    assert unchanged is False
