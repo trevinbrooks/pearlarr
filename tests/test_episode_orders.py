@@ -223,8 +223,7 @@ def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_o
 
 
 def test_a_series_numbered_by_another_order_with_nothing_stored_has_no_view() -> None:
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50, season_type="dvd")], FakeCacheStore(), sonarr=sonarr)
+    strat = _sync([_series(1, 50, season_type="dvd")], FakeCacheStore())
 
     assert strat._reads.aired_series(1) is NoView.ORDERS_UNREAD
     assert strat._reads.series_index(1) is None
@@ -249,8 +248,7 @@ _SCENE_ROWS = [
 def test_a_series_numbered_by_another_order_whose_scene_mappings_were_never_read_has_no_view() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    strat = _sync([_series(1, 50, season_type="dvd")], cache)
 
     assert strat._reads.aired_series(1) is NoView.SCENE_UNREAD
     assert strat._reads.series_index(1) is None
@@ -285,7 +283,7 @@ def test_a_series_numbered_by_another_order_carries_the_scene_numbers_its_mappin
 
 
 def test_a_series_in_aired_order_keeps_the_scene_numbers_sonarr_sent_whatever_thexem_maps() -> None:
-    rows = [sonarr_ep(1, 1, ep_id=11, tvdb_id=9001, scene_season=9, scene_episode=1, scene_absolute=91)]
+    rows = [sonarr_ep(1, 1, ep_id=11, scene_season=9, scene_episode=1, scene_absolute=91)]
     cache = FakeCacheStore()
     cache.put_scene_mappings(50, stored_scene_mappings((SceneMapping(1, 1, 2, 1, 13),)))
     reads = _reads([_series(1, 50)], cache, sonarr=FakeSonarrClient(episodes=rows))
@@ -300,7 +298,7 @@ def test_a_new_read_of_a_series_replaces_its_view_and_index() -> None:
     sonarr = FakeSonarrClient(episodes=list(_ROWS))
     reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=sonarr)
     before = reads.series_index(1)
-    third = sonarr_ep(1, 3, ep_id=13, tvdb_id=9003)
+    third = sonarr_ep(1, 3, ep_id=13)
     sonarr.episodes_return = [*_ROWS, third]
 
     reads.read_episodes(1)
@@ -354,7 +352,7 @@ def test_the_series_hash_of_a_run_is_of_the_series_with_an_anilist_mapping() -> 
 
 def test_the_scene_mappings_of_a_pending_imports_series_are_read_for_the_one_in_another_order() -> None:
     # One pending import claimed on both series. Only series 2, of TVDB series 60, is in another order.
-    pending = two_claim_pending_import(series_ids=(1, 2), infohash="h")
+    pending = two_claim_pending_import(series_ids=(1, 2))
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], cache, waits=ImportWaitMode.BLOCKING)
     strat.start_of_run([])
@@ -472,16 +470,8 @@ def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_rele
     # Series 1's rows are out of step with its stored orders. A torrent with a title of it has no index of it to be
     # placed by, and a file name Sonarr matched to it has no aired match.
     reads = _aired_over_dvd_rows(_skyhook(_ORDERS))
-    reads.aired_series(1)
-    named_as_series_one = ParsedFileInfo(
-        season_number=1,
-        episode_numbers=(2,),
-        series_title="Show 1",
-        matched_episodes=(_matched(1, 2, 12),),
-        series_id=1,
-    )
 
-    assert (reads.series_index(1), reads.aired_parse(named_as_series_one)) == (None, NoView.READ_FAILED)
+    assert (reads.series_index(1), reads.aired_parse(ParsedFileInfo(series_id=1))) == (None, NoView.READ_FAILED)
 
 
 def test_the_import_is_not_given_rows_out_of_step_with_the_order_the_library_read_names() -> None:
@@ -661,9 +651,9 @@ def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     series_id: int, mode: ImportWaitMode, fetched: int
 ) -> None:
     # Nothing in the scan needs a series, but grab and import read the pending import's series anyway.
-    pending = pending_import(infohash="h", series_id=series_id)
+    pending = pending_import(series_id=series_id)
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
-    strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], cache, waits=mode)
+    strat = _sync([_series(1, 50), _series(2, 60)], cache, waits=mode)
     strat.start_of_run([])
 
     assert strat.prefetch_orders([]) == fetched
@@ -773,7 +763,7 @@ def test_a_name_with_only_an_absolute_number_is_matched_to_the_aired_episode_wit
 def test_a_name_with_a_season_and_episode_is_matched_to_the_aired_episode_numbered_so() -> None:
     # Sonarr's order has no second season, so it matched the name to nothing.
     reads = _reads_in_one_season()
-    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
+    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_id=1)
 
     assert reads.aired_parse(info) == info.with_matched((_matched(2, 2, 15),))
 
@@ -784,7 +774,6 @@ def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on() -> None:
     info = ParsedFileInfo(
         season_number=1,
         episode_numbers=(5,),
-        series_title="Show",
         matched_episodes=(_matched(1, 5, 15),),
         series_id=1,
     )
@@ -794,7 +783,7 @@ def test_an_episode_sonarr_matched_by_its_own_order_is_not_passed_on() -> None:
 
 def test_a_name_is_matched_to_an_aired_episode_sonarrs_order_has_no_row_for() -> None:
     reads = _reads_in_one_season()
-    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
+    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_id=1)
 
     assert reads.aired_parse(info) == info.with_matched((_matched(2, 4, -9007),))
 
@@ -826,7 +815,7 @@ def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows() -> None:
     # An import poll re-reads the series after Sonarr gains a row for the seventh episode, where the stand-in was.
     sonarr = FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
     reads = _reads_in_one_season(sonarr)
-    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_title="Show", series_id=1)
+    info = ParsedFileInfo(season_number=0, absolute_episode_numbers=(7,), series_id=1)
     before = reads.aired_parse(info)
     sonarr.episodes_return = [*_ONE_SEASON_ROWS, sonarr_ep(1, 7, ep_id=17, tvdb_id=9007)]
 
@@ -961,7 +950,6 @@ def test_a_name_sonarr_searches_for_a_specials_title_has_no_matched_episodes() -
     by_sonarr = ParsedFileInfo(
         season_number=1,
         episode_numbers=(0,),
-        series_title="Show",
         matched_episodes=(_matched(0, 1, 20),),
         series_id=1,
     )
@@ -1034,9 +1022,7 @@ def _title_cached(cache: FakeCacheStore) -> bool:
 
 def test_a_pending_import_stored_without_tvdb_ids_on_a_series_in_another_order_is_dropped_with_one_warning() -> None:
     recording = install_recording_hub()
-    strat, cache = _at_run_start(
-        [_series(1, 50, season_type="dvd")], _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS))
-    )
+    strat, cache = _at_run_start([_series(1, 50, season_type="dvd")], _WITHOUT_TVDB_IDS)
 
     strat.start_of_run([])
 
@@ -1404,7 +1390,6 @@ def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_while_its_seri
     # The stored orders are past their fresh-until, and SkyHook is unreachable for the run.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED, fresh_for=timedelta(days=-1)))
-    cache.put_scene_mappings(50, stored_scene_mappings())
     sonarr = FakeSonarrClient(all_series=[_library_row("dvd", 2)], episodes=list(_DVD_ROWS))
     unreachable = FakeSkyHookClient(failing=frozenset({(50, "official")}))
 
