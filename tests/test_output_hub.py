@@ -19,14 +19,12 @@ from typing import ClassVar, override
 
 import pytest
 
-from pearlarr.cli import _install_output_hub
 from pearlarr.config import Arr, LogFormat
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     ArrRunFinished,
     Diagnostic,
     Event,
-    FileLogRenderer,
     NullRenderer,
     OutputHub,
     PearlarrStarted,
@@ -37,10 +35,8 @@ from pearlarr.output import (
     emit_to_hub,
     hub_note,
     install_hub,
-    uninstall_bridge,
     uninstall_hub,
 )
-from pearlarr.paths import resolve_paths
 
 from .fakes import RecordingHub, RecordingRenderer, install_recording_hub
 
@@ -167,8 +163,8 @@ class _GatedRenderer(_QuietRenderer):
 
 
 def test_every_renderer_sees_every_event_in_order() -> None:
-    first, second = RecordingRenderer(), RecordingRenderer()
-    hub = OutputHub([first, second])
+    first, second, console = RecordingRenderer(), RecordingRenderer(), RecordingRenderer()
+    hub = OutputHub([first, second], console=console)  # a console handed in, as a subcommand's hub has
     events: list[Event] = [_EVENT, Diagnostic(severity=Severity.WARNING, message="w")]
 
     for event in events:
@@ -176,6 +172,7 @@ def test_every_renderer_sees_every_event_in_order() -> None:
 
     assert first.events == events
     assert second.events == events
+    assert console.events == events
 
 
 class _FileLog(_QuietRenderer):
@@ -748,20 +745,40 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
     assert second.whens == [100.0, 200.0]
 
 
-# --- console ownership (the rich handler's skip predicate) ---------------------------
+# --- the stderr fallback ----------------------------------------------------------
 
 
-def test_visible_warnings_reach_stderr_while_no_console_renderer_is_active(capsys: pytest.CaptureFixture[str]) -> None:
-    """This covers the install→`begin_run` window and a quarantined console renderer.
-
-    A visible WARNING+ diagnostic must still reach a human, via stderr.
-    """
+def test_a_visible_warning_reaches_stderr_before_the_first_run_seats_a_console(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Between installing the hub and the first begin_run there's no console, so stderr is the only way to a human."""
 
     hub = OutputHub([_FileLog()], console_factory=lambda console_format: NullRenderer())
 
-    hub.emit(Diagnostic(severity=Severity.CRITICAL, message="invalid level", origin="app"))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
 
-    assert "CRITICAL [app] invalid level" in capsys.readouterr().err
+    assert capsys.readouterr().err == "WARNING [app] watch out\n"
+
+
+def test_a_visible_warning_reaches_stderr_once_the_console_strikes_out(capsys: pytest.CaptureFixture[str]) -> None:
+    hub = OutputHub([_FileLog()], console_factory=lambda console_format: _FailingRenderer())
+    hub.begin_run(console_format="rich", level=logging.INFO)
+
+    for _ in range(3):
+        hub.emit(_EVENT)  # the console strikes out, and the notes about it are the file log's
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
+
+    assert capsys.readouterr().err == "WARNING [app] watch out\n"
+
+
+def test_losing_the_file_log_before_the_first_run_tells_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    hub = OutputHub([_FailingFileLog()], console_factory=lambda console_format: NullRenderer())
+
+    hub.emit(_EVENT)
+
+    # The note escalates to a visible error, and with no console seated yet, stderr is where it goes.
+    failed = "renderer _FailingFileLog failed on PearlarrStarted: render bug"
+    assert capsys.readouterr().err == f"ERROR [output.hub] {failed}\n"
 
 
 def test_the_stderr_fallback_skips_info_file_only_and_hubs_with_a_console_renderer(
@@ -786,29 +803,40 @@ def test_factory_less_hubs_never_write_stderr(capsys: pytest.CaptureFixture[str]
     assert capsys.readouterr().err == ""
 
 
-def test_console_render_active_is_false_without_a_console_renderer() -> None:
-    hub = OutputHub([RecordingRenderer()])
+class _BrokenStderr(io.StringIO):
+    """A stderr whose pipe is gone."""
 
-    assert hub.console_render_active() is False
-
-
-def test_console_render_active_is_true_for_an_active_console_renderer() -> None:
-    hub = OutputHub([], console=RecordingRenderer())
-
-    assert hub.console_render_active() is True
+    @override
+    def write(self, s: str) -> int:
+        raise BrokenPipeError
 
 
-def test_console_render_active_is_false_once_the_console_renderer_strikes_out() -> None:
-    # The quarantine fallback: a struck-out console renderer hands the badge class
-    # back to the legacy handler, so warnings can never vanish.
-    hub = OutputHub([], console=_FailingRenderer(), strike_limit=1)
+def test_a_broken_stderr_never_raises_through_emit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broken pipe on stderr is contained like a renderer's failure, so it can't abort the run."""
 
-    hub.emit(_EVENT)
+    file_log = _FileLog()
+    hub = OutputHub([file_log], console_factory=lambda console_format: NullRenderer())
+    monkeypatch.setattr(sys, "stderr", _BrokenStderr())
+    warning = Diagnostic(severity=Severity.WARNING, message="watch out")
 
-    assert hub.console_render_active() is False
+    hub.emit(warning)  # no console is seated yet, so this one goes to stderr too
+
+    assert file_log.events == [warning]
 
 
-# --- console renderer swap -----------------------------------------------------------
+# --- the console renderer ----------------------------------------------------------
+
+
+def test_a_blocked_console_never_starves_the_file_log() -> None:
+    """The console is handed each event after the file log, so a stuck terminal can't keep an event out of the file."""
+
+    console, file_log = _GatedRenderer(), _FileLog()
+    hub = OutputHub([file_log], console_factory=lambda console_format: console)
+    hub.begin_run(console_format="rich", level=logging.INFO)
+
+    drainer = _emit_held_at(hub, console)
+    assert file_log.events == [_EVENT]
+    _release(console, drainer)
 
 
 def test_begin_run_swaps_the_console_renderer_only_on_format_change() -> None:
@@ -836,36 +864,45 @@ def test_begin_run_swaps_the_console_renderer_only_on_format_change() -> None:
     assert stable_renderer.events == [_EVENT, _EVENT]  # the stable renderer saw both
 
 
-def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file_only() -> None:
-    console, renderer = RecordingRenderer(), _FileLog()
+def test_a_console_that_raises_on_close_is_still_swapped_out() -> None:
+    old, new = _FailingCloseRenderer(), RecordingRenderer()
+    consoles: dict[LogFormat, Renderer] = {"rich": old, "plain": new}
+    hub = OutputHub([], console_factory=lambda console_format: consoles[console_format])
 
-    def factory(console_format: LogFormat) -> Renderer:
-        raise RuntimeError("no tty")
-
-    hub = OutputHub([renderer], console=console, console_factory=factory)
+    hub.begin_run(console_format="rich", level=logging.INFO)
     hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
 
+    assert old.log == ["begin_run", "close"]
+    assert new.events == [_EVENT]
+
+
+def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file_only() -> None:
+    console, file_log = RecordingRenderer(), _FileLog()
+
+    def factory(console_format: LogFormat) -> Renderer:
+        if console_format == "plain":
+            raise RuntimeError("no tty")
+        return console
+
+    hub = OutputHub([file_log], console_factory=factory)
+    hub.begin_run(console_format="rich", level=logging.INFO)
+    hub.begin_run(console_format="plain", level=logging.INFO)
+    hub.emit(_EVENT)
+
+    note = Diagnostic(
+        severity=Severity.WARNING,
+        message="console factory failed for format 'plain': no tty; keeping the current console",
+        origin="output.hub",
+        file_only=True,
+    )
+    assert _untraced(file_log.events) == [note, _EVENT]
+    # The old console keeps rendering. It's handed the file-only note too, and a real console drops those itself.
+    assert _untraced(console.events) == [note, _EVENT]
     assert not console.closed
-    assert _EVENT in console.events  # the old console renderer keeps rendering
-    notes = [e for e in renderer.events if isinstance(e, Diagnostic)]
-    assert notes[0].file_only
-    assert "console factory failed" in notes[0].message
-    assert "keeping the current console" in notes[0].message
 
 
-# --- the process registry (install/uninstall) + the cli renderer order ----------------
-
-
-def test_cli_hub_installs_the_file_log_renderer_first() -> None:
-    # The file-before-console dispatch pin: _subs[0] is the first-declared renderer
-    # (the reader convention above), and cli declares FileLogRenderer first.
-    hub, _ = _install_output_hub(resolve_paths())
-    try:
-        assert isinstance(hub._subs[0].renderer, FileLogRenderer)
-    finally:
-        uninstall_hub()
-        uninstall_bridge()
+# --- the process registry (install/uninstall) -----------------------------------
 
 
 def test_install_hub_closes_the_previously_installed_hub() -> None:
@@ -956,30 +993,6 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order()
 
     # The in-flight event finishes its fan-out before the follow-up it queued, and nothing goes out twice.
     assert recorder.events == [_EVENT, Diagnostic(severity=Severity.INFO, message="queued behind"), _AFTER]
-
-
-class _BrokenStderr(io.StringIO):
-    """A stderr whose pipe is gone."""
-
-    @override
-    def write(self, s: str) -> int:
-        raise BrokenPipeError
-
-
-def test_a_broken_stderr_never_raises_through_emit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The stderr fallback is contained like every renderer write.
-
-    A broken pipe on stderr must not abort the run (the emit-never-raises
-    contract).
-    """
-
-    hub = OutputHub([], console_factory=lambda console_format: NullRenderer())
-    # No begin_run: the console renderer is inactive, so the fallback path fires.
-    monkeypatch.setattr(sys, "stderr", _BrokenStderr())
-
-    hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
-
-    assert hub.counts.mark().warning == 1  # emitted, counted, contained
 
 
 class _NoisyCloser(_QuietRenderer):
