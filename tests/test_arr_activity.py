@@ -394,7 +394,10 @@ class _Situation:
 
 
 _GAP = HistoryCheckpoint("2020-01-01T00:00:00Z", 1)
-"""A checkpoint from further back than the history read reaches, so the history since it can't all be read."""
+"""A checkpoint from further back than the history read reaches, so the history since it can't all be read.
+
+Its record 1 came before `sonarr_file_imported`'s.
+"""
 
 
 class TestWhatARunChecksAgain:
@@ -457,4 +460,4 @@ class TestWhatARunChecksAgain:
         drive_arr_run(healthy, lambda services: _CachedLibrary(services, history, frozenset()))
 
         assert _shown_unchanged(recording) == [2]
-        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, 1)
+        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, history[0].id)
