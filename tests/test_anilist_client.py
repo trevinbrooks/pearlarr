@@ -1,8 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# These are deliberately under-test private helpers. The repo already disables
-# reportPrivateUsage for all of tests/ (test code reads private members), but the
-# strict directive above re-enables it, so restore the repo's test policy here.
 """Direct unit tests for the pure helpers and retry path in `anilist_client`.
 
 These are otherwise only exercised incidentally. The classification / parsing /
@@ -14,6 +10,7 @@ The `AniListMediaNode` tests pin its all-None empty-dict validation, the
 not-found node contract the AniList gateway depends on.
 """
 
+import json
 import re
 import time
 from datetime import date
@@ -22,18 +19,21 @@ from typing import cast
 import httpx
 import pytest
 import respx
+from pydantic import AliasPath
 from respx.models import Call
 
 from pearlarr.anilist_client import (
-    _MEDIA_FIELDS,
     API_URL,
+    BATCH_QUERY,
     MAX_RETRIES,
+    QUERY,
     AniListClient,
     AniListMediaNode,
     extract_path,
     lacks_air_dates,
     media_from_body,
 )
+from pearlarr.boundary import FuzzyDate
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
@@ -137,38 +137,49 @@ def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(media: dict
     assert lacks_air_dates({"data": {"Media": media}}) is lacks
 
 
-# --- constants sanity -------------------------------------------------------
+# --- what the queries ask for -----------------------------------------------
 
 
-def test_media_fields_fragment_covers_model_reads() -> None:
-    """Every field `AniListMediaNode` reads is selected by the fragment.
+# The node reads a date from all three parts of AniList's date object.
+_FUZZY_DATE: object = FuzzyDate
 
-    The read set below is derived from the model's fields: the top-level
-    `id`/`title`/`coverImage`/`episodes`/`format`/`startDate`/`endDate`/`duration`
-    keys plus the nested `title.english`/`title.romaji`/`coverImage.large` and
-    date `year`/`month`/`day` selections. A field dropped from `_MEDIA_FIELDS`
-    would silently parse to `None` downstream, so the shared fragment (not any
-    full query string) is what's pinned here.
-    """
 
-    read_fields = (
-        "id",
-        "title",
-        "english",
-        "romaji",
-        "coverImage",
-        "large",
-        "episodes",
-        "format",
-        "startDate",
-        "endDate",
-        "year",
-        "month",
-        "day",
-        "duration",
-    )
-    for name in read_fields:
-        assert re.search(rf"\b{name}\b", _MEDIA_FIELDS), f"fragment no longer selects {name!r}"
+def _node_paths() -> set[str]:
+    """What `AniListMediaNode` reads of a Media, as paths: `episodes`, `title.english`, each part of a date."""
+
+    paths: set[str] = set()
+    for name, field in AniListMediaNode.model_fields.items():
+        alias = field.validation_alias
+        if isinstance(alias, AliasPath):
+            paths.add(".".join(str(step) for step in alias.path))
+            continue
+        key = alias if isinstance(alias, str) else name
+        if field.annotation is _FUZZY_DATE:
+            paths.update(f"{key}.{part}" for part in ("year", "month", "day"))
+        else:
+            paths.add(key)
+    return paths
+
+
+def _selected_paths(query: str) -> set[str]:
+    """What a query asks of each Media, as paths: `episodes`, `title.english`."""
+
+    # The Media selection is everything after the query's last argument list, and nests one level deep.
+    selection = query.rsplit(") {", 1)[1]
+    paths: set[str] = set()
+    for field, subfields in cast("list[tuple[str, str]]", re.findall(r"(\w+)\s*(?:\{([^}]*)\})?", selection)):
+        if subfields:
+            paths.update(f"{field}.{sub}" for sub in subfields.split())
+        else:
+            paths.add(field)
+    return paths
+
+
+@pytest.mark.parametrize("query", [pytest.param(QUERY, id="single"), pytest.param(BATCH_QUERY, id="batch")])
+def test_each_query_asks_for_everything_the_node_reads(query: str) -> None:
+    """Whatever the node reads that a query leaves out would read as missing for every title."""
+
+    assert _node_paths() - _selected_paths(query) == set()
 
 
 # --- AniListClient.query / query_batch (respx-faked httpx boundary) --------------------------
@@ -201,6 +212,22 @@ def test_every_post_carries_the_project_referer() -> None:
     assert route.call_count == 2
     calls = cast("list[Call]", route.calls)
     assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
+
+
+@respx.mock
+def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
+    """A wrong id would read another title's answer as this one's."""
+
+    route = respx.post(API_URL).respond(json={"data": {"Media": None}})
+
+    client = _client()
+    client.query(21)
+    client.query_batch([21, 22])
+
+    single, batch = cast("list[Call]", route.calls)
+    assert str(single.request.url) == str(batch.request.url) == "https://graphql.anilist.co/"
+    assert json.loads(single.request.content) == {"query": QUERY, "variables": {"id": 21}}
+    assert json.loads(batch.request.content) == {"query": BATCH_QUERY, "variables": {"ids": [21, 22]}}
 
 
 @respx.mock
