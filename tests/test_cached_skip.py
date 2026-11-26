@@ -11,18 +11,21 @@ resolve it). An absent cached title, or one whose entry changed, is checked agai
 and a row sent on to a check loses its stamp until a check caches the title.
 """
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import override
+from typing import Final, override
 
 import httpx
 import pytest
+from seadex import EntryRecord
 
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitle, CachedTitleUpdate
-from pearlarr.config import Arr
-from pearlarr.output import Accent, StyledValue, TitleDetail
+from pearlarr.config import AppConfig, Arr
+from pearlarr.output import Accent, StyledValue, TitleDetail, TitleHeader
+from pearlarr.output.events import TitleState
 from pearlarr.pending_import import TitleNames
 from pearlarr.tvdb_orders import AIRED_ORDER
 
@@ -41,13 +44,15 @@ from .builders import (
     make_services,
     one_release_dict,
 )
-from .fakes import install_recording_hub
+from .fakes import RecordingHub, install_recording_hub
 from .wait_fakes import FakeQbit
 
 _URL = "https://releases.moe/7"
 _COVERAGE = "S01 E01-E12"
 _CACHED_ON = datetime(2026, 1, 1)
 """SeaDex's update time for title 7's entry, the one its row was cached under."""
+
+_ENTRY = make_entry_record(anilist_id=7, url=_URL, updated_at=_CACHED_ON)
 
 _SETTINGS = make_config()
 
@@ -76,13 +81,13 @@ def _cached_row(*, fallback_satisfied: bool = False) -> CachedTitleUpdate:
     return row
 
 
-def _services(cache: FakeCacheStore) -> ArrRunServices:
+def _services(cache: FakeCacheStore, *, settings: AppConfig = _SETTINGS) -> ArrRunServices:
     """One run's services over the cache, built as bootstrap builds them for each run.
 
     qBittorrent is set up, so the run is no dry run and what it caches is what the next run reads.
     """
 
-    deps = make_run_deps(config=_SETTINGS, cache_store=cache, qbit=FakeQbit().client())
+    deps = make_run_deps(config=settings, cache_store=cache, qbit=FakeQbit().client())
     return ArrRunServices(deps, Arr.SONARR)
 
 
@@ -92,6 +97,43 @@ def _holding(row: CachedTitleUpdate) -> FakeCacheStore:
     cache = FakeCacheStore()
     cache.update_cached_title(Arr.SONARR, 7, row)
     return cache
+
+
+def _shown_unchanged(recording: RecordingHub) -> list[int | None]:
+    """The titles shown as unchanged, by AniList id."""
+
+    return [header.anilist_id for header in recording.of_type(TitleHeader) if header.state is TitleState.UNCHANGED]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Gate:
+    """What the gate weighs for title 7: its row, SeaDex's entry for it, and what the run knows."""
+
+    row: CachedTitleUpdate | None = field(default_factory=_cached_row)
+    """None for a title never cached."""
+    entry: EntryRecord = _ENTRY
+    settings: AppConfig = _SETTINGS
+    last_scan: AppConfig | None = None
+    """The settings the last full scan stored its selection hash under. None for the settings the run has."""
+    files_changed: frozenset[int] = frozenset()
+    """The titles whose files changed in Sonarr since the last run."""
+
+
+def _run_under(gate: _Gate, cache: FakeCacheStore) -> ArrRunServices:
+    """The run's services over the cache, once the cache and the run hold what the gate weighs."""
+
+    cache.store_selection_hash(Arr.SONARR, (gate.last_scan or gate.settings).selection_hash())
+    if gate.row is not None:
+        cache.update_cached_title(Arr.SONARR, 7, gate.row)
+    run = _services(cache, settings=gate.settings)
+    run.mark_dirty(gate.files_changed)
+    return run
+
+
+_LEFT_ALONE: Final[tuple[bool, list[int | None]]] = (True, [7])
+"""True to the strategy, which stops there, and an unchanged block shown for the title."""
+_SENT_ON: Final[tuple[bool, list[int | None]]] = (False, [])
+"""False, so the strategy checks the title, and nothing shown for it yet."""
 
 
 class _RecordingCacheStore(FakeCacheStore):
@@ -132,45 +174,56 @@ class _BackfillCase:
 _FRESH = datetime(2021, 1, 1)
 
 
+class TestLeavingATitleAlone:
+    """A cached title is left alone only while nothing could change what its check would find."""
+
+    @pytest.mark.parametrize(
+        ("gate", "outcome"),
+        [
+            pytest.param(_Gate(), _LEFT_ALONE, id="cached under its entry's current update"),
+            pytest.param(_Gate(row=None), _SENT_ON, id="never cached"),
+            pytest.param(
+                _Gate(entry=copy.replace(_ENTRY, updated_at=datetime(2026, 3, 1))),
+                _SENT_ON,
+                id="its entry updated since",
+            ),
+            pytest.param(
+                _Gate(settings=make_config(ignore_seadex_update_times=True)),
+                _SENT_ON,
+                id="the settings ignore SeaDex's update times",
+            ),
+            pytest.param(_Gate(files_changed=frozenset({7})), _SENT_ON, id="its files changed"),
+            pytest.param(_Gate(files_changed=frozenset({8})), _LEFT_ALONE, id="another title's files changed"),
+            pytest.param(
+                _Gate(last_scan=make_config(want_best=False)),
+                _SENT_ON,
+                id="the selection settings changed since the last full scan",
+            ),
+            pytest.param(
+                _Gate(row=_cached_row(fallback_satisfied=True), settings=make_config(private_releases="warn")),
+                _SENT_ON,
+                id="a public fallback satisfied it and private releases warn",
+            ),
+            pytest.param(
+                _Gate(row=_cached_row(fallback_satisfied=True), settings=make_config(private_releases="fallback")),
+                _LEFT_ALONE,
+                id="a public fallback satisfied it and private releases fall back",
+            ),
+        ],
+    )
+    def test_a_title_is_left_alone_only_while_nothing_could_change_its_check(
+        self, gate: _Gate, outcome: tuple[bool, list[int | None]]
+    ) -> None:
+        recording = install_recording_hub()
+        run = _run_under(gate, FakeCacheStore())
+
+        left_alone = run.is_unchanged(7, gate.entry, lambda: _COVERAGE)
+
+        assert (left_alone, _shown_unchanged(recording)) == outcome
+
+
 class TestIsUnchanged:
-    """`is_unchanged` is True only for a fresh cached title, backfilling url/coverage and the name once.
-
-    It is bypassed by `ignore_seadex_update_times` or a dirty id.
-    """
-
-    @staticmethod
-    def _run(cache: FakeCacheStore) -> ArrRunServices:
-        # is_unchanged touches only cache_store + _config (real, default
-        # ignore_seadex_update_times=False) + the reporter + the AniList gateway the
-        # name backfill asks. ctx defaults to a SONARR ArrRunState (make_services).
-        return make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
-        )
-
-    def test_unchanged_when_cached_and_timestamp_matches(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        reporter = _RecordingReporter()
-        run = make_services(
-            cache_store=cache,
-            _reporter=reporter,
-            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
-        )
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
-        assert reporter.cached == [7]
-
-    def test_checks_when_the_cached_title_is_absent(self) -> None:
-        run = self._run(FakeCacheStore())
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
-
-    def test_checks_when_the_timestamp_changed(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = self._run(cache)
-        # SeaDex entry now carries a newer updated_at -> changed -> check again.
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
+    """An unchanged title backfills the url/coverage and the name its row lacks, once."""
 
     @pytest.mark.parametrize(
         "case",
@@ -243,40 +296,6 @@ class TestIsUnchanged:
         persisted = cache.get_cached_title(Arr.SONARR, 7)
         assert persisted is not None
         assert persisted.name == case.name
-
-    def test_ignore_update_times_reprocesses_even_when_fresh(self) -> None:
-        # The config escape hatch: a fresh, matching timestamp is still re-processed.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            ignore_seadex_update_times=True,
-        )
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
-
-    def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
-        # An arr-side file change bypasses the unchanged check despite a matching timestamp.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = self._run(cache)
-        run.mark_dirty([7])
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
-
-    def test_selection_changed_reprocesses_even_when_fresh(self) -> None:
-        # A matching-preference change bypasses the unchanged check despite a matching timestamp.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_changed=True)
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
-
-    def test_non_dirty_sibling_stays_unchanged(self) -> None:
-        # Marking one id dirty must not widen the bypass to other cached ids.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = self._run(cache)
-        run.mark_dirty([8])
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
 class TestACheckedTitleLosesItsStamp:
@@ -364,41 +383,6 @@ class TestACheckedTitleLosesItsStamp:
         self._grab(run)
 
         assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
-
-
-class TestFallbackSatisfiedResurfacing:
-    """The fallback-satisfied marker bypasses the unchanged check in warn mode only."""
-
-    @staticmethod
-    def _cache(*, marker: bool) -> FakeCacheStore:
-        cache = FakeCacheStore()
-        cache.update_cached_title(
-            Arr.SONARR,
-            7,
-            {"url": "u", "updated_at": datetime(2021, 1, 1), "fallback_satisfied": marker},
-        )
-        return cache
-
-    @staticmethod
-    def _skips(cache: FakeCacheStore, private_releases: str) -> bool:
-        run = make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
-            private_releases=private_releases,
-        )
-        return run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
-
-    def test_warn_mode_reprocesses_a_marked_title(self) -> None:
-        # Fresh timestamp, but the title was satisfied by a fallback: warn mode
-        # checks it again so the private-only warning resurfaces.
-        assert self._skips(self._cache(marker=True), "warn") is False
-
-    def test_fallback_mode_still_finds_a_marked_title_unchanged(self) -> None:
-        assert self._skips(self._cache(marker=True), "fallback") is True
-
-    def test_warn_mode_finds_an_unmarked_title_unchanged(self) -> None:
-        assert self._skips(self._cache(marker=False), "warn") is True
 
 
 class _TailReporter:
