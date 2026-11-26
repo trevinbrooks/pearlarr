@@ -396,10 +396,9 @@ class TestPrivateFallback:
         assert set(result["A"].releases) == {"priv", "pub"}
 
     def test_exactly_covered_private_files_skip_the_search(self) -> None:
-        # MUTATION PIN (needs_fallback): the coverage check `<= public_file_names`
-        # flipped to `<` treats an EXACTLY-equal fileset as uncovered and runs the
-        # fallback search. Priv's files equal Pub's file-for-file: no search, so
-        # the non-best Alt never enters the dict.
+        # Priv's files equal Pub's file for file, and an exactly equal fileset
+        # counts as covered: no fallback search runs, so the non-best Alt never
+        # enters the dict.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
             torrents=(
@@ -433,10 +432,9 @@ class TestPrivateFallback:
         assert set(result) == {"Priv", "Pub"}
 
     def test_private_first_iteration_still_registers_group_public(self) -> None:
-        # MUTATION PIN (group_has_public accumulation): `prior or is_pub` degraded
-        # (e.g. to `and`) loses the group's public flag when a PRIVATE candidate
-        # iterates first. Group A: blind private then public - A is covered
-        # per-group, so no search runs and Alt stays out.
+        # A group keeps its public flag when its private release is listed first.
+        # Group A: blind private then public - A is covered per-group, so no
+        # search runs and Alt stays out.
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
         entry = make_entry_record(
             torrents=(
@@ -646,9 +644,8 @@ class TestInteractivePick:
     def test_comma_separated_multi_pick_keeps_each_selection(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # MUTATION PIN: the comma-separated selection path was never exercised -
-        # a mutated split/parse collapses "0, 2" to nothing. Both picked groups
-        # (with the space-padded token) must survive, the unpicked one dropped.
+        # Both picked groups survive, the space-padded token included, and the
+        # unpicked one is dropped.
         filt = make_release_filter()
         seadex_dict = {"GroupA": rg_group({}), "GroupB": rg_group({}), "GroupC": rg_group({})}
 
@@ -756,7 +753,7 @@ class TestInteractivePick:
 
 
 def test_file_size_cover_merges_torrents_with_elementwise_max() -> None:
-    """MUTATION PIN: `|` not `+`, and not a set union either.
+    """The cover is each size's highest count in any one torrent: `|` on counters, not `+` and not a set union.
 
     Two torrents carrying one copy of a size each cannot cover a torrent that
     genuinely carries two - only ONE torrent with both can. A `+` merge would

@@ -110,10 +110,7 @@ class TestClassifyPendingImport:
 
 
 class TestSanitizeTorrentDownloadProgress:
-    """MUTATION PIN: pins the pure download progress sanitizer's clamps and sentinel conversions.
-
-    Covers the numeric-string `_as_float` path too - a cluster of ~10 surviving mutants.
-    """
+    """The download progress sanitizer's clamps and sentinel conversions, numeric strings included."""
 
     @pytest.mark.parametrize(
         ("progress", "dlspeed", "eta", "completed", "size", "expected"),
