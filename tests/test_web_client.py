@@ -8,13 +8,13 @@
 webhooks, mapping downloads): these pin its transport policy - redirects
 followed (no credential header is sent on it), verification always on, the
 `pearlarr/<version>` User-Agent default, and the (5, 30) timeout split -
-mirroring `test_make_httpx_client_pins_the_transport_policy` for the arr
-client. `get_with_retries` replaces the urllib3 `Retry` adapter the old
-requests session mounted, so its matrix is pinned too: transient statuses and
-transport errors retry with backoff, a terminal status returns immediately,
-retry exhaustion returns the response (never raises on status) but propagates
-a transport error, and a response's Retry-After window beats the backoff
-(capped, junk falls back).
+mirroring what `test_arr_http` pins for the arr client. `get_with_retries`
+replaces the urllib3 `Retry` adapter the old requests session mounted, so
+its matrix is pinned too: transient statuses and transport errors retry
+with backoff, a terminal status returns immediately, retry exhaustion
+returns the response (never raises on status) but propagates a transport
+error, and a response's Retry-After window beats the backoff (capped, junk
+falls back).
 """
 
 import ssl

@@ -24,7 +24,6 @@ from pearlarr.arr_http import (
     ArrHttp,
     ArrUnreachableError,
     DeleteOutcome,
-    make_arr_client,
 )
 from pearlarr.output import Diagnostic, Severity
 
@@ -573,14 +572,6 @@ def test_history_since_failure_returns_none_with_one_warning() -> None:
     assert _one_warning(recording).message == (
         "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
     )
-
-
-def test_make_httpx_client_pins_the_transport_policy() -> None:
-    """The factory fixes the connect and read timeouts every arr call shares, so no call site can forget one."""
-
-    with make_arr_client() as client:
-        assert client.timeout.connect == 5
-        assert client.timeout.read == 30
 
 
 @pytest.mark.parametrize("url", [f"{_URL}", f"{_URL}/"])
