@@ -282,6 +282,26 @@ class TestPrivateFallback:
         )
         assert set(filt.build(entry)) == {"Best", "AltDual"}
 
+    def test_a_fallback_is_always_a_public_release(self) -> None:
+        # AltPriv's release is dual audio like the preferred one, so the preferences would choose it over AltPub's,
+        # but it is private too.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=True)
+        entry = _entry(
+            _torrent(
+                release_group="Best",
+                url="priv",
+                tracker=Tracker.ANIMEBYTES,
+                infohash=None,
+                is_best=True,
+                is_dual_audio=True,
+            ),
+            _torrent(
+                release_group="AltPriv", url="priv2", tracker=Tracker.ANIMEBYTES, infohash=None, is_dual_audio=True
+            ),
+            _torrent(release_group="AltPub", url="pub", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"Best", "AltPub"}
+
     def test_same_group_private_release_with_uncovered_files_survives_the_drop(self) -> None:
         # Group A: a private dual S1+S2 torrent (preferred) + a public S1-only copy
         # re-added as the fallback. The coverage-aware drop must NOT delete the
