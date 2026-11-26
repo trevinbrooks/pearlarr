@@ -36,7 +36,7 @@ from .sonarr_import_builders import (
     make_sonarr_for_import,
     posted_imports,
 )
-from .wait_fakes import FakeQbit, FakeTorrent
+from .wait_fakes import FakeQbit, FakeTorrent, stored_awaiting_cleanup
 
 _SHOW_FILE = "Show - 01 [1080p].mkv"
 
@@ -414,8 +414,6 @@ class TestImportOverEpisodeFiles:
         mgr.finish_cleanups()
 
         assert len(sonarr.execute_calls) == 1
-        row = store.get_pending_import_row(Arr.SONARR, pending.infohash)
-        assert row is not None
-        assert row["awaiting_cleanup"] is False
+        assert stored_awaiting_cleanup(store) == {pending.infohash: False}
         assert state.pending_import_states[pending.infohash] is PendingImportState.DOWNLOADED
         assert any("no longer has every file imported" in w for w in diagnostic_messages(recording, Severity.WARNING))
