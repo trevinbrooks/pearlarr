@@ -434,10 +434,7 @@ class TestSonarrCheckTitleMetadataUnread:
         resident = pending_import(infohash="h1", series_id=8, seadex_files=list(GRAB_FILES))
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[EP1, EP2]),
-            windows={5: [EP2]},
-            unread_series=unread_series,
-            unread_anilist_ids=unread_anilist_ids,
+            FakeSonarrClient(episodes=[EP1, EP2]), unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
         )
 
         run = sonarr_grab_run(store=store, episodes=episodes)
