@@ -324,25 +324,37 @@ _OLDER_SELECTION = "an-older-selection"
 """The selection hash an earlier full run stored, under selection settings changed since."""
 
 
-def _series_3(services: ArrRunServices | None = None) -> FakeStrategy:
-    """A library of series 3 mapping title 11, its history the one import. `services` holds each title past the cap."""
+class _Series3(FakeStrategy):
+    """A library of series 3 mapping title 11, its history the one import.
 
-    return FakeStrategy(
-        items=[FakeArrItem(item_id=3)],
-        anilist_ids={11: TitleMapping(anilist_id=11)},
-        services=services,
-        history=[sonarr_file_imported(3)],
-    )
+    `services` holds each title past the cap, and with `fails` the title's check raises.
+    """
+
+    def __init__(self, services: ArrRunServices | None = None, *, fails: bool = False) -> None:
+        super().__init__(
+            items=[FakeArrItem(item_id=3)],
+            anilist_ids={11: TitleMapping(anilist_id=11)},
+            services=services,
+            history=[sonarr_file_imported(3)],
+        )
+        self._fails = fails
+
+    @override
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        if self._fails:
+            raise RuntimeError("check failed")
+        super().check_title(item, anilist_id, mapping)
 
 
 @dataclass(frozen=True, kw_only=True)
 class _Situation:
-    """What a run met: the series it was narrowed to, and which sources were unreachable or held a title."""
+    """What a run met: its narrowing to one series, the sources unreachable or holding a title, and a failed check."""
 
     item_id: int | None = None
     seadex_unreachable: bool = False
     anilist_unreachable: bool = False
     held_past_the_cap: bool = False
+    title_fails: bool = False
 
 
 class TestSelectionRecheck:
@@ -372,7 +384,7 @@ class TestSelectionRecheck:
         cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION if changed else config.selection_hash())
         recording = install_recording_hub()
 
-        drive_arr_run(make_run_deps(config=config, cache_store=cache), lambda _: _series_3(), item_id=item_id)
+        drive_arr_run(make_run_deps(config=config, cache_store=cache), lambda _: _Series3(), item_id=item_id)
 
         assert (self._NOTE in diagnostic_messages(recording)) is announced
 
@@ -386,6 +398,9 @@ class TestSelectionRecheck:
             pytest.param(_Situation(anilist_unreachable=True), True, id="no-anilist"),
             # So is a title held past the cap.
             pytest.param(_Situation(held_past_the_cap=True), True, id="held-past-the-cap"),
+            # And one whose check failed: blocking the stores, one flaky title would have the library checked again
+            # every run.
+            pytest.param(_Situation(title_fails=True), True, id="a-title-failed"),
         ],
     )
     def test_a_full_scan_seadex_answered_stores_the_selection_and_the_checkpoint(
@@ -404,7 +419,7 @@ class TestSelectionRecheck:
 
         drive_arr_run(
             deps,
-            lambda services: _series_3(services if situation.held_past_the_cap else None),
+            lambda services: _Series3(services if situation.held_past_the_cap else None, fails=situation.title_fails),
             item_id=situation.item_id,
         )
 
