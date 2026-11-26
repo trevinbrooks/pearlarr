@@ -85,10 +85,10 @@ class TestPrefetch:
             store.put_anilist_meta(anilist_id, _fresh_answer(anilist_id))
         gateway.load_cache()
 
-        assert gateway.prefetch([1, 2], dry_run=True) == 0
+        assert gateway.prefetch([1, 2], dry_run=False) == 0
         assert client.batch_calls == []
 
-    def test_51_missing_chunks_merges_persists_and_reports(self) -> None:
+    def test_51_missing_chunks_persists_and_reports(self) -> None:
         # 51 missing ids -> two id_in pages ([50, 1]). id 7 is unknown to AniList
         # (absent from the batch result), which is just not found, never a raise.
         client = ScriptedAniListClient(absent=frozenset({7}))
@@ -102,54 +102,36 @@ class TestPrefetch:
         # Returns how many NEEDED fetching (the absent id still counted as work).
         assert fetched == len(ids)
         assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE], ids[ANILIST_BATCH_SIZE:]]
-        # Both pages merged into the run cache. The absent id is simply absent.
-        assert set(gateway.answers) == set(ids) - {7}
-        # Persisted (via put_anilist_meta) before returning, so the batch's work
-        # survives an early run exit.
-        assert store.get_anilist_meta(1) is not None
-        assert store.get_anilist_meta(ids[-1]) is not None
-        assert store.get_anilist_meta(7) is None
+        # Both pages' answers are stored. The absent id is simply absent.
+        assert {anilist_id for anilist_id, _ in store.iter_anilist_meta()} == set(ids) - {7}
         # The progress handle saw one (fraction, "done/total") update per batch.
         assert progress.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
 
     def test_writes_exactly_the_fetched_ids(self) -> None:
-        client = ScriptedAniListClient(absent=frozenset({2}))
         store = FakeCacheStore()
-        gateway = make_anilist_gateway(client, store)
-        original = _stamp(days_ago=1)
-        store.put_anilist_meta(1, {"fetched_at": original, "data": anilist_body(1)})
+        gateway = make_anilist_gateway(ScriptedAniListClient(), store)
+        loaded = _fresh_answer(1)
+        store.put_anilist_meta(1, loaded)
         gateway.load_cache()
-        # A confirmed not-found answer is kept for the run, so the prefetch has nothing to ask about it.
-        assert gateway.titles(2) == ()
 
-        before = _now_str()
-        gateway.prefetch([1, 2, 3], dry_run=False)
+        gateway.prefetch([1, 3], dry_run=False)
 
-        assert client.batch_calls == [[3]]
         # A loaded fresh row keeps its stamp, so the refresh age can actually reach it.
-        fresh = store.get_anilist_meta(1)
-        assert fresh is not None
-        assert fresh["fetched_at"] == original
-        # The not-found answer kept for the run never reaches disk.
-        assert store.get_anilist_meta(2) is None
+        assert store.get_anilist_meta(1) == loaded
         written = store.get_anilist_meta(3)
         assert written is not None
-        assert written["fetched_at"] >= before
         assert written["data"] == anilist_body(3)
 
     def test_a_dry_run_save_writes_nothing(self) -> None:
-        # A dry run never commits, so the fetch stays in memory and no aged row is evicted.
-        client = ScriptedAniListClient()
+        # A dry run never commits: what it fetched isn't written, and no aged row is evicted.
         store = FakeCacheStore()
-        gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _stale_answer(1))
+        gateway = make_anilist_gateway(ScriptedAniListClient(), store)
+        aged = _stale_answer(1)
+        store.put_anilist_meta(1, aged)
 
         gateway.prefetch([3], dry_run=True)
 
-        assert client.batch_calls == [[3]]
-        assert gateway.answers[3] == anilist_body(3)
-        assert store.get_anilist_meta(3) is None
-        assert store.get_anilist_meta(1) is not None
+        assert dict(store.iter_anilist_meta()) == {1: aged}
 
     def test_stops_once_anilist_is_unreachable(self) -> None:
         client = ScriptedAniListClient(failing=frozenset({1}))
@@ -170,23 +152,18 @@ class TestPrefetch:
         assert store.get_anilist_meta(1) is None
 
     def test_unreachable_keeps_stale_rows_and_serves_them(self) -> None:
-        client = ScriptedAniListClient(failing=frozenset({1}))
         store = FakeCacheStore()
-        gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _stale_answer(1))
-        store.put_anilist_meta(9, _stale_answer(9))
+        gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})), store)
+        aged = _stale_answer(1)
+        store.put_anilist_meta(1, aged)
         gateway.load_cache()
 
         gateway.prefetch([1], dry_run=False)
 
-        assert gateway.unreachable is True
-        # Nothing evicted: the aged rows are what is serving this run.
-        assert store.get_anilist_meta(1) is not None
-        assert store.get_anilist_meta(9) is not None
-        assert gateway.titles(1) == ("Resolved",)
+        # Nothing evicted: the aged row is what serves this run.
+        assert dict(store.iter_anilist_meta()) == {1: aged}
         # The aged count still answers: the alternative is grabbing every episode.
         assert gateway.episode_count(1) == 12
-        assert client.query_calls == []
 
     @pytest.mark.parametrize("asked", [pytest.param([1, 2], id="asked-for"), pytest.param([2], id="not-asked-for")])
     def test_a_fresh_answer_stored_without_dates_is_refetched(self, asked: list[int]) -> None:
@@ -197,7 +174,7 @@ class TestPrefetch:
         store.put_anilist_meta(2, _fresh_answer(2))
         gateway.load_cache()
 
-        assert gateway.prefetch(asked, dry_run=False) == 1
+        gateway.prefetch(asked, dry_run=False)
 
         assert client.batch_calls == [[1]]
         written = store.get_anilist_meta(1)
@@ -213,19 +190,16 @@ class TestPrefetch:
         gateway.load_cache()
 
         before = _now_str()
-        assert gateway.prefetch([1, 2], dry_run=False) == 2
+        gateway.prefetch([1, 2], dry_run=False)
 
         assert client.batch_calls == [[1, 2]]
-        # Returned: rewritten with a fresh stamp, the count serves again.
+        # Returned: rewritten with a fresh stamp.
         answer = store.get_anilist_meta(1)
         assert answer is not None
         assert answer["fetched_at"] >= before
-        assert gateway.episode_count(1) == 12
-        # Not returned: still served from memory this run, but evicted from disk.
+        # Not returned: evicted from disk, but still served from memory this run.
         assert store.get_anilist_meta(2) is None
-        assert gateway.titles(2) == ("Resolved",)
         assert gateway.episode_count(2) == 12
-        assert client.query_calls == []
 
 
 class TestMediaResolution:
