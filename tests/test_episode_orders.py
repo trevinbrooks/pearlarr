@@ -967,14 +967,17 @@ def test_a_listed_file_of_a_series_with_no_aired_view_yet_has_no_matched_episode
     assert file.parse == _FIFTH_BY_SONARR.with_matched(())
 
 
-def test_a_listed_file_of_a_series_whose_episodes_fail_to_read_is_an_unread_parse() -> None:
-    sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR})
+def test_the_listed_files_of_a_series_whose_episodes_fail_to_read_are_unread_parses_after_one_try() -> None:
+    # A failed read isn't kept, and Sonarr's client warns on each one. The second file is left unread without a try.
+    of_series_one = ParsedFileInfo(series_id=1)
+    sonarr = _parsing({_FIFTH: of_series_one, _SIXTH: of_series_one})
     sonarr.episodes_return = None
     strat = _synced_in_one_season(sonarr)
 
-    ((file,),) = strat._parse.parsed_files(_listing(_FIFTH)).values()
+    ((fifth, sixth),) = strat._parse.parsed_files(_listing(_FIFTH, _SIXTH)).values()
 
-    assert file.parse is None
+    assert (fifth.parse, sixth.parse) == (None, None)
+    assert sonarr.episodes_calls == [1]
 
 
 _WITHOUT_TVDB_IDS = pending_import(
