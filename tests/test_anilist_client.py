@@ -101,7 +101,7 @@ def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(
 # --- what the queries ask for -----------------------------------------------
 
 
-# The node reads a date from all three parts of AniList's date object.
+# Compared as a plain object: the type checker reads `field.annotation is FuzzyDate` as always false.
 _FUZZY_DATE: object = FuzzyDate
 
 
@@ -125,7 +125,9 @@ def _node_paths() -> set[str]:
 def _selected_paths(query: str) -> set[str]:
     """What a query asks of each Media, as paths: `episodes`, `title.english`."""
 
-    # The Media selection is everything after the query's last argument list, and nests one level deep.
+    # This reads only the plain shape both queries use: the fields after the last argument list, each with at
+    # most one level of subfields. A field commented out or given an alias passes unseen. An argument on a field,
+    # a second level or a fragment fails the test instead, and then the fault is here, not in the query.
     selection = query.rsplit(") {", 1)[1]
     paths: set[str] = set()
     for field, subfields in cast("list[tuple[str, str]]", re.findall(r"(\w+)\s*(?:\{([^}]*)\})?", selection)):
