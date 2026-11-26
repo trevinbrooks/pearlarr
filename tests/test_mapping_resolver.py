@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# Drives module-private resolver internals under test (_mapping_from_raw, m._parse_*, resolver._(maybe_)download*).
+# Drives module-private resolver internals under test (_mapping_from_raw, m._parse_*).
 """Parity + edge tests for the SQL-backed `MappingResolver` / `AniBridge`.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
@@ -33,11 +33,12 @@ from pearlarr.anibridge import (
     AniBridgeGraph,
     SpecialAliasing,
 )
-from pearlarr.mapping_store import AnimeIdRow, MappingStore
+from pearlarr.mapping_store import MappingStore
 from pearlarr.mappings import (
     ANIBRIDGE_MAPPINGS_FILE,
     ANIDB_MAPPINGS_FILE,
     ANIME_IDS_FILE,
+    ANIME_IDS_URL,
     AnimeIdsByName,
     AnimeIdsRawMapping,
     ExternalIds,
@@ -52,8 +53,8 @@ from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
 from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
 
-from .builders import make_bare_instance, make_sonarr_episodes, sonarr_ep
-from .fakes import debug_logger, diagnostic_messages, install_recording_hub
+from .builders import make_sonarr_episodes, sonarr_ep
+from .fakes import RecordingProgress, debug_logger, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
 _WEB = httpx.Client()
@@ -661,6 +662,7 @@ class TestAnidbSkipTallies:
 # --------------------------------------------------------------------------- #
 
 _FROM_FILES = MappingSources(anime=None, anidb=None, anibridge=None)
+_ANIME_IDS_FROM_FILE = MappingSources(anime=None, anidb=False, anibridge=False)
 _FRIEREN: AnimeIdsByName = {"Sousou no Frieren": {"anilist_id": 154587, "tvdb_id": 424536, "tvdb_season": 1}}
 
 
@@ -707,40 +709,6 @@ class TestSourceHashGate:
         assert changed.resolve(ExternalIds(tvdb=424536)).kept[154587] == TitleMapping(154587, tvdb_season=2)
 
 
-class TestConstructionFailureClosesStore:
-    """A non-`DatabaseError` raised during `_build` still closes the store before it propagates."""
-
-    def test_store_closed_when_build_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A non-DatabaseError from _build must still close the store (the resolver
-        # is never returned, so no one else can). Spy on close().
-        closed = {"n": 0}
-        real_close = MappingStore.close
-
-        def spy_close(self: MappingStore) -> None:
-            closed["n"] += 1
-            real_close(self)
-
-        monkeypatch.setattr(MappingStore, "close", spy_close)
-
-        def boom(_amap: AnimeIdsByName) -> list[AnimeIdRow]:
-            raise ValueError("parse blew up")
-
-        monkeypatch.setattr(m, "_anime_ids_rows", boom)
-
-        with pytest.raises(ValueError, match="parse blew up"):
-            MappingResolver(
-                refresh_days=1,
-                ignore_anilist_ids=set(),
-                web=_WEB,
-                sources=MappingSources(
-                    anime={"x": {"anilist_id": 1}},
-                    anidb=False,
-                    anibridge=False,
-                ),
-            )
-        assert closed["n"] >= 1
-
-
 class TestUnwritableDbFallback:
     """A mappings database that can't be written is rebuilt in memory for the run, with one warning."""
 
@@ -762,6 +730,127 @@ class TestUnwritableDbFallback:
             ),
         ]
         assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
+
+
+def _aged(path: Path, *, days: int) -> None:
+    """Set the file's modified time `days` days and a minute back."""
+
+    then = time.time() - days * 86400 - 60
+    os.utime(path, (then, then))
+
+
+def _cut_off() -> httpx.Response:
+    """A 200 whose body breaks off after its first 64 KiB, as a dropped connection leaves it."""
+
+    def chunks() -> Iterator[bytes]:
+        yield b" " * (1 << 16)
+        raise httpx.ReadError("connection reset by peer")
+
+    return httpx.Response(200, content=chunks())
+
+
+class TestSourceDownloads:
+    """A boot downloads a source file that's missing, and again once it is `refresh_days` old.
+
+    A download lands whole or not at all: it streams into a `.part` file beside the source and replaces the source
+    only once complete. Its errors name no URL.
+    """
+
+    @respx.mock
+    def test_a_missing_source_is_downloaded_whole_and_indexed(self, tmp_path: Path) -> None:
+        # Many 64 KiB read chunks, so a body cut short would show.
+        records = {str(n): {"anilist_id": n, "tvdb_id": 70000 + n, "tvdb_season": 1} for n in range(1, 3001)}
+        body = json.dumps(records, indent=2).encode()
+        respx.get(ANIME_IDS_URL).respond(content=body)
+
+        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+
+        assert (tmp_path / ANIME_IDS_FILE).read_bytes() == body
+        assert not (tmp_path / f"{ANIME_IDS_FILE}.part").exists()
+        assert resolver.resolve(ExternalIds(tvdb=73000)).kept == {3000: TitleMapping(3000, tvdb_season=1)}
+
+    @respx.mock
+    def test_a_download_shows_each_megabyte_on_the_boot_bar(self, tmp_path: Path) -> None:
+        body = json.dumps(_FRIEREN).encode().ljust(2 << 20)  # two megabytes, the JSON padded with spaces
+        respx.get(ANIME_IDS_URL).respond(content=body)
+        bar = RecordingProgress()
+
+        MappingResolver(
+            refresh_days=1,
+            ignore_anilist_ids=set(),
+            sources=_ANIME_IDS_FROM_FILE,
+            web=httpx.Client(),
+            mappings_db=str(tmp_path / "mappings.db"),
+            progress=bar,
+        )
+
+        assert bar.updates == [(0.5, "anime_ids.json · 1/2 MB"), (1.0, "anime_ids.json · 2/2 MB")]
+
+    @respx.mock
+    def test_a_source_as_old_as_refresh_days_is_downloaded_again(self, tmp_path: Path) -> None:
+        source = tmp_path / ANIME_IDS_FILE
+        source.write_text(json.dumps(_FRIEREN))
+        _aged(source, days=1)
+        fresh = json.dumps(
+            {**_FRIEREN, "Sousou no Frieren 2": {"anilist_id": 182255, "tvdb_id": 424536, "tvdb_season": 2}}
+        )
+        respx.get(ANIME_IDS_URL).respond(content=fresh.encode())
+
+        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+
+        assert source.read_text() == fresh
+        assert list(resolver.resolve(ExternalIds(tvdb=424536)).kept) == [154587, 182255]
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        ("respond", "detail"),
+        [
+            pytest.param(lambda: httpx.Response(500), "HTTP 500", id="server error"),
+            pytest.param(_cut_off, "ReadError", id="cut off mid-stream"),
+        ],
+    )
+    def test_refresh_failure_falls_open_to_cached_file(
+        self, tmp_path: Path, respond: Callable[[], httpx.Response], detail: str
+    ) -> None:
+        source = tmp_path / ANIME_IDS_FILE
+        cached = json.dumps(_FRIEREN)
+        source.write_text(cached)
+        _aged(source, days=10)
+        respx.get(ANIME_IDS_URL).mock(return_value=respond())
+        recording = install_recording_hub()
+
+        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            f"Could not refresh anime_ids.json (download failed: {detail}) - using the cached copy"
+        ]
+        assert source.read_text() == cached
+        assert not (tmp_path / f"{ANIME_IDS_FILE}.part").exists()
+        assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        ("respond", "error"),
+        [
+            pytest.param(lambda: httpx.Response(500), "download failed: HTTP 500", id="server error"),
+            pytest.param(
+                lambda: httpx.Response(200, content=b" " * (2 << 20)),
+                "anime_ids.json exceeded the 1 MB download cap; aborting",
+                id="over the size cap",
+            ),
+        ],
+    )
+    def test_first_ever_download_failure_still_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, respond: Callable[[], httpx.Response], error: str
+    ) -> None:
+        monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1 << 20)  # a cap a small body can pass
+        respx.get(ANIME_IDS_URL).mock(return_value=respond())
+
+        with pytest.raises(OSError, match=f"^{re.escape(error)}$"):
+            _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+
+        # No source and no part file, and the database closed: one left open keeps its -wal file beside it.
+        assert [p.name for p in tmp_path.iterdir()] == ["mappings.db"]
 
 
 # --------------------------------------------------------------------------- #
@@ -910,121 +999,3 @@ class TestRealDataParity:
                     assert resolver.anidb_episode_by_tvdb(anidb_id, season) == expected
         finally:
             resolver.close()
-
-
-def _boom(*_a: object, **_k: object) -> None:
-    raise OSError("connection reset by peer")
-
-
-class TestMaybeDownloadFailOpen:
-    """A refresh blip falls open to the cached file. A first-ever download stays fatal."""
-
-    def test_refresh_failure_falls_open_to_cached_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A stale-but-valid cached source whose refresh download fails on a transient
-        # error must NOT abort the run: fall open to the on-disk copy and warn.
-        source = tmp_path / "anime_ids.json"
-        source.write_text("{}")
-        old = time.time() - 10 * 86400  # 10 days old, past refresh_days
-        os.utime(source, (old, old))
-        monkeypatch.setattr(MappingResolver, "_download_file", _boom)
-
-        recording = install_recording_hub()
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, refresh_days=1, _web=_WEB)
-        resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
-
-        # Warned (not aborted): the fall-open notice goes through the hub.
-        [warning] = diagnostic_messages(recording, Severity.WARNING)
-        assert "Could not refresh anime_ids.json" in warning
-        assert source.exists()  # the cached copy is left intact
-
-    def test_first_ever_download_failure_still_propagates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # With no file on disk there is nothing to fall open to, so a first-ever
-        # download failure stays fatal (the run cannot proceed without the source).
-        monkeypatch.setattr(MappingResolver, "_download_file", _boom)
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, refresh_days=1, _web=_WEB)
-
-        with pytest.raises(OSError):
-            resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")
-
-
-class TestDownloadFileSizeCap:
-    """An over-cap response aborts as OSError and leaves no partial file behind."""
-
-    @respx.mock
-    def test_over_cap_download_aborts_and_cleans_up(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        dest = tmp_path / "out.json"
-        monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1024)
-        respx.get("https://example/src.json").respond(content=b"x" * 4096)
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
-
-        with pytest.raises(OSError, match="download cap"):
-            resolver._download_file("https://example/src.json", str(dest), label="src.json")
-
-        # Neither the destination nor the .part temp survives the abort.
-        assert not dest.exists()
-        assert not (tmp_path / "out.json.part").exists()
-
-
-class TestDownloadFile:
-    """The streamed download contract: atomic success, contained failures."""
-
-    @respx.mock
-    def test_success_streams_to_dest_and_removes_the_part_temp(self, tmp_path: Path) -> None:
-        """A 200 lands the exact body at dest with the .part temp gone (atomic rename)."""
-
-        body = bytes(range(256)) * 800  # 200 KB: several 64 KiB read chunks
-        respx.get("https://example/src.json").respond(content=body)
-        dest = tmp_path / "out.json"
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
-
-        resolver._download_file("https://example/src.json", str(dest), label="src.json")
-
-        assert dest.read_bytes() == body
-        assert not (tmp_path / "out.json.part").exists()
-
-    @respx.mock
-    def test_http_failure_raises_a_url_free_oserror_and_writes_nothing(self, tmp_path: Path) -> None:
-        """A 500 raises OSError carrying only the status - never the URL - and writes no file.
-
-        `raise_for_status` fires before the `.part` open, so nothing lands on
-        disk. The exact-message assert pins the containment contract (the httpx
-        message embeds the URL, pearlarr's must not).
-        """
-
-        respx.get("https://example/src.json").respond(status_code=500)
-        dest = tmp_path / "out.json"
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
-
-        with pytest.raises(OSError, match="download failed: HTTP 500") as excinfo:
-            resolver._download_file("https://example/src.json", str(dest), label="src.json")
-
-        assert str(excinfo.value) == "download failed: HTTP 500"  # exact: no URL leaks
-        assert not dest.exists()
-        assert not (tmp_path / "out.json.part").exists()
-
-    @respx.mock
-    def test_mid_stream_failure_preserves_the_preexisting_dest(self, tmp_path: Path) -> None:
-        """A transport error mid-body leaves the cached copy intact and cleans the .part.
-
-        Pins the atomicity contract `_maybe_download`'s fall-open relies on: a
-        failed refresh writes only the temp (one chunk lands before the wire dies,
-        verified live: respx streams the generator lazily), never the dest it
-        falls back to. The `finally` sweeps the temp.
-        """
-
-        def _chunks() -> Iterator[bytes]:
-            yield b"y" * (1 << 16)  # one chunk reaches .part before the wire dies
-            raise httpx.ReadError("boom")
-
-        respx.get("https://example/src.json").mock(return_value=httpx.Response(200, content=_chunks()))
-        dest = tmp_path / "out.json"
-        dest.write_bytes(b'{"cached": true}')
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
-
-        with pytest.raises(OSError, match="download failed: ReadError"):
-            resolver._download_file("https://example/src.json", str(dest), label="src.json")
-
-        assert dest.read_bytes() == b'{"cached": true}'  # the cached copy is untouched
-        assert not (tmp_path / "out.json.part").exists()
