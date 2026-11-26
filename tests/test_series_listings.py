@@ -16,7 +16,6 @@ from pearlarr.series_listings import SeriesListings
 
 from .builders import (
     FakeSeaDexSource,
-    make_bare_instance,
     make_entry_record,
     make_sonarr_episodes,
     make_torrent_record,
@@ -83,9 +82,7 @@ def _window(anilist_id: int, *ids: int) -> TitleWindow:
 def _reader(seadex: FakeSeaDexSource, episodes: ScriptedEpisodes) -> SeriesListings:
     """A `SeriesListings` over the given entries and scripted windows, with no ignored tags."""
 
-    return make_bare_instance(
-        SeriesListings, _seadex=seadex, _episodes=episodes, _ignore_tags=frozenset(), _names=_names, _reads={}
-    )
+    return SeriesListings(seadex, episodes, frozenset(), _names)
 
 
 class TestRead:
@@ -215,7 +212,7 @@ class TestRead:
 
     def test_a_series_with_no_aired_view_marks_its_hashes_unread(self) -> None:
         seadex = FakeSeaDexSource({1: _entry(1, _H1)})
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=_episodes(1)), no_views={7: NoView.ORDERS_UNREAD})
+        episodes = ScriptedEpisodes(FakeSonarrClient(), no_views={7: NoView.ORDERS_UNREAD})
 
         read = _reader(seadex, episodes).read(7, _mappings(1))
 
