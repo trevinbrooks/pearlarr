@@ -113,14 +113,19 @@ class TestPrefetch:
 
         assert dict(store.iter_anilist_meta()) == {1: aged}
 
-    def test_a_batch_anilist_did_not_answer_is_not_counted_as_progress(self) -> None:
-        gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})))
+    def test_what_anilist_answered_before_it_went_down_is_kept_and_counted(self) -> None:
+        ids = list(range(1, ANILIST_BATCH_SIZE + 2))
+        store = FakeCacheStore()
+        # AniList answers the first batch and fails on the second, which holds the last id alone.
+        gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({ids[-1]})), store)
         progress = RecordingProgress()
 
-        gateway.prefetch([1], dry_run=False, progress=progress)
+        gateway.prefetch(ids, dry_run=False, progress=progress)
 
-        # The boot step's bar claims only the batches AniList answered.
-        assert progress.updates == []
+        # The next run doesn't ask again for the batch that came back.
+        assert {anilist_id for anilist_id, _ in store.iter_anilist_meta()} == set(ids[:-1])
+        # The boot step's bar claims only the batch AniList answered.
+        assert progress.updates == [(50 / 51, "50/51")]
 
     @pytest.mark.parametrize(
         "stored",
