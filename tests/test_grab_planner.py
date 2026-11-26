@@ -75,6 +75,12 @@ def _reduce(seadex: SeadexDict) -> PrivateOnlyNotices:
     return make_planner().reduce_overlapping_grabs(seadex)
 
 
+def _plan(seadex: SeadexDict, title: list[SonarrEpisode]) -> GrabPlan:
+    """The plan for `seadex` on a title of these episodes, where Sonarr's files are the ones on them."""
+
+    return make_planner().plan(seadex, arr_files(title), title)
+
+
 def _sonarr_group(**releases: Release) -> GroupReleases:
     """A group of `releases` by key, with every release's placed episodes, as the placement leaves a Sonarr group."""
 
@@ -176,7 +182,7 @@ class TestGroupsCoveringTheSameFiles:
             ),
         }
         title = [sonarr_ep(1, 1, size=100), sonarr_ep(1, 2, size=555)]
-        return make_planner().plan(seadex, arr_files(title), title)
+        return _plan(seadex, title)
 
     @pytest.mark.parametrize(
         "is_fallback", [pytest.param(True, id="beside-a-fallback"), pytest.param(False, id="beside-a-public-group")]
@@ -243,7 +249,7 @@ class TestGroupsCoveringTheSameFiles:
             sonarr_ep(1, 3, size=310, release_group="Pub"),
         ]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u4": "grab"}
         assert plan.skips == PrivateOnlyNotices()
@@ -582,7 +588,7 @@ class TestAReleaseThatPlacedNothing:
         # owned. A rename can strip the group from Sonarr's files, and files at its listed sizes are still its copy.
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200]))}
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == grabs
 
@@ -594,7 +600,7 @@ class TestAReleaseThatPlacedNothing:
         }
         title = [sonarr_ep(1, 1, size=100, release_group="Other")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -620,7 +626,7 @@ class TestAReleaseThatPlacedNothing:
         }
         title = [sonarr_ep(1, 1, size=500, release_group="Left"), sonarr_ep(1, 2, size=300, release_group="Other")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == grabs
 
@@ -653,7 +659,7 @@ class TestAReleaseByEpisode:
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200], episodes=[_S1E1, _S1E2]))}
         title = [held, sonarr_ep(1, 2, size=200)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == grabs
 
@@ -664,7 +670,7 @@ class TestAReleaseByEpisode:
         seadex = {"RG": _sonarr_group(u1=make_release(size=[100, 999], episodes=[placed]))}
         title = [sonarr_ep(1, 1, size=100, release_group="RG")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -675,7 +681,7 @@ class TestAReleaseByEpisode:
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[0], episodes=[placed]))}
         title = [sonarr_ep(1, 1, size=0)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "grab"}
 
@@ -689,7 +695,7 @@ class TestAReleaseByEpisode:
         }
         title = [sonarr_ep(1, 1, size=100)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -702,7 +708,7 @@ class TestAReleaseByEpisode:
         }
         title = [sonarr_ep(1, 1, size=999)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "grab", "u2": "grab"}
 
@@ -763,7 +769,7 @@ class TestListedSizeOnTooManyEpisodes:
         # sits on both episodes or each holds a copy.
         title = [self._ours(1, 200), self._ours(2, 200)]
 
-        plan = make_planner().plan(self._listing(100, 200), arr_files(title), title)
+        plan = _plan(self._listing(100, 200), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -772,7 +778,7 @@ class TestListedSizeOnTooManyEpisodes:
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 200, 999], episodes=[_S1E1, _S1E2]))}
         title = [self._ours(1, 100), self._ours(2, 999)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -782,7 +788,7 @@ class TestListedSizeOnTooManyEpisodes:
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100, 150, 200], episodes=episodes))}
         title = [self._ours(1, 200), self._ours(2, 200)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -791,14 +797,14 @@ class TestListedSizeOnTooManyEpisodes:
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[300], episodes=episodes))}
         title = [self._ours(1, 300), self._ours(2, 300)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
     def test_a_size_listed_twice_held_twice_does_not_grab(self) -> None:
         title = [self._ours(1, 300), self._ours(2, 300)]
 
-        plan = make_planner().plan(self._listing(300, 300), arr_files(title), title)
+        plan = _plan(self._listing(300, 300), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -807,7 +813,7 @@ class TestListedSizeOnTooManyEpisodes:
         seadex = {**self._listing(100, 200), "Other": _sonarr_group(u2=make_release(size=[200, 200]))}
         title = [sonarr_ep(1, 1, size=200, release_group="Other"), sonarr_ep(1, 2, size=200, release_group="Other")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -815,7 +821,7 @@ class TestListedSizeOnTooManyEpisodes:
         # E02's file with no group is this group's by its listed size, so size 200 sits on two episodes.
         title = [self._ours(1, 200), sonarr_ep(1, 2, size=200), self._ours(3, 300)]
 
-        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
+        plan = _plan(self._listing(100, 200, 300), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -823,7 +829,7 @@ class TestListedSizeOnTooManyEpisodes:
         # Episode 3 at its listed size means not every size differs, and a swap doubles no size.
         title = [self._ours(1, 200), self._ours(2, 100), self._ours(3, 300)]
 
-        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
+        plan = _plan(self._listing(100, 200, 300), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -831,7 +837,7 @@ class TestListedSizeOnTooManyEpisodes:
         # Every size differs from its placement, which marks an upgrade though no size sits on too many episodes.
         title = [self._ours(1, 200), self._ours(2, 100)]
 
-        plan = make_planner().plan(self._listing(100, 200), arr_files(title), title)
+        plan = _plan(self._listing(100, 200), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -839,7 +845,7 @@ class TestListedSizeOnTooManyEpisodes:
         # 999 sits on two episodes, but no release lists it, and E01 at its listed size means not every size differs.
         title = [self._ours(1, 100), self._ours(2, 999), self._ours(3, 999)]
 
-        plan = make_planner().plan(self._listing(100, 200, 300), arr_files(title), title)
+        plan = _plan(self._listing(100, 200, 300), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -849,7 +855,7 @@ class TestListedSizeOnTooManyEpisodes:
         seadex = {**self._listing(100, 200, is_public=False), "Fall": _sonarr_group(u2=public)}
         title = [self._ours(1, 200), self._ours(2, 200)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
         assert plan.skips == PrivateOnlyNotices(
@@ -869,7 +875,7 @@ class TestGroupGuardFacts:
             sonarr_ep(1, 2, size=999, release_group="Era-Raws"),
         ]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
         assert plan.guards == OwnedAtGrab(stale_groups=("Era-Raws",))
@@ -884,7 +890,7 @@ class TestGroupGuardFacts:
         seadex = {"Y": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "X": _sonarr_group(u2=x)}
         title = [sonarr_ep(1, 1, size=100, release_group="Y"), sonarr_ep(1, 13, size=999, release_group="Y")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {"u2": "grab"}
         assert plan.guards == OwnedAtGrab(entry_groups=("X",), stale_groups=("Y",))
@@ -905,7 +911,7 @@ class TestGroupGuardFacts:
         seadex = {"Ember": _sonarr_group(**releases)}
         title = [sonarr_ep(1, 1, size=100, release_group="Ember")]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
         assert plan.guards == guards
@@ -916,7 +922,7 @@ class TestGroupGuardFacts:
         seadex = {"RG": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "Other": _sonarr_group(u2=other)}
         title = [sonarr_ep(1, 1, episode_file_id=0)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert plan.guards == OwnedAtGrab(entry_groups=("RG", "Other"))
 
@@ -934,7 +940,7 @@ class TestGroupGuardFacts:
         # group, never by its size, so naming it would let it past the group's guard.
         seadex = {"Era-Raws": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1]))}
 
-        plan = make_planner().plan(seadex, arr_files([held]), [held])
+        plan = _plan(seadex, [held])
 
         assert plan.guards.owned_episodes == owned_episodes
 
@@ -1048,7 +1054,7 @@ class TestTorrentLeftForAHandImport:
     def test_every_special_holding_a_torrent_file_is_in_place(self) -> None:
         title = [self._ours(n, size) for n, size in enumerate(self._SIZES, 1)]
 
-        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+        plan = _plan(self._seadex(), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -1062,14 +1068,14 @@ class TestTorrentLeftForAHandImport:
     def test_an_empty_special_marks_the_torrent_to_grab_as_an_upgrade(self, skip_reason: SkipReason) -> None:
         title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, episode_file_id=0)]
 
-        plan = make_planner().plan(self._seadex(skip_reason), arr_files(title), title)
+        plan = _plan(self._seadex(skip_reason), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
     def test_files_of_an_unlisted_group_mark_the_torrent_to_grab(self) -> None:
         title = [sonarr_ep(0, n, size=size, release_group="Other") for n, size in enumerate(self._SIZES, 1)]
 
-        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+        plan = _plan(self._seadex(), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "grab"}
 
@@ -1077,7 +1083,7 @@ class TestTorrentLeftForAHandImport:
         sibling = _sonarr_group(u2=make_release(size=[999], episodes=[placed_episode(season=0, episode=3, size=999)]))
         title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, size=999, release_group="Sib")]
 
-        plan = make_planner().plan(self._seadex(Sib=sibling), arr_files(title), title)
+        plan = _plan(self._seadex(Sib=sibling), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -1085,7 +1091,7 @@ class TestTorrentLeftForAHandImport:
         # A hand import whose names carry no group: the listed size still says whose file each special has.
         title = [sonarr_ep(0, n, size=size) for n, size in enumerate(self._SIZES, 1)]
 
-        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+        plan = _plan(self._seadex(), title)
 
         assert _grabs(plan.seadex_dict) == {}
 
@@ -1096,14 +1102,14 @@ class TestTorrentLeftForAHandImport:
         seadex["Pack"] = _sonarr_group(**seadex["Pack"].releases, u2=make_release(size=[999], episodes=[covered]))
         title = [self._ours(1, 100), self._ours(2, 200), self._ours(3, 999)]
 
-        plan = make_planner().plan(seadex, arr_files(title), title)
+        plan = _plan(seadex, title)
 
         assert _grabs(plan.seadex_dict) == {}
 
     def test_a_torrent_file_at_an_unlisted_size_marks_the_torrent_to_grab(self) -> None:
         title = [self._ours(1, 150), self._ours(2, 200), self._ours(3, 300)]
 
-        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+        plan = _plan(self._seadex(), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
 
@@ -1111,7 +1117,7 @@ class TestTorrentLeftForAHandImport:
         # The plan claims for the torrent no file it can't prove is the torrent's, so the import may replace it.
         title = [self._ours(1, 100), self._ours(2, 200), sonarr_ep(0, 3, size=150, ep_id=103)]
 
-        plan = make_planner().plan(self._seadex(), arr_files(title), title)
+        plan = _plan(self._seadex(), title)
 
         assert _grabs(plan.seadex_dict) == {"u1": "upgrade"}
         assert plan.guards == OwnedAtGrab(entry_groups=("Pack",))
