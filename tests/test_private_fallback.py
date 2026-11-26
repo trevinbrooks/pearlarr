@@ -287,7 +287,7 @@ class TestTheArrHasNoCopyOfTheTitle:
     ) -> None:
         # Only G's private release has S02E01, and no other group is listed to cover it, so G's public release is
         # added and its private one skipped when the grab comes to it.
-        entry = _entry(_public("G", "S01E01", size=555), _private("G", "S01E01", "S02E01", size=999))
+        entry = _entry(_public("G", "S01E01", size=555), _private("G", "S02E01", size=999))
 
         outcome = _outcome(entry, _sonarr(_missing(1, 1), _missing(2, 1)), private_releases=private_releases)
 
@@ -390,7 +390,7 @@ class TestTheArrHasACopyOfThePrivateRelease:
         # episodes but never replaces M's copy, so M's private release is skipped when added.
         entry = _entry(
             _public("M", "S01E01", size=555),
-            _private("M", "S01E01", "S02E01", size=999),
+            _private("M", "S02E01", size=999),
             _public("F", "S01E01", "S02E01", size=777, preferred=False),
         )
         library = _sonarr(sonarr_ep(1, 1, size=555, release_group="M"), sonarr_ep(2, 1, size=100, release_group="M"))
