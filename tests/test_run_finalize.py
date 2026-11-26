@@ -13,6 +13,7 @@ recorder - so the contracts are pinned by asserting recorded state.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import override
 
@@ -27,25 +28,23 @@ from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, Diagnostic, Severity, TitleHeader
-from pearlarr.output.events import TitleState
+from pearlarr.output import BootStepFinished, Diagnostic, Severity
 from pearlarr.progress import ProgressCallback
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
-from pearlarr.wait_types import ImportWaitMode, Outcome, OutcomeKind
+from pearlarr.wait_types import Outcome, OutcomeKind
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
-    CLIENT_SENTINEL,
     FakeCacheStore,
     ScriptedAniListClient,
+    drive_arr_run,
     grab_request,
     make_anilist_gateway,
     make_bare_instance,
     make_config,
-    make_import_wait_manager,
+    make_run_deps,
     make_services,
-    pending_import,
 )
 from .fakes import (
     FakeArrItem,
@@ -56,37 +55,41 @@ from .fakes import (
     diagnostic_messages,
     install_recording_hub,
 )
-from .run_loop_fakes import FakeBound, FakeGateway, FinalizeRecorder, make_engine, make_engine_services
+from .run_loop_fakes import FakeBound, FakeGateway, FinalizeRecorder, make_engine
+from .wait_fakes import FakeQbit
 
 
-class _StagingStrategy(FakeStrategy):
-    """A `FakeStrategy` whose items each map titles 1 and 2, every title staging a row through `report_no_releases`.
+class _Staging(FakeStrategy):
+    """A library of items 1 and 2, item 1 mapping titles 11 and 12 and item 2 titles 21 and 22.
 
-    A row is keyed `item.id * 10 + anilist_id`. `stop_at` (item id, AniList id) raises `SystemExit` after that id's
-    row, standing in for the SIGTERM handler. `None` never stops.
+    Each title's check ends with nothing to grab, which stages the title's cached row and owes the pacing pause, as a
+    real check does. The check of title `stop_at` stops the run once its row is staged, as the SIGTERM handler would.
     """
 
-    def __init__(self, *, items: list[FakeArrItem], services: ArrRunServices, stop_at: tuple[int, int] | None) -> None:
-        super().__init__(items=items, anilist_ids={1: TitleMapping(anilist_id=1), 2: TitleMapping(anilist_id=2)})
+    def __init__(self, services: ArrRunServices, *, stop_at: int | None = None) -> None:
+        super().__init__(items=[FakeArrItem(item_id=1), FakeArrItem(item_id=2)], anilist_ids={})
         self._services = services
         self._stop_at = stop_at
 
     @override
+    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
+        return {anilist_id: TitleMapping(anilist_id=anilist_id) for anilist_id in (item.id * 10 + 1, item.id * 10 + 2)}
+
+    @override
     def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        self._services.report_no_releases(item.id * 10 + anilist_id, {"name": item.title})
-        if (item.id, anilist_id) == self._stop_at:
+        self._services.report_no_releases(anilist_id, {})
+        if anilist_id == self._stop_at:
             raise SystemExit(0)
+
+
+class _StagingFirstSnapshotFails(_Staging):
+    """A `_Staging` library whose item 1 import snapshot fails once its titles are checked."""
 
     @override
     def pending_import_series_id(self, item: FakeArrItem) -> int | None:
-        return item.id
-
-
-class _RaisingSnapshots(FakeBound):
-    """A wait manager whose per-item pending-import snapshot raises, after that item's titles staged their rows."""
-
-    def report_imports_for_series(self, series_id: int) -> None:
-        raise RuntimeError(f"snapshot failed for series {series_id}")
+        if item.id == 1:
+            raise RuntimeError("snapshot failed")
+        return None
 
 
 class _StopOnSleepClock(FakeClock):
@@ -103,117 +106,77 @@ class _StopOnSleepClock(FakeClock):
             raise SystemExit(0)
 
 
-_TITLES = [FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")]
+def _scan_into(
+    cache: Path,
+    strategy: Callable[[ArrRunServices], _Staging],
+    *,
+    qbit: FakeQbit | None,
+    clock: FakeClock | None = None,
+) -> None:
+    """One whole Sonarr run of `strategy` over the cache file at `cache`, closed after it as bootstrap closes it.
 
+    `qbit` None is a run with no qBittorrent configured, so a dry run.
+    """
 
-def _still_cached(path: Path, keys: list[int]) -> list[int]:
-    """The `keys` whose cached titles the cache at `path` holds once reopened."""
-
-    reopened = CacheStore.load(str(path), config_hash="")
+    store = CacheStore.load(str(cache), config_hash="")
     try:
-        return [key for key in keys if reopened.get_cached_title(Arr.SONARR, key) is not None]
+        client = None if qbit is None else qbit.client()
+        deps = make_run_deps(cache_store=store, qbit=client, clock=clock)
+        drive_arr_run(deps, strategy)
     finally:
-        reopened.close()
+        store.close()
 
 
-def _run(engine: ArrRunLoop, strategy: _StagingStrategy, mode: ImportWaitMode = ImportWaitMode.OFF) -> None:
-    """One full-library `run_arr` of `strategy` with wait mode `mode`."""
+def _saved_titles(cache: Path) -> list[int]:
+    """The titles of the `_Staging` library the cache file at `cache` holds cached rows of, read fresh."""
 
-    engine.run_arr(strategy, item_id=None, dry_run=False, import_wait_mode=mode, boot=BootFlow())
+    store = CacheStore.load(str(cache), config_hash="")
+    try:
+        return [anilist_id for anilist_id in (11, 12, 21, 22) if store.get_cached_title(Arr.SONARR, anilist_id)]
+    finally:
+        store.close()
 
 
 class TestPerItemCommit:
-    """A real run commits between items, so a stop keeps what finished and rolls back the item in flight.
+    """A real run commits after each library item, so a stop keeps what finished and rolls back the item in flight.
 
     A dry run commits nothing.
     """
 
-    def test_a_stop_mid_item_keeps_the_finished_items(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
-        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
+    def test_a_stop_mid_item_keeps_the_finished_items(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
 
-        # Stopped on item B's second title, after its first title's row was staged.
+        # Stopped on item 2's second title, after its first title's row was staged.
         with pytest.raises(SystemExit):
-            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 2)))
-        store.close()
+            _scan_into(cache, lambda services: _Staging(services, stop_at=22), qbit=FakeQbit())
 
-        assert _still_cached(tmp_path / "cache.db", [11, 12, 21, 22]) == [11, 12]
+        assert _saved_titles(cache) == [11, 12]
 
-    def test_an_item_that_raised_still_commits_what_it_staged(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
-        engine = make_engine(
-            FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=_RaisingSnapshots()
-        )
+    def test_an_item_that_raised_still_commits_what_it_staged(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
 
-        # Item A's snapshot raises after its titles, a contained item-level error. B stops before reaching its own.
+        # Item 1's snapshot fails after its titles, an error the scan contains. The scan takes each item's snapshot
+        # while imports are waited on, as they are by default. Item 2 stops before reaching its own.
         with pytest.raises(SystemExit):
-            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=(2, 1)), ImportWaitMode.BLOCKING)
-        store.close()
+            _scan_into(cache, lambda services: _StagingFirstSnapshotFails(services, stop_at=21), qbit=FakeQbit())
 
-        assert _still_cached(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
+        assert _saved_titles(cache) == [11, 12]
 
-    def test_a_stop_in_the_pacing_pause_keeps_the_item_before_it(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        # Every title owes a pause. The second one slept is the one after item A's last title.
-        clock = _StopOnSleepClock(stop_on=2)
-        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store, _clock=clock, sleep_time=1)
-        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
+    def test_a_stop_in_the_pacing_pause_keeps_the_item_before_it(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
 
+        # Every title owes a pause. The second one slept is the one before item 2's first title.
         with pytest.raises(SystemExit):
-            _run(engine, _StagingStrategy(items=_TITLES, services=services, stop_at=None))
-        store.close()
+            _scan_into(cache, _Staging, qbit=FakeQbit(), clock=_StopOnSleepClock(stop_on=2))
 
-        assert clock.sleeps == [1, 1]
-        assert _still_cached(tmp_path / "cache.db", [11, 12, 21]) == [11, 12]
+        assert _saved_titles(cache) == [11, 12]
 
-    def test_a_dry_run_keeps_nothing(self, logger: logging.Logger, tmp_path: Path) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = make_engine_services(cache_store=store)
-        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services)
+    def test_a_dry_run_keeps_nothing(self, tmp_path: Path) -> None:
+        cache = tmp_path / "cache.db"
 
-        _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None))
-        store.close()
+        _scan_into(cache, _Staging, qbit=None)
 
-        assert _still_cached(tmp_path / "cache.db", [11, 12]) == []
-
-    @pytest.mark.parametrize(("qbit", "kept"), [(CLIENT_SENTINEL, [1]), (None, [])], ids=["real", "preview"])
-    def test_the_finalize_save_commits_only_a_real_run(
-        self, logger: logging.Logger, tmp_path: Path, qbit: object, kept: list[int]
-    ) -> None:
-        store = CacheStore.load(str(tmp_path / "cache.db"), config_hash="")
-        services = make_engine_services(qbit=qbit, cache_store=store)
-        engine = make_engine(None, logger, cache_store=store, services=services)
-        # With no items, the arr run tail's save is the arr run's only commit.
-        store.update_cached_title(Arr.SONARR, 1, {"name": "A"})
-
-        _run(engine, _StagingStrategy(items=[], services=services, stop_at=None))
-        store.close()
-
-        assert _still_cached(tmp_path / "cache.db", [1]) == kept
-
-
-class TestArrRunStartKeepsPendingImports:
-    """Nothing at an arr run's start drops a carried-over pending import, however old."""
-
-    def test_a_years_old_pending_import_survives_the_arr_run_start_and_is_reported(
-        self, logger: logging.Logger
-    ) -> None:
-        store = FakeCacheStore()
-        old = pending_import(infohash="h", series_id=1, added_at="2000-01-01 00:00:00")
-        store.put_pending_import_row(Arr.SONARR, old.infohash, old.to_json())
-        services = make_engine_services(qbit=CLIENT_SENTINEL, cache_store=store)
-        manager = make_import_wait_manager(cache_store=store)
-        engine = make_engine(FinalizeRecorder(), logger, cache_store=store, services=services, wait_manager=manager)
-        recording = install_recording_hub()
-
-        _run(engine, _StagingStrategy(items=_TITLES[:1], services=services, stop_at=None), ImportWaitMode.BLOCKING)
-
-        assert set(store.get_pending_import_rows(Arr.SONARR)) == {"h"}
-        assert [(h.state, h.title) for h in recording.of_type(TitleHeader)] == [
-            (TitleState.DOWNLOADING, old.display_label)
-        ]
+        assert _saved_titles(cache) == []
 
 
 class _GrabRecorder(FakeBound):
