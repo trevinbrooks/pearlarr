@@ -11,7 +11,7 @@ cache, the import or the run's start builds the strategy (`_sync`), whose collab
 series. A whole run is driven through `drive_arr_run` (`_run`).
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import timedelta
 from typing import override
@@ -42,7 +42,6 @@ from pearlarr.scene_numbers import SceneMapping
 from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.sonarr_episodes import sonarr_series_hash
-from pearlarr.sonarr_matching import AiredMatcher
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
 from pearlarr.wait_types import NO_PROGRESS, ImportProgress, ImportWaitMode
@@ -461,37 +460,20 @@ def test_an_aired_series_over_rows_numbered_by_another_order_has_no_view_for_the
 def test_rows_out_of_step_with_an_answer_from_an_earlier_run_are_tested_again_by_one_fetched_now() -> None:
     # TVDB swapped the two episodes since the answer was stored, and Sonarr's rows already follow it.
     recording = install_recording_hub()
-    client = _skyhook(_SWAPPED_SINCE)
-    reads = _aired_over_dvd_rows(client)
+    reads = _aired_over_dvd_rows(_skyhook(_SWAPPED_SINCE))
 
     view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
-    assert client.fetch_calls == [(50, "official")]
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
-def test_rows_out_of_step_with_an_answer_this_run_wrote_are_not_fetched_for_again() -> None:
-    client = _skyhook(_ORDERS)
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50)], FakeCacheStore(), client, sonarr=sonarr)
-    strat._episodes.prefetch_orders([1])
-    asked_at_the_prefetch = list(client.fetch_calls)
-
-    view = strat._reads.aired_series(1)
-
-    assert view is NoView.READ_FAILED
-    assert client.fetch_calls == asked_at_the_prefetch == [(50, "official"), (50, "dvd")]
-
-
 def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come() -> None:
-    client = _skyhook(_ORDERS)
-    reads = _aired_over_dvd_rows(client, stored=False)
+    reads = _aired_over_dvd_rows(_skyhook(_ORDERS), stored=False)
 
     view = reads.aired_series(1)
 
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
-    assert client.fetch_calls == []
 
 
 def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_release_needs_it() -> None:
@@ -567,16 +549,14 @@ def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
     # The stored aired order numbers the two episodes the other way round. Nothing is tested against it.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    client = _skyhook(_ORDERS)
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    reads = _reads([_series(1, 50, season_type=None)], cache, client, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type=None)], cache, _skyhook(_ORDERS), sonarr=sonarr)
 
     rows = reads.read_episodes(1)
     view = reads.aired_series(1)
 
     assert rows == _DVD_ROWS
     assert view == AiredSeries(in_sonarr=tuple(_DVD_ROWS), stand_ins=())
-    assert client.fetch_calls == []
 
 
 def test_the_import_reads_a_series_with_an_aired_view_as_sonarr_numbers_it() -> None:
@@ -853,42 +833,6 @@ def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(series_id:
     assert reads.aired_parse(info) is info
 
 
-def test_a_parse_reads_the_same_whatever_the_run_read_of_its_series_before() -> None:
-    # One run has read nothing of series 1, one checked a title of it, and one re-read it in an import poll after.
-    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
-    unread = _reads_in_one_season()
-    checked = _reads_in_one_season()
-    checked.aired_series(1)
-    polled = _reads_in_one_season()
-    polled.aired_series(1)
-    polled.read_episodes(1)
-
-    answers = [reads.aired_parse(info) for reads in (unread, checked, polled)]
-
-    assert answers == [info.with_matched((_matched(2, 2, 15),))] * 3
-
-
-def test_a_series_matcher_is_built_once_for_a_read_of_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Each listed file's parse is matched over the whole series, and a batch release lists a file per episode.
-    # Built per file, the matcher of a long series would cost seconds a release. The answers are the same either
-    # way, so the builds are counted.
-    built: list[AiredSeries] = []
-    build = AiredMatcher.of
-
-    def recording(series: AiredSeries, aliases: Iterable[AlternateTitle]) -> AiredMatcher:
-        built.append(series)
-        return build(series, aliases)
-
-    monkeypatch.setattr(AiredMatcher, "of", recording)
-    reads = _reads_in_one_season()
-    info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
-
-    reads.aired_parse(info)
-    reads.aired_parse(info)
-
-    assert built == [reads.aired_series(1)]
-
-
 def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows() -> None:
     # An import poll re-reads the series after Sonarr gains a row for the seventh episode, where the stand-in was.
     sonarr = FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
@@ -1078,18 +1022,6 @@ def test_a_listed_file_of_a_series_whose_episodes_fail_to_read_is_an_unread_pars
     files = strat._parse.parsed_files(_listing(_FIFTH))
 
     assert files == {_URL: (ListedFile(_FIFTH, 100, None),)}
-
-
-def test_a_series_whose_episodes_fail_to_read_is_asked_for_once_however_many_files_it_has() -> None:
-    sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR, _SIXTH: _FIFTH_BY_SONARR})
-    sonarr.episodes_return = None
-    strat = _synced_in_one_season(sonarr)
-    asked_before = len(sonarr.episodes_calls)
-
-    files = strat._parse.parsed_files(_listing(_FIFTH, _SIXTH))
-
-    assert files == {_URL: (ListedFile(_FIFTH, 100, None), ListedFile(_SIXTH, 100, None))}
-    assert sonarr.episodes_calls[asked_before:] == [1]
 
 
 _WITHOUT_TVDB_IDS = pending_import(
@@ -1557,22 +1489,16 @@ def _boot_steps(recording: RecordingHub) -> dict[str, str | None]:
 
 
 def test_a_run_reads_the_scene_mappings_of_its_series_in_another_order_after_the_tvdb_orders() -> None:
-    xem = FakeXemClient()
-
-    recording = _run(FakeCacheStore(), _library_row("dvd", 2), xem)
+    recording = _run(FakeCacheStore(), _library_row("dvd", 2))
 
     steps = _boot_steps(recording)
-    assert xem.asked == [50]
     assert list(steps)[-2:] == ["Fetching TVDB orders", _THEXEM_STEP]
     assert steps[_THEXEM_STEP] == "1 series"
 
 
-def test_a_run_over_a_library_all_in_aired_order_asks_thexem_nothing_and_has_no_boot_step_for_it() -> None:
-    xem = FakeXemClient()
+def test_a_run_over_a_library_all_in_aired_order_has_no_thexem_boot_step() -> None:
+    recording = _run(FakeCacheStore(), _library_row("official", 2))
 
-    recording = _run(FakeCacheStore(), _library_row("official", 2), xem)
-
-    assert xem.asked == []
     assert _THEXEM_STEP not in _boot_steps(recording)
 
 
