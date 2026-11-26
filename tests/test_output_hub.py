@@ -14,6 +14,7 @@ import io
 import logging
 import sys
 import threading
+from dataclasses import replace
 from typing import ClassVar, override
 
 import pytest
@@ -195,8 +196,8 @@ class _FileLog(_QuietRenderer):
         self.closed = True
 
 
-class _FailingFileish(_FailingRenderer):
-    """A failing renderer that IS the file renderer (the dying-log-file shape)."""
+class _FailingFileLog(_FailingRenderer):
+    """A file log renderer that raises from every handle, as one writing to a dying disk would."""
 
     writes_file_only: ClassVar[bool] = True
 
@@ -223,41 +224,73 @@ class _LifecycleEmitter(_QuietRenderer):
 # --- containment --------------------------------------------------------------------
 
 
-def test_a_raising_renderer_never_breaks_the_survivors() -> None:
-    flaky, survivor = _FailingRenderer(), _FileLog()
-    hub = OutputHub([flaky, survivor])
+def _untraced(events: list[Event]) -> list[Event]:
+    """The events with each diagnostic's trace dropped, so a containment note compares whole."""
+
+    return [replace(event, trace=None) if isinstance(event, Diagnostic) else event for event in events]
+
+
+def test_a_raising_renderer_leaves_the_file_log_an_uncounted_note() -> None:
+    """The note is file-only while the file log survives, and uncounted: a presentation bug isn't a run warning."""
+
+    file_log = _FileLog()
+    hub = OutputHub([_FailingRenderer(), file_log])
 
     hub.emit(_EVENT)
 
-    assert survivor.events[0] == _EVENT
-    note = survivor.events[1]
-    assert isinstance(note, Diagnostic)
-    assert note.file_only  # a file renderer survives: forensic, not console spam
-    assert note.severity is Severity.WARNING
-    assert note.origin == "output.hub"
-    assert "_FailingRenderer failed on PearlarrStarted" in note.message
-    assert note.trace is not None and "RuntimeError" in note.trace.plain
+    assert _untraced(file_log.events) == [
+        _EVENT,
+        Diagnostic(
+            severity=Severity.WARNING,
+            message="renderer _FailingRenderer failed on PearlarrStarted: render bug",
+            origin="output.hub",
+            file_only=True,
+        ),
+    ]
+    note = file_log.events[1]
+    assert isinstance(note, Diagnostic) and note.trace is not None
+    assert "RuntimeError: render bug" in note.trace.plain
+    assert hub.counts.mark() == SeverityTally(info=1)
 
 
 def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_error() -> None:
-    """A run must never silently lose its whole log file.
+    """A run must never silently lose its whole log file."""
 
-    When the casualty IS the file renderer, the containment note goes visible
-    at ERROR and counts.
-    """
-
-    flaky, survivor = _FailingFileish(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
-    mark = hub.counts.mark()
+    survivor = RecordingRenderer()
+    hub = OutputHub([_FailingFileLog(), survivor])
 
     hub.emit(_EVENT)
 
-    note = survivor.events[1]
-    assert isinstance(note, Diagnostic)
-    assert not note.file_only
-    assert note.severity is Severity.ERROR
-    assert "_FailingFileish failed on PearlarrStarted" in note.message
-    assert hub.counts.counts_since(mark).errors == 1
+    assert _untraced(survivor.events) == [
+        _EVENT,
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="renderer _FailingFileLog failed on PearlarrStarted: render bug",
+            origin="output.hub",
+        ),
+    ]
+    assert hub.counts.mark() == SeverityTally(info=1, error=1)
+
+
+def test_a_warning_is_counted_even_when_every_renderer_raises_on_it() -> None:
+    hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
+
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="boom"))
+
+    # Counted when it's emitted, though nothing rendered it. With no file log left, both notes are counted errors.
+    assert hub.counts.mark() == SeverityTally(warning=1, error=2)
+
+
+def test_a_renderer_that_fails_on_a_note_takes_a_strike_for_it() -> None:
+    first, second = _FailingRenderer(), _FailingRenderer()
+    hub = OutputHub([first, second])
+
+    hub.emit(_EVENT)
+    hub.emit(_EVENT)
+
+    # Each fails on the event and on the other's note, so the second event is each one's third strike. The second
+    # one's note about that strike-out then has nowhere to go: the first is already out.
+    assert first.log == ["PearlarrStarted", "Diagnostic", "PearlarrStarted", "close"]
 
 
 def test_a_renderer_strikes_out_on_its_third_failure_until_the_next_run() -> None:
@@ -312,18 +345,6 @@ def test_the_final_strike_says_the_renderer_is_disabled() -> None:
         failed,
         f"{failed} (disabled until the next run)",
     ]
-
-
-def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> None:
-    flaky, survivor = _FailingRenderer(), _FileLog()
-    hub = OutputHub([flaky, survivor])
-    mark = hub.counts.mark()
-
-    hub.emit(_EVENT)  # INFO event. The forensic WARNING note must not inflate the tally
-
-    since = hub.counts.counts_since(mark)
-    assert (since.info, since.warning) == (1, 0)
-    assert any(isinstance(event, Diagnostic) for event in survivor.events)  # the note went out
 
 
 # --- re-entrancy -----------------------------------------------------------------------
@@ -665,17 +686,6 @@ def test_file_only_diagnostics_are_never_counted() -> None:
 
     recording.emit(Diagnostic(severity=Severity.WARNING, message="visible note"))
     assert recording.hub.counts.counts_since(mark).warning == 1
-
-
-def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> None:
-    hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
-    mark = hub.counts.mark()
-
-    hub.emit(Diagnostic(severity=Severity.WARNING, message="boom"))
-
-    since = hub.counts.counts_since(mark)
-    assert since.warning == 1  # counted at enqueue, though nothing rendered it
-    assert since.errors == 2  # with no file renderer left, both notes escalate visible
 
 
 # --- levels + lifecycle -------------------------------------------------------------
