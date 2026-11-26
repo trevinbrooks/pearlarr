@@ -75,19 +75,18 @@ def _check_title_in_another_order(
     release = make_release(url=GRAB_URL, infohash="h1", files=list(GRAB_FILES))
     seadex: SeadexDict = {"NAN0": rg_group({GRAB_URL: release})}
     run = FakeRunServices(
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
+        prologue_entry=make_entry_record(),
         anilist_title="Show",
         seadex_dict=seadex,
         plan_marks=frozenset({GRAB_URL}) if grab else frozenset(),
         import_wait_mode=ImportWaitMode.BLOCKING,
-        cache_store=FakeCacheStore(),
     )
-    episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), windows={5: window}, order="dvd")
+    episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order="dvd")
     parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
     strat = sonarr_checking(
         run,
         episodes,
-        config=make_config(sleep_time=0, ignore_unmonitored=ignore_unmonitored),
+        config=make_config(ignore_unmonitored=ignore_unmonitored),
         parse=ScriptedParse({GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in GRAB_FILES)}),
     )
     strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
@@ -155,9 +154,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     ) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
         recording = install_recording_hub()
-        strat = sonarr_checking(
-            run, ScriptedEpisodes(FakeSonarrClient(episodes=[EP1]), order="dvd", no_views={7: reason})
-        )
+        strat = sonarr_checking(run, ScriptedEpisodes(order="dvd", no_views={7: reason}))
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
@@ -174,14 +171,14 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     """A title of a series in aired order says nothing of its numbers, and nothing when its series can't be read."""
 
     def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP1, EP2]})
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]))
 
         run = sonarr_grab_run(store=FakeCacheStore(), episodes=episodes)
 
         assert (run.numbers_orders, run.left_out) == ([], [])
 
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
+        run = FakeRunServices(prologue_entry=make_entry_record())
         recording = install_recording_hub()
         strat = sonarr_checking(run, ScriptedEpisodes())
 
@@ -255,8 +252,7 @@ def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int,
         cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
         cache.put_scene_mappings(library.series.tvdbId, stored_scene_mappings())
     run = FakeRunServices(
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show Second Season",
+        prologue_entry=make_entry_record(),
         seadex_dict=seadex,
         plan_marks=frozenset({GRAB_URL}),
         import_wait_mode=ImportWaitMode.BLOCKING,
@@ -278,7 +274,7 @@ def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int,
         _follower=PendingFollower(run.pending_imports, reads, make_logger()),
         _parse=SonarrParseCache(deps, sonarr, reads),
         _listings=ScriptedListings(episode_by_size=episode_by_size),
-        _config=make_config(sleep_time=0),
+        _config=make_config(),
         logger=make_logger(),
     )
     strat.check_title(library.series, 5, TitleMapping(anilist_id=5, tvdb_season=2))
