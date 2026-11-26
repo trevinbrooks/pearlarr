@@ -221,6 +221,17 @@ class TestLeavingATitleAlone:
 
         assert (left_alone, _shown_unchanged(recording)) == outcome
 
+    def test_a_full_row_is_left_alone_without_a_look_at_its_episodes_or_anilist(self) -> None:
+        # Each look is a request: Sonarr's for the series, which the run's episode prefetch leaves out for a series
+        # whose titles are all left alone, and AniList's once its answer for the title has aged out.
+        def episodes() -> str:
+            pytest.fail("looked up the episodes of a title whose row has its url")
+
+        deps = make_run_deps(config=_SETTINGS, cache_store=_holding(_cached_row()), qbit=FakeQbit().client())
+
+        assert ArrRunServices(deps, Arr.SONARR).is_unchanged(7, _ENTRY, episodes) is True
+        assert deps.anilist.answers == {}, "asked AniList about a title whose row has its name"
+
 
 class TestIsUnchanged:
     """An unchanged title backfills the url/coverage and the name its row lacks, once."""
