@@ -275,6 +275,9 @@ def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_er
     assert hub.counts.mark() == SeverityTally(info=1, error=1)
 
 
+# --- strikes ------------------------------------------------------------------------
+
+
 def test_a_renderer_that_fails_on_a_note_takes_a_strike_for_it() -> None:
     first, second = _FailingRenderer(), _FailingRenderer()
     hub = OutputHub([first, second])
@@ -341,10 +344,10 @@ def test_the_final_strike_says_the_renderer_is_disabled() -> None:
     ]
 
 
-# --- re-entrancy ---------------------------------------------------------------------
+# --- emits from inside a renderer --------------------------------------------------
 
 
-def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
+def test_emits_from_inside_a_renderer_go_out_after_its_event_in_order() -> None:
     observer = RecordingRenderer()
     hub = OutputHub([_EmittingRenderer(), observer])
     install_hub(hub)
@@ -417,7 +420,8 @@ def test_dispatch_is_active_only_on_the_thread_dispatching() -> None:
     active_here = hub.dispatch_active()
     _release(gated, drainer)
 
-    assert (active_here, probe.active) == (False, [True])
+    assert not active_here
+    assert probe.active == [True]
 
 
 # --- interrupts ---------------------------------------------------------------------
@@ -475,11 +479,13 @@ class _CtrlCMidDispatch(_QuietRenderer):
 @pytest.mark.parametrize(
     ("again_on", "survivor_gets"),
     [
-        pytest.param(_EVENT, [_EVENT, _QUEUED, _AFTER], id="as-the-unwind-retries-the-event"),
-        pytest.param(_QUEUED, [_EVENT, _AFTER], id="as-the-unwind-flushes-the-queue"),
+        pytest.param(_EVENT, [_EVENT, _QUEUED, _AFTER], id="on-the-retry-the-queue-still-flushes"),
+        pytest.param(_QUEUED, [_EVENT, _AFTER], id="on-the-queue-the-flush-stops-there"),
     ],
 )
-def test_a_second_ctrl_c_during_the_unwind(again_on: Event, survivor_gets: list[Event]) -> None:
+def test_a_second_ctrl_c_during_the_unwind_still_leaves_the_hub_dispatching(
+    again_on: Event, survivor_gets: list[Event]
+) -> None:
     """One on the retry of the cut-short event is contained, so the queue still flushes.
 
     One on the queue cuts the flush short, but the hub still dispatches the next emit.
@@ -653,7 +659,7 @@ def test_the_same_once_key_from_different_origins_both_pass() -> None:
 # --- severity counts -------------------------------------------------------------------
 
 
-def test_severity_counts_mark_and_delta() -> None:
+def test_a_counter_tallies_what_came_after_a_mark() -> None:
     counts = SeverityCounter()
     counts.record(Severity.WARNING)
     mark = counts.mark()
@@ -668,11 +674,9 @@ def test_severity_counts_mark_and_delta() -> None:
     assert counts.mark() == SeverityTally(warning=2, error=1, critical=1)  # the totals only grow
 
 
-def test_bound_mark_diffs_only_its_own_counter() -> None:
-    """A bound mark keeps the counter it was taken from, so a hub swapped in after the mark can't skew what it reads."""
-
+def test_a_bound_mark_reads_what_its_own_counter_tallied_after_it() -> None:
     counts = SeverityCounter()
-    counts.record(Severity.WARNING)  # so a mark read from zero, or from a fresh counter, would show
+    counts.record(Severity.WARNING)  # before the mark, so not part of what it reads
     mark = counts.bound_mark()
 
     counts.record(Severity.ERROR)
@@ -842,6 +846,9 @@ def test_a_renderer_raising_from_a_lifecycle_call_takes_a_strike_and_the_call_go
     # The call's failure is its first strike, so the second event is its third.
     assert flaky.log == [*logged, "PearlarrStarted", "PearlarrStarted", "close"]
     assert survivor.levels == [logging.INFO]
+
+
+# --- close ----------------------------------------------------------------------------
 
 
 def test_close_is_idempotent_and_reaches_every_renderer() -> None:
@@ -1131,7 +1138,7 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
     assert "ValueError: boom" in note.trace.plain
 
 
-def test_hub_note_without_exc_keeps_the_trace_none() -> None:
+def test_hub_note_defaults_to_an_info_note_with_no_trace() -> None:
     recording = install_recording_hub()
 
     hub_note("plain note")
