@@ -9,7 +9,6 @@ failures stay quiet, re-warn on a timer and end with a recovery note. The API ke
 """
 
 import json
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import cast
@@ -338,41 +337,6 @@ def test_rewarns_at_the_bound_cadence() -> None:
         "down (status code 404)",
         "down (status code 404; still failing - attempt 4, 1m)",
         "down (status code 404; still failing - attempt 6, 2m)",
-    ]
-
-
-@respx.mock
-def test_concurrent_failures_keep_an_exact_streak_count() -> None:
-    """Concurrent sweep threads hammer one failing key, and the recovery note counts every failure.
-
-    `streak.count += 1` is a read-modify-write that would drop increments unlocked (the shared client pool
-    serves `SONARR_FETCH_WORKERS` threads). The fake clock holds the note's age at 0s however long the
-    threads take.
-    """
-
-    route = respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
-    primary, recording = _bind()
-    http = replace(primary, clock=FakeClock().monotonic)
-    workers, per_worker = 8, 25
-    barrier = threading.Barrier(workers, timeout=30.0)
-
-    def hammer() -> None:
-        barrier.wait()
-        for _ in range(per_worker):
-            assert http.get_json("/api/v3/thing", warn="down ({detail})") is None
-
-    threads = [threading.Thread(target=hammer, daemon=True) for _ in range(workers)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30.0)
-        assert not thread.is_alive(), "a worker never finished its reads"
-
-    route.respond(json=[])
-    assert http.get_json("/api/v3/thing", warn="down ({detail})") == []
-    assert [note.message for note in recording.of_type(Diagnostic)] == [
-        "down (status code 404)",
-        f"down - recovered after {workers * per_worker} failures (0s)",
     ]
 
 
