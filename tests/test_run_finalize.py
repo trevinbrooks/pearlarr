@@ -110,13 +110,13 @@ def _scan_into(
 ) -> None:
     """One whole Sonarr run of `strategy` over the cache file at `cache`, closed after it as bootstrap closes it.
 
-    `qbit` None is a run with no qBittorrent configured, so a dry run.
+    `qbit` None is a run with no qBittorrent configured, so a dry run. AniList knows every title.
     """
 
     store = CacheStore.load(str(cache), config_hash="")
     try:
         client = None if qbit is None else qbit.client()
-        deps = make_run_deps(cache_store=store, qbit=client, clock=clock)
+        deps = make_run_deps(cache_store=store, qbit=client, clock=clock, anilist_client=ScriptedAniListClient())
         drive_arr_run(deps, strategy)
     finally:
         store.close()
@@ -172,6 +172,24 @@ class TestPerItemCommit:
         _scan_into(cache, _Staging, qbit=None)
 
         assert _saved_titles(cache) == []
+
+    @pytest.mark.parametrize(
+        ("qbit", "next_fetch"),
+        [pytest.param(FakeQbit(), "cached", id="real"), pytest.param(None, "4 titles", id="dry-run")],
+    )
+    def test_the_anilist_answers_the_prefetch_fetched_are_kept_before_the_scan(
+        self, tmp_path: Path, qbit: FakeQbit | None, next_fetch: str
+    ) -> None:
+        # Stopped in the first title, before any library item commits. The next run fetches only what wasn't kept.
+        cache = tmp_path / "cache.db"
+        with pytest.raises(SystemExit):
+            _scan_into(cache, lambda services: _Staging(services, stop_at=11), qbit=qbit)
+        recording = install_recording_hub()
+
+        _scan_into(cache, _Staging, qbit=FakeQbit())
+
+        [step] = [step for step in recording.of_type(BootStepFinished) if step.label == "Fetching AniList metadata"]
+        assert step.detail == next_fetch
 
 
 type _Ending = Callable[[ArrRunServices, int], None]
