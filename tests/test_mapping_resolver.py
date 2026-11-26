@@ -513,14 +513,29 @@ class TestAnidbMappingDict:
         assert resolver.anidb_episode_by_tvdb(1, 1) == {}
 
 
+def _refuse(request: httpx.Request) -> httpx.Response:
+    """Fail the test on a request, which a boot over source files it has to hand never makes."""
+
+    raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+
+def _offline() -> httpx.Client:
+    """A web client that fails the test on any request. An httpx error would only become a boot warning."""
+
+    return httpx.Client(transport=httpx.MockTransport(_refuse))
+
+
 def _boot(data_dir: Path, sources: MappingSources, *, logger: logging.Logger | None = None) -> MappingResolver:
-    """A resolver booted as a run boots it, its source files and mappings.db in `data_dir`, refreshing daily."""
+    """A resolver booted as a run boots it, its source files and mappings.db in `data_dir`, with no web access.
+
+    Its files never age out, so it reads the ones the test wrote.
+    """
 
     return MappingResolver(
-        refresh_days=1,
+        refresh_days=99999,
         ignore_anilist_ids=set(),
         sources=sources,
-        web=httpx.Client(),
+        web=_offline(),
         mappings_db=str(data_dir / "mappings.db"),
         logger=logger,
     )
@@ -695,6 +710,21 @@ def _aged(path: Path, *, days: int) -> None:
     os.utime(path, (then, then))
 
 
+def _download_boot(
+    data_dir: Path, *, refresh_days: int = 99999, progress: RecordingProgress | None = None
+) -> MappingResolver:
+    """A boot that reads Kometa's file in `data_dir`, downloading it under respx when missing or `refresh_days` old."""
+
+    return MappingResolver(
+        refresh_days=refresh_days,
+        ignore_anilist_ids=set(),
+        sources=_ANIME_IDS_FROM_FILE,
+        web=httpx.Client(),
+        mappings_db=str(data_dir / "mappings.db"),
+        progress=progress,
+    )
+
+
 def _cut_off() -> httpx.Response:
     """A 200 whose body breaks off after its first 64 KiB, as a dropped connection leaves it."""
 
@@ -719,7 +749,7 @@ class TestSourceDownloads:
         body = json.dumps(records, indent=2).encode()
         respx.get(ANIME_IDS_URL).respond(content=body)
 
-        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+        resolver = _download_boot(tmp_path)
 
         assert (tmp_path / ANIME_IDS_FILE).read_bytes() == body
         assert not (tmp_path / f"{ANIME_IDS_FILE}.part").exists()
@@ -731,14 +761,7 @@ class TestSourceDownloads:
         respx.get(ANIME_IDS_URL).respond(content=body)
         bar = RecordingProgress()
 
-        MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            sources=_ANIME_IDS_FROM_FILE,
-            web=httpx.Client(),
-            mappings_db=str(tmp_path / "mappings.db"),
-            progress=bar,
-        )
+        _download_boot(tmp_path, progress=bar)
 
         assert bar.updates == [(0.5, "anime_ids.json · 1/2 MB"), (1.0, "anime_ids.json · 2/2 MB")]
 
@@ -752,7 +775,7 @@ class TestSourceDownloads:
         )
         respx.get(ANIME_IDS_URL).respond(content=fresh.encode())
 
-        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+        resolver = _download_boot(tmp_path, refresh_days=1)
 
         assert source.read_text() == fresh
         assert list(resolver.resolve(ExternalIds(tvdb=424536)).kept) == [154587, 182255]
@@ -775,7 +798,7 @@ class TestSourceDownloads:
         respx.get(ANIME_IDS_URL).mock(return_value=respond())
         recording = install_recording_hub()
 
-        resolver = _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+        resolver = _download_boot(tmp_path, refresh_days=1)
 
         assert diagnostic_messages(recording, Severity.WARNING) == [
             f"Could not refresh anime_ids.json (download failed: {detail}) - using the cached copy"
@@ -803,7 +826,7 @@ class TestSourceDownloads:
         respx.get(ANIME_IDS_URL).mock(return_value=respond())
 
         with pytest.raises(OSError, match=f"^{re.escape(error)}$"):
-            _boot(tmp_path, _ANIME_IDS_FROM_FILE)
+            _download_boot(tmp_path)
 
         # No source and no part file, and the database closed: one left open keeps its -wal file beside it.
         assert [p.name for p in tmp_path.iterdir()] == ["mappings.db"]
@@ -853,10 +876,11 @@ def real_sources() -> _RealSources:
 def _real_boot(sources: MappingSources) -> MappingResolver:
     """A resolver over the real source files, indexed in memory so nothing in the data dir is written.
 
-    The refresh age is far off, so nothing downloads.
+    The refresh age is far off and the web client refuses every request, so nothing downloads. The conftest closes
+    it after the test.
     """
 
-    return MappingResolver(refresh_days=99999, ignore_anilist_ids=set(), sources=sources, web=httpx.Client())
+    return MappingResolver(refresh_days=99999, ignore_anilist_ids=set(), sources=sources, web=_offline())
 
 
 def _each_id(record: AnimeIdsRawMapping) -> list[ExternalIds]:
