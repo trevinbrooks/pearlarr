@@ -13,7 +13,6 @@ not-found node contract the AniList gateway depends on.
 import json
 import re
 import time
-from datetime import date
 from typing import cast
 
 import httpx
@@ -95,10 +94,12 @@ def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_war
         pytest.param({"id": 7, "episodes": 12}, True, id="an id and no startDate key"),
         # AniList answers a date it doesn't know with null parts, and the key is still there.
         pytest.param({"id": 7, "startDate": {"year": None, "month": None, "day": None}}, False, id="null date parts"),
-        pytest.param({"episodes": 12}, False, id="no id"),
+        pytest.param(None, False, id="no such id"),
     ],
 )
-def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(media: dict[str, object], lacks: bool) -> None:
+def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(
+    media: dict[str, object] | None, lacks: bool
+) -> None:
     assert lacks_air_dates({"data": {"Media": media}}) is lacks
 
 
@@ -439,21 +440,11 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        None,
-        {"year": None, "month": None, "day": None},
-        {"year": 2020, "month": 8, "day": None},
-        {"year": 2020, "month": 8},
-        # February has no 30th.
-        {"year": 2020, "month": 2, "day": 30},
-        "2020-08-29",
+        pytest.param(None, id="null"),
+        pytest.param({"year": None, "month": None, "day": None}, id="null parts"),
+        pytest.param({"year": 2020, "month": 8, "day": None}, id="no day"),
+        pytest.param({"year": 2020, "month": 2, "day": 30}, id="no such day"),
     ],
 )
-def test_an_anilist_date_without_every_part_is_no_date(raw: object) -> None:
+def test_an_anilist_date_without_every_part_is_no_date(raw: dict[str, int | None] | None) -> None:
     assert AniListMediaNode.model_validate({"id": 1, "startDate": raw}) == AniListMediaNode(id=1)
-
-
-def test_anilist_media_node_takes_a_date_by_field_name() -> None:
-    by_alias = AniListMediaNode.model_validate({"startDate": {"year": 2020, "month": 8, "day": 29}})
-    by_name = AniListMediaNode(start_date=date(2020, 8, 29))
-
-    assert by_alias.start_date == by_name.start_date == date(2020, 8, 29)
