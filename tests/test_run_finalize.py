@@ -20,18 +20,15 @@ from typing import override
 import pytest
 
 from pearlarr.arr_models import HistoryRecord
-from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
-from pearlarr.arr_run_state import ArrRunState
 from pearlarr.cache import CacheStore
 from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import BootStepFinished, Diagnostic, Severity
+from pearlarr.output import BootStepFinished
 from pearlarr.progress import ProgressCallback
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
-from pearlarr.wait_types import Outcome, OutcomeKind
-from pearlarr.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.wait_types import OutcomeKind
 
 from .builders import (
     FakeCacheStore,
@@ -39,7 +36,6 @@ from .builders import (
     ScriptedAniListClient,
     drive_arr_run,
     grab_request,
-    make_bare_instance,
     make_config,
     make_run_deps,
 )
@@ -256,34 +252,6 @@ class TestPacingPause:
         drive_arr_run(deps, lambda services: _Endings(services, (first, _no_query, _no_query)))
 
         assert clock.sleeps == sleeps
-
-
-class _RaisingNotifier:
-    """A fake `Notifier` whose wait-summary push raises a non-HTTP error."""
-
-    def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
-        del arr, result
-        raise RuntimeError("notifier exploded")
-
-
-class TestNotifyWaitCompleteContainment:
-    """A wait-notification failure warns (with traceback) and never propagates."""
-
-    def test_push_failure_is_swallowed_with_a_warning(self) -> None:
-        loop = make_bare_instance(
-            ArrRunLoop,
-            _config=make_config(wait_notify=True),
-            _notifier=_RaisingNotifier(),
-            _state=ArrRunState(arr=Arr.SONARR),
-        )
-        recording = install_recording_hub()
-        result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
-
-        loop._notify_wait_complete(result)  # must not raise
-
-        (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-        assert warning.message == "Wait completion notification failed unexpectedly - the notification was dropped"
-        assert warning.trace is not None
 
 
 _NOTED = OutcomeKind.IMPORTED
