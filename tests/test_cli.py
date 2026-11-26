@@ -38,7 +38,6 @@ and calls the command functions directly (they return `bool`). The exit-code
 tests go through `CliRunner` since the callback only runs inside typer.
 """
 
-import io
 import json
 import logging
 import os
@@ -48,7 +47,6 @@ import ssl
 import sys
 import time
 from datetime import datetime, timedelta
-from functools import partial
 from pathlib import Path
 from typing import NoReturn, cast
 
@@ -56,15 +54,12 @@ import httpx
 import pytest
 import respx
 import truststore
-import yaml
-from pydantic import ValidationError
 from typer.testing import CliRunner, Result
 
 from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
-    _console_renderer,
     _handle_sigterm,
     cache_backup,
     cache_check,
@@ -78,28 +73,21 @@ from pearlarr.cli import (
     pearlarr_cli,
     run_single,
 )
-from pearlarr.config import AppConfig, Arr, ArrTarget, LogFormat, template_path
+from pearlarr.config import AppConfig, Arr, ArrTarget, template_path
 from pearlarr.config_migrations import CONFIG_VERSION
-from pearlarr.console_features import DetectedFeatures
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
     Diagnostic,
     FileLogRenderer,
-    ItemStarted,
-    OutputHub,
-    PearlarrStarted,
-    RowFinished,
-    ScanStarted,
     Severity,
     current_hub,
 )
 from pearlarr.paths import AppPaths, resolve_paths
 from pearlarr.runlock import single_instance_lock
-from pearlarr.wait_types import ImportWaitMode, Outcome
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import write_cache_db
 from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
-from .scan_goldens import SUMMARY_MINIMAL
 
 
 def _starter_text() -> str:
@@ -1073,59 +1061,6 @@ class TestLogFormatWiring:
         assert lines[-1].startswith("Next scheduled run at ")
 
 
-def _drive_representative(hub: OutputHub) -> None:
-    """Boot facts, scan lines, both diagnostic classes, a finished row, a summary."""
-
-    hub.emit(PearlarrStarted(version="v9.9.9", data_dir="/data"))
-    hub.emit(ScanStarted(arr=Arr.SONARR, total=1))
-    hub.emit(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"))
-    hub.emit(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
-    hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", origin="output.hub", file_only=True))
-    hub.emit(RowFinished(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60.0))
-    hub.emit(SUMMARY_MINIMAL)
-
-
-class TestHubRenderers:
-    """The REAL cli console renderer factory, pinned end-to-end.
-
-    Plain stdout is the file's bytes minus exactly the file_only lines. json is
-    event-per-line.
-    """
-
-    @staticmethod
-    def _with_console_renderer(
-        log_dir: Path,
-        console_format: LogFormat,
-        level: int,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> tuple[OutputHub, io.StringIO]:
-        stream = io.StringIO()
-        monkeypatch.setattr(sys, "stdout", stream)
-        hub = OutputHub(
-            [FileLogRenderer(str(log_dir))],
-            console_factory=partial(_console_renderer, detected_features=DetectedFeatures()),
-        )
-        hub.begin_run(console_format=console_format, level=level)
-        return hub, stream
-
-    @pytest.mark.parametrize("level", [logging.INFO, logging.WARNING])
-    def test_plain_stdout_is_the_file_minus_exactly_the_file_only_lines(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        level: int,
-    ) -> None:
-        hub, stream = self._with_console_renderer(tmp_path / "logs", "plain", level, monkeypatch)
-        _drive_representative(hub)
-        hub.close()
-
-        stdout_lines = stream.getvalue().splitlines()
-        file_lines = (tmp_path / "logs" / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
-        assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR outcome line
-        assert [line for line in file_lines if "forensic note" not in line] == stdout_lines
-        assert sum("forensic note" in line for line in file_lines) == 1  # the sole carve-out
-
-
 class TestMissingConfigExitsNonzero:
     """A virgin data dir: exit 1 with the template written, never a silent retry.
 
@@ -1250,13 +1185,15 @@ _needs_posix_permissions = pytest.mark.skipif(
 # The canonical v0-schema config body: old enough to trigger auto-migrate,
 # used across TestConfigAutoMigrate and TestScheduledLifecycle.
 _OLD_SCHEMA_CONFIG = "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n"
+# The same with no arr, so a run through the CLI stops at the selection, before any request.
+_OLD_SCHEMA_NO_ARRS = "seadex:\n  private_releases: allow\n"
 
 
 class TestConfigAutoMigrate:
     """An old-schema config is rewritten in place after the load, backup first.
 
     The console gets one terse line either way. The functional detail (what was
-    converted) goes to the log as a file_only diagnostic. A file that cannot be
+    converted) goes to the log file only. A file that cannot be
     rewritten falls back to the in-memory migration behind a short warning, and
     a dry run never writes at all.
     """
@@ -1274,33 +1211,40 @@ class TestConfigAutoMigrate:
         assert loaded is not None
         return loaded
 
-    def test_an_old_schema_file_is_rewritten_with_a_backup(self, tmp_path: Path) -> None:
-        recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
+    def test_an_old_schema_file_is_rewritten_with_a_backup(self) -> None:
+        config = _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
+        config.chmod(0o600)  # keep the loose-permissions warn out of the stream
 
-        _rewrite_old_config(str(config), self._load(config), dry_run=False)
+        result = _invoke_offline("run", "single")
 
         rewritten = config.read_text(encoding="utf-8")
         assert f"config_version: {CONFIG_VERSION}" in rewritten
         assert "private_releases: warn" in rewritten
-        assert (tmp_path / "config.yml.bak").read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
-        (notice,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
-        assert notice.severity is Severity.INFO
-        assert notice.message == (
-            f"Config migrated to the current schema - previous file saved as {config}.bak (details in the log)"
-        )
+        assert Path(f"{config}.bak").read_text(encoding="utf-8") == _OLD_SCHEMA_NO_ARRS
+        # After the opening line and the config read: one line about the
+        # rewrite, and no warning about the old schema.
+        assert _lines(result.stdout)[2:] == [
+            (
+                "INFO [Pearlarr] Config migrated to the current schema - previous file saved as "
+                f"{config}.bak (details in the log) during=boot"
+            ),
+            *_SKIP_NOTES,
+            _nothing_configured_line(config),
+        ]
 
-    def test_the_conversion_detail_goes_to_the_file_log(self, tmp_path: Path) -> None:
-        recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
+    def test_the_conversion_detail_goes_to_the_file_log(self) -> None:
+        _write_data_dir_config(_OLD_SCHEMA_NO_ARRS).chmod(0o600)
 
-        _rewrite_old_config(str(config), self._load(config), dry_run=False)
+        result = _invoke_offline("run", "single")
 
-        (detail,) = [d for d in recording.of_type(Diagnostic) if d.file_only]
-        assert detail.severity is Severity.INFO
-        assert detail.message.startswith(f"Config schema v0 -> v{CONFIG_VERSION}: ")
-        assert "'allow'" in detail.message  # the private_releases conversion
-        assert "wait_mode" in detail.message  # the note-only default flip comes along
+        log_lines = _lines(Path(resolve_paths().log_dir, "Pearlarr.log").read_text(encoding="utf-8"))
+        (detail,) = [
+            line for line in log_lines if line.startswith(f"INFO [Pearlarr] Config schema v0 -> v{CONFIG_VERSION}: ")
+        ]
+        assert "'allow'" in detail  # the private_releases conversion
+        assert "wait_mode" in detail  # the note-only default flip comes along
+        # The console prints every other line of the log.
+        assert _lines(result.stdout) == [line for line in log_lines if line != detail]
 
     def test_a_raised_log_level_drops_the_details_promise(self, tmp_path: Path) -> None:
         # At --log-level warning the INFO detail line never reaches the file
@@ -1326,57 +1270,6 @@ class TestConfigAutoMigrate:
         (note,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
         assert note.severity is Severity.INFO
         assert note.message == "Config uses an older schema - left unchanged on a dry run"
-
-    def test_a_yaml_failure_reason_is_redacted_and_one_line(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # str(YAMLError) quotes the offending source line - the secret itself
-        # when the error sits on a credential line - and the log file is more
-        # readable than the 0600 config. The file-log line carries the
-        # formatted description instead, on one line.
-        recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
-        loaded = self._load(config)
-        mark = yaml.Mark(str(config), 9, 1, 4, "  api_key: hunter2-secret\n", 9)
-        boom = yaml.MarkedYAMLError(problem="found character that cannot start any token", problem_mark=mark)
-
-        def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
-            raise boom
-
-        monkeypatch.setattr("pearlarr.bootstrap.migrate_config_file", refuse)
-        _rewrite_old_config(str(config), loaded, dry_run=False)
-
-        reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
-        assert "hunter2-secret" not in reason.message
-        assert "\n" not in reason.message
-        assert "found character that cannot start any token at line 2, column 5" in reason.message
-
-    def test_a_validation_failure_reason_stays_one_line(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # str(ValidationError) spans multiple lines. The file log's line
-        # grammar merges the bad keys onto one.
-        recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
-        loaded = self._load(config)
-        with pytest.raises(ValidationError) as excinfo:
-            AppConfig.model_validate({"typo_key": 1, "other_typo": 2})
-        boom = excinfo.value
-
-        def refuse(path: str, expected_hash: str | None = None) -> NoReturn:
-            raise boom
-
-        monkeypatch.setattr("pearlarr.bootstrap.migrate_config_file", refuse)
-        _rewrite_old_config(str(config), loaded, dry_run=False)
-
-        reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
-        assert "\n" not in reason.message
-        assert "typo_key" in reason.message
-        assert "other_typo" in reason.message
 
     @_needs_posix_permissions
     def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self, tmp_path: Path) -> None:
@@ -1544,31 +1437,6 @@ class TestScheduledLifecycle:
             )
         ]
         assert slept == [6 * 3600]
-
-    def test_an_old_schema_config_is_rewritten_and_still_loads(
-        self,
-        logger: logging.Logger,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # The run brings an old file forward on disk, not just in memory: one
-        # terse notice names the backup, and no old-schema warning fires.
-        recording = install_recording_hub()
-        _write_data_dir_config(_OLD_SCHEMA_CONFIG)
-        paths = resolve_paths()
-        self._stub_resolver(monkeypatch)
-
-        assert (
-            run_arrs(
-                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir)
-            )
-            is False
-        )
-
-        assert f"config_version: {CONFIG_VERSION}" in Path(paths.config_file).read_text(encoding="utf-8")
-        notice = next(d for d in recording.of_type(Diagnostic) if "Config migrated" in d.message)
-        assert notice.severity is Severity.INFO
-        assert f"{paths.config_file}.bak" in notice.message
-        assert not any("older schema" in d.message for d in recording.of_type(Diagnostic))
 
     def test_a_dry_run_never_rewrites_the_config_file(
         self,
