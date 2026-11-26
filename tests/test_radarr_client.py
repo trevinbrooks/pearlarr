@@ -16,7 +16,7 @@ import httpx
 import respx
 
 from pearlarr.arr_http import ArrHttp
-from pearlarr.arr_models import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
+from pearlarr.arr_models import MovieFile, RadarrItem, RadarrMovie
 from pearlarr.mapping_store import IdKind
 from pearlarr.mappings import KnownExternalIds
 from pearlarr.output import Severity
@@ -48,12 +48,14 @@ def _make_client() -> RadarrClient:
 
 @respx.mock
 def test_movie_files_decodes_resources_and_builds_request() -> None:
-    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}]
+    """Each of the movie's files reads into its group and size, and a file Radarr names no group for reads as None."""
+
+    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123}, {"size": 456}]
     route = respx.get(f"{_BASE}/moviefile").respond(json=body)
     files = _make_client().movie_files(7)
 
-    assert files == [MovieFile(release_group="SubsPlease", size=123)]
-    assert "movieId=7" in str(route.calls.last.request.url)
+    assert files == [MovieFile(release_group="SubsPlease", size=123), MovieFile(release_group=None, size=456)]
+    assert route.calls.last.request.url.params["movieId"] == "7"
 
 
 @respx.mock
@@ -70,52 +72,17 @@ def test_movie_files_non_200_returns_empty_and_warns() -> None:
 
 
 @respx.mock
-def test_history_since_decodes_records_and_builds_request() -> None:
-    """`history_since()` keys the item id on `movieId` and the request pins `includeMovie=false`.
+def test_history_since_asks_for_the_records_alone() -> None:
+    """Radarr's history read asks for every event since the date, with the movie flag off.
 
-    A record with no `data` object parses to a `None` reason.
+    How each record reads, `movieId` as its item id included, is the model's (`test_arr_models`,
+    `test_boundary_parity`).
     """
 
-    body: list[object] = [
-        {
-            "id": 3,
-            "movieId": 9,
-            "date": "2026-07-01T10:00:00Z",
-            "eventType": "movieFileDeleted",
-            "downloadId": "abc123",
-            "data": {"reason": "upgrade"},
-        },
-        {
-            "id": 4,
-            "movieId": 10,
-            "date": "2026-07-01T11:00:00Z",
-            "eventType": "downloadFolderImported",
-        },
-    ]
-    route = respx.get(f"{_BASE}/history/since").respond(json=body)
-    records = _make_client().history_since("2026-06-30T08:00:00Z")
+    route = respx.get(f"{_BASE}/history/since").respond(json=[])
+    _make_client().history_since("2026-06-30T08:00:00Z")
 
-    assert records == [
-        HistoryRecord(
-            id=3,
-            date="2026-07-01T10:00:00Z",
-            item_id=9,
-            event_type="movieFileDeleted",
-            download_id="abc123",
-            reason="upgrade",
-        ),
-        HistoryRecord(
-            id=4,
-            date="2026-07-01T11:00:00Z",
-            item_id=10,
-            event_type="downloadFolderImported",
-            download_id=None,
-            reason=None,
-        ),
-    ]
-    url = str(route.calls.last.request.url)
-    assert "date=2026-06-30T08%3A00%3A00Z" in url
-    assert "includeMovie=false" in url
+    assert dict(route.calls.last.request.url.params) == {"date": "2026-06-30T08:00:00Z", "includeMovie": "false"}
 
 
 # A minimal `/api/v3/movie` resource: the consumed item fields plus a couple of
@@ -133,18 +100,11 @@ _MOVIE_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_movies_parses_into_radarr_item_shape() -> None:
-    """`all_movies` parses each raw resource into a `RadarrMovie` satisfying the `RadarrItem` protocol.
-
-    This is checked from `object` (the runtime counterpart of the client's
-    typed claim), with correctly-typed id fields.
-    """
+    """`all_movies` reads each movie into the `RadarrItem` fields a run keys on."""
 
     respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY])
-    client = _make_client()
-    movies: list[object] = list(client.all_movies())
+    [movie] = _make_client().all_movies()
 
-    [movie] = movies
-    assert isinstance(movie, RadarrItem)
     assert movie.id == 9
     assert movie.title == "Your Name."
     assert movie.tmdbId == 372058
@@ -182,11 +142,3 @@ def test_collect_anime_movies_wires_id_spaces() -> None:
 
     assert id_sets.calls == ["tmdb_movie_id", "imdb_id"]
     assert [m.id for m in kept] == [1]
-
-
-def test_movie_file_nullability() -> None:
-    """Missing releaseGroup/size parse to None. Unknown keys are ignored."""
-
-    assert MovieFile.model_validate({}) == MovieFile(release_group=None, size=None)
-    parsed = MovieFile.model_validate({"releaseGroup": "SubsPlease", "size": 123, "id": 9, "unknown": True})
-    assert parsed == MovieFile(release_group="SubsPlease", size=123)

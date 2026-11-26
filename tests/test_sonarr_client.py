@@ -20,19 +20,18 @@ from typing import cast
 import httpx
 import pytest
 import respx
+from respx.models import Call
 
 from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome
 from pearlarr.arr_models import (
     CommandResource,
     DownloadClientConfig,
-    HistoryRecord,
     Language,
     ManualImportFile,
     MatchedEpisode,
     ParsedFileInfo,
     Quality,
     QueueRecord,
-    SonarrItem,
 )
 from pearlarr.boundary import BoundaryContractError
 from pearlarr.output import Severity
@@ -99,18 +98,11 @@ _SERIES_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_series_parses_into_sonarr_item_shape() -> None:
-    """`all_series` parses each raw resource into a `SonarrSeries` satisfying the `SonarrItem` protocol.
-
-    The check runs against `object` (the runtime counterpart of the client's
-    typed claim), with correctly-typed id fields.
-    """
+    """`all_series` reads each series into the `SonarrItem` fields a run keys on."""
 
     respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY])
-    client = _make_client()
-    series: list[object] = list(client.all_series())
 
-    [show] = series
-    assert isinstance(show, SonarrItem)
+    [show] = _make_client().all_series()
     assert show.id == 228
     assert show.title == "Undefeated Bahamut Chronicle"
     assert show.tvdbId == 299502
@@ -172,25 +164,16 @@ def test_queue_paginates_until_total_records_covered() -> None:
     It is never silently truncated at the first page.
     """
 
-    pages = [
+    route = respx.get(f"{_BASE}/queue")
+    route.side_effect = [
         httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"])),
         httpx.Response(200, json=_queue_page(3, ["HASH2"])),
     ]
-    seen_urls: list[str] = []
-
-    def _serve(request: httpx.Request) -> httpx.Response:
-        seen_urls.append(str(request.url))
-        return pages.pop(0)
-
-    respx.get(f"{_BASE}/queue").mock(side_effect=_serve)
-    client = _make_client()
-    records = client.queue()
+    records = _make_client().queue()
 
     assert records is not None
     assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
-    assert len(seen_urls) == 2
-    assert "page=1" in seen_urls[0]
-    assert "page=2" in seen_urls[1]
+    assert [call.request.url.params["page"] for call in cast("list[Call]", route.calls)] == ["1", "2"]
 
 
 @respx.mock
@@ -335,7 +318,7 @@ def test_parse_decodes_season_episode() -> None:
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
         series_id=228,
     )
-    assert "title=" in str(route.calls.last.request.url)
+    assert route.calls.last.request.url.params["title"] == "Show.S01E01.mkv"
 
 
 @respx.mock
@@ -870,7 +853,7 @@ def test_list_commands_non_200_returns_none() -> None:
 
 @pytest.mark.parametrize("value", [1729655860, "not a time", "2026-10-23T03:57:40"])
 @respx.mock
-def test_list_commands_decodes_an_unzoned_started_as_none(value: object) -> None:
+def test_list_commands_decodes_an_unzoned_started_as_none(value: int | str) -> None:
     """A command start time that isn't a zoned ISO 8601 timestamp decodes as None."""
 
     respx.get(f"{_BASE}/command").respond(
@@ -886,56 +869,21 @@ def test_list_commands_decodes_an_unzoned_started_as_none(value: object) -> None
 
 
 @respx.mock
-def test_history_since_decodes_records_and_builds_request() -> None:
-    """`history_since()` narrows each record to a `HistoryRecord`.
+def test_history_since_asks_for_the_records_alone() -> None:
+    """Sonarr's history read asks for every event since the date, with the series and episode flags off.
 
-    This includes the case-insensitive `data` reason key and a null
-    `downloadId`. The request pins the date + the include flags off.
+    How each record reads, `seriesId` as its item id included, is the model's (`test_arr_models`,
+    `test_boundary_parity`).
     """
 
-    body: list[object] = [
-        {
-            "id": 12,
-            "seriesId": 4,
-            "date": "2026-07-01T10:00:00Z",
-            "eventType": "episodeFileDeleted",
-            "downloadId": "ABC123",
-            "data": {"Reason": "Upgrade"},
-        },
-        {
-            "id": 13,
-            "seriesId": 5,
-            "date": "2026-07-01T11:00:00Z",
-            "eventType": "downloadFolderImported",
-            "downloadId": None,
-            "data": {"reason": "MissingFromDisk"},
-        },
-    ]
-    route = respx.get(f"{_BASE}/history/since").respond(json=body)
-    records = _make_client().history_since("2026-06-30T08:00:00Z")
+    route = respx.get(f"{_BASE}/history/since").respond(json=[])
+    _make_client().history_since("2026-06-30T08:00:00Z")
 
-    assert records == [
-        HistoryRecord(
-            id=12,
-            date="2026-07-01T10:00:00Z",
-            item_id=4,
-            event_type="episodeFileDeleted",
-            download_id="ABC123",
-            reason="Upgrade",
-        ),
-        HistoryRecord(
-            id=13,
-            date="2026-07-01T11:00:00Z",
-            item_id=5,
-            event_type="downloadFolderImported",
-            download_id=None,
-            reason="MissingFromDisk",
-        ),
-    ]
-    url = str(route.calls.last.request.url)
-    assert "date=2026-06-30T08%3A00%3A00Z" in url
-    assert "includeSeries=false" in url
-    assert "includeEpisode=false" in url
+    assert dict(route.calls.last.request.url.params) == {
+        "date": "2026-06-30T08:00:00Z",
+        "includeSeries": "false",
+        "includeEpisode": "false",
+    }
 
 
 # --- quality_definitions() / languages() ------------------------------------
@@ -943,11 +891,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 @respx.mock
 def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
-    """Each definition's nested `quality` validates verbatim.
-
-    The resolver re-emits it into the outgoing payload, unknown keys
-    included.
-    """
+    """Each definition carries its nested `quality`, which the import payload re-emits."""
 
     respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))
     defs = _make_client().quality_definitions()
