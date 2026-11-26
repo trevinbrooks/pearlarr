@@ -28,7 +28,7 @@ from .wait_types import torrent_errored, torrent_finished
 
 
 class TorrentAddError(Exception):
-    """A failed add: qBittorrent rejected it (a non-`"Ok."` `torrents_add` result), or the release's cross-seed left."""
+    """A failed add: qBittorrent rejected it, or the release's cross-seed left."""
 
 
 # The expected external failures a grab can hit. Anything else is a bug and propagates.
@@ -93,6 +93,12 @@ def _row_added_on(row: object) -> datetime | None:
         return datetime.fromtimestamp(raw)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def _rejected(url: str, answer: str) -> TorrentAddError:
+    """The error for an add qBittorrent turned down, naming the release and what qBittorrent answered."""
+
+    return TorrentAddError(f"qBittorrent rejected the torrent from {url} (response: {answer!r})")
 
 
 @dataclass(frozen=True)
@@ -321,13 +327,15 @@ class TorrentService:
         if self.qbit is None:
             raise RuntimeError("qBittorrent client not configured")
 
-        result = self.qbit.torrents_add(
-            urls=torrent_url,
-            category=self.categories.grab_category(),
-            tags=self.tags,
-        )
-        if result != "Ok.":
-            raise TorrentAddError(f"qBittorrent rejected the torrent from {item.url} (response: {result!r})")
+        category = self.categories.grab_category()
+        try:
+            answer = self.qbit.torrents_add(urls=torrent_url, category=category, tags=self.tags)
+        except qbittorrentapi.Conflict409Error as e:
+            # qBittorrent 5.2 and later turns an add down with a 409, where older versions answer "Fails.".
+            raise _rejected(item.url, str(e)) from e
+        # Before 5.2 the answer is "Ok." or "Fails.". From 5.2 on it is counts, sent only for an add it took.
+        if isinstance(answer, str) and answer != "Ok.":
+            raise _rejected(item.url, answer)
 
         if infohash is None:
             return None
