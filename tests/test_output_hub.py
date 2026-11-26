@@ -508,6 +508,34 @@ def test_a_second_ctrl_c_during_the_unwind(again_on: Event, survivor_gets: list[
     assert survivor.events == survivor_gets
 
 
+class _BrokenByCtrlC(_FailingRenderer):
+    """Ctrl-C lands inside its first handle and leaves it broken, so every later handle raises."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.interrupted = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if not self.interrupted:
+            self.interrupted = True
+            raise KeyboardInterrupt
+        super().handle(event, when)
+
+
+def test_a_renderer_that_fails_the_retry_of_an_interrupted_event_takes_a_strike_for_it() -> None:
+    broken = _BrokenByCtrlC()
+    hub = OutputHub([broken])
+
+    with pytest.raises(KeyboardInterrupt):
+        hub.emit(_EVENT)
+    hub.emit(_EVENT)
+    hub.emit(_EVENT)
+
+    # The failed retry is its first strike, so the second emit after it is its third.
+    assert broken.log == ["PearlarrStarted"] * 3 + ["close"]
+
+
 def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypatch: pytest.MonkeyPatch) -> None:
     """An interrupt that lands after emit queues the event but before the drain starts leaves no drain lock behind."""
 
