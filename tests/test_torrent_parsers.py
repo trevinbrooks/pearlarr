@@ -28,6 +28,8 @@ from pearlarr.tracker_links import (
 )
 from pearlarr.web_client import get_with_retries, head_with_retries
 
+from .http_mock import nyaa_disposition
+
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 
 # The torrent names the saved HTML fixtures carry (so a test asserts the exact scrape).
@@ -60,18 +62,11 @@ def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- Nyaa (build the .torrent link, read the torrent name off its download header) ---
 
 
-def _nyaa_disposition(filename: str) -> dict[str, str]:
-    """The download header Nyaa sends: the name twice, percent-encoded, the second as RFC 6266 `filename*`."""
-
-    encoded = quote(filename)
-    return {"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
-
-
 @respx.mock
 def test_fetch_nyaa_link_reads_the_title_off_one_head() -> None:
     """The link is built from the release number and the torrent name is its download filename, from one HEAD."""
 
-    head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
+    head = respx.head(_NYAA_LINK).respond(headers=nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
     result = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
@@ -84,7 +79,7 @@ def test_fetch_nyaa_link_reads_the_title_off_one_head() -> None:
 def test_fetch_nyaa_link_decodes_a_non_ascii_title() -> None:
     """The torrent name comes from the header's UTF-8 `filename*` form, so a non-ASCII name survives."""
 
-    respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition("[Group] クールアニメ - 01.torrent"))
+    respx.head(_NYAA_LINK).respond(headers=nyaa_disposition("[Group] クールアニメ - 01.torrent"))
 
     _, title = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
@@ -96,14 +91,14 @@ def test_fetch_nyaa_link_decodes_a_non_ascii_title() -> None:
 )
 @respx.mock
 def test_fetch_nyaa_link_finds_the_release_number_past_a_slash_fragment_or_query(url: str) -> None:
-    respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
+    respx.head(_NYAA_LINK).respond(headers=nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
     assert fetch_nyaa_link(url, client=httpx.Client()) == TrackerLink(_NYAA_LINK, _NYAA_TITLE)
 
 
 @respx.mock
 def test_fetch_nyaa_link_refuses_a_download_url_without_a_request() -> None:
-    head = respx.head(_NYAA_LINK).respond(headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
+    head = respx.head(_NYAA_LINK).respond(headers=nyaa_disposition(f"{_NYAA_TITLE}.torrent"))
 
     with pytest.raises(TrackerPageError, match="Could not read a Nyaa release number"):
         fetch_nyaa_link(_NYAA_LINK, client=httpx.Client())
@@ -145,7 +140,7 @@ def test_fetch_nyaa_link_retries_a_429(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(torrent, "head_with_retries", _no_sleep_head)
     route = respx.head(_NYAA_LINK)
-    route.side_effect = [httpx.Response(429), httpx.Response(200, headers=_nyaa_disposition(f"{_NYAA_TITLE}.torrent"))]
+    route.side_effect = [httpx.Response(429), httpx.Response(200, headers=nyaa_disposition(f"{_NYAA_TITLE}.torrent"))]
 
     _, title = fetch_nyaa_link("https://nyaa.si/view/1234567", client=httpx.Client())
 
