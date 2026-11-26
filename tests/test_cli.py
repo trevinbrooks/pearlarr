@@ -29,6 +29,7 @@ import httpx
 import pytest
 import respx
 import truststore
+import typer
 from typer.testing import CliRunner, Result
 
 from pearlarr.boot_flow import BootFlow
@@ -1560,28 +1561,23 @@ class TestScheduledLifecycle:
 
         assert [line for line in _lines(result.stdout) if "not configured - not run" in line] == _SKIP_NOTES
 
-    def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("command", ["single", "scheduled"])
+    def test_the_run_commands_register_the_sigterm_handler_before_the_run(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         recorder = _SignalRecorder()
         monkeypatch.setattr(signal, "signal", recorder)
+        at_the_run: list[tuple[int, object]] = []
 
-        _invoke_offline("run", "scheduled")  # a fresh data dir: the run stops at the missing config
-
-        assert recorder.registered == [(signal.SIGTERM, _handle_sigterm)]
-
-    def test_run_single_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        recorder = _SignalRecorder()
-        monkeypatch.setattr(signal, "signal", recorder)
-        during_run: list[tuple[int, object]] = []
-
-        def run_arrs(*args: object, **kwargs: object) -> bool:
-            del args, kwargs
-            during_run.extend(recorder.registered)
-            return True
+        def run_arrs(*args: object, **kwargs: object) -> NoReturn:
+            at_the_run.extend(recorder.registered)
+            raise typer.Exit(1)  # both commands stop here, as on a missing config
 
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", run_arrs)
 
-        assert run_single() is True
-        assert during_run == [(signal.SIGTERM, _handle_sigterm)]
+        CliRunner().invoke(pearlarr_cli, ["run", command])
+
+        assert at_the_run == [(signal.SIGTERM, _handle_sigterm)]
 
     def test_scheduled_help_names_the_bare_metal_fallback(self) -> None:
         result = CliRunner().invoke(pearlarr_cli, ["run", "scheduled", "--help"])
