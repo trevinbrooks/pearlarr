@@ -46,7 +46,6 @@ import re
 import signal
 import ssl
 import sys
-from collections.abc import Callable
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -343,34 +342,36 @@ class TestActiveRunGuard:
 
 
 class TestMissingFilesAreReportedNotRaised:
-    """A missing cache/backup file echoes one hinting stderr line and returns False."""
+    """A missing cache/backup file is one hinting stderr line and exit 1, leaving stdout clean for scripts."""
 
+    @pytest.mark.parametrize(
+        ("command", "what", "file", "hint"),
+        [
+            pytest.param("backup", "cache database", "cache.db", "it is created by the first run", id="backup"),
+            pytest.param("stats", "cache database", "cache.db", "it is created by the first run", id="stats"),
+            pytest.param("check", "cache database", "cache.db", "it is created by the first run", id="check"),
+            pytest.param("remove", "cache database", "cache.db", "nothing to remove", id="remove"),
+            pytest.param("restore", "backup", "cache.backup.db", "run pearlarr cache backup first", id="restore"),
+        ],
+    )
     def test_each_cache_command_reports_a_missing_file_with_a_hint(
         self,
+        command: str,
+        what: str,
+        file: str,
+        hint: str,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
 
-        # Each message names what's missing and hints at how to get one, so a
-        # fresh install isn't met with a bare "No file at ...".
-        checks: list[tuple[Callable[[], bool], str]] = [
-            (cache_backup, "No cache database at"),
-            (cache_stats, "No cache database at"),
-            (cache_check, "No cache database at"),
-            (cache_backup, "it is created by the first run"),
-            (cache_remove, "nothing to remove"),
-            (cache_restore, "No backup at"),
-            (cache_restore, "run pearlarr cache backup first"),
-        ]
-        for command, expected in checks:
-            assert command() is False
-            captured = capsys.readouterr()
-            # One stderr line, nothing on stdout (scripted use stays clean).
-            assert expected in captured.err
-            assert captured.err.count("\n") == 1
-            assert captured.out == ""
+        result = CliRunner().invoke(pearlarr_cli, ["cache", command])
+
+        # The line names what's missing and how to get one, so a fresh install
+        # isn't met with a bare "No file at ...".
+        assert result.exit_code == 1
+        assert result.stderr == f"No {what} at {tmp_path / file} - {hint}\n"
+        assert result.stdout == ""
 
 
 class TestConfigInit:
@@ -1935,30 +1936,6 @@ def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:
         assert ssl.SSLContext is truststore.SSLContext
     finally:
         truststore.extract_from_ssl()
-
-
-class TestExitCodes:
-    """The result callback maps a False return to exit code 1 (typer ignores returns)."""
-
-    def test_failure_exits_nonzero_and_success_exits_zero(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        runner = CliRunner()
-
-        # No cache.db yet: the command reports the missing file (on stderr,
-        # keeping stdout clean for scripts) and must exit 1.
-        result = runner.invoke(pearlarr_cli, ["cache", "stats"])
-        assert result.exit_code == 1
-        assert "No cache database at" in result.stderr
-        assert result.stdout == ""
-
-        write_cache_db(tmp_path)
-        result = runner.invoke(pearlarr_cli, ["cache", "stats"])
-        assert result.exit_code == 0
-        assert "entries:" in result.stdout
 
 
 def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
