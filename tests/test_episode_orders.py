@@ -181,8 +181,8 @@ def test_a_series_not_numbered_by_another_order_is_served_sonarrs_rows_as_sent(
     view = reads.aired_series(series_id)
     index = reads.series_index(series_id)
 
-    assert isinstance(view, AiredSeries)
-    assert (reads.library_orders(series_id).season_type, view.aired) == (order, tuple(_ROWS))
+    assert view == AiredSeries(in_sonarr=tuple(_ROWS), stand_ins=())
+    assert reads.library_orders(series_id).season_type == order
     assert index is not None
     assert (set(index.by_id), set(index.orders)) == ({11, 12}, other_orders)
 
@@ -306,12 +306,9 @@ def test_a_new_read_of_a_series_replaces_its_view_and_index() -> None:
 
     view = reads.aired_series(1)
     index = reads.series_index(1)
-    assert before is not None
-    assert set(before.by_id) == {11, 12}
-    assert isinstance(view, AiredSeries)
-    assert view.aired == (*_ROWS, third)
-    assert index is not None
-    assert set(index.by_id) == {11, 12, 13}
+    assert view == AiredSeries(in_sonarr=(*_ROWS, third), stand_ins=())
+    assert before is not None and index is not None
+    assert (set(before.by_id), set(index.by_id)) == ({11, 12}, {11, 12, 13})
 
 
 def test_a_series_the_library_read_has_in_another_order_is_renumbered_whatever_numbers_its_rows_carry() -> None:
@@ -874,6 +871,9 @@ def test_a_parse_reads_the_same_whatever_the_run_read_of_its_series_before() -> 
 
 
 def test_a_series_matcher_is_built_once_for_a_read_of_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Each listed file's parse is matched over the whole series, and a batch release lists a file per episode.
+    # Built per file, the matcher of a long series would cost seconds a release. The answers are the same either
+    # way, so the builds are counted.
     built: list[AiredSeries] = []
     build = AiredMatcher.of
 
@@ -1475,6 +1475,7 @@ def test_a_title_checked_on_orders_skyhook_could_not_refresh_is_checked_again_on
 def test_a_title_cached_with_no_order_is_checked_again_only_when_its_series_is_in_another_order(
     library: SonarrSeries, checked: list[int]
 ) -> None:
+    # The row as a run stored it before a title's cache kept its series' order and episode count.
     cache = FakeCacheStore()
     entry = _entry(500)
     cache.update_cached_title(
@@ -1535,10 +1536,11 @@ def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_while_its_seri
 
 def test_a_title_with_no_aired_episode_prints_its_row_on_every_run_and_is_not_cached() -> None:
     cache = FakeCacheStore()
+    _run(cache, _library_row("dvd", 2))
 
-    printed = [_no_episode_rows(_run(cache, _library_row("dvd", 2))) for _ in range(2)]
+    recording = _run(cache, _library_row("dvd", 2))
 
-    assert ["Third" in rows for rows in printed] == [True, True]
+    assert "Third" in _no_episode_rows(recording)
     assert cache.get_cached_title(Arr.SONARR, 700) is None
 
 
