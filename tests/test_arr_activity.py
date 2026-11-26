@@ -397,8 +397,8 @@ class TestWhatARunChecksAgain:
     """A run checks again the cached titles Sonarr's history or the start-of-run hook names.
 
     A title is named by a file change in its series since the last run, and every title is when that history can't
-    all be read. Either setting that turns the history read off skips its boot step. With the ignore flag every title
-    is checked anyway, and the hook runs whatever the settings.
+    all be read. A history read that names no title leaves the hook's titles named. Either setting that turns the
+    history read off skips its boot step, and with the ignore flag every title is checked anyway.
     """
 
     @pytest.mark.parametrize(
@@ -415,10 +415,7 @@ class TestWhatARunChecksAgain:
             pytest.param(_Situation(detect_activity=False), [1, 2], None, id="detection-off"),
             pytest.param(_Situation(ignore_update_times=True), [], None, id="ignoring-update-times"),
             pytest.param(
-                _Situation(imported_into=None, detect_activity=False, check_again=frozenset({2})),
-                [1],
-                None,
-                id="start-of-run-hook",
+                _Situation(imported_into=None, check_again=frozenset({2})), [1], "none", id="start-of-run-hook"
             ),
         ],
     )
