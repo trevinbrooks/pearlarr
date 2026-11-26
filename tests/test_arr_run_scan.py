@@ -25,10 +25,13 @@ from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import (
     ArrRunSummaryReady,
+    BootReady,
     BootStepFinished,
     Diagnostic,
     ItemStarted,
     ScanStarted,
+    ScopeClosed,
+    ScopeOpened,
     Severity,
     TitleRow,
 )
@@ -310,6 +313,20 @@ class TestBootNotes:
             ("Fetching AniList metadata", *anilist_step),
             ("Fetching SeaDex entries", *seadex_step),
         ]
+
+
+def test_the_boot_view_closes_on_its_ready_line_before_the_scan_starts() -> None:
+    # The renderers draw the boot steps in a live view, and a scan row shown while it is open reflows above an old
+    # spinner.
+    recording = _scan(_Library())
+
+    (boot,) = {opened.scope for opened in recording.of_type(ScopeOpened) if opened.label == "boot"}
+    order = [
+        type(event)
+        for event in recording.events
+        if isinstance(event, BootReady | ScanStarted) or event == ScopeClosed(scope=boot)
+    ]
+    assert order == [BootReady, ScopeClosed, ScanStarted]
 
 
 _OLDER_SELECTION = "an-older-selection"
