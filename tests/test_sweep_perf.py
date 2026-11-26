@@ -226,14 +226,12 @@ class TestParseCacheRows:
         assert rows.read(_NAME, window=_window()) is None
 
 
-class TestFetchWorkers:
-    """`fetch_workers` returns the concurrent worker count when unthrottled, else 1 when sleep-throttled."""
-
-    def test_concurrent_when_no_sleep(self) -> None:
-        assert fetch_workers(make_config(sleep_time=0)) == SONARR_FETCH_WORKERS
-
-    def test_sequential_when_throttled(self) -> None:
-        assert fetch_workers(make_config(sleep_time=2)) == 1
+@pytest.mark.parametrize(
+    ("sleep_time", "workers"),
+    [pytest.param(0, SONARR_FETCH_WORKERS, id="unthrottled"), pytest.param(1, 1, id="throttled")],
+)
+def test_fetch_workers_are_one_under_a_sleep_throttle(sleep_time: int, workers: int) -> None:
+    assert fetch_workers(make_config(sleep_time=sleep_time)) == workers
 
 
 class _Series:
