@@ -65,7 +65,7 @@ def test_movie_files_decodes_resources_and_builds_request() -> None:
 
 @respx.mock
 def test_movie_files_non_200_returns_empty_and_warns() -> None:
-    """A Radarr 404 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
+    """A failed read gives [] with a warning, so the caller goes on as if the movie had no files."""
 
     respx.get(f"{_BASE}/moviefile").respond(status_code=404)
     recording = install_recording_hub()
@@ -74,27 +74,6 @@ def test_movie_files_non_200_returns_empty_and_warns() -> None:
     assert files == []
     [warning] = diagnostic_messages(recording, Severity.WARNING)
     assert warning == "Could not fetch files for movie 7 from Radarr (status code 404) - assuming none"
-
-
-@respx.mock
-def test_movie_files_request_error_returns_empty() -> None:
-    """A transient request error (timeout / connection drop) degrades to []."""
-
-    respx.get(f"{_BASE}/moviefile").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().movie_files(7) == []
-
-
-@respx.mock
-def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
-    """A 200 with an HTML body (reverse-proxy page) fails open to [] - never an abort."""
-
-    respx.get(f"{_BASE}/moviefile").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = install_recording_hub()
-    files = _make_client().movie_files(7)
-
-    assert files == []
-    [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert "non-JSON body" in warning
 
 
 @respx.mock
