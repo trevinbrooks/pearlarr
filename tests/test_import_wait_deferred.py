@@ -29,7 +29,6 @@ from .wait_fakes import (
     FakeTorrent,
     QbitStep,
     RecordingStrategy,
-    RecordingWaitView,
     make_orchestration_manager,
     stored_awaiting_cleanup,
 )
@@ -71,7 +70,7 @@ class TestRunDeferred:
             grabbed=[pending_import(infohash="new")],
         )
 
-        result = mgr.run_deferred(view=RecordingWaitView())
+        result = mgr.run_deferred()
 
         assert result is not None
         assert result.carried_over_imported == 2
@@ -166,7 +165,7 @@ class TestRunDeferred:
             stored_pending_imports=[pending_import(infohash="h")],
         )
 
-        result = mgr.run_deferred(view=RecordingWaitView())
+        result = mgr.run_deferred()
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(outcome, True)]
@@ -183,7 +182,7 @@ class TestRunDeferred:
             stored_pending_imports=[pending_import(infohash="h")],
         )
 
-        mgr.run_deferred(view=RecordingWaitView())
+        mgr.run_deferred()
 
         assert run.pending_import_states == {"h": PendingImportState.DOWNLOADED}
 
@@ -197,7 +196,7 @@ class TestRunDeferred:
             clock=_AutoTickClock(step=30),
         )
 
-        result = mgr.run_deferred(view=RecordingWaitView())
+        result = mgr.run_deferred()
 
         assert result is not None
         assert [row.outcome for row in result.rows] == [Outcome.STILL_DOWNLOADING]
