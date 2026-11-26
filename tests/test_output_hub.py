@@ -405,6 +405,33 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     assert gated.threads == [drainer, drainer]
 
 
+class _ActiveProbe(_QuietRenderer):
+    """Logs whether the process hub says dispatch is active, from inside each handle."""
+
+    def __init__(self) -> None:
+        self.active: list[bool] = []
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        self.active.append(current_hub().dispatch_active())
+
+
+def test_dispatch_is_active_only_on_the_thread_dispatching() -> None:
+    """The logging bridge sends a record logged mid-dispatch to the file log alone, so it must ask per thread.
+
+    A worker thread's warning, logged while the main thread dispatches, still belongs on the console.
+    """
+
+    gated, probe = _GatedRenderer(), _ActiveProbe()
+    hub = OutputHub([gated, probe])
+    install_hub(hub)
+    drainer = _emit_held_at(hub, gated)
+    active_here = hub.dispatch_active()
+    _release(gated, drainer)
+
+    assert (active_here, probe.active) == (False, [True])
+
+
 # --- interrupts ---------------------------------------------------------------------
 
 _EXIT_LINE = Diagnostic(severity=Severity.INFO, message="Received SIGTERM - exiting")
