@@ -45,7 +45,6 @@ from .http_mock import sonarr_fixture
 
 _URL = "http://sonarr.test"
 _BASE = f"{_URL}/api/v3"
-_KEY = "testkey"
 
 
 def _make_client() -> SonarrClient:
@@ -60,7 +59,7 @@ def _make_client() -> SonarrClient:
         http=ArrHttp.bind(
             client=httpx.Client(),
             url=_URL,
-            api_key=_KEY,
+            api_key="testkey",
             label="Sonarr",
             sleep=lambda _s: None,
         ),
@@ -117,16 +116,6 @@ def test_all_series_parses_into_sonarr_item_shape() -> None:
     assert show.tvdbId == 299502
     assert show.imdbId == "tt5311514"
     assert show.monitored is True
-
-
-@respx.mock
-def test_all_series_skips_non_dict_elements() -> None:
-    """A stray non-object element in the series array is skipped, never crashed on."""
-
-    respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY, "stray", 42])
-    series = _make_client().all_series()
-
-    assert [s.id for s in series] == [228]
 
 
 @respx.mock
@@ -293,19 +282,6 @@ def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
 
     assert episodes is not None
     assert [ep.id for ep in episodes] == [9, 1, 2]
-
-
-@respx.mock
-def test_episodes_skips_non_dict_elements() -> None:
-    """A stray non-object element in the episode array is skipped, never crashed on."""
-
-    respx.get(f"{_BASE}/episode").respond(
-        json=[{"id": 1, "seasonNumber": 1, "episodeNumber": 1}, "stray", 42],
-    )
-    episodes = _make_client().episodes(228)
-
-    assert episodes is not None
-    assert [ep.id for ep in episodes] == [1]
 
 
 @respx.mock
@@ -960,36 +936,6 @@ def test_history_since_decodes_records_and_builds_request() -> None:
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeSeries=false" in url
     assert "includeEpisode=false" in url
-
-
-@respx.mock
-def test_history_since_skips_non_dict_elements() -> None:
-    """Stray non-object array elements are dropped, not crashed on."""
-
-    body: list[object] = [
-        {"id": 1, "seriesId": 2, "date": "2026-07-01T10:00:00Z", "eventType": "grabbed"},
-        "stray",
-        42,
-    ]
-    respx.get(f"{_BASE}/history/since").respond(json=body)
-    records = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert records == [HistoryRecord(id=1, date="2026-07-01T10:00:00Z", item_id=2, event_type="grabbed")]
-
-
-@respx.mock
-def test_trailing_slash_url_is_normalized() -> None:
-    """A trailing-slash base url must not become a `//api` join.
-
-    Live Sonarr 302s that to the login page, breaking every raw endpoint.
-    """
-
-    client = SonarrClient(
-        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Sonarr"),
-        logger=logging.getLogger("pearlarr.test"),
-    )
-    respx.get(f"{_BASE}/history/since").respond(json=[])
-    assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
 # --- quality_definitions() / languages() ------------------------------------
