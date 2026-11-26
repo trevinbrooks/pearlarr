@@ -199,10 +199,12 @@ _HASH = sonarr_series_hash([1])
 """The series hash of a run over `_LIBRARY`."""
 
 
-def _parse_cache(sonarr: FakeSonarrClient, cache: FakeCacheStore) -> SonarrParseCache:
-    """A run's parse cache over the stored parses in `cache`, its library `_LIBRARY`, built as a run builds it."""
+def _parse_cache(
+    sonarr: FakeSonarrClient, cache: FakeCacheStore, *, library: Sequence[SonarrSeries] = _LIBRARY
+) -> SonarrParseCache:
+    """The parse cache of a run over `library` and the stored parses in `cache`, built as a run builds it."""
 
-    return SonarrParseCache(make_run_deps(cache_store=cache), sonarr, make_series_reads(sonarr, library=_LIBRARY))
+    return SonarrParseCache(make_run_deps(cache_store=cache), sonarr, make_series_reads(sonarr, library=library))
 
 
 def _listing(files: Mapping[str, int], urls: Sequence[str] = ("u",)) -> SeadexDict:
@@ -235,6 +237,16 @@ class TestParsedFilesCache:
         _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100}))
 
         assert sonarr.parse_calls == asked
+
+    def test_a_name_that_matched_no_series_is_asked_again_once_the_library_gains_a_series(self) -> None:
+        cache = FakeCacheStore()
+        sonarr = FakeSonarrClient(parse_fn=lambda _name: _NO_SERIES)
+
+        _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100}))
+        larger = (*_LIBRARY, SonarrSeries(id=2))
+        _parse_cache(sonarr, cache, library=larger).parsed_files(_listing({_NAME: 100}))
+
+        assert sonarr.parse_calls == [_NAME, _NAME]
 
     def test_a_stored_parse_with_no_matched_episodes_is_asked_again_sooner(self) -> None:
         # The same age for both: past the backstop of a parse with no matched episodes, inside the TTL of one with.
