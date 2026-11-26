@@ -12,8 +12,8 @@ fakes in `run_loop_fakes`, and `_finish_arr_run` is mostly replaced by a typed
 recorder - so the contracts are pinned by asserting recorded state.
 """
 
-import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
@@ -21,11 +21,10 @@ import pytest
 
 from pearlarr.arr_models import HistoryRecord
 from pearlarr.arr_run_loop import ArrRunLoop
-from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
-from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import CacheStore
-from pearlarr.config import AppConfig, Arr
+from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, Diagnostic, Severity
 from pearlarr.progress import ProgressCallback
@@ -49,11 +48,9 @@ from .fakes import (
     FakeClock,
     FakeSkyHookClient,
     FakeStrategy,
-    RecordingHub,
     diagnostic_messages,
     install_recording_hub,
 )
-from .run_loop_fakes import FakeGateway, FinalizeRecorder, make_engine
 from .wait_fakes import FakeQbit
 
 
@@ -322,120 +319,117 @@ class TestBootNotes:
         ]
 
 
-# One import event on the scanned item, so the activity read has a checkpoint to commit.
+# One import event on series 3, so the activity read has a checkpoint to stage.
 _IMPORT_EVENT = HistoryRecord(
     id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
 )
 
+_OLDER_SELECTION = "an-older-selection"
+"""The selection hash an earlier full run stored, under selection settings changed since."""
+
+
+def _series_3(services: ArrRunServices | None = None) -> FakeStrategy:
+    """A library of series 3 mapping title 11, its history the one import. `services` holds each title past the cap."""
+
+    return FakeStrategy(
+        items=[FakeArrItem(item_id=3)],
+        anilist_ids={11: TitleMapping(anilist_id=11)},
+        services=services,
+        history=[_IMPORT_EVENT],
+    )
+
+
+def _left_for_the_next_run(deps: ArrRunDeps) -> tuple[bool, bool]:
+    """Whether the run stored its selection settings and its activity checkpoint, both read for the next run."""
+
+    cache = deps.cache_store
+    return (
+        not cache.selection_changed(Arr.SONARR, deps.config.selection_hash()),
+        cache.get_history_checkpoint(Arr.SONARR) is not None,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Situation:
+    """What a run met: the series it was narrowed to, and which sources were unreachable or held a title."""
+
+    item_id: int | None = None
+    seadex_unreachable: bool = False
+    anilist_unreachable: bool = False
+    held_past_the_cap: bool = False
+
 
 class TestSelectionRecheck:
-    """The changed-selection announcement + the full-coverage rule for storing the selection hash.
+    """A run over changed selection settings checks the cached titles again, and a full scan stores the new settings.
 
-    Whether the hash was stored is read back through `selection_changed`: after it is stored, any
-    OTHER hash reads changed. With no hash stored, nothing reads changed.
+    The note says why the titles are checked again. A single-item run checks only its series and can't store the
+    settings, so the note would overstate it and recur. With the ignore flag every title is checked anyway.
     """
 
     _NOTE = "Selection settings changed - checking cached titles again"
 
-    def _run(
-        self,
-        logger: logging.Logger,
-        *,
-        stale: bool = False,
-        item_id: int | None = None,
-        config: AppConfig | None = None,
-        seadex: FakeGateway | None = None,
-        anilist: FakeGateway | None = None,
-        cap_reached: bool = False,
-    ) -> tuple[ArrRunLoop, RecordingHub]:
+    @pytest.mark.parametrize(
+        ("changed", "item_id", "ignore_update_times", "announced"),
+        [
+            pytest.param(True, None, False, True, id="changed"),
+            pytest.param(False, None, False, False, id="unchanged"),
+            pytest.param(True, 3, False, False, id="single-item"),
+            pytest.param(True, None, True, False, id="ignoring-update-times"),
+        ],
+    )
+    def test_a_changed_selection_is_announced_only_on_a_full_run_that_reads_update_times(
+        self, changed: bool, item_id: int | None, ignore_update_times: bool, announced: bool
+    ) -> None:
+        config = make_config(url="http://sonarr", api_key="key", ignore_seadex_update_times=ignore_update_times)
+        cache = FakeCacheStore()
+        cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION if changed else config.selection_hash())
         recording = install_recording_hub()
-        engine = make_engine(FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
-        strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=3)],
-            anilist_ids={11: TitleMapping(anilist_id=11)},
-            services=engine._services if cap_reached else None,
-            history=[_IMPORT_EVENT],
+
+        drive_arr_run(make_run_deps(config=config, cache_store=cache), lambda _: _series_3(), item_id=item_id)
+
+        assert (self._NOTE in diagnostic_messages(recording)) is announced
+
+    @pytest.mark.parametrize(
+        ("situation", "stored"),
+        [
+            pytest.param(_Situation(), True, id="full"),
+            pytest.param(_Situation(item_id=3), False, id="single-item"),
+            pytest.param(_Situation(seadex_unreachable=True), False, id="no-seadex"),
+            # A title AniList left unread isn't cached, so the next run checks it whatever this one stored.
+            pytest.param(_Situation(anilist_unreachable=True), True, id="no-anilist"),
+            # So is a title held past the cap.
+            pytest.param(_Situation(held_past_the_cap=True), True, id="held-past-the-cap"),
+        ],
+    )
+    def test_a_full_scan_seadex_answered_stores_the_selection_and_the_checkpoint(
+        self, situation: _Situation, stored: bool
+    ) -> None:
+        # Left unstored, the next run checks the cached titles again and replays the same activity. The run is a real
+        # one, as only a real run's stores are saved.
+        cache = FakeCacheStore()
+        cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION)
+        deps = make_run_deps(
+            cache_store=cache,
+            qbit=FakeQbit().client(),
+            seadex=FakeSeaDexSource(unreachable=situation.seadex_unreachable),
+            anilist_client=ScriptedAniListClient(failing=frozenset({11} if situation.anilist_unreachable else ())),
         )
-        engine._services._selection_changed = stale
-        engine.run_arr(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
-        return engine, recording
 
-    def _vouched_any(self, engine: ArrRunLoop) -> bool:
-        """Whether the arr run stored a selection hash at all (an alien hash then reads changed)."""
+        drive_arr_run(
+            deps,
+            lambda services: _series_3(services if situation.held_past_the_cap else None),
+            item_id=situation.item_id,
+        )
 
-        return engine.cache_store.selection_changed(Arr.SONARR, "some-other-digest")
-
-    def test_selection_changed_is_announced(self, logger: logging.Logger) -> None:
-        _, recording = self._run(logger, stale=True)
-
-        assert self._NOTE in diagnostic_messages(recording)
-
-    def test_unchanged_selection_stays_quiet(self, logger: logging.Logger) -> None:
-        _, recording = self._run(logger, stale=False)
-
-        assert self._NOTE not in diagnostic_messages(recording)
-
-    def test_single_item_run_does_not_announce(self, logger: logging.Logger) -> None:
-        # A single-item run re-checks only its id and cannot store the selection hash, so the whole-
-        # library note is suppressed (it would overstate the scan and recur).
-        _, recording = self._run(logger, stale=True, item_id=3)
-
-        assert self._NOTE not in diagnostic_messages(recording)
-
-    def test_ignore_update_times_suppresses_the_announcement(self, logger: logging.Logger) -> None:
-        # The ignore flag already re-checks everything. Announcing a selection
-        # re-check on top would be noise.
-        _, recording = self._run(logger, stale=True, config=make_config(ignore_seadex_update_times=True))
-
-        assert self._NOTE not in diagnostic_messages(recording)
-
-    def test_full_run_stores_the_current_selection_hash(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger)
-
-        assert engine.cache_store.selection_changed(Arr.SONARR, engine._config.selection_hash()) is False
-        assert self._vouched_any(engine) is True
-
-    def test_single_item_run_does_not_store_the_selection_hash(self, logger: logging.Logger) -> None:
-        engine, _ = self._run(logger, item_id=3)
-
-        assert self._vouched_any(engine) is False
-
-    def test_a_run_that_held_a_title_past_the_cap_stores_the_selection_hash_and_commits_the_checkpoint(
-        self, logger: logging.Logger
-    ) -> None:
-        # A hold keeps neither the selection hash nor the checkpoint back.
-        engine, _ = self._run(logger, cap_reached=True)
-
-        assert self._vouched_any(engine) is True
-        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
-
-    def test_unreachable_run_does_not_store_the_selection_hash(self, logger: logging.Logger) -> None:
-        unreachable_gateway = FakeGateway()
-        unreachable_gateway.unreachable = True
-        engine, _ = self._run(logger, seadex=unreachable_gateway)
-
-        assert self._vouched_any(engine) is False
-
-    def test_an_anilist_unreachable_run_stores_the_selection_hash_and_commits_the_checkpoint(
-        self, logger: logging.Logger
-    ) -> None:
-        # A title AniList left unread isn't cached, so AniList being unreachable keeps neither back.
-        unreachable_gateway = FakeGateway()
-        unreachable_gateway.unreachable = True
-        engine, _ = self._run(logger, anilist=unreachable_gateway)
-
-        assert self._vouched_any(engine) is True
-        assert engine.cache_store.get_history_checkpoint(Arr.SONARR) is not None
+        assert _left_for_the_next_run(deps) == (stored, stored)
 
 
-class _OrderFetchingStrategy(FakeStrategy):
-    """Warms episodes as the Sonarr strategy does, its order fetch asking `skyhook` for item 3 on a v4 Sonarr."""
+class _OrderFetching(FakeStrategy):
+    """Series 3 mapping title 11, its episodes warmed and its orders asked of `skyhook`, as Sonarr's series are."""
 
     def __init__(self, skyhook: SkyHookGateway) -> None:
         super().__init__(
-            items=[FakeArrItem(item_id=3)],
-            anilist_ids={11: TitleMapping(anilist_id=11)},
-            history=[_IMPORT_EVENT],
+            items=[FakeArrItem(item_id=3)], anilist_ids={11: TitleMapping(anilist_id=11)}, history=[_IMPORT_EVENT]
         )
         self._skyhook = skyhook
 
@@ -447,7 +441,7 @@ class _OrderFetchingStrategy(FakeStrategy):
     @override
     def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
         series = [SonarrSeriesOrders(item.id, AIRED_ORDER, None) for item in items]
-        return self._skyhook.prefetch(series, dry_run=True, progress=progress)
+        return self._skyhook.prefetch(series, dry_run=False, progress=progress)
 
 
 @pytest.mark.parametrize(
@@ -458,18 +452,17 @@ class _OrderFetchingStrategy(FakeStrategy):
     ],
 )
 def test_a_skyhook_unreachable_notes_unreachable_and_the_run_neither_stores_the_selection_hash_nor_commits(
-    logger: logging.Logger, failing: frozenset[tuple[int, str]], note: str, full_scan: bool
+    failing: frozenset[tuple[int, str]], note: str, full_scan: bool
 ) -> None:
     # A series SkyHook left unrefreshed was read by its old stored orders, so the run commits neither and the next one
-    # repeats the re-checks a settings or file change drove.
+    # repeats the re-checks a settings or file change drove. A real run, as only a real run's stores are saved.
+    cache = FakeCacheStore()
+    cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION)
+    deps = make_run_deps(cache_store=cache, qbit=FakeQbit().client(), skyhook_client=FakeSkyHookClient(failing=failing))
     recording = install_recording_hub()
-    store = FakeCacheStore()
-    skyhook = SkyHookGateway(client=FakeSkyHookClient(failing=failing), cache_store=store)
-    engine = make_engine(FinalizeRecorder(), logger, cache_store=store, skyhook=skyhook)
 
-    engine.run_arr(_OrderFetchingStrategy(skyhook), item_id=None, dry_run=True, boot=BootFlow())
+    drive_arr_run(deps, lambda _: _OrderFetching(deps.skyhook))
 
     [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching TVDB orders"]
     assert step.detail == note
-    assert store.selection_changed(Arr.SONARR, "some-other-digest") is full_scan
-    assert (store.get_history_checkpoint(Arr.SONARR) is not None) is full_scan
+    assert _left_for_the_next_run(deps) == (full_scan, full_scan)
