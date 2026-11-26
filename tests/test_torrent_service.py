@@ -421,14 +421,13 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
     # Guard: the kwargs must route to the qbittorrent group, else build skips qbit.
     assert config.qbittorrent.credentials() is not None
 
-    web = httpx.Client()
     with pytest.raises(QbitConnectionError):
         ArrRunDeps.build(
             Arr.SONARR,
             app_config=config,
             logger=logging.getLogger("pearlarr.test"),
-            resolver=make_resolver(config, web),
-            web=web,
+            resolver=make_resolver(),
+            web=httpx.Client(),
             boot=BootFlow(),
         )
 

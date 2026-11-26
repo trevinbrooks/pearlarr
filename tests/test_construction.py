@@ -125,14 +125,13 @@ def test_radarr_strategy_init_builds_without_network_via_the_client_argument() -
 def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
     """`ArrRunDeps.build` over the throwaway wiring every construction test shares."""
 
-    web = httpx.Client()
     return ArrRunDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("pearlarr.test"),
-        resolver=make_resolver(app_config, web),
+        resolver=make_resolver(),
         app_config=app_config,
-        web=web,
+        web=httpx.Client(),
         boot=BootFlow(),
     )
 

@@ -87,7 +87,7 @@ def _episodes(
     if anilist is not None:
         deps.anilist.answers[123] = anilist
     if anime_lists is not None:
-        deps = replace(deps, resolver=make_resolver(deps.config, deps.http, anime_lists=anime_lists))
+        deps = replace(deps, resolver=make_resolver(deps.config, anime_lists=anime_lists))
     return make_sonarr_episodes(deps, sonarr=FakeSonarrClient(episodes=listed))
 
 
