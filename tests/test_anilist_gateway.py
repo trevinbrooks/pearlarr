@@ -213,12 +213,8 @@ class TestMediaResolution:
     def test_titles_list_english_then_romaji_once_each(
         self, english: str | None, romaji: str, titles: tuple[str, ...]
     ) -> None:
-        body = anilist_body(1)
-        body["data"]["Media"]["title"] = {"english": english, "romaji": romaji}
-        store = FakeCacheStore()
-        store.put_anilist_meta(1, {"fetched_at": _stamp(days_ago=1), "data": body})
-        gateway = make_anilist_gateway(store=store)
-        gateway.load_cache()
+        gateway = make_anilist_gateway()
+        gateway.answers[1] = anilist_body(1, english, romaji)
 
         assert gateway.titles(1) == titles
 
