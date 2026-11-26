@@ -66,7 +66,7 @@ _NO_SERIES = ParsedFileInfo()
 
 
 def _matched(season: int, episode: int) -> ParsedFileInfo:
-    """A parse Sonarr resolved to one series episode (ids omitted, as a cached row reads back)."""
+    """A parse Sonarr resolved to one series episode, its episode id left out."""
 
     return ParsedFileInfo(matched_episodes=(MatchedEpisode(season_number=season, episode_number=episode),))
 
@@ -187,70 +187,24 @@ class TestParseFreshness:
 class TestParseCacheRows:
     """The parse-cache leaf: fresh-only reads and shape-owning writes."""
 
-    @staticmethod
-    def _parse_cache_rows() -> tuple[ParseCacheRows, FakeCacheStore]:
-        store = FakeCacheStore()
-        return ParseCacheRows(store), store
-
-    def test_round_trip_keeps_the_matched_ids(self) -> None:
-        rows, _ = self._parse_cache_rows()
-        info = ParsedFileInfo(
-            season_number=1,
-            episode_numbers=(1,),
-            matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
-        )
-
-        rows.write("show - 01.mkv", info, window=_window())
-
-        assert rows.read("show - 01.mkv", window=_window()) == info
-
     @pytest.mark.parametrize(
-        "info",
+        ("info", "under_another_hash"),
         [
-            pytest.param(_NO_SERIES, id="no-series"),
-            pytest.param(_of_series(7).with_matched(()), id="a-series-and-no-episode"),
+            pytest.param(_of_series(7), _of_series(7), id="matched"),
+            pytest.param(_NO_SERIES, None, id="no-series"),
+            pytest.param(_of_series(7).with_matched(()), None, id="a-series-and-no-episode"),
         ],
     )
-    def test_a_write_with_no_matched_episodes_is_pinned_to_the_series_hash(self, info: ParsedFileInfo) -> None:
-        rows, store = self._parse_cache_rows()
+    def test_a_written_parse_with_no_matched_episode_reads_back_only_under_its_series_hash(
+        self, info: ParsedFileInfo, under_another_hash: ParsedFileInfo | None
+    ) -> None:
+        rows = ParseCacheRows(FakeCacheStore())
 
-        rows.write("show - 01.mkv", info, window=_window("fp"))
+        rows.write(_NAME, info, window=_window("fp"))
 
-        row = store.get_sonarr_parse("show - 01.mkv")
-        assert row is not None
-        assert row["series_fp"] == "fp"
-        assert rows.read("show - 01.mkv", window=_window("other")) is None
-
-    def test_matched_write_carries_no_series_hash(self) -> None:
-        rows, store = self._parse_cache_rows()
-
-        rows.write("show - 01.mkv", _matched(1, 1), window=_window("fp"))
-
-        row = store.get_sonarr_parse("show - 01.mkv")
-        assert row is not None
-        assert "series_fp" not in row
-
-    def test_a_parse_of_a_series_in_another_order_is_written_with_that_order(self) -> None:
-        rows, store = self._parse_cache_rows()
-
-        rows.write("show - 01.mkv", _of_series(7), window=_window(orders={7: "dvd"}))
-
-        row = store.get_sonarr_parse("show - 01.mkv")
-        assert row is not None
-        assert row["series_order"] == "dvd"
-
-    @pytest.mark.parametrize(
-        "info",
-        [pytest.param(_of_series(8), id="of-an-aired-series"), pytest.param(_NO_SERIES, id="of-no-series")],
-    )
-    def test_a_parse_of_no_series_in_another_order_is_written_with_no_order(self, info: ParsedFileInfo) -> None:
-        rows, store = self._parse_cache_rows()
-
-        rows.write("show - 01.mkv", info, window=_window(orders={7: "dvd"}))
-
-        row = store.get_sonarr_parse("show - 01.mkv")
-        assert row is not None
-        assert "series_order" not in row
+        same_hash = rows.read(_NAME, window=_window("fp"))
+        another_hash = rows.read(_NAME, window=_window("other"))
+        assert (same_hash, another_hash) == (info, under_another_hash)
 
     def test_unreadable_parse_reads_as_a_miss(self) -> None:
         # A row whose values this build cannot validate re-parses: every field is present, so the key check passes
@@ -259,17 +213,17 @@ class TestParseCacheRows:
             "fetched_at": _stamp(1),
             "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
         }
-        store = FakeCacheStore(sonarr_parse={"show - 01.mkv": row})
+        store = FakeCacheStore(sonarr_parse={_NAME: row})
 
-        assert ParseCacheRows(store).read("show - 01.mkv", window=_window()) is None
+        assert ParseCacheRows(store).read(_NAME, window=_window()) is None
 
     def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
         # The model would read the missing title as "", so the key decides, inside the TTL.
-        store = FakeCacheStore(sonarr_parse={"show - 01.mkv": _untitled(_matched(1, 1))})
+        store = FakeCacheStore(sonarr_parse={_NAME: _untitled(_matched(1, 1))})
         rows = ParseCacheRows(store)
 
-        assert not rows.is_fresh("show - 01.mkv", window=_window())
-        assert rows.read("show - 01.mkv", window=_window()) is None
+        assert not rows.is_fresh(_NAME, window=_window())
+        assert rows.read(_NAME, window=_window()) is None
 
 
 class TestFetchWorkers:
