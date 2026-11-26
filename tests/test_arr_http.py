@@ -1,18 +1,11 @@
 # pyright: strict
-"""Direct tests for `ArrHttp`.
+"""Tests for `ArrHttp`, the transport every Sonarr and Radarr request goes through.
 
-The httpx-native transport the raw arr endpoints share. Pins the fail-open
-matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
-naming the cause), the strict library-fetch matrix (the same failures RAISE
-typed `ArrUnreachableError`/`ArrAuthError` instead), the GET retry policy
-(transient statuses retry with backoff, terminal ones don't - the `retries=0`
-poll handle never retries), the consecutive-failure coalescing (streak dict,
-timed re-warns, recovery notes, shared streak dict), the POST policy
-(`post_json` NEVER retries - not idempotent), the per-request GET timeout
-override, and the two
-security invariants: the API key goes in the `X-Api-Key` header (never the
-URL) and a redirect is NEVER followed (a 3xx must not replay the key at a new
-location).
+A failed fail-open read gives None and one warning naming the cause, and the strict library read raises a
+typed error instead. Transient GET failures retry and others don't. A POST never retries, since a repeat
+could queue a command twice, and a DELETE leaves its retry to the caller's next run or poll. Repeat
+failures stay quiet, re-warn on a timer and end with a recovery note. The API key travels only in the
+`X-Api-Key` header, and a redirect is never followed, so a 3xx can't replay the key somewhere else.
 """
 
 import json
