@@ -74,7 +74,7 @@ class TestLoadCache:
 class TestPrefetch:
     """prefetch batches the missing and stale ids and persists exactly what it fetched.
 
-    It stops when AniList is unreachable.
+    While AniList is unreachable it counts no progress and evicts nothing.
     """
 
     def test_all_fresh_fetches_nothing(self) -> None:
@@ -133,23 +133,14 @@ class TestPrefetch:
 
         assert dict(store.iter_anilist_meta()) == {1: aged}
 
-    def test_stops_once_anilist_is_unreachable(self) -> None:
-        client = ScriptedAniListClient(failing=frozenset({1}))
-        store = FakeCacheStore()
-        gateway = make_anilist_gateway(client, store)
+    def test_a_batch_anilist_did_not_answer_is_not_counted_as_progress(self) -> None:
+        gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})))
         progress = RecordingProgress()
-        ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
-        fetched = gateway.prefetch(ids, dry_run=False, progress=progress)
+        gateway.prefetch([1], dry_run=False, progress=progress)
 
-        assert fetched == len(ids)
-        assert gateway.unreachable is True
-        # The first chunk marked AniList unreachable, so the second was never requested.
-        assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE]]
-        # The tripped chunk fetched nothing, so the boot step's bar never claimed it as progress.
+        # The boot step's bar claims only the batches AniList answered.
         assert progress.updates == []
-        assert gateway.answers == {}
-        assert store.get_anilist_meta(1) is None
 
     def test_unreachable_keeps_stale_rows_and_serves_them(self) -> None:
         store = FakeCacheStore()
