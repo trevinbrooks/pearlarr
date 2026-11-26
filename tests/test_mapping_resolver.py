@@ -666,6 +666,27 @@ _ANIME_IDS_FROM_FILE = MappingSources(anime=None, anidb=False, anibridge=False)
 _FRIEREN: AnimeIdsByName = {"Sousou no Frieren": {"anilist_id": 154587, "tvdb_id": 424536, "tvdb_season": 1}}
 
 
+class TestSourcesSummary:
+    """The boot step's note names the sources a run reads."""
+
+    @pytest.mark.parametrize(
+        ("sources", "note"),
+        [
+            pytest.param(
+                MappingSources(anime=_FRIEREN, anidb=ElementTree.fromstring("<anime-list/>"), anibridge=GRAPH),
+                "anime-ids · anime-lists · anibridge",
+                id="all three",
+            ),
+            pytest.param(MappingSources(anime=False, anidb=False, anibridge=GRAPH), "anibridge", id="one"),
+            pytest.param(MappingSources(anime=False, anidb=False, anibridge=False), "none enabled", id="none"),
+        ],
+    )
+    def test_the_note_names_each_source_read(self, sources: MappingSources, note: str) -> None:
+        resolver = MappingResolver(refresh_days=1, ignore_anilist_ids=set(), sources=sources, web=httpx.Client())
+
+        assert resolver.sources_summary() == note
+
+
 class TestSourceHashGate:
     """A boot indexes a source file again only when its content changed."""
 
