@@ -22,7 +22,7 @@ class TestNormalize:
         assert normalize_file_name("  Show - 01.MKV  ") == "show - 01.mkv"
 
     def test_folding_a_folded_key_gives_the_same_key(self) -> None:
-        # MUTATION PIN: casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
+        # Casefold expands ß to "ss" and leaves the mark after it hanging off the second s,
         # uncomposed, until the NFC after the casefold composes it. A stored pending import folds its keys again on
         # every load, so without that NFC the second pass would re-key it.
         name = "Der Weiß\u0323e Ritter - 01.mkv"
@@ -31,12 +31,12 @@ class TestNormalize:
         assert normalize_file_name(once) == once
 
     def test_canonically_equal_names_fold_alike_when_casefold_turns_a_mark_into_a_letter(self) -> None:
-        # MUTATION PIN: casefold turns U+0345 (the Greek iota below) into a letter, so the NFC before it is what
-        # makes these two spellings of one name fold alike. With only the NFC after it, they fold apart.
+        # Casefold turns U+0345 (the Greek iota below) into a letter, so the NFC before it is what makes these
+        # two spellings of one name fold alike. With only the NFC after it, they fold apart.
         assert normalize_file_name("\u1fb4 - 01.mkv") == normalize_file_name("\u03b1\u0345\u0301 - 01.mkv")
 
     def test_windows_paths_and_trailing_separators_still_reduce_to_a_file_name(self) -> None:
-        # MUTATION PIN: a Windows arr's paths reach pearlarr verbatim, where posixpath.basename
+        # A Windows arr's paths reach pearlarr verbatim, where posixpath.basename
         # sees no separator at all and would key the whole path.
         assert normalize_file_name("C:\\downloads\\Show\\Show - 01.mkv") == "show - 01.mkv"
         # And a directory path never folds to an empty file name, which every other
@@ -51,8 +51,8 @@ class TestNormalize:
         assert file_name("Show/NC/") == "NC"
 
     def test_file_name_keeps_a_name_that_looks_like_a_drive(self) -> None:
-        # MUTATION PIN: catches a file_name on os.path only on the Windows CI job, where os.path is ntpath and
-        # reads the leading "K:" as a drive, so the grab's key for the file never matches the one Sonarr's path
+        # Only the Windows CI job can fail here. There os.path is ntpath, which reads the leading "K:" as a
+        # drive, so a file_name built on os.path gives the grab a key that never matches the one Sonarr's path
         # gives.
         assert file_name("K: Return of Kings - 01.mkv") == "K: Return of Kings - 01.mkv"
 
@@ -60,9 +60,8 @@ class TestNormalize:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
 
     def test_group_strip_only_removes_wrapping_dashes(self) -> None:
-        # MUTATION PIN: strip("-") widened to a multi-char strip set would eat
-        # the X off an X-edged group. Only wrapping dashes (and whitespace) go,
-        # and interior dashes always stay.
+        # Only wrapping dashes (and whitespace) go. The X on an X-edged group
+        # stays, and so does an interior dash.
         assert normalize_group("Xrays-") == "xrays"
         assert normalize_group("X-Raws") == "x-raws"
 
