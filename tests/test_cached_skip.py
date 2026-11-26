@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
 
-import httpx
 import pytest
 from seadex import EntryRecord
 
@@ -30,20 +29,15 @@ from pearlarr.pending_import import TitleNames
 from pearlarr.tvdb_orders import AIRED_ORDER
 
 from .builders import (
-    AddStatus,
     FakeCacheStore,
     FakeSeaDexSource,
-    FakeTorrents,
     ScriptedAniListClient,
     anilist_body,
-    grab_request,
     make_anilist_gateway,
     make_config,
     make_entry_record,
-    make_grab_pipeline,
     make_run_deps,
     make_services,
-    one_release_dict,
 )
 from .fakes import RecordingHub, install_recording_hub
 from .wait_fakes import FakeQbit
@@ -142,17 +136,6 @@ _LEFT_ALONE: Final[tuple[bool, list[int | None]]] = (True, [7])
 """True to the strategy, which stops there, and an unchanged block shown for the title."""
 _SENT_ON: Final[tuple[bool, list[int | None]]] = (False, [])
 """False, so the strategy checks the title, and nothing shown for it yet."""
-
-
-class _RecordingReporter:
-    """Records the title each `log_cached_title` call reports as cached."""
-
-    def __init__(self) -> None:
-        self.cached: list[int] = []
-
-    def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
-        del state
-        self.cached.append(anilist_id)
 
 
 _FRESH = datetime(2021, 1, 1)
@@ -278,91 +261,43 @@ class TestAnOlderRowIsFilledIn:
         assert (row.name, row.url, row.coverage) == after
 
 
-class TestACheckedTitleLosesItsStamp:
-    """The gate clears the stamp of a title it sends on to a check: only a check that caches it writes it back."""
+class TestWhatTheNextRunChecks:
+    """A title the gate sends on is checked again by every run until a check caches it.
 
-    _ENTRY = make_entry_record(updated_at=_CACHED_ON)
+    The gate clears the row's stamp before the check starts, so a check that fails, is held at the add cap, or stops
+    for any reason before caching leaves the title to be checked again. Each run builds its services afresh over the
+    same cache, as bootstrap does.
+    """
 
-    @staticmethod
-    def _run(cache: FakeCacheStore, **wiring: object) -> ArrRunServices:
-        return make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
-            **wiring,
-        )
+    def test_a_title_left_alone_is_left_alone_next_run(self) -> None:
+        cache = _holding(_cached_row())
 
-    def _rechecking(self, cache: FakeCacheStore, torrents: FakeTorrents, *, add_cap: int = 0) -> ArrRunServices:
-        """A run made to check title 7 again over its cached row, as a library change makes it."""
+        assert _services(cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is True
+        assert _services(cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is True
 
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": _CACHED_ON})
-        pipeline = make_grab_pipeline(_torrents=torrents, cache_store=cache, sleep_time=0, max_torrents_to_add=add_cap)
-        pipeline._anilist.answers.update({7: {}})
-        pipeline._state.per_title.title_name = "Show"
-        run = self._run(cache, _grab_pipeline=pipeline, _state=pipeline._state)
+    @pytest.mark.parametrize(
+        "gate",
+        [
+            pytest.param(_Gate(files_changed=frozenset({7})), id="its files changed"),
+            pytest.param(_Gate(last_scan=make_config(want_best=False)), id="the selection settings changed"),
+        ],
+    )
+    def test_a_title_whose_check_caches_nothing_is_checked_again_next_run(self, gate: _Gate) -> None:
+        cache = FakeCacheStore()
+        assert _run_under(gate, cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is False
+        # The full scan stores the run's selection hash whatever became of each title.
+        cache.store_selection_hash(Arr.SONARR, _SETTINGS.selection_hash())
+
+        assert _services(cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is False
+
+    def test_a_title_whose_check_caches_it_is_left_alone_next_run(self) -> None:
+        cache = _holding(_cached_row())
+        run = _services(cache)
         run.mark_dirty([7])
-        return run
+        assert run.is_unchanged(7, _ENTRY, lambda: _COVERAGE) is False
+        run.report_no_releases(7, _checked())
 
-    def _grab(self, run: ArrRunServices) -> None:
-        """The check's tail over one planned grab, hash h1, set up as an arr strategy sets it up."""
-
-        run.grab_and_cache(
-            grab_request(
-                anilist_id=7,
-                entry=self._ENTRY,
-                seadex_dict=one_release_dict(srg="RG", infohash="h1"),
-                update=run.new_cached_title_update(run.resolve_title(7), self._ENTRY),
-            )
-        )
-
-    def test_a_title_sent_on_to_a_check_loses_its_stamp(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
-        run = self._run(cache)
-        run.mark_dirty([7])
-
-        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
-
-        cached = cache.get_cached_title(Arr.SONARR, 7)
-        assert cached is not None
-        assert cached.updated_at is None
-
-    def test_an_unchanged_title_keeps_its_stamp(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": _CACHED_ON})
-
-        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
-        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
-
-    def test_a_recheck_whose_grab_fails_is_checked_again_next_run(self) -> None:
-        # The row matched SeaDex's current update before the re-check, and nothing forces the next run.
-        cache = FakeCacheStore()
-        run = self._rechecking(cache, FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")}))
-
-        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
-        self._grab(run)
-
-        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
-
-    def test_a_recheck_held_past_the_add_cap_is_checked_again_next_run(self) -> None:
-        cache = FakeCacheStore()
-        run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}), add_cap=1)
-        run.state.torrents_added = 1
-
-        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
-        self._grab(run)
-
-        assert run.state.stats.held_by_cap == 1
-        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is False
-
-    def test_a_recheck_that_caches_the_title_is_unchanged_next_run(self) -> None:
-        cache = FakeCacheStore()
-        run = self._rechecking(cache, FakeTorrents({"h1": (AddStatus.ADDED, "Show-RG")}))
-
-        assert run.is_unchanged(7, self._ENTRY, lambda: "") is False
-        self._grab(run)
-
-        assert self._run(cache).is_unchanged(7, self._ENTRY, lambda: "") is True
+        assert _services(cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is True
 
 
 class _TailReporter:
