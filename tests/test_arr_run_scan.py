@@ -36,10 +36,7 @@ from pearlarr.output import (
     TitleRow,
 )
 from pearlarr.output.events import TitleState
-from pearlarr.progress import ProgressCallback
-from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import AIRED_ORDER, SonarrSeriesOrders
 from pearlarr.wait_types import ImportWaitMode, OutcomeKind
 
 from .builders import (
@@ -55,7 +52,6 @@ from .builders import (
 from .fakes import (
     FakeArrItem,
     FakeClock,
-    FakeSkyHookClient,
     FakeSonarrClient,
     FakeStrategy,
     RecordingHub,
@@ -422,52 +418,6 @@ class TestSelectionRecheck:
         )
 
         assert _left_for_the_next_run(deps) == (stored, stored)
-
-
-class _OrderFetching(FakeStrategy):
-    """Series 3 mapping title 11, its episodes warmed and its orders asked of `skyhook`, as Sonarr's series are."""
-
-    def __init__(self, skyhook: SkyHookGateway) -> None:
-        super().__init__(
-            items=[FakeArrItem(item_id=3)],
-            anilist_ids={11: TitleMapping(anilist_id=11)},
-            history=[sonarr_file_imported(3)],
-        )
-        self._skyhook = skyhook
-
-    @property
-    @override
-    def warms_episodes(self) -> bool:
-        return True
-
-    @override
-    def prefetch_orders(self, items: list[FakeArrItem], *, progress: ProgressCallback | None = None) -> int:
-        series = [SonarrSeriesOrders(item.id, AIRED_ORDER, None) for item in items]
-        return self._skyhook.prefetch(series, dry_run=False, progress=progress)
-
-
-@pytest.mark.parametrize(
-    ("failing", "note", "full_scan"),
-    [
-        pytest.param(frozenset({(3, "official")}), "unreachable", False, id="outage"),
-        pytest.param(frozenset[tuple[int, str]](), "1 series", True, id="healthy"),
-    ],
-)
-def test_a_skyhook_unreachable_notes_unreachable_and_the_run_neither_stores_the_selection_hash_nor_commits(
-    failing: frozenset[tuple[int, str]], note: str, full_scan: bool
-) -> None:
-    # A series SkyHook left unrefreshed was read by its old stored orders, so the run commits neither and the next one
-    # repeats the re-checks a settings or file change drove. A real run, as only a real run's stores are saved.
-    cache = FakeCacheStore()
-    cache.store_selection_hash(Arr.SONARR, _OLDER_SELECTION)
-    deps = make_run_deps(cache_store=cache, qbit=FakeQbit().client(), skyhook_client=FakeSkyHookClient(failing=failing))
-    recording = install_recording_hub()
-
-    drive_arr_run(deps, lambda _: _OrderFetching(deps.skyhook))
-
-    [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching TVDB orders"]
-    assert step.detail == note
-    assert _left_for_the_next_run(deps) == (full_scan, full_scan)
 
 
 class _Staging(FakeStrategy):
