@@ -1,5 +1,5 @@
 # pyright: strict
-"""Contract tests for `AniListGateway`: the refresh age, stale serving, eviction, prefetch, and the per-id resolvers.
+"""The AniList gateway: the refresh age, stale serving, eviction, the prefetch, the readers, and unread air dates.
 
 The gateway is driven over the in-memory `FakeCacheStore`. The HTTP/retry
 layer is already pinned in `test_anilist_client`, so the wire is the shared
