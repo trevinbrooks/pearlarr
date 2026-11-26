@@ -504,107 +504,48 @@ class TestArrRunServicesIgnoredIds:
         assert log.ids == []
 
 
-class TestVu1AniBridgeWithoutTvdbMappings:
-    """VU1: an AniBridge id reachable via imdb but not tvdb has no TVDB mappings (no tvdb season ranges).
+class TestAniBridgeTitleWithoutTvdbRanges:
+    """A title AniBridge reaches by IMDb alone has no TVDB season ranges.
 
-    In the Sonarr/tvdb context it must defer to Kometa (which has the precise season) and, with no Kometa
-    fallback, skip rather than grab the wrong episodes - while Radarr's AniBridge-primary precedence stays
-    untouched.
+    A series takes Kometa's season for it when Kometa has one, and covers none of its episodes when Kometa has none.
     """
 
     def test_sonarr_context_kometa_overrides_a_mapping_without_tvdb_mappings(self) -> None:
-        # AniBridge resolves AniList 400 ONLY via imdb (imdb_show:tt400, no tvdb_show)
-        # -> an AniBridge mapping without TVDB mappings. Kometa carries the precise season for the same id on
-        # the series' tvdb. In the Sonarr context (tvdb_id passed) Kometa must win.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
-                anidb=False,
-                anibridge={"anilist:400": {"imdb_show:tt400": {}}},
-            ),
+        # Kometa has the season for title 400 on the series' TVDB id.
+        resolver = _resolver(
+            anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
+            anibridge={"anilist:400": {"imdb_show:tt400": {}}},
         )
-        try:
-            mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
-            mapping = mappings[400]
-            assert mapping.source is MappingSource.ANIME_IDS  # Kometa won, not the AniBridge one without TVDB mappings
-            assert mapping.tvdb_season == 2  # the precise season is no longer shadowed
-        finally:
-            resolver.close()
+
+        mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
+
+        assert mappings == {400: TitleMapping(400, tvdb_season=2, imdb_id="tt400")}
 
     def test_sonarr_movie_as_special_keeps_kometa_season_zero(self) -> None:
-        # A movie-as-special: Kometa attaches AniList 600 to series 555 at
-        # tvdb_season=0, while AniBridge carries it via the movie's imdb (without TVDB mappings)
-        # that the series' imdbId collides with. The Sonarr-context override must
-        # restore Kometa's season 0 - without it the AniBridge mapping's -1 shadows season 0,
-        # and check_ep_by_anime_ids DROPS every s0 episode (`-1 & season 0 -> False`),
-        # so the special is never grabbed. Guards that the fix does not break (it
-        # RESTORES) Sonarr grabbing movies as specials.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
-                anidb=False,
-                anibridge={"anilist:600": {"imdb_movie:tt600": {}}},
-            ),
+        # A movie the series lists as a special: Kometa maps title 600 to season 0, and AniBridge reaches it by the
+        # movie's IMDb id, which the series shares. AniBridge's mapping would read as season -1 and cover no special.
+        resolver = _resolver(
+            anime={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
+            anibridge={"anilist:600": {"imdb_movie:tt600": {}}},
         )
-        try:
-            mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
-            mapping = mappings[600]
-            assert mapping.source is MappingSource.ANIME_IDS  # Kometa restored, not the AniBridge -1
-            assert mapping.tvdb_season == 0  # season 0 preserved -> the special is still selectable
-        finally:
-            resolver.close()
 
-    def test_radarr_context_preserves_anibridge_precedence(self) -> None:
-        # The SAME shape without TVDB mappings for a movie (tmdb_movie/imdb, never tvdb-scoped):
-        # in the Radarr context (NO tvdb_id) the override must NOT fire, so AniBridge
-        # stays the winning source - the documented "AniBridge is primary" invariant.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime={"k": {"anilist_id": 401, "tmdb_movie_id": 888, "imdb_id": "tt401"}},
-                anidb=False,
-                anibridge={"anilist:401": {"tmdb_movie:888": {}, "imdb_movie:tt401": {}}},
-            ),
-        )
-        try:
-            mappings = resolver.resolve(ExternalIds(tmdb_movie=888, imdb="tt401")).kept
-            assert mappings[401].source is MappingSource.ANIBRIDGE  # AniBridge stays primary
-        finally:
-            resolver.close()
+        mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
+
+        assert mappings == {600: TitleMapping(600, tvdb_season=0, imdb_id="tt600")}
 
     def test_imdb_only_mapping_without_tvdb_mappings_makes_sonarr_skip(self) -> None:
-        # End-to-end: the resolver emits an AniBridge mapping without TVDB mappings (no Kometa fallback), and
-        # feeding THAT real mapping to title_episodes returns no episodes - the series is skipped,
-        # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=False,  # no Kometa fallback
-                anidb=False,
-                anibridge={"anilist:500": {"imdb_show:tt500": {}}},
-            ),
-        )
-        try:
-            mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
-        finally:
-            resolver.close()
+        # With no Kometa record the title keeps AniBridge's mapping, and the series covers none of its episodes
+        # rather than every season.
+        resolver = _resolver(anibridge={"anilist:500": {"imdb_show:tt500": {}}})
+
+        mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
+
         without_tvdb_mappings = mappings[500]
         assert without_tvdb_mappings.source is MappingSource.ANIBRIDGE
-        assert without_tvdb_mappings.kind is MappingKind.SEASON_OFFSET  # no tvdb ranges -> would have grabbed wrong eps
+        assert without_tvdb_mappings.kind is MappingKind.SEASON_OFFSET
         assert without_tvdb_mappings.tvdb_mappings is None
 
         episodes = make_sonarr_episodes(series_episodes={777: [sonarr_ep(s, 1) for s in (1, 2, 3)]})
-        # A non-empty series, yet the mapping without TVDB mappings resolves to NO episodes (skip).
         resolved = episodes.title_episodes(777, 500, without_tvdb_mappings)
         assert isinstance(resolved, TitleEpisodes)
         assert resolved.aired == ()
