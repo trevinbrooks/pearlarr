@@ -1192,8 +1192,14 @@ def _library_row(season_type: str | None, total: int | None, counts: Mapping[str
     return SonarrSeries.model_validate(raw)
 
 
-def _run(cache: FakeCacheStore, library: SonarrSeries, xem: FakeXemClient | None = None) -> RecordingHub:
-    """One whole Sonarr run over `cache` (`_run_deps`), and what it printed.
+def _run(
+    cache: FakeCacheStore,
+    library: SonarrSeries,
+    xem: FakeXemClient | None = None,
+    *,
+    titles: Mapping[int, str] = _SEASON_TITLES,
+) -> RecordingHub:
+    """One whole Sonarr run over `cache` (`_run_deps`) mapping `titles`, and what it printed.
 
     Sonarr lists `library` alone, with the season's two rows numbered by the order it names. TVDB series 50 has
     `_SEASON_TWO_AIRED` stored, written over what `cache` held on every call. TheXEM is `xem`, one that maps no
@@ -1202,24 +1208,29 @@ def _run(cache: FakeCacheStore, library: SonarrSeries, xem: FakeXemClient | None
 
     cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED))
     rows = _DVD_ROWS if library.seasonType == "dvd" else _ROWS
-    return _run_over(FakeSonarrClient(all_series=[library], episodes=list(rows)), _run_deps(cache, xem=xem))
+    sonarr = FakeSonarrClient(all_series=[library], episodes=list(rows))
+    return _run_over(sonarr, _run_deps(cache, xem=xem, titles=titles))
 
 
 def _run_deps(
-    cache: FakeCacheStore, *, xem: FakeXemClient | None = None, skyhook: FakeSkyHookClient | None = None
+    cache: FakeCacheStore,
+    *,
+    xem: FakeXemClient | None = None,
+    skyhook: FakeSkyHookClient | None = None,
+    titles: Mapping[int, str] = _SEASON_TITLES,
 ) -> ArrRunDeps:
     """What a whole run over `cache` is built from, with activity detection off.
 
-    qBittorrent is configured, so it is a real run, which saves what it stores for the next. Each of `_SEASON_TITLES`
-    has its SeaDex entry (`_entry`), its AniList answer and its season of TVDB series 50. TheXEM is `xem` and SkyHook
-    is `skyhook`, each one that has no series when left out.
+    qBittorrent is configured, so it is a real run, which saves what it stores for the next. Each of `titles`, by
+    AniList id, has its SeaDex entry (`_entry`), its AniList answer and its season of TVDB series 50, in order from
+    season 1. TheXEM is `xem` and SkyHook is `skyhook`, each one that has no series when left out.
     """
 
-    seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in _SEASON_TITLES})
+    seadex = FakeSeaDexSource({anilist_id: _entry(anilist_id) for anilist_id in titles})
     config = make_config(url="http://sonarr", api_key="key", sleep_time=0, detect_arr_activity=False)
     seasons: AnimeIdsByName = {
         name: {"anilist_id": anilist_id, "tvdb_id": 50, "tvdb_season": season}
-        for season, (anilist_id, name) in enumerate(_SEASON_TITLES.items(), start=1)
+        for season, (anilist_id, name) in enumerate(titles.items(), start=1)
     }
     deps = make_run_deps(
         config=config,
@@ -1230,7 +1241,7 @@ def _run_deps(
         skyhook_client=skyhook,
         anime_ids=seasons,
     )
-    for anilist_id, name in _SEASON_TITLES.items():
+    for anilist_id, name in titles.items():
         deps.anilist.answers[anilist_id] = anilist_body(anilist_id, name)
     return deps
 
@@ -1290,6 +1301,17 @@ def test_a_cached_title_is_checked_again_once_its_series_is_numbered_another_way
     _run(cache, before)
 
     recording = _run(cache, now)
+
+    assert _checked(recording) == [500]
+
+
+def test_a_series_whose_titles_are_all_cached_is_checked_again_once_it_is_numbered_another_way() -> None:
+    # With no title of the series left uncached, only the start-of-run hook's mark of First has the run read the
+    # series' episodes and scene numbers before the scan. Marked any later, the check waits a run for them.
+    cache = FakeCacheStore()
+    _run(cache, _library_row("official", 2), titles={500: "First"})
+
+    recording = _run(cache, _library_row("dvd", 2), titles={500: "First"})
 
     assert _checked(recording) == [500]
 
