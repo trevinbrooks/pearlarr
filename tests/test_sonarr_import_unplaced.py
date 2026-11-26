@@ -240,6 +240,7 @@ class TestLeftForHandImportFiles:
         assert done.left_for_hand_import.names == ()
 
     def test_a_plain_skip_alone_finishes(self) -> None:
+        # The empty episode 102 would keep the pending import stored if Extras.mkv were left for a hand import.
         strat, _ = make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv"), manual_candidate("/d/Extras.mkv")],
             episodes=[
