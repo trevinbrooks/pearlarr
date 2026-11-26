@@ -172,7 +172,7 @@ def test_an_answer_with_data_comes_back_as_sent(status: int, body: dict[str, obj
 def test_every_post_carries_the_project_referer() -> None:
     """AniList refuses a Referer-less request, so the single and batch POSTs both name the project."""
 
-    route = respx.post(API_URL).respond(json={"data": {"Media": {"id": 1}}})
+    route = respx.post(API_URL).respond(json=_FOUND)
 
     client = _client()
     client.query(1)
@@ -186,7 +186,7 @@ def test_every_post_carries_the_project_referer() -> None:
 def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
     """A wrong id would read another title's answer as this one's."""
 
-    route = respx.post(API_URL).respond(json={"data": {"Media": None}})
+    route = respx.post(API_URL).respond(json=_FOUND)
 
     client = _client()
     client.query(21)
