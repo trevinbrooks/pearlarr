@@ -20,13 +20,16 @@ import respx
 from pearlarr.arr_http import (
     BACKOFF_BASE_S,
     GET_RETRIES,
+    SONARR_FETCH_WORKERS,
     ArrAuthError,
     ArrHttp,
     ArrUnreachableError,
     DeleteOutcome,
+    fetch_workers,
 )
 from pearlarr.output import Diagnostic, Severity
 
+from .builders import make_config
 from .fakes import FakeClock, RecordingHub, bind_arr_http
 
 _URL = "http://arr.test"
@@ -583,3 +586,11 @@ def test_bind_normalizes_the_base_url(url: str) -> None:
         label="Sonarr",
     )
     assert http.base_url == _URL
+
+
+@pytest.mark.parametrize(
+    ("sleep_time", "workers"),
+    [pytest.param(0, SONARR_FETCH_WORKERS, id="unthrottled"), pytest.param(1, 1, id="throttled")],
+)
+def test_fetch_workers_are_one_under_a_sleep_throttle(sleep_time: int, workers: int) -> None:
+    assert fetch_workers(make_config(sleep_time=sleep_time)) == workers
