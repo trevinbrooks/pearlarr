@@ -143,7 +143,7 @@ class TestWhatARunShows:
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
         recording = install_recording_hub()
 
-        _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), FakeQbit(TORRENT_H_COMPLETE), mode=mode)
+        _run(cache, RecordingStrategy(), FakeQbit(TORRENT_H_COMPLETE), mode=mode)
 
         assert _finish_steps(recording) == steps
 
@@ -157,7 +157,7 @@ class TestWhatARunShows:
 
         _run(
             cache,
-            RecordingStrategy(attempts=_ALL_IMPORTED, supports_blocking_wait=False),
+            RecordingStrategy(supports_blocking_wait=False),
             FakeQbit(TORRENT_H_COMPLETE),
             mode=ImportWaitMode.BLOCKING,
             arr=Arr.RADARR,
@@ -182,7 +182,7 @@ class TestWhatARunShows:
         _cache_left_with(cache, Arr.SONARR, *stored)
         recording = install_recording_hub()
 
-        _run(cache, RecordingStrategy(attempts=_ALL_IMPORTED), FakeQbit(TORRENT_H_COMPLETE), mode=mode, dry_run=dry_run)
+        _run(cache, RecordingStrategy(), FakeQbit(TORRENT_H_COMPLETE), mode=mode, dry_run=dry_run)
 
         assert _finish_steps(recording) == ["sonarr scan finished", "summary", "sonarr run finished"]
 
@@ -275,10 +275,10 @@ class TestWhatARunSaves:
         assert _saved_pending_imports(cache, Arr.SONARR) == set()
 
     def test_a_run_with_the_wait_off_leaves_its_pending_imports_alone(self, tmp_path: Path) -> None:
-        # Series 7 is in the library and the arr has all of "h" in, so any look at "h" would finish it.
+        # Series 7 is in the library and the arr has all of "h" in, so the scan's look at "h" would finish it.
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
-        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=_ALL_IN)
+        strategy = _SeriesInLibrary(progress=_ALL_IN)
 
         _run(cache, strategy, FakeQbit(TORRENT_H_COMPLETE), mode=ImportWaitMode.OFF)
 
