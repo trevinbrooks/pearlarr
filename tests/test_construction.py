@@ -2,13 +2,11 @@
 # pyright: reportPrivateUsage=false
 # These assert on the loop/services/strategy's private wiring (_filter / _state / _parse /
 # _reconciler), which strict re-flags. The repo disables reportPrivateUsage for tests.
-"""Construction tests: the REAL `__init__` + `bind_arr_run` rebind.
+"""Construction tests: the real `__init__` and the `bind_arr_run` rebind.
 
-The rest of the suite builds the services/loop/strategy via `make_bare_instance`
-(`object.__new__`), which bypasses `__init__`. These drive the real
-`ArrRunServices` / `ArrRunLoop` / `SonarrStrategy` constructors off a hand-built
-`ArrRunDeps` so the collaborator wiring and the `bind_arr_run` two-phase rebind
-have an in-suite guard (previously only an offline smoke).
+These drive `ArrRunDeps.build` and the real `ArrRunServices`, `ArrRunLoop`, `SonarrStrategy`
+and `RadarrStrategy` constructors, and pin the wiring between the collaborators they build
+and the two-phase `bind_arr_run` rebind.
 """
 
 import logging
@@ -25,11 +23,10 @@ from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
-from pearlarr.mappings import MappingResolver
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.sonarr_strategy import SonarrStrategy
 
-from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_deps
+from .builders import FakeCacheStore, make_config, make_resolver, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
@@ -128,13 +125,14 @@ def test_radarr_strategy_init_builds_without_network_via_the_client_argument() -
 def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
     """`ArrRunDeps.build` over the throwaway wiring every construction test shares."""
 
+    web = httpx.Client()
     return ArrRunDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("pearlarr.test"),
-        resolver=make_bare_instance(MappingResolver),
+        resolver=make_resolver(app_config, web),
         app_config=app_config,
-        web=httpx.Client(),
+        web=web,
         boot=BootFlow(),
     )
 

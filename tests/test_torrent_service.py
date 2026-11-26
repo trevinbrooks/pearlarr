@@ -32,7 +32,6 @@ from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices, QbitConnection
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import Arr, ArrSettings
-from pearlarr.mappings import MappingResolver
 from pearlarr.output import Severity
 from pearlarr.releases import GroupReleases, Release
 from pearlarr.torrent_service import (
@@ -47,11 +46,11 @@ from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     download_client_json,
-    make_bare_instance,
     make_categories,
     make_config,
     make_entry_record,
     make_release,
+    make_resolver,
     make_run_deps,
     make_torrent_record,
     sonarr_client_fields,
@@ -422,13 +421,14 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
     # Guard: the kwargs must route to the qbittorrent group, else build skips qbit.
     assert config.qbittorrent.credentials() is not None
 
+    web = httpx.Client()
     with pytest.raises(QbitConnectionError):
         ArrRunDeps.build(
             Arr.SONARR,
             app_config=config,
             logger=logging.getLogger("pearlarr.test"),
-            resolver=make_bare_instance(MappingResolver),
-            web=httpx.Client(),
+            resolver=make_resolver(config, web),
+            web=web,
             boot=BootFlow(),
         )
 

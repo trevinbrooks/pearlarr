@@ -795,6 +795,21 @@ def make_services(**overrides: Any) -> ArrRunServices:
     return make_bare_instance(ArrRunServices, **defaults)
 
 
+def make_resolver(config: AppConfig, web: httpx.Client, *, anime_ids: AnimeIdsByName | None = None) -> MappingResolver:
+    """A real resolver over the Anime-IDs rows in `anime_ids`, given inline, and none by default.
+
+    The other two sources are off, so it fetches nothing, and its `anibridge` is a real empty one. The ignore list
+    and refresh age are the config's, as bootstrap reads them.
+    """
+
+    return MappingResolver(
+        refresh_days=config.mappings.refresh_days,
+        ignore_anilist_ids=config.seadex.ignore_anilist_ids,
+        web=web,
+        sources=MappingSources(anime=anime_ids or {}, anidb=False, anibridge=False),
+    )
+
+
 def make_run_deps(
     *,
     config: AppConfig | None = None,
@@ -819,8 +834,7 @@ def make_run_deps(
     its gateway, as a run's does.
     `categories` swaps in a resolver that reads the arr's clients, in place of the config passthrough.
 
-    The mappings are the Anime-IDs rows in `anime_ids`, given inline as a config can give them, and none by default.
-    The other two sources are off, and the ignore list and refresh age are the config's, as bootstrap reads them.
+    The mappings are `make_resolver`'s, over the Anime-IDs rows in `anime_ids`.
     """
 
     if config is None:
@@ -851,14 +865,7 @@ def make_run_deps(
         parse_cache_rows=ParseCacheRows(cache_store),
         http=http,
         qbit=qbit,
-        # A real resolver over in-memory mappings (no network). It carries a real (empty)
-        # `anibridge` the strategy reads at construction.
-        resolver=MappingResolver(
-            refresh_days=config.mappings.refresh_days,
-            ignore_anilist_ids=config.seadex.ignore_anilist_ids,
-            web=http,
-            sources=MappingSources(anime=anime_ids or {}, anidb=False, anibridge=False),
-        ),
+        resolver=make_resolver(config, http, anime_ids=anime_ids),
         logger=logger,
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
