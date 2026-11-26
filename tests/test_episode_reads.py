@@ -181,13 +181,16 @@ class TestPrefetchEpisodes:
             pytest.param(_Run(unmonitored=(1,)), [1], id="unmonitored-not-ignored"),
         ],
     )
-    def test_a_series_is_read_only_when_one_of_its_titles_will_be_checked(self, run: _Run, read: list[int]) -> None:
+    def test_a_series_is_read_and_counted_only_when_one_of_its_titles_will_be_checked(
+        self, run: _Run, read: list[int]
+    ) -> None:
         sonarr = _Sonarr()
         episodes, _ = _episodes(sonarr, run)
 
-        episodes.prefetch(_library(run))
+        # The boot step prints this count, and "cached" when it is 0.
+        warmed = episodes.prefetch(_library(run))
 
-        assert sonarr.series_read == read
+        assert (sonarr.series_read, warmed) == (read, len(read))
 
     @pytest.mark.parametrize(
         ("failing", "reads"),
@@ -210,12 +213,14 @@ class TestPrefetchEpisodes:
         assert isinstance(view, AiredSeries)
         assert (view.in_sonarr, sonarr.reads) == ((sonarr_ep(1, 1),), reads)
 
-    def test_a_read_with_no_answer_still_counts_as_done(self) -> None:
+    def test_the_count_and_the_progress_take_in_every_read_made_answered_or_not(self) -> None:
+        # Series 2 gets no answer, and series 3 isn't read: its title is unchanged.
+        run = _Run(series=(1, 2, 3), titles={7: 1, 8: 2, 9: 3}, unchanged=(9,))
         sonarr = _Sonarr((2,))
-        episodes, _ = _episodes(sonarr, _TWO_SERIES)
+        episodes, _ = _episodes(sonarr, run)
         progress = RecordingProgress()
 
-        warmed = episodes.prefetch(_library(_TWO_SERIES), progress=progress)
+        warmed = episodes.prefetch(_library(run), progress=progress)
 
         assert (warmed, progress.updates) == (2, [(0.5, "1/2"), (1.0, "2/2")])
 
