@@ -323,21 +323,19 @@ class TestAGrab:
         [pytest.param(True, True, id="asked-for"), pytest.param(False, False, id="no-qbittorrent")],
     )
     @respx.mock
-    def test_a_dry_run_adds_nothing_and_tracks_posts_and_holds_nothing(self, dry_run: bool, qbittorrent: bool) -> None:
+    def test_a_dry_run_tracks_posts_and_holds_nothing(self, dry_run: bool, qbittorrent: bool) -> None:
         # Two releases under a cap of 1: a real run would add the first and hold the second. The dry run still reads
         # each torrent's name off Nyaa.
         recording = install_recording_hub()
         webhook = respx.post(_DISCORD_URL).respond()
         serve_named_nyaa_torrents({1: "Show-RG 1", 2: "Show-RG 2"})
-        qbit = FakeQbit() if qbittorrent else None
         state = _run_state(dry_run=dry_run)
         config = make_config(max_torrents_to_add=1, discord_url=_DISCORD_URL)
-        pipeline = _pipeline(qbit, state=state, config=config)
+        pipeline = _pipeline(FakeQbit() if qbittorrent else None, state=state, config=config)
         updates = {"h1": pending_import_update("h1"), "h2": pending_import_update("h2")}
 
         pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1), _release(2))}, pending_import_updates=updates))
 
-        assert qbit is None or qbit.added == []
         assert (_tracked(pipeline), _guards(pipeline), state.grabbed_this_run) == (set(), {}, {})
         assert not webhook.called
         assert (state.stats.held_by_cap, recording.of_type(CapReached)) == (0, [])
@@ -350,6 +348,16 @@ class TestAGrab:
                 waiting_to_import=False,
             )
         ]
+
+    @respx.mock
+    def test_a_dry_run_asked_for_adds_nothing_to_qbittorrent(self) -> None:
+        serve_nyaa_torrents(1)
+        qbit = FakeQbit()
+        pipeline = _pipeline(qbit, state=_run_state(dry_run=True))
+
+        pipeline.grab_and_cache(_grab_request({"RG": _group(_release(1))}))
+
+        assert qbit.added == []
 
 
 class TestGrabReleaseRegistersPending:
