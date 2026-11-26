@@ -8,6 +8,7 @@ it as a partial import that stays stored.
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.wait_types import AttemptKind, Outcome, PendingImportState
+from pearlarr.wait_view import WaitResult
 
 from .builders import (
     FakeCacheStore,
@@ -107,34 +108,30 @@ class TestUnplacedRowFinish:
 class TestLeftForHandImportRowFinish:
     """A result naming hand-import files finishes as a partial import: kept for the hand import, never cleaned up."""
 
+    _LEFT = order_only_hand_import_files()
+
+    @classmethod
+    def _run(cls, store: FakeCacheStore, qbit: FakeQbit, state: ArrRunState) -> WaitResult | None:
+        """One run's deferred wait pass over `store`, every poll naming the hand-import files."""
+
+        strategy = RecordingStrategy(attempts=[attempt_result(all_done=False, left_for_hand_import=cls._LEFT)])
+        mgr = make_orchestration_manager(
+            qbit=qbit, strategy=strategy, store=store, state=state, post_import_category="pearlarr-done"
+        )
+        return mgr.run_deferred()
+
     def test_each_run_names_the_hand_import_files_and_leaves_the_torrent_in_its_category(self) -> None:
-        left = order_only_hand_import_files()
         store = FakeCacheStore()
+        store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h").to_json())
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        run1 = make_orchestration_manager(
-            qbit=qbit,
-            strategy=RecordingStrategy(attempts=[attempt_result(all_done=False, left_for_hand_import=left)]),
-            store=store,
-            stored_pending_imports=[pending_import(infohash="h")],
-            post_import_category="pearlarr-done",
-        )
-        # The same store, next run.
-        run2_state = ArrRunState(arr=Arr.SONARR)
-        run2 = make_orchestration_manager(
-            qbit=qbit,
-            strategy=RecordingStrategy(attempts=[attempt_result(all_done=False, left_for_hand_import=left)]),
-            store=store,
-            state=run2_state,
-            post_import_category="pearlarr-done",
-        )
+        second_run = ArrRunState(arr=Arr.SONARR)
 
-        first = run1.run_deferred(view=RecordingWaitView())
-        second = run2.run_deferred(view=RecordingWaitView())
+        first = self._run(store, qbit, ArrRunState(arr=Arr.SONARR))
+        second = self._run(store, qbit, second_run)
 
-        assert first is not None
-        assert [(row.outcome, row.left_for_hand_import) for row in first.rows] == [(Outcome.PARTIAL, left)]
-        assert second is not None
-        assert [(row.outcome, row.left_for_hand_import) for row in second.rows] == [(Outcome.PARTIAL, left)]
-        assert run2_state.pending_import_states == {"h": PendingImportState.DOWNLOADED}
+        for result in (first, second):
+            assert result is not None
+            assert [(row.outcome, row.left_for_hand_import) for row in result.rows] == [(Outcome.PARTIAL, self._LEFT)]
+        assert second_run.pending_import_states == {"h": PendingImportState.DOWNLOADED}
         assert stored_awaiting_cleanup(store) == {"h": False}
         assert qbit.set_category_calls == []
