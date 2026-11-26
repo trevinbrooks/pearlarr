@@ -44,10 +44,10 @@ _WEBHOOK = "https://hook.example/wait"
 """The wait webhook the notifying tests set in the config."""
 
 
-def _pending(infohash: str, title: str = "Frieren") -> PendingImport:
-    """A pending import of `title` on series 7 by SubGroup, so its wait row reads `<title> · SubGroup`."""
+def _pending(infohash: str) -> PendingImport:
+    """A pending import of Frieren on series 7 by SubGroup, so its wait row reads `Frieren · SubGroup`."""
 
-    return pending_import(infohash=infohash, title=title, series_id=7, release_group="SubGroup")
+    return pending_import(infohash=infohash, title="Frieren", series_id=7, release_group="SubGroup")
 
 
 def _cache_left_with(cache: Path, arr: Arr, *pending: PendingImport) -> None:
@@ -151,7 +151,7 @@ class TestWhatARunShows:
         # Radarr has no blocking wait, so the deferred wait is the only look its pending imports get. It stores a
         # movie's pending import on series 0, with no episode map.
         cache = tmp_path / "cache.db"
-        movie = pending_import(infohash="h", title="Frieren", series_id=0, file_episode_map={}, seadex_files=())
+        movie = pending_import(infohash="h", series_id=0, file_episode_map={}, seadex_files=())
         _cache_left_with(cache, Arr.RADARR, movie)
         recording = install_recording_hub()
 
@@ -192,7 +192,7 @@ class _SeriesInLibrary(RecordingStrategy):
 
     @override
     def get_items(self) -> list[FakeArrItem]:
-        return [FakeArrItem(item_id=7, title="Frieren")]
+        return [FakeArrItem(item_id=7)]
 
     @override
     def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
@@ -287,7 +287,7 @@ class TestWhatARunSaves:
 
     def test_a_stop_in_the_deferred_wait_still_saves_the_import_it_finished(self, tmp_path: Path) -> None:
         cache = tmp_path / "cache.db"
-        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b", "Dandadan"))
+        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b"))
         # The stop lands while qBittorrent is read for "b", after "a" was imported.
         qbit = FakeQbit({"a": [_FINISHED], "b": [SystemExit(0)]})
         recording = install_recording_hub()
@@ -300,7 +300,7 @@ class TestWhatARunSaves:
 
     def test_a_stop_in_the_blocking_wait_still_saves_the_import_it_finished(self, tmp_path: Path) -> None:
         cache = tmp_path / "cache.db"
-        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b", "Dandadan"))
+        _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b"))
         # "b" is still downloading at the first poll, and the stop lands while qBittorrent is read on the next.
         qbit = FakeQbit({"a": [_FINISHED], "b": [_DOWNLOADING, SystemExit(0)]})
         recording = install_recording_hub()
