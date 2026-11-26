@@ -28,12 +28,9 @@ from pearlarr.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
-    RETRYABLE_ERROR_SUBSTRINGS,
-    RETRYABLE_STATUS,
     AniListClient,
     AniListError,
     AniListMediaNode,
-    _errors_are_retryable,
     _parse_errors,
     extract_path,
     lacks_air_dates,
@@ -44,6 +41,10 @@ from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
 from .fakes import diagnostic_messages, install_recording_hub
+
+_FOUND: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
+# AniList's answer past its rate limit, with HTTP 429 or, when it soft-throttles, HTTP 200.
+_THROTTLED: dict[str, object] = {"errors": [{"message": "Too Many Requests.", "status": 429}], "data": None}
 
 
 @pytest.fixture
@@ -59,44 +60,6 @@ def _client() -> AniListClient:
     """A wire client for tests with no narration asserts."""
 
     return AniListClient(client=httpx.Client())
-
-
-# --- _errors_are_retryable --------------------------------------------------
-
-
-def test_errors_are_retryable_none_body() -> None:
-    """A `None` body carries no errors, so it is never retryable."""
-
-    assert _errors_are_retryable(None) is False
-
-
-def test_errors_are_retryable_no_errors() -> None:
-    """An empty body, a missing `errors` key, and an empty list are all read as not found, never a throttle."""
-
-    assert _errors_are_retryable({}) is False
-    assert _errors_are_retryable({"data": {"Media": None}}) is False
-    assert _errors_are_retryable({"errors": []}) is False
-
-
-def test_errors_are_retryable_throttle_substring_is_case_insensitive() -> None:
-    """A throttle/rate-limit message matches regardless of case, even without a status."""
-
-    body: dict[str, object] = {"errors": [{"message": "Rate Limit Exceeded"}]}
-    assert _errors_are_retryable(body) is True
-
-
-def test_errors_are_retryable_status_path() -> None:
-    """A 5xx-style status in the error object is retryable even with a benign message."""
-
-    body: dict[str, object] = {"errors": [{"message": "internal", "status": 503}]}
-    assert _errors_are_retryable(body) is True
-
-
-def test_errors_are_retryable_non_retryable_error() -> None:
-    """A genuine validation error (non-throttle status, non-throttle message) is not retried."""
-
-    body: dict[str, object] = {"errors": [{"message": "Validation failed", "status": 400}]}
-    assert _errors_are_retryable(body) is False
 
 
 # --- _parse_errors ----------------------------------------------------------
@@ -253,14 +216,6 @@ def test_media_fields_fragment_covers_model_reads() -> None:
         assert re.search(rf"\b{name}\b", _MEDIA_FIELDS), f"fragment no longer selects {name!r}"
 
 
-def test_retryable_constants() -> None:
-    """The retry vocabulary matches the helpers' assumptions: 429 is retryable and every throttle substring is lower-case (the message is lower-cased before matching)."""
-
-    assert 429 in RETRYABLE_STATUS
-    assert 200 not in RETRYABLE_STATUS
-    assert all(substring == substring.lower() for substring in RETRYABLE_ERROR_SUBSTRINGS)
-
-
 # --- AniListClient.query / query_batch (respx-faked httpx boundary) --------------------------
 
 
@@ -295,42 +250,36 @@ def test_every_post_carries_the_project_referer() -> None:
 
 @respx.mock
 @pytest.mark.usefixtures("slept")
-def test_query_retries_after_http_429() -> None:
-    """A 429 is retried. The following 200 succeeds, for two total requests."""
+@pytest.mark.parametrize(
+    "first",
+    [
+        # A proxy's 429 page carries no throttle error, so the status alone asks again.
+        pytest.param(httpx.Response(429, text="<html>Too Many Requests</html>"), id="429"),
+        pytest.param(httpx.Response(200, json=_THROTTLED), id="429 riding a 200"),
+        pytest.param(
+            httpx.Response(200, json={"errors": [{"message": "Internal Server Error", "status": 500}], "data": None}),
+            id="500 riding a 200",
+        ),
+        # Throttle wording with no status, in any case.
+        pytest.param(
+            httpx.Response(200, json={"errors": [{"message": "Too Many Requests."}], "data": None}),
+            id="too many requests",
+        ),
+        pytest.param(
+            httpx.Response(200, json={"errors": [{"message": "Rate Limit Exceeded"}], "data": None}), id="rate limit"
+        ),
+        pytest.param(
+            httpx.Response(200, json={"errors": [{"message": "Request throttled"}], "data": None}), id="throttle"
+        ),
+    ],
+)
+def test_a_rate_limit_or_server_error_is_asked_for_again(first: httpx.Response) -> None:
+    """The client waits and asks again, and the answer that follows is the one that comes back."""
 
-    success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
-    route = respx.post(API_URL)
-    route.side_effect = [
-        httpx.Response(429, json={"data": None}),
-        httpx.Response(200, json=success),
-    ]
+    route = respx.post(API_URL).mock(side_effect=[first, httpx.Response(200, json=_FOUND)])
 
-    body = _client().query(2)
-
+    assert _client().query(1) == _FOUND
     assert route.call_count == 2
-    assert body == success
-
-
-@respx.mock
-@pytest.mark.usefixtures("slept")
-def test_query_retries_on_throttle_error_body() -> None:
-    """A soft-throttle (HTTP 200 + throttle error payload) takes the same retry path as a 429."""
-
-    throttled: dict[str, object] = {
-        "data": None,
-        "errors": [{"message": "Too Many Requests", "status": 429}],
-    }
-    success: dict[str, object] = {"data": {"Media": {"id": 3, "episodes": 1}}}
-    route = respx.post(API_URL)
-    route.side_effect = [
-        httpx.Response(200, json=throttled),
-        httpx.Response(200, json=success),
-    ]
-
-    body = _client().query(3)
-
-    assert route.call_count == 2
-    assert body == success
 
 
 @respx.mock
