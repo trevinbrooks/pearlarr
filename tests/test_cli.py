@@ -74,21 +74,23 @@ def _starter_text() -> str:
 
 
 def _write_data_dir_config(body: str) -> Path:
-    """Write `body` as the config in the test's data dir, where `resolve_paths` looks for it, and give its path."""
+    """Write `body` as the config in the test's data dir, where `resolve_paths` looks for it, and give its path.
+
+    The file is owner-only, so a run adds no loose-permissions warning of its own.
+    """
 
     paths = resolve_paths()
     os.makedirs(paths.data_dir)
     config = Path(paths.config_file)
     config.write_text(body, encoding="utf-8")
+    config.chmod(0o600)
     return config
 
 
 def _write_current_config(body: str = "") -> Path:
-    """`body` as a current-schema, owner-only config, so a run adds no migration or permissions line of its own."""
+    """`body` as a current-schema config, so a run adds no migration line of its own."""
 
-    config = _write_data_dir_config(f"config_version: {CONFIG_VERSION}\n{body}")
-    config.chmod(0o600)
-    return config
+    return _write_data_dir_config(f"config_version: {CONFIG_VERSION}\n{body}")
 
 
 _TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
@@ -1083,13 +1085,11 @@ class TestMissingConfigExitsNonzero:
 class TestOutdatedEnvNamesWarning:
     """A version 6 override variable name warns once per load, every run."""
 
-    def test_old_names_warn_in_one_line(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_old_names_warn_in_one_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recording = install_recording_hub()
         monkeypatch.setenv("PEARLARR_IMPORTS__WAIT_TIMEOUT", "7")
         monkeypatch.setenv("PEARLARR_ADVANCED__CACHE_TIME", "3")
-        config = tmp_path / "config.yml"
-        config.write_text(f"config_version: {CONFIG_VERSION}\n", encoding="utf-8")
-        config.chmod(0o600)
+        config = _write_current_config()
 
         assert load_shared_config(str(config), BootFlow(), "") is not None
 
@@ -1109,17 +1109,12 @@ class TestUnknownTrackerWarning:
     """
 
     @staticmethod
-    def _load(tmp_path: Path, body: str) -> AppConfig | None:
-        config = tmp_path / "config.yml"
-        # Current-schema version + 0600: keep the old-schema and loose-permissions
-        # warnings out of the recorded stream (this class is about trackers).
-        config.write_text(f"config_version: {CONFIG_VERSION}\n{body}", encoding="utf-8")
-        config.chmod(0o600)
-        return load_shared_config(str(config), BootFlow(), "")
+    def _load(body: str) -> AppConfig | None:
+        return load_shared_config(str(_write_current_config(body)), BootFlow(), "")
 
-    def test_unknown_value_warns_naming_it_and_the_vocabulary(self, tmp_path: Path) -> None:
+    def test_unknown_value_warns_naming_it_and_the_vocabulary(self) -> None:
         recording = install_recording_hub()
-        assert self._load(tmp_path, "seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
+        assert self._load("seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
 
         warning = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING)
         assert "nyaaa" in warning.message  # the offender (casefolded, as matching sees it)
@@ -1127,17 +1122,17 @@ class TestUnknownTrackerWarning:
         assert "animetosho" in warning.message  # the known vocabulary is enumerated
         assert "otherprivate" in warning.message  # including the seadex-only catch-alls
 
-    def test_known_values_do_not_warn(self, tmp_path: Path) -> None:
+    def test_known_values_do_not_warn(self) -> None:
         recording = install_recording_hub()
-        loaded = self._load(tmp_path, "seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
+        loaded = self._load("seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
 
         assert loaded is not None
         assert loaded.seadex.trackers == {"nyaa", "otherprivate"}
         assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
 
-    def test_default_trackers_do_not_warn(self, tmp_path: Path) -> None:
+    def test_default_trackers_do_not_warn(self) -> None:
         recording = install_recording_hub()
-        assert self._load(tmp_path, "sonarr:\n  url: http://s\n") is not None
+        assert self._load("sonarr:\n  url: http://s\n") is not None
         assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
 
 
@@ -1189,13 +1184,6 @@ class TestConfigAutoMigrate:
     """
 
     @staticmethod
-    def _write(tmp_path: Path, body: str) -> Path:
-        config = tmp_path / "config.yml"
-        config.write_text(body, encoding="utf-8")
-        config.chmod(0o600)  # keep the loose-permissions warn out of the stream
-        return config
-
-    @staticmethod
     def _load(config: Path) -> AppConfig:
         loaded = load_shared_config(str(config), BootFlow(), "")
         assert loaded is not None
@@ -1203,7 +1191,6 @@ class TestConfigAutoMigrate:
 
     def test_an_old_schema_file_is_rewritten_with_a_backup(self) -> None:
         config = _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
-        config.chmod(0o600)  # keep the loose-permissions warn out of the stream
 
         result = _invoke_offline("run", "single")
 
@@ -1220,7 +1207,7 @@ class TestConfigAutoMigrate:
         ]
 
     def test_the_conversion_detail_goes_to_the_file_log(self) -> None:
-        _write_data_dir_config(_OLD_SCHEMA_NO_ARRS).chmod(0o600)
+        _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
 
         result = _invoke_offline("run", "single")
 
@@ -1233,12 +1220,12 @@ class TestConfigAutoMigrate:
         # The console prints every other line of the log.
         assert _lines(result.stdout) == [line for line in log_lines if line != detail]
 
-    def test_a_raised_log_level_drops_the_details_promise(self, tmp_path: Path) -> None:
+    def test_a_raised_log_level_drops_the_details_promise(self) -> None:
         # At --log-level warning the INFO detail line never reaches the file
         # log, so the console note must not point at it.
         recording = install_recording_hub()
         current_hub().set_level(int(Severity.WARNING))
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
+        config = _write_data_dir_config(_OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
@@ -1246,31 +1233,31 @@ class TestConfigAutoMigrate:
         assert notice.message.endswith(".bak")
         assert "details in the log" not in notice.message
 
-    def test_a_dry_run_leaves_the_file_alone_behind_a_note(self, tmp_path: Path) -> None:
+    def test_a_dry_run_leaves_the_file_alone_behind_a_note(self) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
+        config = _write_data_dir_config(_OLD_SCHEMA_CONFIG)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=True)
 
         assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
+        assert sorted(p.name for p in config.parent.iterdir()) == ["config.yml"]
         (note,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
         assert note.severity is Severity.INFO
         assert note.message == "Config uses an older schema - left unchanged on a dry run"
 
     @_needs_posix_permissions
-    def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self, tmp_path: Path) -> None:
+    def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self) -> None:
         recording = install_recording_hub()
-        config = self._write(tmp_path, _OLD_SCHEMA_CONFIG)
+        config = _write_data_dir_config(_OLD_SCHEMA_CONFIG)
         loaded = self._load(config)
-        tmp_path.chmod(0o500)  # the temp-file create fails before anything is touched
+        config.parent.chmod(0o500)  # the temp-file create fails before anything is touched
         try:
             _rewrite_old_config(str(config), loaded, dry_run=False)
         finally:
-            tmp_path.chmod(0o755)
+            config.parent.chmod(0o755)
 
         assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
-        assert not (tmp_path / "config.yml.bak").exists()
+        assert not Path(f"{config}.bak").exists()
         (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING and not d.file_only]
         assert warning.message == (
             f"Config {config} uses an older schema and could not be rewritten in place - "
@@ -1280,15 +1267,15 @@ class TestConfigAutoMigrate:
         assert str(config) in reason.message
         assert "Permission denied" in reason.message
 
-    def test_a_current_schema_file_is_left_alone(self, tmp_path: Path) -> None:
+    def test_a_current_schema_file_is_left_alone(self) -> None:
         recording = install_recording_hub()
         body = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n  api_key: k\n"
-        config = self._write(tmp_path, body)
+        config = _write_data_dir_config(body)
 
         _rewrite_old_config(str(config), self._load(config), dry_run=False)
 
         assert config.read_text(encoding="utf-8") == body
-        assert not (tmp_path / "config.yml.bak").exists()
+        assert not Path(f"{config}.bak").exists()
         assert recording.of_type(Diagnostic) == []
 
 
