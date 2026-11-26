@@ -174,6 +174,24 @@ def test_queue_paginates_until_total_records_covered() -> None:
 
 
 @respx.mock
+def test_queue_stops_at_an_empty_page_whatever_the_total_says() -> None:
+    """A download that leaves the queue between page reads makes the total stale.
+
+    The page that comes back empty ends the read, where trusting the total would page forever.
+    """
+
+    route = respx.get(f"{_BASE}/queue")
+    route.side_effect = [
+        httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"])),
+        httpx.Response(200, json=_queue_page(3, [])),
+    ]
+    records = _make_client().queue()
+
+    assert records is not None
+    assert [r.download_id for r in records] == ["HASH0", "HASH1"]
+
+
+@respx.mock
 def test_queue_later_page_failure_fails_the_whole_read() -> None:
     """A failed LATER page returns None, never the partial pages.
 
