@@ -936,14 +936,6 @@ def test_a_cached_parse_is_matched_as_aired_again_without_asking_sonarr() -> Non
 _FIFTH_ON_NO_EPISODE = _FIFTH_BY_SONARR.with_matched(())
 """Sonarr's parse of `_FIFTH` when it matches the name to the series and to no episode of it."""
 
-_EITHER_PARSE = pytest.mark.parametrize(
-    "by_sonarr",
-    [
-        pytest.param(_FIFTH_BY_SONARR, id="matched-episodes"),
-        pytest.param(_FIFTH_ON_NO_EPISODE, id="no-matched-episode"),
-    ],
-)
-
 
 def _asked_to_parse(cache: FakeCacheStore, series: SonarrSeries, by_sonarr: ParsedFileInfo) -> list[str]:
     """The names one run asks Sonarr to parse for a release listing `_FIFTH`, over the parses `cache` holds.
@@ -957,31 +949,28 @@ def _asked_to_parse(cache: FakeCacheStore, series: SonarrSeries, by_sonarr: Pars
     return sonarr.parse_calls
 
 
-@_EITHER_PARSE
-def test_a_parse_stored_under_another_order_is_asked_for_again_once_its_series_is_aired(
-    by_sonarr: ParsedFileInfo,
+@pytest.mark.parametrize(
+    "by_sonarr",
+    [
+        pytest.param(_FIFTH_BY_SONARR, id="matched-episodes"),
+        pytest.param(_FIFTH_ON_NO_EPISODE, id="no-matched-episode"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("before", "now", "asked"),
+    [
+        pytest.param(_in_one_season(), _series(1, 50), [_FIFTH], id="another-order-then-aired"),
+        pytest.param(_series(1, 50), _in_one_season(), [_FIFTH], id="aired-then-another-order"),
+        pytest.param(_in_one_season(), _in_one_season(), [], id="another-order-on-both-runs"),
+    ],
+)
+def test_a_stored_parse_is_asked_for_again_once_its_series_is_in_another_order_than_it_was_stored_under(
+    before: SonarrSeries, now: SonarrSeries, by_sonarr: ParsedFileInfo, asked: list[str]
 ) -> None:
     cache = _stored_as_one_season()
-    _asked_to_parse(cache, _in_one_season(), by_sonarr)
+    _asked_to_parse(cache, before, by_sonarr)
 
-    assert _asked_to_parse(cache, _series(1, 50), by_sonarr) == [_FIFTH]
-
-
-def test_a_parse_stored_with_no_order_is_asked_for_again_once_its_series_is_in_another_order() -> None:
-    cache = _stored_as_one_season()
-    _asked_to_parse(cache, _series(1, 50), _FIFTH_BY_SONARR)
-
-    assert _asked_to_parse(cache, _in_one_season(), _FIFTH_BY_SONARR) == [_FIFTH]
-
-
-@_EITHER_PARSE
-def test_a_parse_stored_under_another_order_is_not_asked_for_again_while_its_series_stays_in_it(
-    by_sonarr: ParsedFileInfo,
-) -> None:
-    cache = _stored_as_one_season()
-    _asked_to_parse(cache, _in_one_season(), by_sonarr)
-
-    assert _asked_to_parse(cache, _in_one_season(), by_sonarr) == []
+    assert _asked_to_parse(cache, now, by_sonarr) == asked
 
 
 _SIXTH = "Show - 06.mkv"
@@ -1109,12 +1098,14 @@ def _at_run_start(
 ) -> tuple[PendingFollower, FakeCacheStore]:
     """The follower of a run after its library read of `series`, `pending` stored and its title cached.
 
-    TVDB series 50 has `_ORDERS` stored, and TheXEM was read for it and maps none of its episodes.
+    TVDB series 50 has `_ORDERS` stored, and TheXEM was read for it and maps none of its episodes. TVDB series 60
+    has `_ORDERS` stored too, and TheXEM was never read for it. No other series has either.
     """
 
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     cache.put_scene_mappings(50, stored_scene_mappings())
+    cache.put_tvdb_orders(60, stored_orders(_ORDERS))
     cache.update_cached_title(Arr.SONARR, PENDING_IMPORT_ANILIST_ID, {"updated_at": PENDING_IMPORT_STAMP})
     return make_pending_follower(cache, _reads(series, cache, sonarr=sonarr)), cache
 
@@ -1176,7 +1167,8 @@ def test_a_pending_import_stored_without_tvdb_ids_takes_them_from_the_rows_of_it
     [
         pytest.param(_series(1, 50), None, id="a-failed-read"),
         pytest.param(_series(1, 50), [], id="no-rows"),
-        pytest.param(_series(1, 60, season_type="dvd"), _DVD_ROWS, id="another-order-with-no-orders-stored"),
+        pytest.param(_series(1, 60, season_type="dvd"), _DVD_ROWS, id="another-order-with-scene-mappings-unread"),
+        pytest.param(_series(1, 70, season_type="dvd"), _DVD_ROWS, id="another-order-with-no-orders-stored"),
     ],
 )
 def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_when_its_series_has_no_aired_rows_to_read(
@@ -1185,20 +1177,6 @@ def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_when_its_ser
     sonarr = FakeSonarrClient()
     sonarr.episodes_return = rows
     follower, cache = _at_run_start([series], _WITHOUT_TVDB_IDS, sonarr)
-
-    follower.begin_run(waits_on_imports=True)
-
-    assert cache.get_pending_import_rows(Arr.SONARR) == {"h": _WITHOUT_TVDB_IDS.to_json()}
-    assert _title_cached(cache)
-
-
-def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_while_its_series_scene_mappings_are_unread() -> (
-    None
-):
-    # TVDB series 60 has its orders stored, and TheXEM was never read for it.
-    series: list[SonarrItem] = [_series(1, 60, season_type="dvd")]
-    follower, cache = _at_run_start(series, _WITHOUT_TVDB_IDS, FakeSonarrClient(episodes=list(_DVD_ROWS)))
-    cache.put_tvdb_orders(60, stored_orders(_ORDERS))
 
     follower.begin_run(waits_on_imports=True)
 
