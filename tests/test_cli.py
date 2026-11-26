@@ -1278,6 +1278,7 @@ class TestConfigAutoMigrate:
         )
         reason = next(d for d in recording.of_type(Diagnostic) if d.file_only and d.severity is Severity.WARNING)
         assert str(config) in reason.message
+        assert "Permission denied" in reason.message
 
     def test_a_current_schema_file_is_left_alone(self, tmp_path: Path) -> None:
         recording = install_recording_hub()
