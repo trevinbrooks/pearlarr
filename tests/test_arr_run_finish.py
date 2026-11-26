@@ -205,7 +205,10 @@ class _SeriesInLibrary(RecordingStrategy):
 
 
 class TestWhatARunCounts:
-    """The summary counts each pending import where the run left it, and says when the run could grab nothing."""
+    """The summary counts each pending import where the run left it and says when the run could grab nothing.
+
+    It holds how long the run took.
+    """
 
     def test_the_summary_counts_each_carried_over_import_where_it_ended(self, tmp_path: Path) -> None:
         # The arr answers every import and progress read the same (every file in), so qBittorrent decides each end:
@@ -241,6 +244,14 @@ class TestWhatARunCounts:
 
         (summary,) = recording.of_type(ArrRunSummaryReady)
         assert summary.summary.dry_run_note == note
+
+    def test_the_summary_holds_how_long_the_run_took(self, tmp_path: Path) -> None:
+        recording = install_recording_hub()
+
+        _run(tmp_path / "cache.db", RecordingStrategy(), FakeQbit(), mode=ImportWaitMode.OFF)
+
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        assert summary.summary.elapsed_s is not None
 
 
 class TestWhatARunSaves:
