@@ -51,11 +51,13 @@ from functools import partial
 from pathlib import Path
 from typing import ClassVar, NoReturn, cast, override
 
+import httpx
 import pytest
+import respx
 import truststore
 import yaml
 from pydantic import ValidationError
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
@@ -66,7 +68,6 @@ from pearlarr.cli import (
     _handle_sigterm,
     _run_format,
     _schedule_hours,
-    _trust_os_certificates,
     cache_backup,
     cache_check,
     cache_remove,
@@ -124,6 +125,28 @@ def _write_data_dir_config(body: str) -> Path:
     config = Path(paths.config_file)
     config.write_text(body, encoding="utf-8")
     return config
+
+
+_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
+
+
+def _lines(text: str) -> list[str]:
+    """A run's plain console or log file lines, without the timestamp each one starts with."""
+
+    return [_TIMESTAMP.sub("", line) for line in text.splitlines()]
+
+
+def _invoke_offline(*args: str) -> Result:
+    """Invoke the CLI with every outbound request refused, failing the test if one was made.
+
+    A run that gets past where it should stop then fails here instead of reaching the network.
+    """
+
+    with respx.mock(assert_all_called=False) as router:
+        web = router.route().mock(side_effect=httpx.ConnectError("refused by the test"))
+        result = CliRunner().invoke(pearlarr_cli, list(args))
+    assert not web.called
+    return result
 
 
 @pytest.fixture
@@ -1270,6 +1293,15 @@ class TestMissingConfigExitsNonzero:
         # This handler exits now. The skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
 
+    def test_bare_pearlarr_runs_scheduled_mode_and_exits_one(self) -> None:
+        # No subcommand is the scheduled loop. A missing config stops it at once
+        # instead of sleeping on a template nobody has filled in.
+        result = _invoke_offline()
+
+        assert result.exit_code == 1
+        assert _lines(result.stdout)[0] == "INFO [run] scheduled run started number=1"
+        assert Path(resolve_paths().config_file).read_text(encoding="utf-8") == _starter_text()
+
 
 class TestOutdatedEnvNamesWarning:
     """A version 6 override variable name warns once per load, every run."""
@@ -1939,14 +1971,12 @@ class TestScheduleHours:
         assert _schedule_hours(str(path)) == 6.0
 
 
-def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:
-    """The root callback's TLS hook swaps `ssl.SSLContext` for truststore's OS-backed one.
+def test_commands_verify_tls_against_the_os_trust_store() -> None:
+    """The root callback swaps `ssl.SSLContext` for truststore's OS-backed one, before any HTTP client builds a context."""
 
-    It runs before any HTTP client builds a context.
-    """
-
+    truststore.extract_from_ssl()  # an earlier command in this process already swapped it in
     try:
-        _trust_os_certificates()
+        assert CliRunner().invoke(pearlarr_cli, ["paths"]).exit_code == 0
         assert ssl.SSLContext is truststore.SSLContext
     finally:
         truststore.extract_from_ssl()
