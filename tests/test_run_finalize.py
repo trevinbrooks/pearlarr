@@ -294,7 +294,7 @@ class TestBootNotes:
         client: ScriptedAniListClient | None = None,
     ) -> RecordingHub:
         strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=1, title="A")],
+            items=[FakeArrItem()],
             anilist_ids={1: TitleMapping(anilist_id=1)},
         )
         anilist = make_anilist_gateway(client) if client is not None else None
@@ -368,7 +368,7 @@ class TestSelectionRecheck:
         recording = install_recording_hub()
         engine = make_engine(FinalizeRecorder(), logger, config=config, seadex=seadex, anilist=anilist)
         strategy = FakeStrategy(
-            items=[FakeArrItem(item_id=3, title="A")],
+            items=[FakeArrItem(item_id=3)],
             anilist_ids={11: TitleMapping(anilist_id=11)},
             services=engine._services if cap_reached else None,
             history=[_IMPORT_EVENT],
@@ -450,7 +450,7 @@ class _OrderFetchingStrategy(FakeStrategy):
 
     def __init__(self, skyhook: SkyHookGateway) -> None:
         super().__init__(
-            items=[FakeArrItem(item_id=3, title="A")],
+            items=[FakeArrItem(item_id=3)],
             anilist_ids={11: TitleMapping(anilist_id=11)},
             history=[_IMPORT_EVENT],
         )
