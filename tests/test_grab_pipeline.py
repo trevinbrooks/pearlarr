@@ -11,14 +11,17 @@ import json
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
-from itertools import combinations
+from functools import partial
+from itertools import combinations, repeat
 from typing import cast
 
+import httpx
 import pytest
 import qbittorrentapi
 import respx
 from seadex import Tracker
 
+from pearlarr import tracker_links
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, PerTitleState
 from pearlarr.boundary import Json
@@ -55,6 +58,7 @@ from pearlarr.releases import (
 from pearlarr.stamps import now_stamp
 from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import ImportWaitMode
+from pearlarr.web_client import head_with_retries
 
 from .builders import (
     PENDING_IMPORT_ANILIST_ID,
@@ -87,9 +91,6 @@ _TITLE_COVERAGE = "S01 E01-E12"
 _UPDATED_AT = "2026-01-01 00:00:00"
 
 _DISCORD_URL = "https://discord.example/hook"
-
-# The download header of a Nyaa torrent file named Show.
-_NAMED_FILE = 'inline; filename="Show.torrent"'
 
 
 def _run_state(*, torrents_added: int = 0, dry_run: bool = False) -> ArrRunState:
@@ -940,30 +941,50 @@ class TestGrabFailureContainment:
     """
 
     @pytest.mark.parametrize(
-        ("disposition", "qbittorrent", "error"),
+        ("answer", "error"),
         [
             pytest.param(
-                "inline", "Ok.", "Could not read the torrent name from https://nyaa.si/download/1.torrent", id="parse"
+                httpx.Response(200, headers={"content-disposition": "inline"}),
+                "Could not read the torrent name from https://nyaa.si/download/1.torrent",
+                id="no-name",
             ),
-            pytest.param(
-                _NAMED_FILE,
-                "Fails.",
-                "qBittorrent rejected the torrent from https://nyaa.si/view/1 (response: 'Fails.')",
-                id="add",
-            ),
-            pytest.param(
-                _NAMED_FILE, qbittorrentapi.APIConnectionError("qbit died mid-run"), "qbit died mid-run", id="qbit"
-            ),
+            # The rest of the warning is httpx's text for the status, as it words it today.
+            pytest.param(httpx.Response(404), "404", id="404"),
+            pytest.param(httpx.ConnectError("[Errno 111] Connection refused"), "Connection refused", id="unreachable"),
         ],
     )
     @respx.mock
-    def test_failure_is_one_clean_warning_no_traceback(
-        self, disposition: str, qbittorrent: str | Exception, error: str
+    def test_a_tracker_failure_is_one_warning_naming_the_release(
+        self, monkeypatch: pytest.MonkeyPatch, answer: httpx.Response | httpx.HTTPError, error: str
     ) -> None:
-        # Each kind of error a tracker or qBittorrent raises is caught at the add, and posted as one warning naming
-        # the release. `disposition` is the download header Nyaa sends, and `qbittorrent` its answer to the add.
-        respx.head(nyaa_torrent_link(1)).respond(headers={"content-disposition": disposition})
-        pipeline = _pipeline(FakeQbit(add_answers={nyaa_torrent_link(1): qbittorrent}))
+        # Nyaa gives `answer` to every try at the torrent file, and the tries after a failed one go without their waits.
+        monkeypatch.setattr(tracker_links, "head_with_retries", partial(head_with_retries, sleep=lambda _s: None))
+        respx.head(nyaa_torrent_link(1)).mock(side_effect=repeat(answer))
+        recording = install_recording_hub()
+
+        n_added, results = _pipeline(FakeQbit()).grab_releases(_grab_request({"NAN0": _group(_release(1))}))
+
+        assert (n_added, results) == (0, [])
+        (failed,) = recording.of_type(GrabFailed)
+        assert (failed.group, failed.url, severity_of(failed)) == ("NAN0", "https://nyaa.si/view/1", Severity.WARNING)
+        assert error in failed.error
+
+    @pytest.mark.parametrize(
+        ("answer", "error"),
+        [
+            pytest.param(
+                "Fails.",
+                "qBittorrent rejected the torrent from https://nyaa.si/view/1 (response: 'Fails.')",
+                id="rejected",
+            ),
+            pytest.param(qbittorrentapi.APIConnectionError("qbit died mid-run"), "qbit died mid-run", id="dropped"),
+        ],
+    )
+    @respx.mock
+    def test_a_qbittorrent_failure_is_one_warning_naming_the_release(self, answer: str | Exception, error: str) -> None:
+        # `answer` is qBittorrent's to the add of a torrent Nyaa serves.
+        serve_nyaa_torrents(1)
+        pipeline = _pipeline(FakeQbit(add_answers={nyaa_torrent_link(1): answer}))
         recording = install_recording_hub()
 
         n_added, results = pipeline.grab_releases(_grab_request({"NAN0": _group(_release(1))}))
@@ -972,20 +993,6 @@ class TestGrabFailureContainment:
         (failed,) = recording.of_type(GrabFailed)
         assert failed == GrabFailed(group="NAN0", url="https://nyaa.si/view/1", error=error)
         assert severity_of(failed) is Severity.WARNING
-
-    @respx.mock
-    def test_a_tracker_answering_with_an_error_status_is_one_warning_naming_it(self) -> None:
-        # Nyaa has no torrent file for the release, as when it was taken down.
-        nyaa_lacks_torrents(1)
-        pipeline = _pipeline(FakeQbit())
-        recording = install_recording_hub()
-
-        n_added, results = pipeline.grab_releases(_grab_request({"NAN0": _group(_release(1))}))
-
-        assert (n_added, results) == (0, [])
-        (failed,) = recording.of_type(GrabFailed)
-        assert (failed.group, failed.url, severity_of(failed)) == ("NAN0", "https://nyaa.si/view/1", Severity.WARNING)
-        assert failed.error.startswith("Client error '404 Not Found' for url 'https://nyaa.si/download/1.torrent'")
 
     @respx.mock
     def test_a_failed_release_never_drops_the_next_and_leaves_the_title_uncached(self) -> None:
