@@ -8,6 +8,7 @@ when the run holds none of its rows.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import override
@@ -56,20 +57,13 @@ class _Sonarr(FakeSonarrClient):
         return None if series_id in self.failing else [sonarr_ep(1, series_id)]
 
 
-class _GatedSonarr(_Sonarr):
-    """A `_Sonarr` whose reads after the first wait for `gate`, so the one worker can't run ahead of the stop.
-
-    The wait is bounded once: a gate that never opens fails the test in 30 seconds, never hangs it.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.gate = threading.Event()
+class _SlowSonarr(_Sonarr):
+    """A `_Sonarr` whose reads after the first take a tenth of a second."""
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        if self.reads and not self.gate.wait(30.0):
-            self.gate.set()
+        if self.reads:
+            time.sleep(0.1)
         return super().episodes(series_id, quiet=quiet)
 
 
@@ -87,14 +81,10 @@ class _TogetherSonarr(_Sonarr):
 
 
 class _StopOnFirstProgress:
-    """A `ProgressCallback` that opens the fetch gate, then raises `SystemExit` as the SIGTERM handler would."""
-
-    def __init__(self, gate: threading.Event) -> None:
-        self._gate = gate
+    """A `ProgressCallback` that raises `SystemExit` as the SIGTERM handler would."""
 
     def progress(self, fraction: float, detail: str | None = None) -> None:
         del fraction, detail
-        self._gate.set()
         raise SystemExit(0)
 
 
@@ -234,15 +224,17 @@ class TestPrefetchEpisodes:
         assert sorted(sonarr.series_read) == [1, 2]
 
     def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
-        sonarr = _GatedSonarr()
-        # One worker, and a third series it can't have started by the stop.
+        # One worker, its reads after the first a tenth of a second long, so the stop on the first read's progress
+        # drops the third read before the worker is free to start it. A stop held up longer than that would see the
+        # third read start and fail the test.
+        sonarr = _SlowSonarr()
         run = _Run(series=(1, 2, 3), titles={7: 1, 8: 2, 9: 3}, settings=make_config(sleep_time=2))
         episodes, _ = _episodes(sonarr, run)
 
         with pytest.raises(SystemExit):
-            episodes.prefetch(_library(run), progress=_StopOnFirstProgress(sonarr.gate))
+            episodes.prefetch(_library(run), progress=_StopOnFirstProgress())
 
-        # The first fetch, plus at most the one the worker had in hand.
+        # The first read, plus at most the one the worker had in hand.
         assert sonarr.series_read in ([1], [1, 2])
 
 
