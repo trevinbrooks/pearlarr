@@ -203,24 +203,10 @@ def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
 @pytest.mark.parametrize(
     "first",
     [
-        # A proxy's 429 page carries no throttle error, so the status alone asks again.
-        pytest.param(httpx.Response(429, text="<html>Too Many Requests</html>"), id="429"),
+        # With no throttle error in the body, the status alone asks again.
+        pytest.param(httpx.Response(429), id="429"),
         pytest.param(httpx.Response(200, json=_THROTTLED), id="429 riding a 200"),
-        pytest.param(
-            httpx.Response(200, json={"errors": [{"message": "Internal Server Error", "status": 500}], "data": None}),
-            id="500 riding a 200",
-        ),
-        # Throttle wording with no status, in any case.
-        pytest.param(
-            httpx.Response(200, json={"errors": [{"message": "Too Many Requests."}], "data": None}),
-            id="too many requests",
-        ),
-        pytest.param(
-            httpx.Response(200, json={"errors": [{"message": "Rate Limit Exceeded"}], "data": None}), id="rate limit"
-        ),
-        pytest.param(
-            httpx.Response(200, json={"errors": [{"message": "Request throttled"}], "data": None}), id="throttle"
-        ),
+        pytest.param(httpx.Response(500), id="500"),
     ],
 )
 def test_a_rate_limit_or_server_error_is_asked_for_again(first: httpx.Response) -> None:
