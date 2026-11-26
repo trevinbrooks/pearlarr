@@ -880,7 +880,7 @@ def make_run_deps(
             webhook_url=secret_value(config.notifications.wait_webhook_url),
             web=http,
         ),
-        planner=make_planner(),
+        planner=make_planner(arr=arr, interactive=config.advanced.interactive, logger=logger),
         reporter=_real_reporter(cache_store, anilist),
     )
 
