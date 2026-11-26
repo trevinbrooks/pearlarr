@@ -1,15 +1,10 @@
 # pyright: strict
-"""Direct tests for `SonarrClient`, the Sonarr REST adapter.
+"""Tests for `SonarrClient`, the Sonarr REST adapter.
 
-Each test builds a REAL `SonarrClient` (construction is network-free), then
-drives one method and asserts the request URL / body it builds AND the decoded
-return view its boundary models produce. Every endpoint goes through the
-httpx-based `ArrHttp`, mocked via `respx`. Bodies come from the
-captured `tests/fixtures/sonarr` JSON where one exists (queue /
-manual-import / command-list / quality-definitions), otherwise a minimal
-inline body. POST bodies are asserted by decoding the captured request content
-(no Any-typed body reads). GET request shape is read off
-`route.calls.last.request.url`.
+Each test drives a real client over `respx` and checks what one method decides: the request it sends, what
+it reads back, and what its caller gets, with which warning, when the read fails. How a failed request is
+retried, coalesced and worded belongs to the shared handle and is shown once in `test_arr_http`. Bodies come
+from the captured `tests/fixtures/sonarr` JSON where one exists, so they match what Sonarr really sends.
 """
 
 import json

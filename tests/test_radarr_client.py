@@ -1,12 +1,9 @@
 # pyright: strict
-"""Direct tests for the `radarr_client` module's contracts.
+"""Tests for `RadarrClient`, the Radarr REST adapter, and for `collect_anime_movies`.
 
-Mirrors `test_sonarr_client`: a REAL `RadarrClient` (construction is
-network-free) with every endpoint going through the httpx-based `ArrHttp`, mocked
-via `respx`. Pins the decode into the typed `MovieFile` /
-`RadarrMovie` views and the degrade-to-empty guard (non-200 / transient
-request error -> `[]` + a warning), so an unreachable Radarr never unwinds the
-run, plus the `collect_anime_movies` wiring.
+Each test drives a real client over `respx` and checks what one method decides: the request it sends, what
+it reads back, and what its caller gets when the read fails. How a failed request is retried, coalesced and
+worded belongs to the shared handle and is shown once in `test_arr_http`.
 """
 
 from collections.abc import Set as AbstractSet
