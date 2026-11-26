@@ -231,7 +231,7 @@ class TestLeftForHandImportFiles:
 
     def test_a_hand_import_with_no_group_at_a_listed_size_finishes_the_pending_import(self) -> None:
         strat, sonarr = self._strat()
-        no_group = sonarr_ep(1, 1, ep_id=601, title=self._TITLES[0], size=self._SIZE_ON[601], release_group=None)
+        no_group = sonarr_ep(1, 1, ep_id=601, size=self._SIZE_ON[601], release_group=None)
         sonarr.episodes_return = [no_group, *self._episodes(602, 603)[1:]]
 
         done = strat.import_completed(self._record(), "/d", AttemptKind.ORDINARY)
