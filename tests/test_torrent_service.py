@@ -23,6 +23,7 @@ import httpx
 import pytest
 import qbittorrentapi
 import respx
+from qbittorrentapi.torrents import TorrentsAddedMetadata
 from seadex import Tracker
 
 import pearlarr.torrent_service as torrents
@@ -105,6 +106,7 @@ class _FakeQbit:
     Models qBittorrent's dedup-by-hash: `torrents_info` reports whichever hashes
     are `present` or in `rows`, and lists a category's `rows` (`list_error` fails the list). `torrents_add`
     records its call and (optionally) registers a hash->name as now-present, so the post-add name read-back finds it.
+    It answers `add_result`, or raises it when it is an error.
     `torrents_files` answers each torrent's `files`, raising a scripted error, or 404 for a torrent with none.
     """
 
@@ -116,7 +118,7 @@ class _FakeQbit:
         files: Mapping[str, list[_TorrFile] | Exception] | None = None,
         list_error: Exception | None = None,
         register_on_add: tuple[str, str] | None = None,
-        add_result: str = "Ok.",
+        add_result: str | TorrentsAddedMetadata | Exception = "Ok.",
         added_on: object = None,
     ) -> None:
         self._rows = {h: _TorrInfo(h, n, added_on) for h, n in (present or {}).items()} | {r.hash: r for r in rows}
@@ -151,8 +153,10 @@ class _FakeQbit:
             raise files
         return files
 
-    def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
+    def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str | TorrentsAddedMetadata:
         self.add_calls.append(_AddCall(urls=urls, category=category, tags=tags))
+        if isinstance(self._add_result, Exception):
+            raise self._add_result
         if self._register_on_add is not None:
             registered_hash, registered_name = self._register_on_add
             self._rows[registered_hash] = _TorrInfo(registered_hash, registered_name, self._added_on)
@@ -280,17 +284,45 @@ def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPat
     assert qbit.info_queries == []  # dedup lookup skipped: "" was normalized to None
 
 
-def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-`"Ok."` `torrents_add` result is a hard failure."""
+def test_add_qbit_answers_with_counts_is_added(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An add qBittorrent 5.2 or later took is added: it answers with counts, where older versions answer "Ok."."""
 
     _patch_nyaa_parser(monkeypatch)
-    qbit = _FakeQbit(add_result="Fails.")
+    # Its answer for a link to a torrent file, which it is still fetching.
+    fetching = TorrentsAddedMetadata(
+        {"added_torrent_ids": [], "failure_count": 0, "pending_count": 1, "success_count": 0}
+    )
+    service = _service(_FakeQbit(add_result=fetching))
+
+    outcome, _, _ = service.add(
+        item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), dry_run=False
+    )
+
+    assert outcome is AddStatus.ADDED
+
+
+@pytest.mark.parametrize(
+    ("answer", "shown"),
+    [
+        pytest.param("Fails.", "Fails.", id="before qBittorrent 5.2, the answer Fails."),
+        pytest.param(qbittorrentapi.Conflict409Error("Conflict"), "Conflict", id="from qBittorrent 5.2 on, a 409"),
+    ],
+)
+def test_add_qbit_rejects_add_raises(
+    answer: str | qbittorrentapi.Conflict409Error, shown: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An add qBittorrent turns down is a hard failure."""
+
+    _patch_nyaa_parser(monkeypatch)
+    qbit = _FakeQbit(add_result=answer)
     service = _service(qbit)
+
+    with pytest.raises(TorrentAddError) as raised:
+        service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), dry_run=False)
 
     # The message names the release URL and qBittorrent's response (it surfaces
     # verbatim in the pipeline's containment warning).
-    with pytest.raises(TorrentAddError, match=r"rejected the torrent from https://nyaa.si/view/1 .*'Fails\.'"):
-        service.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), dry_run=False)
+    assert str(raised.value) == f"qBittorrent rejected the torrent from https://nyaa.si/view/1 (response: {shown!r})"
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
