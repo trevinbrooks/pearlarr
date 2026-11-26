@@ -1,13 +1,9 @@
 # pyright: strict
-"""Direct unit tests for the pure helpers and retry path in `anilist_client`.
+"""The AniList wire client: what each query sends and what a run gets back for each answer.
 
-These are otherwise only exercised incidentally. The classification / parsing /
-extraction helpers take plain `dict` bodies, so they are tested with no mocks
-at all. `AniListClient`'s retry loop is exercised through its public queries,
-faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
-
-The `AniListMediaNode` tests pin its all-None empty-dict validation, the
-not-found node contract the AniList gateway depends on.
+It covers the requests themselves, the answers that come back as sent, the rate limits and failures that are
+asked for again and how long each wait is, the answers that mark AniList unreachable for the run, and how a
+stored answer reads as an `AniListMediaNode`. respx answers every request.
 """
 
 import json
@@ -24,7 +20,6 @@ from respx.models import Call
 from pearlarr.anilist_client import (
     API_URL,
     BATCH_QUERY,
-    MAX_RETRIES,
     QUERY,
     AniListClient,
     AniListMediaNode,
@@ -54,7 +49,7 @@ def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 
 def _client() -> AniListClient:
-    """A wire client for tests with no narration asserts."""
+    """A wire client over a fresh web client, whose requests respx answers."""
 
     return AniListClient(client=httpx.Client())
 
@@ -182,7 +177,6 @@ def test_every_post_carries_the_project_referer() -> None:
     client.query(1)
     client.query_batch([1, 2])
 
-    assert route.call_count == 2
     calls = cast("list[Call]", route.calls)
     assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
 
@@ -241,8 +235,8 @@ def test_a_rate_limit_or_server_error_is_asked_for_again(first: httpx.Response) 
 def test_query_batch_reshapes_page_media_by_id() -> None:
     """A Page body is re-keyed to {id: single-id-shaped body}, so the results can populate the run cache directly.
 
-    Junk, id-less and non-int-id elements in the media array are skipped (an id
-    unknown to AniList is simply absent, never an error).
+    An id unknown to AniList is simply absent, never an error. AniList doesn't send the junk, id-less and
+    string-id elements here, and they are skipped.
     """
 
     page: dict[str, object] = {
@@ -341,25 +335,25 @@ def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -
 @pytest.mark.parametrize(
     ("effect", "returned"),
     [
-        pytest.param(httpx.Response(429, json={"data": None}), {"data": None}, id="throttled"),
+        pytest.param(httpx.Response(429, json=_THROTTLED), _THROTTLED, id="throttled"),
         pytest.param(httpx.ConnectError("down"), {}, id="unreachable"),
     ],
 )
 def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, returned: dict[str, object]) -> None:
-    """Exhausting the retries warns ONCE and marks AniList unreachable: later calls never touch the wire."""
+    """Exhausting the retries warns once and marks AniList unreachable: later calls never touch the wire."""
 
     recording = install_recording_hub()
     client = _client()
-    route = respx.post(API_URL).mock(side_effect=[effect] * (MAX_RETRIES + 1))
+    route = respx.post(API_URL).mock(side_effect=[effect] * 4)
 
     assert client.query(1) == returned
     assert client.unreachable is True
     assert client.query(2) == {}
     assert client.query_batch([3, 4]) == {}
 
-    assert route.call_count == MAX_RETRIES + 1
+    assert route.call_count == 4
     (warning,) = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == f"AniList request failed after {MAX_RETRIES} retries, {_SKIPPING}"
+    assert warning == f"AniList request failed after 3 retries, {_SKIPPING}"
 
 
 @respx.mock
