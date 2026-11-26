@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These set the episode collaborator's private config (eps._config) and call the
-# module-private _parse_is_fresh / SonarrParseCache._parse_for.
+# These set the episode collaborator's private config (eps._config) and call
+# SonarrParseCache._parse_for and _warm_parse_cache.
 # Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
@@ -31,7 +31,6 @@ from pearlarr.parse_cache import (
     SONARR_PARSE_NO_EPISODES_TTL_DAYS,
     ParseCacheRows,
     ParseFreshness,
-    _parse_is_fresh,
     parse_to_json,
 )
 from pearlarr.releases import SeadexDict
@@ -39,7 +38,7 @@ from pearlarr.seadex_gateway import SeaDexNoEntry
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import STAMP_FORMAT
+from pearlarr.stamps import STAMP_FORMAT, stamp_of
 from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.video_files import is_video_candidate
 
@@ -59,9 +58,7 @@ from .builders import (
 )
 from .fakes import FakeSonarrClient, RecordingProgress, ScriptedEpisodes, debug_logger
 
-_NOW = datetime(2026, 6, 28, 12, 0, 0)
-_MATCHED_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
-_NO_EPISODES_CUTOFF = _NOW - timedelta(days=SONARR_PARSE_NO_EPISODES_TTL_DAYS)
+_NAME = "[X] Show - 01.mkv"
 
 # The parse Sonarr returns when it matched no series at all. It has no matched
 # episodes, so its row is pinned to the series hash on write.
@@ -86,26 +83,25 @@ def _of_series(series_id: int) -> ParsedFileInfo:
     )
 
 
-def _stamp(days_ago: float) -> str:
-    return (_NOW - timedelta(days=days_ago)).strftime(STAMP_FORMAT)
+def _stamp(days_ago: int) -> str:
+    """A row stamp `days_ago` days before now.
+
+    A run's window opens on the wall clock (`ParseFreshness.open`), so each stamp sits a day or more off a cutoff.
+    """
+
+    return stamp_of(datetime.now() - timedelta(days=days_ago))
 
 
 def _window(series_hash: str = "fp", *, orders: Mapping[int, str] | None = None) -> ParseFreshness:
-    """The parse freshness anchored at `_NOW` (never the wall clock).
+    """A run's parse freshness, opened now under the series hash `series_hash`.
 
     Each series of `orders` is numbered by its order there, and every other series as aired.
     """
 
-    return ParseFreshness(
-        now_str=_NOW.strftime(STAMP_FORMAT),
-        matched_cutoff=_MATCHED_CUTOFF,
-        no_episodes_cutoff=_NO_EPISODES_CUTOFF,
-        series_hash=series_hash,
-        series_orders=orders or {},
-    )
+    return ParseFreshness.open(series_hash, orders or {})
 
 
-def _record(info: ParsedFileInfo, *, days_ago: float = 1, series_hash: str | None = None) -> dict[str, object]:
+def _record(info: ParsedFileInfo, *, days_ago: int = 1, series_hash: str | None = None) -> dict[str, object]:
     """One persisted parse row, stamped `days_ago` and optionally pinned to a series hash."""
 
     row: dict[str, object] = {"fetched_at": _stamp(days_ago), "parse": parse_to_json(info)}
@@ -122,10 +118,6 @@ def _untitled(info: ParsedFileInfo) -> dict[str, object]:
     return {"fetched_at": _stamp(1), "parse": parse}
 
 
-def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
-    return _parse_is_fresh(row, window=_window(series_hash))
-
-
 class TestSeriesHash:
     """`sonarr_series_hash` differs across different id sets, whatever order the library lists them in."""
 
@@ -137,43 +129,59 @@ class TestSeriesHash:
         assert sonarr_series_hash([1, 2]) != sonarr_series_hash([1, 3])
 
 
-class TestParseIsFresh:
-    """`_parse_is_fresh` dispatches on the series hash key: a row with matched episodes gets the 30-day TTL.
+class TestParseFreshness:
+    """A stored parse with matched episodes is read for the 30-day TTL.
 
-    One with none (pinned with `series_fp`) is fresh only under the same
-    series hash and the short backstop. A legacy row carrying no whole parse is
-    never fresh.
+    One with none (pinned with `series_fp`) is read only under the same series hash and the short backstop. A legacy
+    row carrying no whole parse is never read.
     """
 
-    def test_matched_within_ttl_is_fresh(self) -> None:
-        assert _fresh(_record(_matched(1, 1), days_ago=5))
+    @pytest.mark.parametrize(
+        ("row", "read_back"),
+        [
+            pytest.param(
+                _record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS - 1),
+                _matched(1, 1),
+                id="matched-inside-the-ttl",
+            ),
+            pytest.param(
+                _record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1), None, id="matched-past-the-ttl"
+            ),
+            pytest.param(
+                _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS - 1, series_hash="fp"),
+                _NO_SERIES,
+                id="no-matched-episode-inside-the-backstop",
+            ),
+            pytest.param(
+                _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1, series_hash="fp"),
+                None,
+                id="no-matched-episode-past-the-backstop",
+            ),
+            pytest.param(
+                _record(_NO_SERIES, series_hash="old"), None, id="no-matched-episode-under-another-series-hash"
+            ),
+            # Rows older builds stored carry an episode list, not a whole parse: they
+            # re-parse once however recently they were stamped.
+            pytest.param(
+                {"fetched_at": _stamp(1), "episodes": [{"season": 1, "episode": 1}]}, None, id="a-legacy-episode-list"
+            ),
+        ],
+    )
+    def test_a_stored_parse_is_read_only_while_fresh(
+        self, row: dict[str, object], read_back: ParsedFileInfo | None
+    ) -> None:
+        rows = ParseCacheRows(FakeCacheStore(sonarr_parse={_NAME: row}))
 
-    def test_matched_beyond_ttl_is_stale(self) -> None:
-        assert not _fresh(_record(_matched(1, 1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1))
-
-    def test_no_matched_episodes_fresh_when_series_hash_matches_and_within_backstop(self) -> None:
-        assert _fresh(_record(_NO_SERIES, days_ago=2, series_hash="fp"), series_hash="fp")
-
-    def test_no_matched_episodes_stale_on_series_hash_mismatch(self) -> None:
-        assert not _fresh(_record(_NO_SERIES, days_ago=2, series_hash="old"), series_hash="fp")
-
-    def test_no_matched_episodes_stale_beyond_backstop_ttl(self) -> None:
-        aged = _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1, series_hash="fp")
-        assert not _fresh(aged, series_hash="fp")
-
-    def test_no_matched_episodes_uses_the_backstop_not_the_matched_ttl(self) -> None:
-        # Inside the 30-day matched TTL, past the 7-day backstop: the pin decides.
-        assert not _fresh(_record(_NO_SERIES, days_ago=10, series_hash="fp"), series_hash="fp")
-
-    def test_legacy_row_without_a_parse_is_stale_inside_the_ttl(self) -> None:
-        # The pre-reshape rows carry an episode list, not a whole parse: they
-        # re-parse once however recently they were stamped.
-        assert not _fresh({"fetched_at": _stamp(1), "episodes": [{"season": 1, "episode": 1}]})
+        assert rows.read(_NAME, window=_window("fp")) == read_back
 
     def test_a_row_stored_under_one_order_is_stale_once_its_series_is_in_another_of_its_orders(self) -> None:
-        stored = {**_record(_of_series(7)), "series_order": "dvd"}
+        rows = ParseCacheRows(FakeCacheStore())
 
-        assert not _parse_is_fresh(stored, window=_window(orders={7: "altdvd"}))
+        rows.write(_NAME, _of_series(7), window=_window(orders={7: "dvd"}))
+
+        same_order = rows.read(_NAME, window=_window(orders={7: "dvd"}))
+        another_order = rows.read(_NAME, window=_window(orders={7: "altdvd"}))
+        assert (same_order, another_order) == (_of_series(7), None)
 
 
 class TestParseCacheRows:
