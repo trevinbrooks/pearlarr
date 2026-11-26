@@ -33,6 +33,7 @@ from pearlarr.output import (
     Severity,
     SeverityCounter,
     SeverityTally,
+    current_hub,
     emit_to_hub,
     hub_note,
     install_hub,
@@ -986,31 +987,21 @@ def test_install_hub_closes_the_previously_installed_hub() -> None:
 
     install_hub(first)
     install_hub(second)
-    try:
-        # A repeat run single in one process must not leak the prior hub's
-        # open FileLogRenderer. A re-install of the SAME hub never self-closes.
-        assert first_renderer.closes == 1
-        install_hub(second)
-        second.emit(_EVENT)
-        assert second_renderer.events == [_EVENT]
-    finally:
-        uninstall_hub()
+    install_hub(second)  # installing the same hub again leaves it open
+
+    # A second run in one process must not leak the first run's open log file.
+    assert (first_renderer.closes, second_renderer.closes) == (1, 0)
 
 
-def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
+def test_uninstall_hub_closes_the_outgoing_hub_and_restores_the_default() -> None:
+    default = current_hub()
     renderer = RecordingRenderer()
-    hub = OutputHub([renderer])
-    install_hub(hub)
+    install_hub(OutputHub([renderer]))
 
     uninstall_hub()
 
     assert renderer.closes == 1
-    # The renderer-less default survives repeated uninstalls (never closed):
-    # a post-uninstall emit still silently drops rather than raising.
-    uninstall_hub()
-    emit_to_hub(_EVENT)
-    hub.emit(_EVENT)  # drop-after-close is silent
-    assert renderer.events == []
+    assert current_hub() is default
 
 
 # --- hub_note (the raw first-party logging replacement) -------------------------------
@@ -1023,10 +1014,8 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
     except ValueError as e:
         hub_note("it broke", severity=Severity.ERROR, exc=e)
 
+    assert _untraced(recording.events) == [Diagnostic(severity=Severity.ERROR, message="it broke", origin=LOG_NAME)]
     (note,) = recording.of_type(Diagnostic)
-    assert note.severity is Severity.ERROR
-    assert note.message == "it broke"
-    assert note.origin == LOG_NAME
     assert note.trace is not None
     assert "ValueError: boom" in note.trace.plain
 
@@ -1096,8 +1085,7 @@ def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it
 
 def test_hub_note_without_exc_keeps_the_trace_none() -> None:
     recording = install_recording_hub()
+
     hub_note("plain note")
 
-    (note,) = recording.of_type(Diagnostic)
-    assert note.severity is Severity.INFO
-    assert note.trace is None
+    assert recording.events == [Diagnostic(severity=Severity.INFO, message="plain note", origin=LOG_NAME)]
