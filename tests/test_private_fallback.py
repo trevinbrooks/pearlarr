@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 
 import pytest
-from seadex import EntryRecord, TorrentRecord, Tracker
+from seadex import EntryRecord, Tracker
 
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.arr_run_state import ArrRunState
@@ -97,12 +97,6 @@ def _warning_texts(recording: RecordingHub) -> list[str]:
     """The recorded detail texts at WARNING+ (the old `levelno >= WARNING` filter)."""
 
     return [d.value.text for d in recording.of_type(TitleDetail) if d.severity >= Severity.WARNING]
-
-
-def _private_skips(recording: RecordingHub) -> list[ReleaseSkipped]:
-    """The add-time private-only skips (grab_pipeline's typed `ReleaseSkipped` facts)."""
-
-    return [s for s in recording.of_type(ReleaseSkipped) if s.reason is SkipReason.PRIVATE_ONLY]
 
 
 def _grab_request(anilist_id: int, seadex_dict: SeadexDict, entry: EntryRecord) -> GrabRequest:
@@ -294,6 +288,63 @@ def _outcome(entry: EntryRecord, library: _Library, *, private_releases: str) ->
     )
 
 
+class TestTheArrHasNoCopyOfTheTitle:
+    """The arr has no file of the episodes SeaDex lists."""
+
+    def test_warn_mode_warns_of_a_private_release_it_cannot_grab(self) -> None:
+        entry = _entry(_private("Priv", "S01E01", size=999), _public("Fall", "S01E01", size=555, preferred=False))
+
+        outcome = _outcome(entry, _sonarr(_missing(1, 1)), private_releases="warn")
+
+        assert outcome == _Outcome(
+            details=(_Detail("skipped", f"Priv {PLAIN_NOTICE}", Severity.WARNING),),
+            needs_action=(_Row("Priv", PLAIN_ROW, NeedsActionCause.PRIVATE_ONLY),),
+        )
+
+    def test_fallback_mode_grabs_a_fallback_in_place_of_a_private_release(self) -> None:
+        # Fall's release isn't preferred, so the title is cached as satisfied by a fallback.
+        entry = _entry(_private("Priv", "S01E01", size=999), _public("Fall", "S01E01", size=555, preferred=False))
+
+        outcome = _outcome(entry, _sonarr(_missing(1, 1)), private_releases="fallback")
+
+        assert outcome == _Outcome(
+            added=("Fall",),
+            details=(_Detail("skipped", "Priv private-only; falling back to Fall"),),
+            cached=True,
+            fallback_marker=True,
+        )
+
+    @pytest.mark.parametrize(
+        ("private_releases", "expected"),
+        [
+            pytest.param(
+                "warn",
+                _Outcome(added=("G",), skips=(_Skip("G", SkipReason.PRIVATE_ONLY),), cached=True),
+                id="warn-caches-a-title-it-grabbed-for",
+            ),
+            pytest.param(
+                "fallback",
+                _Outcome(
+                    added=("G",),
+                    skips=(_Skip("G", SkipReason.PRIVATE_ONLY),),
+                    needs_action=(_Row("G", NO_FALLBACK_ROW, NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK),),
+                ),
+                id="fallback-leaves-it-uncached",
+            ),
+        ],
+    )
+    def test_a_groups_private_release_is_skipped_beside_its_public_one(
+        self, private_releases: str, expected: _Outcome
+    ) -> None:
+        # Only G's private release has S02E01, and no other group is listed to cover it, so G's public release is
+        # added and its private one skipped when the grab comes to it.
+        entry = _entry(_public("G", "S01E01", size=555), _private("G", "S01E01", "S02E01", size=999))
+
+        outcome = _outcome(entry, _sonarr(_missing(1, 1), _missing(2, 1)), private_releases=private_releases)
+
+        assert outcome == expected
+
+
 class TestTheArrHasACopyOfThePrivateRelease:
     """The arr has a file of the private release SeaDex prefers, at the size SeaDex lists or an outdated one."""
 
@@ -401,167 +452,6 @@ class TestTheArrHasACopyOfThePrivateRelease:
             skips=(_Skip("M", SkipReason.PRIVATE_ONLY),),
             needs_action=(_Row("M", OUTDATED_ROW, NeedsActionCause.PRIVATE_ONLY_OUTDATED),),
         )
-
-
-class TestMixedGroupKeeperPreference:
-    """A mixed group's inflated coverage never shadows a fully-public group.
-
-    The coverage-aware keep gives a mixed group (public S1-only + surviving
-    private S1+S2 torrent) the same same-files key as a fully-public S1+S2 group.
-    The keeper must prefer the group whose releases to grab are all addable - a
-    mixed keeper's private release is skipped at add time, losing S2 - and degrade
-    to the add-time WARNING only when no fully-addable group exists.
-    """
-
-    def _mixed_group_torrents(self) -> tuple[TorrentRecord, TorrentRecord]:
-        g_pub = make_torrent_record(
-            release_group="G",
-            tracker=Tracker.NYAA,
-            url=PUB_URL,
-            infohash=PUB_HASH,
-            file_names=("G.S01E01.web.mkv",),
-            file_size=555,
-            is_best=True,
-        )
-        g_priv = make_torrent_record(
-            release_group="G",
-            tracker=Tracker.ANIMEBYTES,
-            url=PRIV_URL,
-            infohash=None,
-            file_names=("G - S01E01.mkv", "G - S02E01.mkv"),
-            file_size=999,
-            is_best=True,
-        )
-        return g_pub, g_priv
-
-    def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
-        # No fully-addable group exists: the keeper degrades to the mixed group,
-        # its public S1 release is grabbed, and the surviving private torrent is
-        # skipped at add time with a WARNING + the private-only skip flag - never silently.
-        state = ArrRunState(arr=Arr.SONARR)
-        cache = FakeCacheStore()
-        filt = make_release_filter(
-            private_releases="warn",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-            state=state,
-        )
-        g_pub, g_priv = self._mixed_group_torrents()
-        entry = make_entry_record(anilist_id=56, torrents=(g_pub, g_priv))
-        sd = filt.build(entry)
-        _attach_episodes(
-            sd,
-            {
-                PUB_URL: [placed_episode(season=1, episode=1, size=555)],
-                PRIV_URL: [
-                    placed_episode(season=1, episode=1, size=999),
-                    placed_episode(season=2, episode=1, size=999),
-                ],
-            },
-        )
-
-        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert plan.seadex_dict["G"].releases[PUB_URL].to_grab is True
-        assert plan.seadex_dict["G"].releases[PRIV_URL].to_grab is True
-
-        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "G S01 web")})
-        pipe = make_grab_pipeline(
-            cache_store=cache,
-            _state=state,
-            _torrents=torrents,
-            private_releases="warn",
-            sleep_time=0,
-        )
-        recording = install_recording_hub()
-        pipe.grab_and_cache(_grab_request(56, plan.seadex_dict, entry))
-
-        assert [s.group for s in _private_skips(recording)] == ["G"]
-        assert state.per_title.private_only_skipped is True
-        assert state.per_title.private_only_groups == ["G"]
-        assert torrents.calls == [PUB_HASH]
-        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 56), entry) is True
-
-
-class TestSurvivingPrivateCoverage:
-    """A private release kept for uncovered files is warned about, never silently lost."""
-
-    def test_surviving_private_batch_warns_at_add_time(self) -> None:
-        # One group: a private S1+S2 torrent survives the coverage-aware drop next
-        # to its public S1-only fallback. With both episodes missing, the torrent
-        # stays marked to grab and the add-time gate warns + sets the private-only skip flag - the
-        # old drop lost the S2 coverage without a trace.
-        state = ArrRunState(arr=Arr.SONARR)
-        cache = FakeCacheStore()
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=True,
-            planner=make_planner(),
-            state=state,
-        )
-        priv_batch = make_torrent_record(
-            release_group="A",
-            tracker=Tracker.ANIMEBYTES,
-            url=PRIV_URL,
-            infohash=None,
-            file_names=("A - S01E01.mkv", "A - S02E01.mkv"),
-            file_size=999,
-            is_dual_audio=True,
-            is_best=True,
-        )
-        pub_s1 = make_torrent_record(
-            release_group="A",
-            tracker=Tracker.NYAA,
-            url=PUB_URL,
-            infohash=PUB_HASH,
-            file_names=("A.S01E01.web.mkv",),
-            file_size=555,
-            is_best=False,
-        )
-        entry = make_entry_record(anilist_id=33, torrents=(priv_batch, pub_s1))
-        sd = filt.build(entry)
-        assert set(sd["A"].releases) == {PRIV_URL, PUB_URL}
-
-        _attach_episodes(
-            sd,
-            {
-                PRIV_URL: [
-                    placed_episode(season=1, episode=1, size=999),
-                    placed_episode(season=2, episode=1, size=999),
-                ],
-                PUB_URL: [placed_episode(season=1, episode=1, size=555)],
-            },
-        )
-
-        # Sonarr is missing BOTH episodes: the torrent and the fallback are both marked to grab.
-        plan = filt.plan_grabs(sd, ArrFiles(), [sonarr_ep(1, 1), sonarr_ep(2, 1)])
-        assert plan.seadex_dict["A"].releases[PRIV_URL].to_grab is True
-        assert plan.seadex_dict["A"].releases[PUB_URL].to_grab is True
-
-        torrents = FakeTorrents({PUB_HASH: (AddStatus.ADDED, "A S01 web")})
-        pipe = make_grab_pipeline(
-            cache_store=cache,
-            _state=state,
-            _torrents=torrents,
-            private_releases="fallback",
-            sleep_time=0,
-        )
-        recording = install_recording_hub()
-        pipe.grab_and_cache(_grab_request(33, plan.seadex_dict, entry))
-
-        assert [s.group for s in _private_skips(recording)] == ["A"]
-        assert state.per_title.private_only_skipped is True
-        assert state.per_title.private_only_groups == ["A"]
-        assert torrents.calls == [PUB_HASH]
-        # A non-interactive private-only skip in fallback mode blocks the cache even on a partial grab
-        # (the S2 files stay missing), and the no-fallback row resurfaces the title
-        # in every run's summary until a covering public release lands.
-        assert title_is_cached(cache.get_cached_title(Arr.SONARR, 33), entry) is False
-        assert [n.cause for n in state.stats.needs_action] == [NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK]
-        # Exact wording pinned once, in test_grab_pipeline's
-        # test_private_only_in_fallback_mode_surfaces_no_alternative.
-        assert "no fallback" in state.stats.needs_action[0].reason
 
 
 class _CachedTitleReporter:
