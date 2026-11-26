@@ -20,7 +20,8 @@ from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, WaitStarted
+from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, TitleHeader, WaitStarted
+from pearlarr.output.events import TitleState
 from pearlarr.pending_import import PendingImport
 from pearlarr.wait_types import ImportProgress, ImportWaitMode
 
@@ -273,6 +274,19 @@ class TestWhatARunSaves:
 
         assert strategy.removal_calls == ["h"]
         assert _saved_pending_imports(cache, Arr.SONARR) == set()
+
+    def test_a_years_old_pending_import_survives_the_arr_run_start_and_is_reported(self, tmp_path: Path) -> None:
+        # No age ends a pending import: one an earlier run left years ago and still downloading is shown and kept.
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, replace(_pending("h"), added_at="2000-01-01 00:00:00"))
+        recording = install_recording_hub()
+
+        _run(cache, _SeriesInLibrary(), FakeQbit({"h": [_DOWNLOADING]}), mode=ImportWaitMode.DEFERRED)
+
+        assert _saved_pending_imports(cache, Arr.SONARR) == {"h"}
+        assert [(header.state, header.title) for header in recording.of_type(TitleHeader)] == [
+            (TitleState.DOWNLOADING, "Frieren · SubGroup")
+        ]
 
     def test_a_run_with_the_wait_off_leaves_its_pending_imports_alone(self, tmp_path: Path) -> None:
         # Series 7 is in the library and the arr has all of "h" in, so the scan's look at "h" would finish it.
