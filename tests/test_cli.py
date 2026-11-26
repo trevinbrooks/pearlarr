@@ -1304,7 +1304,7 @@ class TestUnwritableDataDir:
     report must go straight to stderr. `config init`'s template copy and
     `cache restore`'s copy get the same treatment. An unreadable CONFIG in a
     healthy dir instead keeps the skip+retry contract - exiting would kill the
-    scheduled daemon.
+    scheduled daemon - while `config validate` reports it and exits 1.
     """
 
     @_needs_posix_permissions
@@ -1414,6 +1414,20 @@ class TestUnwritableDataDir:
         assert "Could not access config" in out
         assert "skipping this run" in out
         assert "Traceback" not in out
+
+    @_needs_posix_permissions
+    def test_config_validate_on_an_unreadable_file_names_the_fix(self) -> None:
+        config = _write_current_config()
+        config.chmod(0o000)
+        try:
+            result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
+        finally:
+            config.chmod(0o600)
+
+        assert result.exit_code == 1
+        assert result.stderr.startswith(f"Could not access {config} (")
+        assert result.stderr.endswith(") - check permissions on it and the data directory\n")
+        assert result.stdout == ""
 
 
 class TestDataDirLine:
@@ -1674,5 +1688,7 @@ def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: p
         "tvdb_orders:     0",
         "scene_mappings:  0",
     ]
-    assert re.fullmatch(r"size:            \d+\.\d\d MiB", lines[7])
+    size = re.fullmatch(r"size:            (\d+\.\d\d) MiB", lines[7])
+    assert size is not None
+    assert float(size[1]) > 0  # the db's real size, never a placeholder zero
     assert len(lines) == 8
