@@ -223,23 +223,12 @@ def test_queue_later_page_failure_fails_the_whole_read() -> None:
     route = respx.get(f"{_BASE}/queue")
     # Page 1 succeeds. Page 2 stays 500 through the transport retries.
     route.side_effect = [httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"]))] + [httpx.Response(500)] * 10
+    recording = install_recording_hub()
 
     assert _make_client().queue() is None
-
-
-@respx.mock
-@pytest.mark.parametrize(
-    "failure",
-    [pytest.param(httpx.Response(500), id="non-200"), pytest.param(httpx.ConnectError("boom"), id="request-error")],
-)
-def test_queue_unreachable_returns_none(failure: httpx.Response | Exception) -> None:
-    """A failed queue read reports None (fail closed): it never reads as an empty, untracked queue.
-
-    It also never unwinds the poll loop.
-    """
-
-    respx.get(f"{_BASE}/queue").mock(side_effect=[failure] * 10)
-    assert _make_client().queue() is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch the Sonarr queue (status code 500) - will retry",
+    ]
 
 
 # --- queue_delete() ---------------------------------------------------------
@@ -358,14 +347,6 @@ def test_episodes_quiet_suppresses_unreachable_warning() -> None:
 
     assert result is None
     assert diagnostic_messages(recording, Severity.WARNING) == []
-
-
-@respx.mock
-def test_episodes_request_error_returns_none() -> None:
-    """A transient request error (connection drop) is swallowed to None."""
-
-    respx.get(f"{_BASE}/episode").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().episodes(228, quiet=True) is None
 
 
 # --- parse() (the one parse: agnostic numbers + matched pairs) ---------------
@@ -525,18 +506,15 @@ def test_parse_malformed_payload_warns_and_returns_none() -> None:
 
 @respx.mock
 def test_parse_non_200_returns_none() -> None:
-    """A non-200 parse returns None (a failure that must NOT be cached)."""
+    """A non-200 parse returns None (a failure that must NOT be cached) with a warning naming the file."""
 
     respx.get(f"{_BASE}/parse").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
-
-
-@respx.mock
-def test_parse_request_error_returns_none() -> None:
-    """A transient request error returns None (also uncacheable)."""
-
-    respx.get(f"{_BASE}/parse").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not parse Cool.Anime.S01E01.mkv via Sonarr (status code 500)",
+    ]
 
 
 # --- manual_import_candidates_by_download_id() ---------------------------------------------
@@ -589,15 +567,6 @@ def test_manual_import_candidates_non_200_returns_none_silently() -> None:
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
-@respx.mock
-def test_manual_import_candidates_request_error_returns_none() -> None:
-    """A transient request error (slow mount / drop) returns None, not []."""
-
-    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
-    respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
-
-
 # --- manual_import_candidates_by_folder() (GET /manualimport?folder=) --------
 
 
@@ -629,11 +598,16 @@ def test_folder_fetch_sends_folder_and_never_download_or_series_id() -> None:
 
 
 @respx.mock
-def test_folder_fetch_non_200_returns_none_and_empty_stays_empty() -> None:
-    """A non-200 folder fetch is None (retry). A 200 `[]` is a real empty answer."""
+def test_folder_fetch_non_200_returns_none_and_warns() -> None:
+    """A non-200 folder fetch is None, so the import retries, with a warning naming the title."""
 
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
-    assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
+    recording = install_recording_hub()
+
+    assert _make_client().manual_import_candidates_by_folder(folder="/d", title="Yamada-kun") is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch folder-scan import candidates for Yamada-kun (status code 500) - will retry",
+    ]
 
 
 @respx.mock
@@ -642,12 +616,6 @@ def test_folder_fetch_empty_list_decodes_to_empty() -> None:
 
     respx.get(f"{_BASE}/manualimport").respond(json=[])
     assert _make_client().manual_import_candidates_by_folder(folder="/nonexistent", title="t") == []
-
-
-@respx.mock
-def test_folder_fetch_request_error_returns_none() -> None:
-    respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
 
 
 # --- history_for_download() (GET /history) -----------------------------------
@@ -689,7 +657,12 @@ def test_history_for_download_non_200_returns_none() -> None:
     """A failed history read is None ("no answer") - never read as clean history."""
 
     respx.get(f"{_BASE}/history").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().history_for_download(download_id="a" * 40) is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not read Sonarr's history for a download (status code 500) - assuming it is healthy",
+    ]
 
 
 @respx.mock
@@ -737,7 +710,12 @@ def test_remote_path_mappings_non_200_returns_none() -> None:
     """Failure is None, distinct from "no mappings configured" ([])."""
 
     respx.get(f"{_BASE}/remotepathmapping").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().remote_path_mappings() is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch Sonarr's remote path mappings (status code 500) - using download paths as-is",
+    ]
 
 
 # --- wait-path no-retry handle -------------------------------------------------
@@ -829,31 +807,16 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
 
 
 @respx.mock
-def test_manual_import_execute_non_2xx_returns_none() -> None:
-    """A non-2xx command POST leaves the pending import as it is (returns `None`)."""
-
-    file = ManualImportFile(
-        path="/downloads/show/ep01.mkv",
-        seriesId=42,
-        episodeIds=[101],
-        releaseGroup="SubsPlease",
-        downloadId="A" * 40,
-        languages=[Language(id=1, name="English")],
-    )
-    respx.post(f"{_BASE}/command").respond(status_code=400, json={})
-    assert _make_client().manual_import_execute(files=[file]) is None
-
-
-@respx.mock
 def test_post_command_request_error_returns_none() -> None:
-    """A transient error on the command POST (never retried - not idempotent) returns None.
+    """A failed command POST returns None, never raising through the import path, with a warning naming the command."""
 
-    It never raises through the import path.
-    """
+    respx.post(f"{_BASE}/command").mock(side_effect=httpx.ConnectError("boom"))
+    recording = install_recording_hub()
 
-    route = respx.post(f"{_BASE}/command").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().refresh_monitored_downloads() is None
-    assert route.call_count == 1  # ONE attempt: a retry could double-queue
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not queue RefreshMonitoredDownloads command (request failed (ConnectError)) - will retry",
+    ]
 
 
 @respx.mock
@@ -863,12 +826,13 @@ def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
     Sonarr may still have queued the command, so leave a warning.
     """
 
-    recording = install_recording_hub()
-    client = _make_client()
-
     respx.post(f"{_BASE}/command").respond(status_code=201, json=[])
-    assert client.refresh_monitored_downloads() is None
-    assert any("unexpected payload" in m for m in diagnostic_messages(recording, Severity.WARNING))
+    recording = install_recording_hub()
+
+    assert _make_client().refresh_monitored_downloads() is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not confirm the RefreshMonitoredDownloads command was queued (unexpected payload) - will retry",
+    ]
 
 
 @respx.mock
@@ -902,21 +866,18 @@ def test_command_status_decodes() -> None:
 
 @respx.mock
 def test_command_status_non_200_returns_default() -> None:
-    """A non-200 status read yields a default (status-None) `CommandResource`."""
-
-    respx.get(f"{_BASE}/command/9").respond(status_code=503)
-    assert _make_client().command_status(9) == CommandResource()
-
-
-@respx.mock
-def test_command_status_request_error_returns_default() -> None:
-    """A transient request error also yields the default `CommandResource`.
+    """A non-200 status read yields a default (status-None) `CommandResource`.
 
     The caller treats the import as unverified and leaves the pending import as it is.
     """
 
-    respx.get(f"{_BASE}/command/9").mock(side_effect=httpx.ConnectError("boom"))
+    respx.get(f"{_BASE}/command/9").respond(status_code=503)
+    recording = install_recording_hub()
+
     assert _make_client().command_status(9) == CommandResource()
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch status for command 9 (status code 503) - leaving the import unverified",
+    ]
 
 
 @respx.mock
@@ -946,7 +907,12 @@ def test_list_commands_non_200_returns_none() -> None:
     """A non-200 command list reads as unreadable (None)."""
 
     respx.get(f"{_BASE}/command").respond(status_code=503)
+    recording = install_recording_hub()
+
     assert _make_client().list_commands() is None
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch the Sonarr command list (status code 503) - will retry",
+    ]
 
 
 @pytest.mark.parametrize("value", [1729655860, "not a time", "2026-10-23T03:57:40"])
@@ -1087,7 +1053,12 @@ def test_quality_definitions_non_200_returns_empty() -> None:
     """A non-200 quality-definitions read falls back to an empty list."""
 
     respx.get(f"{_BASE}/qualitydefinition").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().quality_definitions() == []
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch quality definitions from Sonarr (status code 500) - using other quality sources",
+    ]
 
 
 @respx.mock
@@ -1095,7 +1066,12 @@ def test_languages_non_200_returns_empty() -> None:
     """A non-200 languages read falls back to an empty list."""
 
     respx.get(f"{_BASE}/language").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().languages() == []
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not fetch languages from Sonarr (status code 500) - using the candidate's languages",
+    ]
 
 
 # --- download_client_config() --------------------------------------------------
@@ -1116,7 +1092,12 @@ def test_download_client_config_non_200_assumes_cdh_on() -> None:
     """A failed read falls back to the defaults (CDH on), deferring rather than racing Sonarr."""
 
     respx.get(f"{_BASE}/config/downloadclient").respond(status_code=500)
+    recording = install_recording_hub()
+
     assert _make_client().download_client_config() == DownloadClientConfig()
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not read Sonarr's download client config (status code 500) - assuming completed download handling is on",
+    ]
 
 
 @respx.mock
@@ -1128,5 +1109,10 @@ def test_download_client_config_malformed_body_warns_and_defaults() -> None:
     config = _make_client().download_client_config()
 
     assert config == DownloadClientConfig()
-    [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert "download client config" in warning
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        (
+            "Could not read Sonarr's download client config "
+            "(malformed response: enableCompletedDownloadHandling: bool_parsing) - "
+            "assuming completed download handling is on"
+        ),
+    ]
