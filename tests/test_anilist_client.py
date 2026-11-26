@@ -151,6 +151,7 @@ def test_each_query_asks_for_everything_the_node_reads(query: str) -> None:
     ("status", "body"),
     [
         pytest.param(200, _FOUND, id="found"),
+        # AniList answers an id it doesn't have with HTTP 404, and that is still an answer.
         pytest.param(404, _NOT_FOUND, id="unknown id"),
     ],
 )
@@ -285,7 +286,7 @@ _SKIPPING = "skipping further lookups this run"
             id="past a minute",
         ),
         pytest.param(
-            httpx.Response(503, text="<html>Service Unavailable</html>", headers={"Retry-After": "5"}),
+            httpx.Response(503, headers={"Retry-After": "5"}),
             5,
             "AniList returned HTTP 503 - waiting 5s (retry 1/3)",
             id="503",
@@ -310,7 +311,7 @@ def test_a_retry_waits_out_retry_after_kept_between_a_second_and_a_minute(
 def test_without_retry_after_each_wait_doubles(slept: list[float]) -> None:
     """Three server errors in a row are waited out, and the answer to the last retry comes back."""
 
-    bad_gateway = httpx.Response(502, text="<html>Bad Gateway</html>")
+    bad_gateway = httpx.Response(502)
     respx.post(API_URL).mock(side_effect=[bad_gateway, bad_gateway, bad_gateway, httpx.Response(200, json=_FOUND)])
 
     assert _client().query(1) == _FOUND
