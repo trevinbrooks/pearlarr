@@ -8,9 +8,8 @@ when the run holds none of its rows.
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import override
 
 import pytest
@@ -34,34 +33,21 @@ from .builders import (
 from .fakes import FakeSonarrClient, RecordingProgress
 
 
-class _Failure(Enum):
-    """How a Sonarr episode read fails."""
-
-    NO_ANSWER = auto()
-    RAISES = auto()
-
-
 class _Sonarr(FakeSonarrClient):
     """Sonarr holding one episode per series, numbered by the series id, recording each read and whether it was quiet.
 
-    A read of a series in `failing` fails as its value says.
+    A read of a series in `failing` gets no answer, as the client answers every failed request.
     """
 
-    def __init__(self, failing: Mapping[int, _Failure] | None = None) -> None:
+    def __init__(self, failing: Iterable[int] = ()) -> None:
         super().__init__()
-        self.failing: dict[int, _Failure] = dict(failing or {})
+        self.failing = set(failing)
         self.reads: list[tuple[int, bool]] = []
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         self.reads.append((series_id, quiet))
-        match self.failing.get(series_id):
-            case _Failure.RAISES:
-                raise ValueError("boom")
-            case _Failure.NO_ANSWER:
-                return None
-            case None:
-                return [sonarr_ep(1, series_id)]
+        return None if series_id in self.failing else [sonarr_ep(1, series_id)]
 
 
 class _GatedSonarr(_Sonarr):
@@ -194,13 +180,12 @@ class TestPrefetchEpisodes:
     @pytest.mark.parametrize(
         ("failing", "reads"),
         [
-            pytest.param({}, [(1, True)], id="answered"),
-            pytest.param({1: _Failure.NO_ANSWER}, [(1, True), (1, False)], id="no-answer"),
-            pytest.param({1: _Failure.RAISES}, [(1, True), (1, False)], id="raises"),
+            pytest.param((), [(1, True)], id="answered"),
+            pytest.param((1,), [(1, True), (1, False)], id="no-answer"),
         ],
     )
     def test_the_check_reads_a_series_again_only_when_the_prefetch_could_not(
-        self, failing: Mapping[int, _Failure], reads: list[tuple[int, bool]]
+        self, failing: tuple[int, ...], reads: list[tuple[int, bool]]
     ) -> None:
         run = _Run()
         sonarr = _Sonarr(failing)
@@ -214,7 +199,7 @@ class TestPrefetchEpisodes:
         assert (view.in_sonarr, sonarr.reads) == ((sonarr_ep(1, 1),), reads)
 
     def test_a_read_with_no_answer_still_counts_as_done(self) -> None:
-        sonarr = _Sonarr({2: _Failure.NO_ANSWER})
+        sonarr = _Sonarr((2,))
         episodes, _ = _episodes(sonarr, _TWO_SERIES)
         progress = RecordingProgress()
 
@@ -260,7 +245,7 @@ class TestAiredSeriesRead:
     def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
         # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
-        sonarr = _Sonarr({1: _Failure.NO_ANSWER})
+        sonarr = _Sonarr((1,))
         reads = make_series_reads(sonarr)
 
         assert (reads.aired_series(1), reads.series_index(1), sonarr.reads) == (
