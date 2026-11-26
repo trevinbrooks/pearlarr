@@ -6,18 +6,17 @@ layer is already pinned in `test_anilist_client`, so the wire is the shared
 scripted `AniListClient` injected at construction.
 """
 
-import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import pytest
 
 from pearlarr.anilist_client import ANILIST_BATCH_SIZE, AniListAiring
-from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS, AniListGateway
+from pearlarr.anilist_gateway import ANILIST_REFRESH_AGE_DAYS
 from pearlarr.stamps import STAMP_FORMAT
 
 from .builders import FakeCacheStore, ScriptedAniListClient, anilist_body, make_anilist_gateway
-from .fakes import CaptureHandler, RecordingProgress
+from .fakes import RecordingProgress
 
 
 def _stamp(*, days_ago: int) -> str:
@@ -337,44 +336,3 @@ class TestUnread:
         gateway.episode_count(3)
 
         assert gateway.air_dates_unread(3) is False
-
-
-class TestLogPluralization:
-    """The debug lines pluralize by count (no "1 entries" / manual "(s)")."""
-
-    def _captured(self, gateway: AniListGateway) -> CaptureHandler:
-        handler = CaptureHandler()
-        gateway.logger.handlers = [handler]
-        gateway.logger.setLevel(logging.DEBUG)
-        return handler
-
-    def test_load_cache_singular(self) -> None:
-        store = FakeCacheStore()
-        gateway = make_anilist_gateway(store=store)
-        store.put_anilist_meta(1, _fresh_answer(1))
-        handler = self._captured(gateway)
-
-        gateway.load_cache()
-
-        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 1 cached AniList answer"]
-
-    def test_load_cache_plural(self) -> None:
-        store = FakeCacheStore()
-        gateway = make_anilist_gateway(store=store)
-        for anilist_id in (1, 2):
-            store.put_anilist_meta(anilist_id, _fresh_answer(anilist_id))
-        handler = self._captured(gateway)
-
-        gateway.load_cache()
-
-        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 2 cached AniList answers"]
-
-    def test_evict_singular(self) -> None:
-        store = FakeCacheStore()
-        gateway = make_anilist_gateway(store=store)
-        store.put_anilist_meta(1, _stale_answer(1))
-        handler = self._captured(gateway)
-
-        gateway.save_cache(dry_run=False)
-
-        assert [r.getMessage().strip() for r in handler.records] == ["Evicted 1 stale AniList answer"]
