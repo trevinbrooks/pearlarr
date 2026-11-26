@@ -569,12 +569,13 @@ def test_a_full_queue_sheds_new_diagnostics_with_one_note() -> None:
 
     drainer = _hold_full_queue(hub, gated)
     hub.emit(Diagnostic(severity=Severity.INFO, message="shed"))
-    hub.emit(Diagnostic(severity=Severity.INFO, message="shed too"))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="shed too", file_only=True))
     _release(gated, drainer)
 
     assert observer.events == [_EVENT, *_FULL_QUEUE, _OVERFLOW_NOTE]
-    # The two shed still count toward the run's tally. The note is file-only, so it doesn't.
-    assert hub.counts.mark() == SeverityTally(info=10_003)
+    # A shed diagnostic still counts toward the run's tally, as it would have if it got through. So the file-only
+    # one doesn't, and nor does the note, which is file-only too.
+    assert hub.counts.mark() == SeverityTally(info=10_002)
 
 
 def test_a_full_queue_never_sheds_a_structural_event() -> None:
