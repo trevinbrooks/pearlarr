@@ -19,7 +19,7 @@ from typing import override
 import pytest
 
 from pearlarr.arr_models import SonarrSeries
-from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
+from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.cache import CacheStore
 from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
@@ -335,16 +335,6 @@ def _series_3(services: ArrRunServices | None = None) -> FakeStrategy:
     )
 
 
-def _left_for_the_next_run(deps: ArrRunDeps) -> tuple[bool, bool]:
-    """Whether the run stored its selection settings and its activity checkpoint, both read for the next run."""
-
-    cache = deps.cache_store
-    return (
-        not cache.selection_changed(Arr.SONARR, deps.config.selection_hash()),
-        cache.get_history_checkpoint(Arr.SONARR) is not None,
-    )
-
-
 @dataclass(frozen=True, kw_only=True)
 class _Situation:
     """What a run met: the series it was narrowed to, and which sources were unreachable or held a title."""
@@ -359,7 +349,8 @@ class TestSelectionRecheck:
     """A run over changed selection settings checks the cached titles again, and a full scan stores the new settings.
 
     The note says why the titles are checked again. A single-item run checks only its series and can't store the
-    settings, so the note would overstate it and recur. With the ignore flag every title is checked anyway.
+    settings, so the note would overstate it and recur. With the ignore flag every title is checked anyway. The run's
+    activity checkpoint is stored with the settings or not at all.
     """
 
     _NOTE = "Selection settings changed - checking cached titles again"
@@ -417,7 +408,10 @@ class TestSelectionRecheck:
             item_id=situation.item_id,
         )
 
-        assert _left_for_the_next_run(deps) == (stored, stored)
+        selection_stored = not cache.selection_changed(Arr.SONARR, deps.config.selection_hash())
+        checkpoint_stored = cache.get_history_checkpoint(Arr.SONARR) is not None
+        assert selection_stored is stored
+        assert checkpoint_stored is stored
 
 
 class _Staging(FakeStrategy):
