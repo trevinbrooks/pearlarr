@@ -901,8 +901,8 @@ def test_a_renderer_raising_from_close_or_the_teardown_hand_off_never_stops_the_
 def test_close_hands_no_teardown_chatter_to_a_struck_out_file_log() -> None:
     """A struck-out file log sits out the rest of the run, teardown included. The real one reopens its file on a write."""
 
-    struck = _FailingFileLog()
-    hub = OutputHub([struck, _NoisyCloser()])
+    struck, healthy = _FailingFileLog(), _FileLog()
+    hub = OutputHub([struck, healthy, _NoisyCloser()])
     install_hub(hub)  # so the closer's note comes to this hub
     for _ in range(3):
         hub.emit(_EVENT)
@@ -910,6 +910,7 @@ def test_close_hands_no_teardown_chatter_to_a_struck_out_file_log() -> None:
     hub.close()
 
     assert "Diagnostic" not in struck.log
+    assert _TEARDOWN_NOTE in healthy.events
 
 
 def test_a_closed_hub_drops_every_later_call() -> None:
