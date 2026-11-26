@@ -29,7 +29,6 @@ from pearlarr.anilist_client import (
     QUERY,
     AniListClient,
     AniListMediaNode,
-    extract_path,
     lacks_air_dates,
     media_from_body,
 )
@@ -61,69 +60,33 @@ def _client() -> AniListClient:
     return AniListClient(client=httpx.Client())
 
 
-# --- extract_path ---------------------------------------------------------------
+# --- reading a stored answer --------------------------------------------------------
 
 
-def test_extract_present_path() -> None:
-    """A fully present path returns the leaf dict node verbatim."""
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_NOT_FOUND, id="unknown id"),
+        # What `query` hands back from the request AniList refused.
+        pytest.param({"data": None}, id="dataless"),
+    ],
+)
+def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, object]) -> None:
+    recording = install_recording_hub()
 
-    body: dict[str, object] = {"data": {"Media": {"id": 5, "episodes": 12}}}
-    assert extract_path(body, "data", "Media") == {"id": 5, "episodes": 12}
-
-
-def test_extract_missing_key_yields_empty() -> None:
-    """A key missing at the final hop yields `{}` rather than `None`."""
-
-    body: dict[str, object] = {"data": {}}
-    assert extract_path(body, "data", "Media") == {}
-
-
-def test_extract_null_intermediate_yields_empty() -> None:
-    """A null intermediate level (`{"data": null}`) is coerced to `{}` and walked safely."""
-
-    body: dict[str, object] = {"data": None}
-    assert extract_path(body, "data", "Media") == {}
-    assert extract_path(None, "data", "Media") == {}
+    assert media_from_body(body) == AniListMediaNode()
+    assert recording.of_type(Diagnostic) == []
 
 
-# --- media_from_body ------------------------------------------------------------
+def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_warning() -> None:
+    """AniList sends episodes as a number, so only a stored answer the node now reads differently looks like this."""
 
+    recording = install_recording_hub()
 
-def test_media_from_full_body() -> None:
-    """A complete body crosses into a fully-populated typed node, preferring `large` cover."""
-
-    body: dict[str, object] = {
-        "data": {
-            "Media": {
-                "id": 5,
-                "title": {"english": "English Title", "romaji": "Romaji Title"},
-                "coverImage": {"large": "https://img/large", "medium": "https://img/medium"},
-                "episodes": 12,
-                "format": "TV",
-            },
-        },
-    }
-    assert media_from_body(body) == AniListMediaNode(
-        id=5,
-        title_english="English Title",
-        title_romaji="Romaji Title",
-        episodes=12,
-        cover_image="https://img/large",
-        format="TV",
-    )
-
-
-def test_media_from_missing_fields_defaults() -> None:
-    """Absent nested `title`/`coverImage` and scalar fields default to `None`."""
-
-    body: dict[str, object] = {"data": {"Media": {"id": 7}}}
-    assert media_from_body(body) == AniListMediaNode(id=7)
-
-
-def test_media_from_none_body_is_all_none() -> None:
-    """A `None` body (not found) parses to an all-`None` node, not a crash."""
-
-    assert media_from_body(None) == AniListMediaNode()
+    assert media_from_body({"data": {"Media": {"id": 1, "episodes": "twelve"}}}) == AniListMediaNode()
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Ignoring malformed AniList Media node (episodes: int_parsing)"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -471,12 +434,6 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
 
 
 # --- AniListMediaNode -----------------------------------------------------------
-
-
-def test_anilist_media_node_empty_dict_is_the_all_none_not_found_node() -> None:
-    """`{}` (the reduced `Media: null` not-found answer) validates to the all-None node."""
-
-    assert AniListMediaNode.model_validate({}) == AniListMediaNode()
 
 
 @pytest.mark.parametrize(
