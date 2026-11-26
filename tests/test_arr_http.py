@@ -95,12 +95,17 @@ def test_terminal_status_does_not_retry() -> None:
 
 @respx.mock
 def test_redirect_is_never_followed() -> None:
-    # A reverse-proxy login bounce: the key must NOT replay at the new location.
-    respx.get(f"{_URL}/api/v3/thing").respond(status_code=302, headers={"Location": "http://evil.test/login"})
-    elsewhere = respx.get("http://evil.test/login").respond(json={})
-    http, recording = _bind()
+    """The client a run builds stops at a 3xx, so the key never replays at the new location.
 
-    assert http.get_json("/api/v3/thing", warn="bounced ({detail})") is None
+    A reverse-proxy login bounce is the 302 an arr behind one answers with.
+    """
+
+    respx.get(f"{_URL}/api/v3/thing").respond(status_code=302, headers={"Location": "http://evil.test/login"})
+    elsewhere = respx.get("http://evil.test/login")
+    primary, recording = _bind()
+
+    with make_arr_client() as client:
+        assert replace(primary, client=client).get_json("/api/v3/thing", warn="bounced ({detail})") is None
     assert elsewhere.call_count == 0
     assert _one_warning(recording).message == "bounced (status code 302)"
 
@@ -511,18 +516,11 @@ def test_history_since_failure_returns_none_with_one_warning() -> None:
 
 
 def test_make_httpx_client_pins_the_transport_policy() -> None:
-    """The factory pins no-redirects: the key must never follow one.
+    """The factory fixes the connect and read timeouts every arr call shares, so no call site can forget one."""
 
-    It also fixes the connect and read timeouts every arr call shares.
-    """
-
-    client = make_arr_client()
-    try:
-        assert client.follow_redirects is False
+    with make_arr_client() as client:
         assert client.timeout.connect == 5
         assert client.timeout.read == 30
-    finally:
-        client.close()
 
 
 @pytest.mark.parametrize("url", [f"{_URL}", f"{_URL}/"])
