@@ -313,10 +313,10 @@ class TestWhatARunSaves:
 
 
 class TestWhatARunSends:
-    """A blocking wait that finished an import sends its report to the wait webhook, unless notifying is off."""
+    """A blocking wait sends its report of the torrents it finished to the wait webhook, unless notifying is off."""
 
     @respx.mock
-    def test_a_blocking_wait_that_finished_an_import_sends_the_wait_webhook(self, tmp_path: Path) -> None:
+    def test_a_blocking_wait_sends_the_torrents_it_finished_to_the_wait_webhook(self, tmp_path: Path) -> None:
         hook = respx.post(_WEBHOOK).respond()
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
