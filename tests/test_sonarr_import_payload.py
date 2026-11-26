@@ -94,11 +94,11 @@ class TestImportCompletedPayload:
     def test_languages_follow_dual_audio_flag(self) -> None:
         pending = pending_import(is_dual_audio=True)
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        languages = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
+        languages = [Language(id=1, name="English"), Language(id=2, name="French"), Language(id=8, name="Japanese")]
         strat, sonarr = make_sonarr_for_import(
             candidates=[candidate],
             languages=languages,
-            config_overrides={"import_languages_dual": ["Japanese", "English"]},
+            config_overrides={"import_languages_dual": ["Japanese", "French"]},
         )
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -106,7 +106,7 @@ class TestImportCompletedPayload:
         assert result.all_done is False
         assert result.command_issued is True
         names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
-        assert names == ["Japanese", "English"]
+        assert names == ["Japanese", "French"]
 
 
 class TestPostedQuality:
