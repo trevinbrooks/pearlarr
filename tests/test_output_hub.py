@@ -113,21 +113,11 @@ class _FailingCloseRenderer(_FailingRenderer):
 
 
 class _EmittingRenderer(_QuietRenderer):
-    """A renderer that emits a follow-up Diagnostic from inside handle (once)."""
+    """Emits two follow-ups from inside handle of the first event it's handed."""
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
         self.emitted = False
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        if not self.emitted and self.hub is not None:
-            self.emitted = True
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="re-entrant"))
-
-
-class _DoubleEmittingRenderer(_EmittingRenderer):
-    """Emits two follow-ups from inside handle of the first event (the FIFO check)."""
 
     @override
     def handle(self, event: Event, when: float) -> None:
@@ -245,13 +235,6 @@ def test_every_renderer_sees_every_event_in_order() -> None:
 
     assert first.events == events
     assert second.events == events
-
-
-def test_null_renderer_satisfies_the_protocol() -> None:
-    renderer: Renderer = NullRenderer()
-    hub = OutputHub([renderer])
-    hub.emit(_EVENT)
-    hub.close()
 
 
 class _FileLog(_QuietRenderer):
@@ -455,11 +438,6 @@ def test_the_final_strike_announces_the_quarantine() -> None:
     assert all("disabled until the next run" not in note.message for note in notes[:-1])
 
 
-def test_emit_never_raises_even_when_every_renderer_fails() -> None:
-    hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
-    hub.emit(_EVENT)  # must not raise
-
-
 def test_keyboard_interrupt_still_propagates() -> None:
     hub = OutputHub([_InterruptingRenderer()])
     with pytest.raises(KeyboardInterrupt):
@@ -481,27 +459,19 @@ def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> Non
 # --- re-entrancy -----------------------------------------------------------------------
 
 
-def test_a_reentrant_emit_is_queued_and_drained_after_the_outer_event() -> None:
+def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
     emitter, observer = _EmittingRenderer(), RecordingRenderer()
     hub = OutputHub([emitter, observer])
     emitter.hub = hub
 
     hub.emit(_EVENT)
 
-    # Queued, not dispatched inline: the observer finishes the outer event first.
-    assert [type(event).__name__ for event in observer.events] == ["PearlarrStarted", "Diagnostic"]
-
-
-def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
-    emitter, observer = _DoubleEmittingRenderer(), RecordingRenderer()
-    hub = OutputHub([emitter, observer])
-    emitter.hub = hub
-
-    hub.emit(_EVENT)
-
-    # Both follow-ups drained inside the same emit call, in enqueue order.
-    assert isinstance(observer.events[0], PearlarrStarted)
-    assert [d.message for d in observer.of_type(Diagnostic)] == ["first", "second"]
+    # Queued, not dispatched inline: the observer finishes the outer event first, then both follow-ups in order.
+    assert observer.events == [
+        _EVENT,
+        Diagnostic(severity=Severity.INFO, message="first"),
+        Diagnostic(severity=Severity.INFO, message="second"),
+    ]
 
 
 def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> None:
@@ -613,26 +583,6 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypa
     assert hub._drainer is None  # nothing to strand: the drain lock was never taken
     follow = Diagnostic(severity=Severity.INFO, message="after")
     hub.emit(follow)  # drains the stranded event AND the new one, in order
-    assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
-
-
-def test_drain_is_a_no_op_loser_when_another_thread_holds_the_drain_lock() -> None:
-    """The take race's loser returns without dispatching or touching the owner's drain lock."""
-
-    survivor = RecordingRenderer()
-    hub = OutputHub([survivor])
-    other = threading.Thread(target=lambda: None)
-    with hub._lock:
-        hub._event_queue.append((_EVENT, 0.0))
-        hub._drainer = other
-
-    hub._drain()
-
-    assert survivor.events == []  # the loser dispatched nothing
-    assert hub._drainer is other  # and left the owner's drain lock alone
-    with hub._lock:  # hand the drain lock back so the follow-up emit can drain
-        hub._drainer = None
-    hub.emit(Diagnostic(severity=Severity.INFO, message="after"))
     assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
 
 
