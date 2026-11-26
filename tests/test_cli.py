@@ -1202,6 +1202,14 @@ class TestConfigAutoMigrate:
             )
         ]
 
+    def test_a_scheduled_run_rewrites_an_old_schema_file_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Only a real run rewrites the file, so this is also what shows a scheduled run is no dry run.
+        config = _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
+
+        _run_scheduled_once(monkeypatch)
+
+        assert f"config_version: {CONFIG_VERSION}" in config.read_text(encoding="utf-8")
+
     def test_the_conversion_detail_goes_to_the_file_log(self) -> None:
         _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
 
