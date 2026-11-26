@@ -235,10 +235,10 @@ def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
 def test_an_absolute_mapping_slices_by_position_across_seasons() -> None:
     """A season of -1 numbers the title across every regular season, so its offset counts rows, not episode numbers.
 
-    The second cour starts two episodes in, and Sonarr numbers it as season 2 from episode 1.
+    The second of three cours starts two episodes in, and Sonarr numbers it as season 2 from episode 1.
     """
 
-    listed = [sonarr_ep(1, 1, ep_id=1), sonarr_ep(1, 2, ep_id=2), sonarr_ep(2, 1, ep_id=3), sonarr_ep(2, 2, ep_id=4)]
+    listed = [sonarr_ep(season, n, ep_id=2 * season + n) for season in (1, 2, 3) for n in (1, 2)]
     episodes = _episodes(listed, _answer("TV", _counted(2)))
 
     result = _resolved(episodes, TitleMapping(anilist_id=123, tvdb_season=-1, tvdb_epoffset=2))
