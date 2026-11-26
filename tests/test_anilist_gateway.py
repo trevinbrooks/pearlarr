@@ -166,6 +166,8 @@ class TestPrefetch:
         gateway = make_anilist_gateway(client, store)
         store.put_anilist_meta(1, _dateless_answer(1))
         store.put_anilist_meta(2, _fresh_answer(2))
+        # The contrast: aged but with its dates, so it waits until the run asks for its id.
+        store.put_anilist_meta(3, _stale_answer(3))
         gateway.load_cache()
 
         gateway.prefetch(asked, dry_run=False)
