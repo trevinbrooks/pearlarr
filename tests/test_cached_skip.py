@@ -135,7 +135,7 @@ _FRESH = datetime(2021, 1, 1)
 class TestIsUnchanged:
     """`is_unchanged` is True only for a fresh cached title, backfilling url/coverage and the name once.
 
-    It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
+    It is bypassed by `ignore_seadex_update_times` or a dirty id.
     """
 
     @staticmethod
@@ -278,22 +278,6 @@ class TestIsUnchanged:
         run.mark_dirty([8])
         assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
-    def test_begin_run_clears_the_dirty_set(self) -> None:
-        # Dirty ids are per-run state: the next run's rebind must reset them.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
-        run = make_services(
-            cache_store=cache,
-            _reporter=_RecordingReporter(),
-            _anilist=make_anilist_gateway(ScriptedAniListClient(None)),
-            _filter=_CtxBind(),
-            _grab_pipeline=_CtxBind(),
-            _pending_imports=_CtxBind(),
-        )
-        run.mark_dirty([7])
-        run.bind_arr_run(run.state)
-        assert run.is_unchanged(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
-
 
 class TestACheckedTitleLosesItsStamp:
     """The gate clears the stamp of a title it sends on to a check: only a check that caches it writes it back."""
@@ -415,13 +399,6 @@ class TestFallbackSatisfiedResurfacing:
 
     def test_warn_mode_finds_an_unmarked_title_unchanged(self) -> None:
         assert self._skips(self._cache(marker=False), "warn") is True
-
-
-class _CtxBind:
-    """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
-
-    def bind_arr_run(self, state: ArrRunState) -> None:
-        del state
 
 
 class _TailReporter:
