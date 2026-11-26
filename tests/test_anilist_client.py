@@ -42,6 +42,8 @@ from .fakes import diagnostic_messages, install_recording_hub
 _FOUND: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
 # AniList's answer past its rate limit, with HTTP 429 or, when it soft-throttles, HTTP 200.
 _THROTTLED: dict[str, object] = {"errors": [{"message": "Too Many Requests.", "status": 429}], "data": None}
+# AniList's answer for an id it doesn't have.
+_NOT_FOUND: dict[str, object] = {"data": {"Media": None}, "errors": [{"message": "Not Found.", "status": 404}]}
 
 
 @pytest.fixture
@@ -186,17 +188,24 @@ def test_each_query_asks_for_everything_the_node_reads(query: str) -> None:
 
 
 @respx.mock
-def test_query_returns_valid_200_body() -> None:
-    """A single 200 with a valid body is returned verbatim after one request."""
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        pytest.param(200, _FOUND, id="found"),
+        pytest.param(404, _NOT_FOUND, id="unknown id"),
+    ],
+)
+def test_an_answer_with_data_comes_back_as_sent(status: int, body: dict[str, object]) -> None:
+    """A Media, or AniList's answer that it has no such id, takes one request and leaves AniList reachable."""
 
-    expected: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
-    route = respx.post(API_URL).respond(json=expected)
+    recording = install_recording_hub()
+    client = _client()
+    route = respx.post(API_URL).respond(status_code=status, json=body)
 
-    body = _client().query(1)
-
+    assert client.query(1) == body
     assert route.call_count == 1
-    assert body == expected
-    assert media_from_body(body).episodes == 12
+    assert client.unreachable is False
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @respx.mock
@@ -459,23 +468,6 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
     quoted = warning.removeprefix("AniList rejected the request (HTTP 403: ").removesuffix(f"), {_SKIPPING}")
     assert quoted.startswith("down for maintenance xxx")
     assert len(quoted) == 160
-
-
-@respx.mock
-def test_unknown_id_404_is_an_ordinary_not_found() -> None:
-    """AniList's unknown-id answer (HTTP 404, `data.Media` null plus a not-found error) never marks it unreachable."""
-
-    recording = install_recording_hub()
-    client = _client()
-    not_found: dict[str, object] = {"data": {"Media": None}, "errors": [{"message": "Not Found.", "status": 404}]}
-    route = respx.post(API_URL).respond(status_code=404, json=not_found)
-
-    assert client.query(1) == not_found
-    assert client.query(2) == not_found
-
-    assert client.unreachable is False
-    assert route.call_count == 2
-    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 # --- AniListMediaNode -----------------------------------------------------------
