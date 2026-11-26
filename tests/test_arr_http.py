@@ -10,7 +10,8 @@ failures stay quiet, re-warn on a timer and end with a recovery note. The API ke
 
 import json
 import threading
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import cast
 
 import httpx
@@ -256,6 +257,42 @@ def test_repeat_failures_coalesce_then_recover() -> None:
         (Severity.WARNING, "miss (status code 404)"),
         (Severity.INFO, "miss - recovered after 2 failures (0s)"),
         (Severity.WARNING, "miss (status code 404)"),
+    ]
+
+
+@dataclass(frozen=True)
+class _Kind:
+    """A kind of request besides the plain read: a call that sends it and a body its success can carry."""
+
+    send: Callable[[ArrHttp], object]
+    body: list[object] | dict[str, object]
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(_Kind(lambda http: http.get_json_list("/thing", warn="x ({detail})"), []), id="array-read"),
+        pytest.param(_Kind(lambda http: http.get_json_dict("/thing", warn="x ({detail})"), {}), id="object-read"),
+        pytest.param(_Kind(lambda http: http.post_json("/thing", json={}, warn="x ({detail})"), {}), id="post"),
+        pytest.param(_Kind(lambda http: http.delete("/thing", warn="x ({detail})"), {}), id="delete"),
+    ],
+)
+def test_every_request_kind_ends_its_streak_on_success(kind: _Kind) -> None:
+    """A success after a failure notes the recovery whichever kind of request it is, not only a plain read.
+
+    A kind that kept its streak open would never note the recovery and would call its next failure, hours
+    later, still failing.
+    """
+
+    respx.route().side_effect = [httpx.Response(400), httpx.Response(200, json=kind.body)]
+    http, recording = _bind()
+
+    kind.send(http)
+    kind.send(http)
+    assert [note.message for note in recording.of_type(Diagnostic)] == [
+        "x (status code 400)",
+        "x - recovered after 1 failure (0s)",
     ]
 
 
