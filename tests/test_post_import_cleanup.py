@@ -409,7 +409,6 @@ class TestMoveKeepsAnUnseenTorrentOut:
             strategy=strategy,
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7)],
-            config=config,
             categories=_reading_sonarrs_clients(config, qbit),
         )
 
