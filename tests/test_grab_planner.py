@@ -912,13 +912,13 @@ class TestGroupGuardFacts:
 
     def test_groups_with_no_files_in_the_arr_stay_protected(self) -> None:
         # A group the arr has no file of is protected, so a copy of it imported while the grab waits is not overwritten.
-        kept = make_release(size=[300], episodes=[placed_episode(season=1, episode=1, size=300)])
-        seadex = {"RG": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "Kept": _sonarr_group(u2=kept)}
+        other = make_release(size=[300], episodes=[placed_episode(season=1, episode=1, size=300)])
+        seadex = {"RG": _sonarr_group(u1=make_release(size=[100], episodes=[_S1E1])), "Other": _sonarr_group(u2=other)}
         title = [sonarr_ep(1, 1, episode_file_id=0)]
 
         plan = make_planner().plan(seadex, arr_files(title), title)
 
-        assert plan.guards == OwnedAtGrab(entry_groups=("RG", "Kept"))
+        assert plan.guards == OwnedAtGrab(entry_groups=("RG", "Other"))
 
     @pytest.mark.parametrize(
         ("held", "owned_episodes"),
