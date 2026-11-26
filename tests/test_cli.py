@@ -410,10 +410,11 @@ class TestConfigInit:
 
 
 class _RunArrsRecorder:
-    """A fake `bootstrap.run_arrs` that records the arrs and wait mode `run_single` asks it for."""
+    """A fake `bootstrap.run_arrs` that records the arrs, dry run and wait mode `run_single` asks it for."""
 
     def __init__(self) -> None:
         self.arrs: list[tuple[Arr, int | None]] | None = None
+        self.dry_run: bool | None = None
         self.import_wait_mode: ImportWaitMode | None = None
 
     def __call__(
@@ -430,6 +431,7 @@ class _RunArrsRecorder:
         retry_note: str | None = None,
     ) -> bool:
         self.arrs = arrs
+        self.dry_run = dry_run
         self.import_wait_mode = import_wait_mode
         return True
 
@@ -471,6 +473,11 @@ class TestRunSingleSelection:
         result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--import-wait-mode", "off"])
         assert result.exit_code == 0
         assert recorder.import_wait_mode is ImportWaitMode.OFF
+
+    def test_the_dry_run_flag_reaches_the_run(self, recorder: _RunArrsRecorder) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--dry-run"])
+        assert result.exit_code == 0
+        assert recorder.dry_run is True
 
     @pytest.mark.parametrize("flag", ["--movie-id", "--series-id"])
     def test_the_old_id_flags_are_usage_errors(self, recorder: _RunArrsRecorder, flag: str) -> None:
