@@ -38,8 +38,10 @@ from .builders import (
     make_entry_record,
     make_logger,
     make_run_deps,
+    sonarr_file_imported,
 )
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy, RecordingHub, install_recording_hub
+from .wait_fakes import FakeQbit
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=UTC)
 
@@ -372,12 +374,6 @@ def _activity_note(recording: RecordingHub) -> str | None:
     return notes[0] if notes else None
 
 
-def _hours_ago(hours: int) -> str:
-    """A Sonarr history date `hours` before now."""
-
-    return format_history_date(datetime.now(UTC) - timedelta(hours=hours))
-
-
 @dataclass(frozen=True, kw_only=True)
 class _Situation:
     """What a run over the `_CachedLibrary` meets.
@@ -393,7 +389,7 @@ class _Situation:
     check_again: frozenset[int] = frozenset()
 
 
-_GAP = HistoryCheckpoint(format_history_date(datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10)), 1)
+_GAP = HistoryCheckpoint("2020-01-01T00:00:00Z", 1)
 """A checkpoint from further back than the history read reaches, so the history since it can't all be read."""
 
 
@@ -435,7 +431,7 @@ class TestWhatARunChecksAgain:
             detect_arr_activity=situation.detect_activity,
             ignore_seadex_update_times=situation.ignore_update_times,
         )
-        history = [] if situation.imported_into is None else [_rec(2, item_id=situation.imported_into)]
+        history = [] if situation.imported_into is None else [sonarr_file_imported(situation.imported_into)]
         cache = _cache_left_unchanged(situation.checkpoint)
         deps = make_run_deps(config=config, cache_store=cache, seadex=FakeSeaDexSource(_ENTRIES))
         recording = install_recording_hub()
@@ -447,15 +443,17 @@ class TestWhatARunChecksAgain:
 
     def test_a_checkpoint_held_by_an_unreachable_seadex_replays_its_history_on_the_next_healthy_run(self) -> None:
         # The run that found SeaDex unreachable checked nothing, so the file imported into series 1 still drives a
-        # check on the next run.
-        cache = _cache_left_unchanged(HistoryCheckpoint(_hours_ago(3), 1))
-        history = [_rec(2, item_id=1, date=_hours_ago(1))]
-        unreachable = make_run_deps(cache_store=cache, seadex=FakeSeaDexSource(unreachable=True))
+        # check on the next run. Both are real runs, as only a real run's stores are saved.
+        cache = _cache_left_unchanged()
+        history = [sonarr_file_imported(1)]
+        unreachable = make_run_deps(
+            cache_store=cache, qbit=FakeQbit().client(), seadex=FakeSeaDexSource(unreachable=True)
+        )
         drive_arr_run(unreachable, lambda services: _CachedLibrary(services, history, frozenset()))
         recording = install_recording_hub()
 
-        healthy = make_run_deps(cache_store=cache, seadex=FakeSeaDexSource(_ENTRIES))
+        healthy = make_run_deps(cache_store=cache, qbit=FakeQbit().client(), seadex=FakeSeaDexSource(_ENTRIES))
         drive_arr_run(healthy, lambda services: _CachedLibrary(services, history, frozenset()))
 
         assert _left_unchanged(recording) == [2]
-        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, 2)
+        assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, 1)
