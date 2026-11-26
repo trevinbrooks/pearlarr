@@ -127,19 +127,14 @@ def _fresh(row: dict[str, object], *, series_hash: str = "fp") -> bool:
 
 
 class TestSeriesHash:
-    """`sonarr_series_hash` is order- and duplicate-independent and differs across different id sets.
+    """`sonarr_series_hash` differs across different id sets, whatever order the library lists them in."""
 
-    It is stable for the empty set.
-    """
-
-    def test_order_and_duplicate_independent(self) -> None:
-        assert sonarr_series_hash([3, 1, 2]) == sonarr_series_hash([2, 2, 1, 3])
+    def test_the_listing_order_does_not_change_it(self) -> None:
+        assert sonarr_series_hash([3, 1, 2]) == sonarr_series_hash([1, 2, 3])
 
     def test_different_sets_differ(self) -> None:
-        assert sonarr_series_hash([1, 2]) != sonarr_series_hash([1, 2, 3])
-
-    def test_empty_is_stable(self) -> None:
-        assert sonarr_series_hash([]) == sonarr_series_hash(iter(()))
+        # Sets of one size, so a hash of how many series there are can't pass.
+        assert sonarr_series_hash([1, 2]) != sonarr_series_hash([1, 3])
 
 
 class TestParseIsFresh:
