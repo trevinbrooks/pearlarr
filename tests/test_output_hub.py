@@ -34,6 +34,7 @@ from pearlarr.output import (
     Severity,
     SeverityCounter,
     SeverityTally,
+    current_hub,
     emit_to_hub,
     hub_note,
     install_hub,
@@ -113,18 +114,17 @@ class _FailingCloseRenderer(_FailingRenderer):
 
 
 class _EmittingRenderer(_QuietRenderer):
-    """Emits two follow-ups from inside handle of the first event it's handed."""
+    """Emits two follow-ups through the process hub from inside handle of the first event it's handed."""
 
     def __init__(self) -> None:
-        self.hub: OutputHub | None = None
         self.emitted = False
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if not self.emitted and self.hub is not None:
+        if not self.emitted:
             self.emitted = True
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="first"))
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="second"))
+            emit_to_hub(Diagnostic(severity=Severity.INFO, message="first"))
+            emit_to_hub(Diagnostic(severity=Severity.INFO, message="second"))
 
 
 class _GatedRenderer(_QuietRenderer):
@@ -223,22 +223,22 @@ class _FailingFileish(_FailingRenderer):
 
 
 class _LifecycleEmitter(_QuietRenderer):
-    """begin_cycle emits into the hub (the bridge-adoption re-entrancy shape)."""
+    """Emits through the process hub from inside begin_run, as a logging call there does through the bridge.
+
+    The log holds "begin_run" once that call returns, and the type of each event it's handed.
+    """
 
     def __init__(self) -> None:
-        self.hub: OutputHub | None = None
-        self.events: list[Event] = []
-        self.seen_during_run: int | None = None
+        self.log: list[str] = []
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        self.events.append(event)
+        self.log.append(type(event).__name__)
 
     @override
     def begin_run(self) -> None:
-        if self.hub is not None:
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
-            self.seen_during_run = len(self.events)
+        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
+        self.log.append("begin_run")
 
 
 class _EmitThenInterrupt(_QuietRenderer):
@@ -250,15 +250,14 @@ class _EmitThenInterrupt(_QuietRenderer):
     """
 
     def __init__(self) -> None:
-        self.hub: OutputHub | None = None
         self._marked = False
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, PearlarrStarted) and self.hub is not None:
+        if isinstance(event, PearlarrStarted):
             if not self._marked:
                 self._marked = True
-                self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
+                emit_to_hub(Diagnostic(severity=Severity.INFO, message="exit marker"))
             raise KeyboardInterrupt
 
 
@@ -421,9 +420,9 @@ def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> Non
 
 
 def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
-    emitter, observer = _EmittingRenderer(), RecordingRenderer()
-    hub = OutputHub([emitter, observer])
-    emitter.hub = hub
+    observer = RecordingRenderer()
+    hub = OutputHub([_EmittingRenderer(), observer])
+    install_hub(hub)
 
     hub.emit(_EVENT)
 
@@ -444,12 +443,11 @@ def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> 
 
     emitter = _LifecycleEmitter()
     hub = OutputHub([emitter])
-    emitter.hub = hub
+    install_hub(hub)
 
     hub.begin_run(console_format="plain", level=logging.INFO)
 
-    assert emitter.seen_during_run == 0  # enqueued, not dispatched mid-lifecycle
-    assert [d.message for d in emitter.events if isinstance(d, Diagnostic)] == ["mid-lifecycle"]
+    assert emitter.log == ["begin_run", "Diagnostic"]  # enqueued, not dispatched mid-lifecycle
 
 
 # --- the combiner (dispatch outside the hub lock) -------------------------------------
@@ -488,9 +486,9 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
 
 
 def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
-    raiser, survivor = _EmitThenInterrupt(), RecordingRenderer()
-    hub = OutputHub([raiser, survivor])
-    raiser.hub = hub
+    survivor = RecordingRenderer()
+    hub = OutputHub([_EmitThenInterrupt(), survivor])
+    install_hub(hub)
 
     with pytest.raises(KeyboardInterrupt):
         hub.emit(_EVENT)
@@ -1008,18 +1006,13 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
 
 class _LifecycleCaller(_QuietRenderer):
-    """On the first PearlarrStarted it's handed, emits a follow-up and then calls `set_level` from inside `handle`."""
-
-    def __init__(self) -> None:
-        self.hub: OutputHub | None = None
-        self._fired = False
+    """On each PearlarrStarted it's handed, emits a follow-up and then sets the process hub's level from inside `handle`."""
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, PearlarrStarted) and self.hub is not None and not self._fired:
-            self._fired = True
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
-            self.hub.set_level(logging.WARNING)
+        if isinstance(event, PearlarrStarted):
+            emit_to_hub(Diagnostic(severity=Severity.INFO, message="queued behind"))
+            current_hub().set_level(logging.WARNING)
 
 
 def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
@@ -1029,9 +1022,8 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order()
     """
 
     recorder = RecordingRenderer()
-    caller = _LifecycleCaller()
-    hub = OutputHub([caller, recorder])
-    caller.hub = hub
+    hub = OutputHub([_LifecycleCaller(), recorder])
+    install_hub(hub)
 
     # On a thread of its own: without the escape, set_level waits on its own drain for good.
     emitter = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
@@ -1070,15 +1062,11 @@ def test_a_broken_stderr_never_raises_through_emit(monkeypatch: pytest.MonkeyPat
 
 
 class _NoisyCloser(_QuietRenderer):
-    """Emits a file-only teardown note from inside its own `close`."""
-
-    def __init__(self) -> None:
-        self.hub: OutputHub | None = None
+    """Emits a file-only teardown note through the process hub from inside its own `close`."""
 
     @override
     def close(self) -> None:
-        if self.hub is not None:
-            self.hub.emit(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
+        emit_to_hub(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
 
 
 def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
@@ -1088,9 +1076,9 @@ def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it
     teardown failure) still reaches the file.
     """
 
-    file_recorder, noisy = _FileLog(), _NoisyCloser()
-    hub = OutputHub([file_recorder, noisy])
-    noisy.hub = hub
+    file_recorder = _FileLog()
+    hub = OutputHub([file_recorder, _NoisyCloser()])
+    install_hub(hub)
 
     hub.close()
 
