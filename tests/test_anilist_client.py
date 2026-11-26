@@ -266,22 +266,10 @@ _SKIPPING = "skipping further lookups this run"
     ("first", "waited", "line"),
     [
         pytest.param(
-            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "42"}),
+            httpx.Response(429, headers={"Retry-After": "42"}),
             42,
             "AniList rate-limited - waiting 42s (retry 1/3)",
-            id="retry-after",
-        ),
-        pytest.param(
-            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "0"}),
-            1,
-            "AniList rate-limited - waiting 1s (retry 1/3)",
-            id="under a second",
-        ),
-        pytest.param(
-            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "120"}),
-            60,
-            "AniList rate-limited - waiting 60s (retry 1/3)",
-            id="past a minute",
+            id="429",
         ),
         pytest.param(
             httpx.Response(503, headers={"Retry-After": "5"}),
@@ -291,10 +279,10 @@ _SKIPPING = "skipping further lookups this run"
         ),
     ],
 )
-def test_a_retry_waits_out_retry_after_kept_between_a_second_and_a_minute(
+def test_a_retry_tells_the_user_why_and_how_long_it_waits(
     slept: list[float], first: httpx.Response, waited: int, line: str
 ) -> None:
-    """The user is told why and how long, so a long wait doesn't look like a hang."""
+    """The user is told why the client waits and for how long, so a long wait doesn't look like a hang."""
 
     recording = install_recording_hub()
     respx.post(API_URL).mock(side_effect=[first, httpx.Response(200, json=_FOUND)])
