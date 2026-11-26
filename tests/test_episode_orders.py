@@ -994,20 +994,9 @@ def test_a_name_sonarr_searches_for_a_specials_title_has_no_matched_episodes() -
     assert files == {_URL: (ListedFile(name, 100, by_sonarr.with_matched(())),)}
 
 
-@pytest.mark.parametrize(
-    "orders",
-    [
-        pytest.param(None, id="aired-order-not-stored"),
-        pytest.param({"official": _TWO_SEASONS, "dvd": _AS_ONE_SEASON}, id="scene-mappings-never-read"),
-    ],
-)
-def test_a_listed_file_of_a_series_with_no_aired_view_yet_has_no_matched_episodes(
-    orders: Mapping[str, tuple[OrderRow, ...]] | None,
-) -> None:
-    cache = FakeCacheStore()
-    if orders is not None:
-        cache.put_tvdb_orders(50, stored_orders(orders))
-    strat = _sync([_in_one_season()], cache, sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+def test_a_listed_file_of_a_series_with_no_aired_view_yet_has_no_matched_episodes() -> None:
+    # No orders are stored for the series.
+    strat = _sync([_in_one_season()], FakeCacheStore(), sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
 
     files = strat._parse.parsed_files(_listing(_FIFTH))
 
@@ -1047,14 +1036,13 @@ def _at_run_start(
 ) -> tuple[SonarrStrategy, FakeCacheStore]:
     """The strategy (`_sync`) of a run that waits on imports as `waits` says, `pending` stored and its title cached.
 
-    TVDB series 50 has `_ORDERS` stored, and TheXEM was read for it and maps none of its episodes. TVDB series 60
-    has `_ORDERS` stored too, and TheXEM was never read for it. No other series has either.
+    TVDB series 50 has `_ORDERS` stored, and TheXEM was read for it and maps none of its episodes. No other series
+    has either.
     """
 
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
     cache.put_scene_mappings(50, stored_scene_mappings())
-    cache.put_tvdb_orders(60, stored_orders(_ORDERS))
     cache.update_cached_title(Arr.SONARR, PENDING_IMPORT_ANILIST_ID, {"updated_at": PENDING_IMPORT_STAMP})
     return _sync(series, cache, sonarr=sonarr, waits=waits), cache
 
@@ -1116,8 +1104,7 @@ def test_a_pending_import_stored_without_tvdb_ids_takes_them_from_the_rows_of_it
     [
         pytest.param(_series(1, 50), None, id="a-failed-read"),
         pytest.param(_series(1, 50), [], id="no-rows"),
-        pytest.param(_series(1, 60, season_type="dvd"), _DVD_ROWS, id="another-order-with-scene-mappings-unread"),
-        pytest.param(_series(1, 70, season_type="dvd"), _DVD_ROWS, id="another-order-with-no-orders-stored"),
+        pytest.param(_series(1, 70, season_type="dvd"), _DVD_ROWS, id="another-order-with-no-view"),
     ],
 )
 def test_a_pending_import_stored_without_tvdb_ids_is_left_as_stored_when_its_series_has_no_aired_rows_to_read(
@@ -1223,7 +1210,10 @@ _SEASON_TWO_AIRED = {"official": (*_ORDERS["official"], OrderRow(2, 1, 9003, 3))
 """A stored answer whose official order has a second season `_DVD` has no episode of."""
 
 _SEASON_TITLES = {500: "First", 600: "Second", 700: "Third"}
-"""The AniList titles of seasons 1, 2 and 3 of TVDB series 50. Neither stored order has a third season."""
+"""The AniList titles of seasons 1, 2 and 3 of TVDB series 50.
+
+Of `_SEASON_TWO_AIRED`'s orders, both have First's episodes, only the aired one has Second's, and neither has Third's.
+"""
 
 _NO_EPISODE_IN_THE_ORDER = (
     "Sonarr's DVD order of the series has none of Second's episodes - not checked again until the series' order, "
@@ -1441,7 +1431,7 @@ def test_a_title_sonarrs_order_has_no_episode_of_is_not_warned_of_again_with_not
     recording = _run(cache, _library_row("dvd", 2))
 
     assert diagnostic_messages(recording, Severity.WARNING) == []
-    assert "Second" not in _no_episode_rows(recording)
+    assert _no_episode_rows(recording) == ["Third"]
 
 
 def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_when_the_series_episode_count_changes() -> None:
@@ -1469,13 +1459,13 @@ def test_a_title_sonarrs_order_has_no_episode_of_is_checked_again_while_its_seri
     assert cache.get_cached_title(Arr.SONARR, 600) is None
 
 
-def test_a_title_with_no_aired_episode_prints_its_row_on_every_run_and_is_not_cached() -> None:
+def test_a_title_with_no_aired_episode_prints_its_row_again_on_the_next_run_and_is_not_cached() -> None:
     cache = FakeCacheStore()
     _run(cache, _library_row("dvd", 2))
 
     recording = _run(cache, _library_row("dvd", 2))
 
-    assert "Third" in _no_episode_rows(recording)
+    assert _no_episode_rows(recording) == ["Third"]
     assert cache.get_cached_title(Arr.SONARR, 700) is None
 
 
