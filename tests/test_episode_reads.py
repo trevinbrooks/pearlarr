@@ -254,9 +254,12 @@ class TestPrefetchEpisodes:
 
 
 class TestAiredSeriesRead:
-    """`aired_series` fetches a cold series once per run and reports a failed fetch as `NoView.READ_FAILED`."""
+    """`aired_series` reads a series from Sonarr once per run.
 
-    def test_second_call_serves_the_run_cache(self) -> None:
+    A read that fails leaves the series unread (`NoView.READ_FAILED`), and the next ask reads it again.
+    """
+
+    def test_a_series_is_read_from_sonarr_once_per_run(self) -> None:
         sonarr = _Sonarr()
         reads = make_series_reads(sonarr, library=[SonarrSeries(id=1)])
 
@@ -266,10 +269,13 @@ class TestAiredSeriesRead:
         assert isinstance(view, AiredSeries)
         assert (view.in_sonarr, sonarr.series_read) == ((sonarr_ep(1, 1),), [1])
 
-    def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
+    def test_a_series_whose_read_fails_stays_unread_and_is_read_again_when_asked(self) -> None:
         # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
         sonarr = _Sonarr((1,))
         reads = make_series_reads(sonarr, library=[SonarrSeries(id=1)])
 
-        assert (reads.aired_series(1), reads.series_index(1), sonarr.series_read) == (NoView.READ_FAILED, None, [1, 1])
+        view = reads.aired_series(1)
+        index = reads.series_index(1)
+
+        assert (view, index, sonarr.series_read) == (NoView.READ_FAILED, None, [1, 1])
