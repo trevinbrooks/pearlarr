@@ -510,6 +510,19 @@ def test_strict_get_rejected_key_raises_auth_error_without_retrying(status: int)
 
 
 @respx.mock
+def test_strict_get_rejected_key_masks_a_url_login() -> None:
+    """A login in the arr's URL is basic auth for a proxy in front of it, so the error names the host without it."""
+
+    respx.get(f"{_URL}/api/v3/series").respond(status_code=401)
+    http, _ = bind_arr_http("http://admin:hunter2@arr.test")
+
+    with pytest.raises(ArrAuthError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == "Sonarr at http://REDACTED@arr.test rejected the API key (status code 401)"
+
+
+@respx.mock
 def test_strict_get_terminal_status_raises_naming_it() -> None:
     """A status a retry won't clear, such as a 404 from a URL pointing at the wrong path, stops the library read at once."""
 
