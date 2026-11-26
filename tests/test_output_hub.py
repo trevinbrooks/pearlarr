@@ -82,16 +82,6 @@ class _FailingRenderer(_QuietRenderer):
         self.log.append("close")
 
 
-class _FailOnMarkerRenderer(_FailingRenderer):
-    """Raises on PearlarrStarted only, so an arr run's close (ArrRunFinished) renders cleanly between failures."""
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        self.log.append(type(event).__name__)
-        if isinstance(event, PearlarrStarted):
-            raise RuntimeError("render bug")
-
-
 class _FailingCloseRenderer(_FailingRenderer):
     """Raises from close too."""
 
@@ -101,18 +91,28 @@ class _FailingCloseRenderer(_FailingRenderer):
         raise RuntimeError("close bug")
 
 
-class _EmittingRenderer(_QuietRenderer):
-    """Emits two follow-ups through the process hub from inside handle of the first event it's handed."""
+class _FileLog(_QuietRenderer):
+    """A file log renderer: keeps each event it's handed, and what it held at each close."""
+
+    writes_file_only: ClassVar[bool] = True
 
     def __init__(self) -> None:
-        self.emitted = False
+        self.events: list[Event] = []
+        self.held_at_each_close: list[list[Event]] = []
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if not self.emitted:
-            self.emitted = True
-            emit_to_hub(Diagnostic(severity=Severity.INFO, message="first"))
-            emit_to_hub(Diagnostic(severity=Severity.INFO, message="second"))
+        self.events.append(event)
+
+    @override
+    def close(self) -> None:
+        self.held_at_each_close.append(list(self.events))
+
+
+class _FailingFileLog(_FailingCloseRenderer):
+    """A file log renderer that raises from every handle and from close, as one writing to a dying disk would."""
+
+    writes_file_only: ClassVar[bool] = True
 
 
 class _GatedRenderer(_QuietRenderer):
@@ -160,6 +160,24 @@ class _GatedRenderer(_QuietRenderer):
         self.log.append("close")
 
 
+def _emit_held_at(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
+    """Emit _EVENT on a drainer thread and return the thread once the gated renderer holds the event mid-handle."""
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
+    drainer.start()
+    assert gated.entered.wait(timeout=30.0)
+    return drainer
+
+
+def _release(gated: _GatedRenderer, drainer: threading.Thread) -> None:
+    """Open the gate and wait for the drainer thread to finish. Fails if the gate ran out before this opened it."""
+
+    gated.release.set()
+    drainer.join(timeout=30.0)
+    assert not drainer.is_alive()
+    assert not gated.ran_out, "the gate ran out before it was opened: this thread was held up on the held renderer"
+
+
 # --- dispatch ---------------------------------------------------------------------
 
 
@@ -174,54 +192,6 @@ def test_every_renderer_sees_every_event_in_order() -> None:
     assert first.events == events
     assert second.events == events
     assert console.events == events
-
-
-class _FileLog(_QuietRenderer):
-    """A file log renderer: keeps each event it's handed, and what it held at each close."""
-
-    writes_file_only: ClassVar[bool] = True
-
-    def __init__(self) -> None:
-        self.events: list[Event] = []
-        self.held_at_each_close: list[list[Event]] = []
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        self.events.append(event)
-
-    @override
-    def close(self) -> None:
-        self.held_at_each_close.append(list(self.events))
-
-
-class _FailingFileLog(_FailingCloseRenderer):
-    """A file log renderer that raises from every handle and from close, as one writing to a dying disk would."""
-
-    writes_file_only: ClassVar[bool] = True
-
-
-class _LifecycleEmitter(_QuietRenderer):
-    """Emits through the process hub from inside begin_run and set_level, as a logging call there does through the bridge.
-
-    The log holds each of those calls once it returns, and the type of each event it's handed.
-    """
-
-    def __init__(self) -> None:
-        self.log: list[str] = []
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        self.log.append(type(event).__name__)
-
-    @override
-    def begin_run(self) -> None:
-        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
-        self.log.append("begin_run")
-
-    @override
-    def set_level(self, level: int) -> None:
-        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
-        self.log.append("set_level")
 
 
 # --- containment --------------------------------------------------------------------
@@ -278,18 +248,6 @@ def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_er
 # --- strikes ------------------------------------------------------------------------
 
 
-def test_a_renderer_that_fails_on_a_note_takes_a_strike_for_it() -> None:
-    first, second = _FailingRenderer(), _FailingRenderer()
-    hub = OutputHub([first, second])
-
-    hub.emit(_EVENT)
-    hub.emit(_EVENT)
-
-    # Each fails on the event and on the other's note, so the second event is each one's third strike. The second
-    # one's note about that strike-out then has nowhere to go: the first is already out.
-    assert first.log == ["PearlarrStarted", "Diagnostic", "PearlarrStarted", "close"]
-
-
 def test_a_renderer_strikes_out_on_its_third_failure_until_the_next_run() -> None:
     """Striking out closes the renderer, so a struck-out live display stops repainting. begin_run restarts it."""
 
@@ -305,6 +263,16 @@ def test_a_renderer_strikes_out_on_its_third_failure_until_the_next_run() -> Non
     # Closed once at the third failure and skipped after it, in each run.
     struck_out = ["PearlarrStarted"] * 3 + ["close"]
     assert flaky.log == [*struck_out, "begin_run", *struck_out]
+
+
+class _FailOnMarkerRenderer(_FailingRenderer):
+    """Raises on PearlarrStarted only, so an arr run's close (ArrRunFinished) renders cleanly between failures."""
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        self.log.append(type(event).__name__)
+        if isinstance(event, PearlarrStarted):
+            raise RuntimeError("render bug")
 
 
 def test_strikes_carry_across_an_arr_run_boundary() -> None:
@@ -344,7 +312,33 @@ def test_the_final_strike_says_the_renderer_is_disabled() -> None:
     ]
 
 
+def test_a_renderer_that_fails_on_a_note_takes_a_strike_for_it() -> None:
+    first, second = _FailingRenderer(), _FailingRenderer()
+    hub = OutputHub([first, second])
+
+    hub.emit(_EVENT)
+    hub.emit(_EVENT)
+
+    # Each fails on the event and on the other's note, so the second event is each one's third strike. The second
+    # one's note about that strike-out then has nowhere to go: the first is already out.
+    assert first.log == ["PearlarrStarted", "Diagnostic", "PearlarrStarted", "close"]
+
+
 # --- emits from inside a renderer --------------------------------------------------
+
+
+class _EmittingRenderer(_QuietRenderer):
+    """Emits two follow-ups through the process hub from inside handle of the first event it's handed."""
+
+    def __init__(self) -> None:
+        self.emitted = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if not self.emitted:
+            self.emitted = True
+            emit_to_hub(Diagnostic(severity=Severity.INFO, message="first"))
+            emit_to_hub(Diagnostic(severity=Severity.INFO, message="second"))
 
 
 def test_emits_from_inside_a_renderer_go_out_after_its_event_in_order() -> None:
@@ -363,24 +357,6 @@ def test_emits_from_inside_a_renderer_go_out_after_its_event_in_order() -> None:
 
 
 # --- concurrent emits ----------------------------------------------------------------
-
-
-def _emit_held_at(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
-    """Emit _EVENT on a drainer thread and return the thread once the gated renderer holds the event mid-handle."""
-
-    drainer = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
-    drainer.start()
-    assert gated.entered.wait(timeout=30.0)
-    return drainer
-
-
-def _release(gated: _GatedRenderer, drainer: threading.Thread) -> None:
-    """Open the gate and wait for the drainer thread to finish. Fails if the gate ran out before this opened it."""
-
-    gated.release.set()
-    drainer.join(timeout=30.0)
-    assert not drainer.is_alive()
-    assert not gated.ran_out, "the gate ran out before it was opened: this thread was held up on the held renderer"
 
 
 def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
@@ -752,6 +728,30 @@ def test_a_lifecycle_call_waits_for_the_active_drain(call: Callable[[OutputHub],
     lifecycle.join(timeout=30.0)
     assert not lifecycle.is_alive()
     assert gated.log == ["PearlarrStarted", *logged]
+
+
+class _LifecycleEmitter(_QuietRenderer):
+    """Emits through the process hub from inside begin_run and set_level, as a logging call there does through the bridge.
+
+    The log holds each of those calls once it returns, and the type of each event it's handed.
+    """
+
+    def __init__(self) -> None:
+        self.log: list[str] = []
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        self.log.append(type(event).__name__)
+
+    @override
+    def begin_run(self) -> None:
+        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
+        self.log.append("begin_run")
+
+    @override
+    def set_level(self, level: int) -> None:
+        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
+        self.log.append("set_level")
 
 
 @pytest.mark.parametrize(
