@@ -1,11 +1,15 @@
 # pyright: strict
 """The arr-side activity read (`ArrActivityReader`), and what a run checks again by it.
 
-The reader half: the checkpoint window math (lookback bootstrap / overlap / clamp),
-the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
-+ item-id filters (no exemption for pearlarr's grabs), and the fail-open contract. The run half runs whole Sonarr
-runs over a library an earlier run cached unchanged, reading the titles the run showed unchanged and the note its
-activity read ended its boot step on. What a run stores of the read for the next run is in `test_arr_run_scan`.
+The reader asks the arr's history for the records since its checkpoint, from a little over a day before it, as the
+two clocks may differ. With no checkpoint it asks from as far back as it reaches. A checkpoint from further back
+than that, or one it can't read, has it ask from there too and have every title checked again, since the history it
+skips may hide a change. It skips the records it has already seen and names the items a file change touched,
+pearlarr's own grabs among them. A failed read names nothing and leaves the checkpoint as it was.
+
+The run half runs whole Sonarr runs over a library an earlier run cached unchanged, reading the titles the run
+showed unchanged and the note its activity read ended its boot step on. What a run stores of the read for the next
+run is in `test_arr_run_scan`.
 """
 
 import logging
