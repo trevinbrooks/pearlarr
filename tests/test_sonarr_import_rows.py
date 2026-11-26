@@ -19,7 +19,6 @@ from pearlarr.wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportP
 
 from .builders import (
     FakeCacheStore,
-    make_config,
     make_import_wait_manager,
     make_sonarr_sync,
     manual_candidate,
@@ -55,7 +54,6 @@ def _two_series_pending_import(
         series_ids=(7, 8),
         windows=((101,), other_window),
         titles=("Show", "Other"),
-        infohash="abc123",
         file_episode_map=mapped,
         seadex_files=list(mapped),
     )
@@ -91,7 +89,7 @@ class TestMultiSeriesImport:
             },
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
-        strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
+        strat = make_sonarr_sync(sonarr=sonarr)
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
 
@@ -130,7 +128,7 @@ class TestMultiSeriesImport:
             },
             candidates=self._candidates(_SHOW_FILE, _OTHER_FILE),
         )
-        strat = make_sonarr_sync(sonarr=sonarr, config=make_config(), cache_store=FakeCacheStore())
+        strat = make_sonarr_sync(sonarr=sonarr)
 
         first = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
         assert first.all_done is False
@@ -309,7 +307,6 @@ class TestImportOverEpisodeFiles:
         # This torrent's E02 file (size 200) is filed on E01 as well. Both rows hold its group at a listed size,
         # but E01's is not its own file, so E01 is still owed and its own file is posted onto it.
         pending = pending_import(
-            infohash="abc123",
             file_episode_map={FIRST_FILE: [101], SECOND_FILE: [102]},
             seadex_files=[FIRST_FILE, SECOND_FILE],
             release_sizes=[100, 200],
@@ -317,9 +314,7 @@ class TestImportOverEpisodeFiles:
         )
         strat, sonarr = make_sonarr_for_import(
             candidates=both_files(),
-            episodes=[
-                sonarr_ep(1, n, ep_id=100 + n, episode_file_id=12, release_group="SubGroup", size=200) for n in (1, 2)
-            ],
+            episodes=[sonarr_ep(1, n, ep_id=100 + n, release_group="SubGroup", size=200) for n in (1, 2)],
         )
 
         result = strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -348,8 +343,6 @@ class TestImportOverEpisodeFiles:
         # torrent pearlarr grabbed for the REST of the season never copies over it. A download already in gets no
         # command at all, not even a rescan.
         pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             guards=OwnedAtGrab(owned_episodes=(SizeMatchedEpisode(101, 700),)),
         )
@@ -368,8 +361,6 @@ class TestImportOverEpisodeFiles:
         # title's guard_facts row alone must feed the loaded pending import's
         # protection decision when the carried-over snapshot drives the import.
         pending = pending_import(
-            infohash="abc123",
-            release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             guards=OwnedAtGrab(entry_groups=("SubGroup", "OtherPick")),
         )
@@ -405,7 +396,7 @@ class TestImportOverEpisodeFiles:
         # a pending import awaiting cleanup whose files are gone re-imports and drops back to an
         # ordinary carryover (the fix's wiring, not a scripted attempt result).
         recording = install_recording_hub()
-        pending = pending_import(infohash="abc123", awaiting_cleanup=True)
+        pending = pending_import(awaiting_cleanup=True)
         store = FakeCacheStore()
         strat, sonarr = make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
