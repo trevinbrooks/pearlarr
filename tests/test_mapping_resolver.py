@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import re
-import sqlite3
+import sys
 import time
 from collections.abc import Callable, Iterator
 from collections.abc import Set as AbstractSet
@@ -35,7 +35,9 @@ from pearlarr.anibridge import (
 )
 from pearlarr.mapping_store import AnimeIdRow, MappingStore
 from pearlarr.mappings import (
+    ANIBRIDGE_MAPPINGS_FILE,
     ANIDB_MAPPINGS_FILE,
+    ANIME_IDS_FILE,
     AnimeIdsByName,
     AnimeIdsRawMapping,
     ExternalIds,
@@ -655,60 +657,54 @@ class TestAnidbSkipTallies:
 
 
 # --------------------------------------------------------------------------- #
-# Hash gate end-to-end: an unchanged source file is not re-parsed
+# The source files and the mappings database
 # --------------------------------------------------------------------------- #
+
+_FROM_FILES = MappingSources(anime=None, anidb=None, anibridge=None)
+_FRIEREN: AnimeIdsByName = {"Sousou no Frieren": {"anilist_id": 154587, "tvdb_id": 424536, "tvdb_season": 1}}
 
 
 class TestSourceHashGate:
-    """The hash gate skips re-parsing an unchanged source file and re-parses only when its content changes."""
+    """A boot indexes a source file again only when its content changed."""
 
     def test_unchanged_file_is_not_reparsed_changed_file_is(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        source = tmp_path / "anime_ids.json"
-        source.write_text(json.dumps({"A": {"anilist_id": 1, "tvdb_id": 10}}))
-        db = str(tmp_path / "mappings.db")
+        anime_ids = tmp_path / ANIME_IDS_FILE
+        anime_ids.write_text(json.dumps(_FRIEREN))
+        (tmp_path / ANIBRIDGE_MAPPINGS_FILE).write_text(
+            json.dumps({"anilist:182255": {"tvdb_show:424536:s2": {"1-10": "1-10"}}})
+        )
+        (tmp_path / ANIDB_MAPPINGS_FILE).write_text(f"<anime-list>{_COWBOY_BEBOP}{_ITS_SPECIALS}</anime-list>")
+        _boot(tmp_path, _FROM_FILES).close()
+        logger = debug_logger("pearlarr-source-hash-gate")
 
-        # Point the resolver at the temp file. It already exists and is fresh, so
-        # _maybe_download never fetches (no network).
-        monkeypatch.setattr(m, "ANIME_IDS_FILE", str(source))
+        with caplog.at_level("DEBUG"):
+            warm = _boot(tmp_path, _FROM_FILES, logger=logger)
 
-        calls = {"n": 0}
-        real_parse = m._parse_anime_mappings
+        assert caplog.messages == [
+            "anime_ids.json unchanged; using cached index",
+            "anime-lists unchanged; using cached index",
+            "anibridge mappings unchanged; using cached index",
+        ]
+        assert warm.resolve(ExternalIds(tvdb=424536)).kept == {
+            154587: TitleMapping(154587, tvdb_season=1),
+            182255: TitleMapping(182255, tvdb_mappings={2: [(1, 10)]}, source=_ANIBRIDGE),
+        }
+        assert warm.anidb_episode_by_tvdb(23, 0) == {0: {1: 1}}
 
-        def counting_parse(path: str) -> AnimeIdsByName:
-            calls["n"] += 1
-            return real_parse(path)
+        anime_ids.write_text(json.dumps({"Sousou no Frieren": {**_FRIEREN["Sousou no Frieren"], "tvdb_season": 2}}))
+        caplog.clear()
+        with caplog.at_level("DEBUG"):
+            changed = _boot(tmp_path, _FROM_FILES, logger=logger)
 
-        monkeypatch.setattr(m, "_parse_anime_mappings", counting_parse)
-
-        def build() -> MappingResolver:
-            return MappingResolver(
-                refresh_days=1,
-                ignore_anilist_ids=set(),
-                web=_WEB,
-                sources=MappingSources(
-                    anime=None,
-                    anidb=False,
-                    anibridge=False,
-                ),
-                mappings_db=db,
-            )
-
-        build().close()
-        assert calls["n"] == 1  # cold: parsed once
-        build().close()
-        assert calls["n"] == 1  # warm + unchanged source hash: served from SQL, no re-parse
-
-        # New content -> source hash changes -> re-parse.
-        source.write_text(json.dumps({"A": {"anilist_id": 2, "tvdb_id": 20}}))
-        resolver = build()
-        try:
-            assert calls["n"] == 2
-            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=20))[2].anilist_id == 2
-            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=10)) == {}  # old content gone
-        finally:
-            resolver.close()
+        assert _untimed(caplog.messages) == [
+            "Parsing + indexing anime_ids.json ...",
+            "Indexed anime_ids.json (1 rows, 0.00s)",
+            "anime-lists unchanged; using cached index",
+            "anibridge mappings unchanged; using cached index",
+        ]
+        assert changed.resolve(ExternalIds(tvdb=424536)).kept[154587] == TitleMapping(154587, tvdb_season=2)
 
 
 class TestConstructionFailureClosesStore:
@@ -746,60 +742,26 @@ class TestConstructionFailureClosesStore:
 
 
 class TestUnwritableDbFallback:
-    """An unwritable on-disk mapping db falls back to `:memory:` with one warning."""
+    """A mappings database that can't be written is rebuilt in memory for the run, with one warning."""
 
-    def test_file_db_write_failure_warns_and_rebuilds_in_memory(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # The first store write (the file-backed db) raises. The :memory: retry
-        # runs the same _build and must serve the mappings as if nothing failed.
-        real_replace = MappingStore.replace_anime_ids
-        calls = {"n": 0}
-
-        def flaky_replace(self: MappingStore, source_hash: str, rows: list[AnimeIdRow]) -> None:
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise sqlite3.OperationalError("attempt to write a readonly database")
-            real_replace(self, source_hash, rows)
-
-        monkeypatch.setattr(MappingStore, "replace_anime_ids", flaky_replace)
-        db = str(tmp_path / "mappings.db")
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod can't make a file read-only to its owner on Windows")
+    def test_file_db_write_failure_warns_and_rebuilds_in_memory(self, tmp_path: Path) -> None:
+        # Inline sources are written on every boot, so the second boot writes to the read-only file.
+        inline = MappingSources(anime=_FRIEREN, anidb=False, anibridge=False)
+        _boot(tmp_path, inline).close()
+        db = tmp_path / "mappings.db"
+        db.chmod(0o444)
         recording = install_recording_hub()
 
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(anime={"x": {"anilist_id": 1, "tvdb_id": 10}}, anidb=False, anibridge=False),
-            mappings_db=db,
-        )
-        try:
-            assert diagnostic_messages(recording, Severity.WARNING) == [
-                (
-                    f"Mappings database at {db} could not be written - rebuilding it "
-                    "in memory for this run (slower boot, no data lost)"
-                ),
-            ]
-            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=10))[1].anilist_id == 1
-        finally:
-            resolver.close()
+        resolver = _boot(tmp_path, inline)
 
-    def test_memory_db_write_failure_reraises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # ":memory:" IS the fallback, so it has none: the error propagates.
-        def broken_replace(self: MappingStore, source_hash: str, rows: list[AnimeIdRow]) -> None:
-            raise sqlite3.OperationalError("disk I/O error")
-
-        monkeypatch.setattr(MappingStore, "replace_anime_ids", broken_replace)
-
-        with pytest.raises(sqlite3.OperationalError):
-            MappingResolver(
-                refresh_days=1,
-                ignore_anilist_ids=set(),
-                web=_WEB,
-                sources=MappingSources(anime={"x": {"anilist_id": 1}}, anidb=False, anibridge=False),
-            )
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            (
+                f"Mappings database at {db} could not be written - rebuilding it "
+                "in memory for this run (slower boot, no data lost)"
+            ),
+        ]
+        assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
 
 
 # --------------------------------------------------------------------------- #
