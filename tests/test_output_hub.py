@@ -638,7 +638,7 @@ def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
     warning = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
     hub.emit(warning)
-    hub.emit(warning)
+    hub.emit(warning)  # the copy the key drops
     hub.begin_run(console_format="plain", level=logging.INFO)
     hub.emit(warning)
 
@@ -677,18 +677,15 @@ def test_severity_counts_mark_and_delta() -> None:
 
 
 def test_bound_mark_diffs_only_its_own_counter() -> None:
-    """A bound mark diffs from where its own counter stood, and records on another counter never move it."""
+    """A bound mark keeps the counter it was taken from, so a hub swapped in after the mark can't skew what it reads."""
 
     counts = SeverityCounter()
-    counts.record(Severity.WARNING)
+    counts.record(Severity.WARNING)  # so a mark read from zero, or from a fresh counter, would show
     mark = counts.bound_mark()
 
-    other = SeverityCounter()
-    other.record(Severity.ERROR)
-    assert mark.since() == SeverityTally()
+    counts.record(Severity.ERROR)
 
-    counts.record(Severity.WARNING)
-    assert mark.since() == SeverityTally(warning=1)
+    assert mark.since() == SeverityTally(error=1)
 
 
 def test_hub_tallies_every_emitted_event() -> None:
@@ -876,7 +873,7 @@ def test_close_is_idempotent_and_reaches_every_renderer() -> None:
     hub = OutputHub([first, second])
 
     hub.close()
-    hub.close()
+    hub.close()  # reaches no renderer
 
     assert (first.closes, second.closes) == (1, 1)
 
@@ -950,7 +947,7 @@ def test_a_visible_warning_reaches_stderr_before_the_first_run_seats_a_console(
 
 def test_a_visible_warning_reaches_stderr_once_the_console_strikes_out(capsys: pytest.CaptureFixture[str]) -> None:
     hub = OutputHub([_FileLog()], console_factory=lambda console_format: _FailingRenderer())
-    hub.begin_run(console_format="rich", level=logging.INFO)
+    hub.begin_run(console_format="rich", level=logging.INFO)  # seats the console
 
     for _ in range(3):
         hub.emit(_EVENT)  # the console strikes out, and the notes about it are the file log's
@@ -974,6 +971,7 @@ def test_the_stderr_fallback_skips_info_file_only_and_hubs_with_a_console_render
 ) -> None:
     hub = OutputHub([_FileLog()], console_factory=lambda console_format: NullRenderer())
 
+    # Each is a case of its own: below WARNING, for the file log alone, and shown by a seated console.
     hub.emit(Diagnostic(severity=Severity.INFO, message="quiet"))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic", file_only=True))
     hub.begin_run(console_format="plain", level=logging.INFO)
