@@ -46,6 +46,7 @@ from .builders import (
     drive_arr_run,
     grab_request,
     make_config,
+    make_entry_record,
     make_run_deps,
     sonarr_file_imported,
 )
@@ -590,44 +591,56 @@ def _invalid_pick(services: ArrRunServices, anilist_id: int) -> None:
     services.report_invalid_selection()
 
 
-def _no_query(services: ArrRunServices, anilist_id: int) -> None:
-    """The check ends having queried nothing, as one that skips an unchanged cached title does."""
-
-    del services, anilist_id
+_PACED_ENTRIES = {anilist_id: make_entry_record(anilist_id=anilist_id) for anilist_id in (1, 2, 3)}
+"""SeaDex's entries of the `_Endings` titles."""
 
 
 class _Endings(FakeStrategy):
-    """A library of one item whose titles 1, 2 and 3 are checked in turn, each ending as `endings` says."""
+    """A library of one item whose titles 1, 2 and 3 are checked in turn, each through the unchanged gate first.
 
-    def __init__(self, services: ArrRunServices, endings: tuple[_Ending, _Ending, _Ending]) -> None:
-        super().__init__(items=[FakeArrItem()], anilist_ids={i: TitleMapping(anilist_id=i) for i in (1, 2, 3)})
+    A title the gate sends on ends its check as `ending` says.
+    """
+
+    def __init__(self, services: ArrRunServices, ending: _Ending) -> None:
+        super().__init__(items=[FakeArrItem()], anilist_ids={i: TitleMapping(anilist_id=i) for i in _PACED_ENTRIES})
         self._services = services
-        self._endings = endings
+        self._ending = ending
 
     @override
     def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        self._endings[anilist_id - 1](self._services, anilist_id)
+        entry = self._services.begin_check(anilist_id)
+        if entry is not None and not self._services.is_unchanged(anilist_id, entry, lambda: ""):
+            self._ending(self._services, anilist_id)
 
 
 class TestPacingPause:
-    """A check that queried owes the `sleep_time` pause, slept once before the next title."""
+    """A check that queried owes the `sleep_time` pause, slept once before the next title.
+
+    A title left unchanged queried nothing and owes none.
+    """
 
     @pytest.mark.parametrize(
-        ("first", "sleeps"),
+        "ending",
         [
-            pytest.param(_grab, [3], id="grab"),
-            pytest.param(_no_releases, [3], id="no-releases"),
-            pytest.param(_invalid_pick, [3], id="invalid-pick"),
-            pytest.param(_no_query, [], id="no-query"),
+            pytest.param(_grab, id="grab"),
+            pytest.param(_no_releases, id="no-releases"),
+            pytest.param(_invalid_pick, id="invalid-pick"),
         ],
     )
-    def test_a_check_that_queried_owes_one_pause_slept_before_the_next_title(
-        self, first: _Ending, sleeps: list[float]
-    ) -> None:
-        # The two titles after the first query nothing, so the first's pause is all the run owes.
+    def test_a_check_that_queried_owes_one_pause_slept_before_the_next_title(self, ending: _Ending) -> None:
+        # An earlier run left titles 2 and 3 unchanged, so the first's pause is all the run owes.
+        cache = FakeCacheStore()
+        for anilist_id in (2, 3):
+            entry = _PACED_ENTRIES[anilist_id]
+            cache.update_cached_title(Arr.SONARR, anilist_id, {"updated_at": entry.updated_at, "url": entry.url})
         clock = FakeClock()
-        deps = make_run_deps(config=make_config(url="http://sonarr", api_key="key", sleep_time=3), clock=clock)
+        deps = make_run_deps(
+            config=make_config(url="http://sonarr", api_key="key", sleep_time=3),
+            cache_store=cache,
+            seadex=FakeSeaDexSource(_PACED_ENTRIES),
+            clock=clock,
+        )
 
-        drive_arr_run(deps, lambda services: _Endings(services, (first, _no_query, _no_query)))
+        drive_arr_run(deps, lambda services: _Endings(services, ending))
 
-        assert clock.sleeps == sleeps
+        assert clock.sleeps == [3]
