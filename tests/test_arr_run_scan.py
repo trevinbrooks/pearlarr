@@ -162,13 +162,13 @@ class TestWhichItemsAreChecked:
 
 
 _FILE_IMPORTED = HistoryRecord(
-    id=1, date="2026-07-06T10:00:00Z", item_id=7, event_type="downloadFolderImported", download_id=None, reason=None
+    id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
 )
-"""Sonarr's history record of a file imported into series 7."""
+"""Sonarr's history record of a file imported into series 3, the one activity a run reads and checkpoints."""
 
 
 def test_an_ignored_title_is_shown_once_by_the_name_of_its_series() -> None:
-    # Series 7 maps AniList 1 and 2, and 2 is ignored. The imported file has the activity read ask for its titles
+    # Series 3 maps AniList 1 and 2, and 2 is ignored. The imported file has the activity read ask for its titles
     # before the scan, as the prefetch does. Title 1, with no SeaDex entry, keeps the series off an undecided case:
     # a series whose only title is ignored shows a no-mapping row too.
     config = make_config(url="http://sonarr", api_key="key", ignore_anilist_ids={2})
@@ -179,7 +179,7 @@ def test_an_ignored_title_is_shown_once_by_the_name_of_its_series() -> None:
             "Frieren Season 2": {"anilist_id": 2, "tvdb_id": 50, "tvdb_season": 2},
         },
     )
-    series = SonarrSeries.model_validate({"id": 7, "title": "Sousou no Frieren", "tvdbId": 50})
+    series = SonarrSeries.model_validate({"id": 3, "title": "Sousou no Frieren", "tvdbId": 50})
     sonarr = FakeSonarrClient(all_series=[series], history_since=[_FILE_IMPORTED])
     recording = install_recording_hub()
 
@@ -312,12 +312,6 @@ class TestBootNotes:
         ]
 
 
-# One import event on series 3, so the activity read has a checkpoint to stage.
-_IMPORT_EVENT = HistoryRecord(
-    id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
-)
-
-
 _OLDER_SELECTION = "an-older-selection"
 """The selection hash an earlier full run stored, under selection settings changed since."""
 
@@ -329,7 +323,7 @@ def _series_3(services: ArrRunServices | None = None) -> FakeStrategy:
         items=[FakeArrItem(item_id=3)],
         anilist_ids={11: TitleMapping(anilist_id=11)},
         services=services,
-        history=[_IMPORT_EVENT],
+        history=[_FILE_IMPORTED],
     )
 
 
@@ -423,7 +417,7 @@ class _OrderFetching(FakeStrategy):
 
     def __init__(self, skyhook: SkyHookGateway) -> None:
         super().__init__(
-            items=[FakeArrItem(item_id=3)], anilist_ids={11: TitleMapping(anilist_id=11)}, history=[_IMPORT_EVENT]
+            items=[FakeArrItem(item_id=3)], anilist_ids={11: TitleMapping(anilist_id=11)}, history=[_FILE_IMPORTED]
         )
         self._skyhook = skyhook
 
