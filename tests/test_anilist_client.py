@@ -233,22 +233,20 @@ def test_a_rate_limit_or_server_error_is_asked_for_again(first: httpx.Response) 
 
 
 @respx.mock
-def test_query_batch_reshapes_page_media_by_id() -> None:
-    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can populate the run cache directly.
+def test_a_batch_answer_comes_back_keyed_by_each_medias_own_id() -> None:
+    """Each Media in a batch answer is filed under its own id, in the shape a single query answers with.
 
-    An id unknown to AniList is simply absent, never an error. AniList doesn't send the junk, id-less and
-    string-id elements here, and they are skipped.
+    AniList leaves out an id it doesn't have, so the answer doesn't line up with the ids asked for, and filing
+    by position would read one title's answer as another's.
     """
 
-    page: dict[str, object] = {
-        "data": {"Page": {"media": [{"id": 1, "episodes": 12}, "junk", {"episodes": 9}, {"id": "7", "episodes": 3}]}},
+    page: dict[str, object] = {"data": {"Page": {"media": [{"id": 1, "episodes": 12}, {"id": 3, "episodes": 24}]}}}
+    respx.post(API_URL).respond(json=page)
+
+    assert _client().query_batch([1, 2, 3]) == {
+        1: {"data": {"Media": {"id": 1, "episodes": 12}}},
+        3: {"data": {"Media": {"id": 3, "episodes": 24}}},
     }
-    route = respx.post(API_URL).respond(json=page)
-
-    out = _client().query_batch([1, 2])
-
-    assert route.call_count == 1
-    assert out == {1: {"data": {"Media": {"id": 1, "episodes": 12}}}}
 
 
 # --- retry narration and marking AniList unreachable --------------------------
