@@ -127,6 +127,14 @@ def _write_data_dir_config(body: str) -> Path:
     return config
 
 
+def _write_current_config(body: str = "") -> Path:
+    """`body` as a current-schema, owner-only config, so a run adds no migration or permissions line of its own."""
+
+    config = _write_data_dir_config(f"config_version: {CONFIG_VERSION}\n{body}")
+    config.chmod(0o600)
+    return config
+
+
 _TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 
 
@@ -431,12 +439,11 @@ class TestConfigInit:
 
 
 class _RunArrsRecorder:
-    """A fake `bootstrap.run_arrs` that records how `run_single` calls it."""
+    """A fake `bootstrap.run_arrs` that records the arrs and wait mode `run_single` asks it for."""
 
     def __init__(self) -> None:
         self.arrs: list[tuple[Arr, int | None]] | None = None
-        self.explicit_selection: bool | None = None
-        self.log_level: str | None = None
+        self.import_wait_mode: ImportWaitMode | None = None
 
     def __call__(
         self,
@@ -452,18 +459,15 @@ class _RunArrsRecorder:
         retry_note: str | None = None,
     ) -> bool:
         self.arrs = arrs
-        self.explicit_selection = explicit_selection
-        self.log_level = log_level
+        self.import_wait_mode = import_wait_mode
         return True
 
 
 class TestRunSingleSelection:
-    """No selection flag = every arr, implicitly. Any flag/id narrows explicitly.
+    """No selection flag asks for every arr. A flag or an id narrows the run to its arr.
 
-    `run_arrs` is faked out, so these pin only the selection wiring: which
-    `(arr, item_id)` pairs are requested and whether the request counts as
-    explicit (an explicit request for an unconfigured arr must refuse rather
-    than skip - that branch is pinned on `configured_arrs` below).
+    `run_arrs` is faked out, so these pin only what the flags ask for. What a
+    run does with an arr that isn't configured is pinned on `configured_arrs` below.
     """
 
     @pytest.fixture
@@ -472,30 +476,30 @@ class TestRunSingleSelection:
         monkeypatch.setattr("pearlarr.bootstrap.run_arrs", recorder)
         return recorder
 
-    def test_no_selection_requests_both_arrs_implicitly(self, recorder: _RunArrsRecorder) -> None:
-        assert run_single() is True
-        assert recorder.arrs == [(Arr.RADARR, None), (Arr.SONARR, None)]
-        assert recorder.explicit_selection is False
-
-    def test_a_module_flag_narrows_and_is_explicit(self, recorder: _RunArrsRecorder) -> None:
-        assert run_single(sonarr=True) is True
-        assert recorder.arrs == [(Arr.SONARR, None)]
-        assert recorder.explicit_selection is True
-
-    def test_an_id_implies_its_arr(self, recorder: _RunArrsRecorder) -> None:
-        assert run_single(tmdb_id=42) is True
-        assert recorder.arrs == [(Arr.RADARR, 42)]
-        assert recorder.explicit_selection is True
-
-    def test_the_tmdb_id_flag_selects_a_movie(self, recorder: _RunArrsRecorder) -> None:
-        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--tmdb-id", "42"])
+    @pytest.mark.parametrize(
+        ("flags", "arrs"),
+        [
+            pytest.param([], [(Arr.RADARR, None), (Arr.SONARR, None)], id="no-flag"),
+            pytest.param(["--sonarr"], [(Arr.SONARR, None)], id="sonarr"),
+            pytest.param(["--radarr"], [(Arr.RADARR, None)], id="radarr"),
+            pytest.param(["--tmdb-id", "42"], [(Arr.RADARR, 42)], id="tmdb-id"),
+            pytest.param(["--tvdb-id", "7"], [(Arr.SONARR, 7)], id="tvdb-id"),
+        ],
+    )
+    def test_the_flags_select_the_arrs(
+        self,
+        recorder: _RunArrsRecorder,
+        flags: list[str],
+        arrs: list[tuple[Arr, int | None]],
+    ) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", *flags])
         assert result.exit_code == 0
-        assert recorder.arrs == [(Arr.RADARR, 42)]
+        assert recorder.arrs == arrs
 
-    def test_the_tvdb_id_flag_selects_a_series(self, recorder: _RunArrsRecorder) -> None:
-        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--tvdb-id", "7"])
+    def test_the_wait_mode_flag_reaches_the_run(self, recorder: _RunArrsRecorder) -> None:
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--import-wait-mode", "off"])
         assert result.exit_code == 0
-        assert recorder.arrs == [(Arr.SONARR, 7)]
+        assert recorder.import_wait_mode is ImportWaitMode.OFF
 
     @pytest.mark.parametrize("flag", ["--movie-id", "--series-id"])
     def test_the_old_id_flags_are_usage_errors(self, recorder: _RunArrsRecorder, flag: str) -> None:
@@ -507,10 +511,6 @@ class TestRunSingleSelection:
         result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--import-wait-mode", "hybrid"])
         assert result.exit_code == 2
         assert recorder.arrs is None
-
-    def test_the_log_level_flag_is_threaded_through(self, recorder: _RunArrsRecorder) -> None:
-        assert run_single(log_level=LogLevel.DEBUG) is True
-        assert recorder.log_level == LogLevel.DEBUG
 
 
 def _config_with(*, sonarr: bool = False, radarr: bool = False) -> AppConfig:
@@ -574,34 +574,35 @@ class TestConfiguredArrs:
         assert error.severity is Severity.ERROR
         assert "set radarr.api_key in config.yml" in error.message
 
-    def test_explicit_selection_of_an_unconfigured_arr_refuses(self, recording: RecordingHub) -> None:
-        kept = configured_arrs(
-            [ArrTarget(Arr.RADARR, 42)],
-            _config_with(sonarr=True),
-            explicit=True,
-            config_path="config.yml",
-        )
-        assert kept is None
-        (error,) = recording.of_type(Diagnostic)
-        assert error.severity is Severity.ERROR
-        assert "radarr.url" in error.message
-        # Prose subject capitalized. The dotted keys above stay lowercase.
-        assert error.message.startswith("Radarr was selected but is not configured")
+    def test_explicit_selection_of_an_unconfigured_arr_refuses(self) -> None:
+        # A Sonarr-only setup asked for Radarr by flag: a config mistake, so
+        # nothing runs, not even the configured Sonarr.
+        config = _write_current_config("sonarr:\n  url: http://127.0.0.1:9\n  api_key: k\n")
 
-    def test_nothing_configured_reports_and_refuses(self, recording: RecordingHub) -> None:
-        kept = configured_arrs(
-            [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
-            _config_with(),
-            explicit=False,
-            config_path="config.yml",
+        result = _invoke_offline("run", "single", "--radarr")
+
+        assert result.exit_code == 1
+        assert _lines(result.stdout)[-1] == (
+            f"ERROR [Pearlarr] Radarr was selected but is not configured - set radarr.url and radarr.api_key "
+            f"in {config} during=boot"
         )
-        assert kept is None
-        # Both per-arr skip notes precede the refusal. The ERROR is the verdict.
-        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == (
-            "Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or radarr.url and "
-            "radarr.api_key, in config.yml"
-        )
+
+    def test_nothing_configured_reports_and_refuses(self) -> None:
+        # The refusal comes before the mapping sources are fetched: a run with
+        # nothing to do never downloads them (`_invoke_offline` fails on any request).
+        config = _write_current_config()
+
+        result = _invoke_offline("run", "single")
+
+        assert result.exit_code == 1
+        assert _lines(result.stdout)[-3:] == [
+            "INFO [Pearlarr] Radarr not configured - not run during=boot",
+            "INFO [Pearlarr] Sonarr not configured - not run during=boot",
+            (
+                "ERROR [Pearlarr] Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, "
+                f"or radarr.url and radarr.api_key, in {config} during=boot"
+            ),
+        ]
 
     def test_fully_configured_passes_through_unchanged(self, recording: RecordingHub) -> None:
         arrs: list[ArrTarget] = [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR, 7)]
@@ -741,26 +742,6 @@ class TestRunFailuresAreCleanAndNonzero:
         out = capsys.readouterr().out
         assert "Invalid configuration" in out
         assert "sonar" in out
-
-
-class TestSelectionSettlesBeforeMappingFetch:
-    """A run with nothing configured fails fast on the selection check, before any mapping source is fetched."""
-
-    def test_nothing_configured_fails_before_the_mapping_fetch(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        # A run with nothing to do must fail fast on the selection check, not
-        # download/parse the (large) mapping sources first.
-        def fail_build(*args: object, **kwargs: object) -> NoReturn:
-            raise AssertionError("mapping sources must not be fetched when nothing can run")
-
-        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", fail_build)
-        _write_data_dir_config("")  # valid config, neither arr configured
-
-        assert run_single() is False
-        capsys.readouterr()  # swallow the boot banner + error line
 
 
 class TestConfigInspection:
