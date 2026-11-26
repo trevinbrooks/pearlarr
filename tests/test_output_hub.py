@@ -10,7 +10,9 @@ run without the hub lock, concurrent emits hand off to the active drainer, and
 lifecycle calls wait out an in-flight drain.
 """
 
+import io
 import logging
+import sys
 import threading
 from typing import ClassVar, override
 
@@ -46,10 +48,28 @@ from .fakes import RecordingHub, RecordingRenderer, install_recording_hub
 _EVENT = PearlarrStarted(version="v1.0.0", data_dir="/data")
 
 
-class _FailingRenderer(Renderer):
-    """A renderer whose handle always raises (the containment test double)."""
+class _QuietRenderer(Renderer):
+    """A renderer that does nothing. Each double below overrides only what it does differently."""
 
-    writes_file_only: ClassVar[bool] = False
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        pass
+
+    @override
+    def begin_run(self) -> None:
+        pass
+
+    @override
+    def set_level(self, level: int) -> None:
+        pass
+
+    @override
+    def close(self) -> None:
+        pass
+
+
+class _FailingRenderer(_QuietRenderer):
+    """A renderer whose handle always raises (the containment test double)."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -59,14 +79,6 @@ class _FailingRenderer(Renderer):
     def handle(self, event: Event, when: float) -> None:
         self.calls += 1
         raise RuntimeError("render bug")
-
-    @override
-    def begin_run(self) -> None:
-        pass
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
 
     @override
     def close(self) -> None:
@@ -100,10 +112,8 @@ class _FailingCloseRenderer(_FailingRenderer):
         raise RuntimeError("close bug")
 
 
-class _EmittingRenderer(Renderer):
+class _EmittingRenderer(_QuietRenderer):
     """A renderer that emits a follow-up Diagnostic from inside handle (once)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
@@ -114,18 +124,6 @@ class _EmittingRenderer(Renderer):
         if not self.emitted and self.hub is not None:
             self.emitted = True
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="re-entrant"))
-
-    @override
-    def begin_run(self) -> None:
-        pass
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
 
 
 class _DoubleEmittingRenderer(_EmittingRenderer):
@@ -139,10 +137,8 @@ class _DoubleEmittingRenderer(_EmittingRenderer):
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="second"))
 
 
-class _LockProbeRenderer(Renderer):
+class _LockProbeRenderer(_QuietRenderer):
     """`handle()` checks the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
@@ -166,27 +162,13 @@ class _LockProbeRenderer(Renderer):
         helper.join(timeout=30.0)
         self.lock_was_free.extend(acquired)
 
-    @override
-    def begin_run(self) -> None:
-        pass
 
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
-
-
-class _GatedRenderer(Renderer):
+class _GatedRenderer(_QuietRenderer):
     """Blocks inside `handle` (on the first event only) until released.
 
     Records each handled event with its handling thread plus lifecycle calls,
     in one order log.
     """
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.entered = threading.Event()
@@ -211,19 +193,9 @@ class _GatedRenderer(Renderer):
     def begin_run(self) -> None:
         self.log.append("cycle")
 
-    @override
-    def set_level(self, level: int) -> None:
-        pass
 
-    @override
-    def close(self) -> None:
-        pass
-
-
-class _InterruptOnceRenderer(Renderer):
+class _InterruptOnceRenderer(_QuietRenderer):
     """Raises KeyboardInterrupt on the first handle only (the drain-lock recovery check)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.calls = 0
@@ -234,27 +206,13 @@ class _InterruptOnceRenderer(Renderer):
         if self.calls == 1:
             raise KeyboardInterrupt
 
-    @override
-    def begin_run(self) -> None:
-        pass
 
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
-
-
-class _ReArmableGate(Renderer):
+class _ReArmableGate(_QuietRenderer):
     """Blocks inside `handle` once per active episode until released.
 
     `arm()` restarts it for the next episode - the overflow-note-per-episode
     reset check.
     """
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.entered = threading.Event()
@@ -272,18 +230,6 @@ class _ReArmableGate(Renderer):
             self._armed = False
             self.entered.set()
             assert self.release.wait(timeout=30.0), "gate never released"
-
-    @override
-    def begin_run(self) -> None:
-        pass
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
 
 
 # --- dispatch ---------------------------------------------------------------------
@@ -308,29 +254,22 @@ def test_null_renderer_satisfies_the_protocol() -> None:
     hub.close()
 
 
-class _FileishRecorder(Renderer):
-    """A recording survivor that claims to be the file renderer (a fake FileLogRenderer)."""
+class _FileLog(_QuietRenderer):
+    """A file log renderer: keeps every event it's handed."""
 
     writes_file_only: ClassVar[bool] = True
 
     def __init__(self) -> None:
         self.events: list[Event] = []
+        self.closed = False
 
     @override
     def handle(self, event: Event, when: float) -> None:
         self.events.append(event)
 
     @override
-    def begin_run(self) -> None:
-        pass
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 class _FailingFileish(_FailingRenderer):
@@ -339,10 +278,8 @@ class _FailingFileish(_FailingRenderer):
     writes_file_only: ClassVar[bool] = True
 
 
-class _LifecycleEmitter(Renderer):
+class _LifecycleEmitter(_QuietRenderer):
     """begin_cycle emits into the hub (the bridge-adoption re-entrancy shape)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
@@ -359,24 +296,14 @@ class _LifecycleEmitter(Renderer):
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
             self.seen_during_run = len(self.events)
 
-    @override
-    def set_level(self, level: int) -> None:
-        pass
 
-    @override
-    def close(self) -> None:
-        pass
-
-
-class _EmitThenInterrupt(Renderer):
+class _EmitThenInterrupt(_QuietRenderer):
     """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
 
     This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
     exit line. The repeat raise models a hostile renderer on the flush's
     best-effort re-dispatch).
     """
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
@@ -390,24 +317,12 @@ class _EmitThenInterrupt(Renderer):
                 self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
             raise KeyboardInterrupt
 
-    @override
-    def begin_run(self) -> None:
-        pass
-
-    @override
-    def set_level(self, level: int) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
-
 
 # --- containment --------------------------------------------------------------------
 
 
 def test_a_raising_renderer_never_breaks_the_survivors() -> None:
-    flaky, survivor = _FailingRenderer(), _FileishRecorder()
+    flaky, survivor = _FailingRenderer(), _FileLog()
     hub = OutputHub([flaky, survivor])
 
     hub.emit(_EVENT)
@@ -552,7 +467,7 @@ def test_keyboard_interrupt_still_propagates() -> None:
 
 
 def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> None:
-    flaky, survivor = _FailingRenderer(), _FileishRecorder()
+    flaky, survivor = _FailingRenderer(), _FileLog()
     hub = OutputHub([flaky, survivor])
     mark = hub.counts.mark()
 
@@ -999,7 +914,7 @@ def test_visible_warnings_reach_stderr_while_no_console_renderer_is_active(capsy
     A visible WARNING+ diagnostic must still reach a human, via stderr.
     """
 
-    hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
+    hub = OutputHub([_FileLog()], console_factory=lambda console_format: NullRenderer())
 
     hub.emit(Diagnostic(severity=Severity.CRITICAL, message="invalid level", origin="app"))
 
@@ -1009,7 +924,7 @@ def test_visible_warnings_reach_stderr_while_no_console_renderer_is_active(capsy
 def test_the_stderr_fallback_skips_info_file_only_and_hubs_with_a_console_renderer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
+    hub = OutputHub([_FileLog()], console_factory=lambda console_format: NullRenderer())
 
     hub.emit(Diagnostic(severity=Severity.INFO, message="quiet"))
     hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic", file_only=True))
@@ -1079,7 +994,7 @@ def test_begin_run_swaps_the_console_renderer_only_on_format_change() -> None:
 
 
 def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file_only() -> None:
-    console, renderer = RecordingRenderer(), _FileishRecorder()
+    console, renderer = RecordingRenderer(), _FileLog()
 
     def factory(console_format: LogFormat) -> Renderer:
         raise RuntimeError("no tty")
@@ -1194,6 +1109,21 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
     assert hub.counts.counts_since(mark).warning == 1
 
 
+class _LifecycleCaller(_QuietRenderer):
+    """On the first PearlarrStarted it's handed, emits a follow-up and then calls `set_level` from inside `handle`."""
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+        self._fired = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if isinstance(event, PearlarrStarted) and self.hub is not None and not self._fired:
+            self._fired = True
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
+            self.hub.set_level(logging.WARNING)
+
+
 def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
     """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's drain lock.
 
@@ -1201,34 +1131,6 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order()
     """
 
     recorder = RecordingRenderer()
-
-    class _LifecycleCaller(Renderer):
-        writes_file_only: ClassVar[bool] = False
-
-        def __init__(self) -> None:
-            self.hub: OutputHub | None = None
-            self._fired = False
-
-        @override
-        def handle(self, event: Event, when: float) -> None:
-            del when
-            if isinstance(event, PearlarrStarted) and self.hub is not None and not self._fired:
-                self._fired = True
-                self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
-                self.hub.set_level(logging.WARNING)
-
-        @override
-        def begin_run(self) -> None:
-            pass
-
-        @override
-        def set_level(self, level: int) -> None:
-            pass
-
-        @override
-        def close(self) -> None:
-            pass
-
     caller = _LifecycleCaller()
     hub = OutputHub([caller, recorder])
     caller.hub = hub
@@ -1245,32 +1147,40 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order()
     assert hub._drainer is None
 
 
-def test_a_broken_stderr_never_raises_through_emit() -> None:
+class _BrokenStderr(io.StringIO):
+    """A stderr whose pipe is gone."""
+
+    @override
+    def write(self, s: str) -> int:
+        raise BrokenPipeError
+
+
+def test_a_broken_stderr_never_raises_through_emit(monkeypatch: pytest.MonkeyPatch) -> None:
     """The stderr fallback is contained like every renderer write.
 
     A broken pipe on stderr must not abort the run (the emit-never-raises
     contract).
     """
 
-    class _BrokenStderr:
-        def write(self, text: str) -> int:
-            raise BrokenPipeError
-
-        def flush(self) -> None:
-            raise BrokenPipeError
-
     hub = OutputHub([], console_factory=lambda console_format: NullRenderer())
     # No begin_run: the console renderer is inactive, so the fallback path fires.
-    import sys
+    monkeypatch.setattr(sys, "stderr", _BrokenStderr())
 
-    original = sys.stderr
-    sys.stderr = _BrokenStderr()  # type: ignore[assignment]
-    try:
-        hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
-    finally:
-        sys.stderr = original
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
 
     assert hub.counts.mark().warning == 1  # emitted, counted, contained
+
+
+class _NoisyCloser(_QuietRenderer):
+    """Emits a file-only teardown note from inside its own `close`."""
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+
+    @override
+    def close(self) -> None:
+        if self.hub is not None:
+            self.hub.emit(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
 
 
 def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
@@ -1280,65 +1190,16 @@ def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it
     teardown failure) still reaches the file.
     """
 
-    class _FileRecorder(Renderer):
-        writes_file_only: ClassVar[bool] = True
-
-        def __init__(self) -> None:
-            self.handled: list[Event] = []
-            self.closed = False
-
-        @override
-        def handle(self, event: Event, when: float) -> None:
-            del when
-            self.handled.append(event)
-
-        @override
-        def begin_run(self) -> None:
-            pass
-
-        @override
-        def set_level(self, level: int) -> None:
-            pass
-
-        @override
-        def close(self) -> None:
-            self.closed = True
-
-    class _NoisyCloser(Renderer):
-        writes_file_only: ClassVar[bool] = False
-
-        def __init__(self) -> None:
-            self.hub: OutputHub | None = None
-
-        @override
-        def handle(self, event: Event, when: float) -> None:
-            pass
-
-        @override
-        def begin_run(self) -> None:
-            pass
-
-        @override
-        def set_level(self, level: int) -> None:
-            pass
-
-        @override
-        def close(self) -> None:
-            if self.hub is not None:
-                self.hub.emit(
-                    Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True),
-                )
-
-    file_recorder, noisy = _FileRecorder(), _NoisyCloser()
+    file_recorder, noisy = _FileLog(), _NoisyCloser()
     hub = OutputHub([file_recorder, noisy])
     noisy.hub = hub
 
     hub.close()
 
-    assert [d.message for d in file_recorder.handled if isinstance(d, Diagnostic)] == ["teardown failed"]
+    assert [d.message for d in file_recorder.events if isinstance(d, Diagnostic)] == ["teardown failed"]
     assert file_recorder.closed
     hub.emit(_EVENT)  # fully closed: drops silently
-    assert not any(isinstance(e, PearlarrStarted) for e in file_recorder.handled)
+    assert not any(isinstance(e, PearlarrStarted) for e in file_recorder.events)
 
 
 def test_begin_run_applies_the_level_to_a_fresh_console_exactly_once() -> None:
@@ -1347,29 +1208,7 @@ def test_begin_run_applies_the_level_to_a_fresh_console_exactly_once() -> None:
     One bug must cost the fresh console ONE strike, not two.
     """
 
-    class _LevelRecorder(Renderer):
-        writes_file_only: ClassVar[bool] = False
-
-        def __init__(self) -> None:
-            self.levels: list[int] = []
-
-        @override
-        def handle(self, event: Event, when: float) -> None:
-            pass
-
-        @override
-        def begin_run(self) -> None:
-            pass
-
-        @override
-        def set_level(self, level: int) -> None:
-            self.levels.append(level)
-
-        @override
-        def close(self) -> None:
-            pass
-
-    fresh = _LevelRecorder()
+    fresh = RecordingRenderer()
     hub = OutputHub([], console_factory=lambda console_format: fresh)
 
     hub.begin_run(console_format="rich", level=logging.DEBUG)
