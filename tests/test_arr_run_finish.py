@@ -149,7 +149,7 @@ class TestWhatARunShows:
 
     def test_a_radarr_run_looks_at_its_imports_before_the_summary_in_blocking_mode(self, tmp_path: Path) -> None:
         # Radarr has no blocking wait, so the deferred wait is the only look its pending imports get. It stores a
-        # movie's pending import on series 0, with no episode map.
+        # movie's pending import on series 0, with no episode map or SeaDex file names.
         cache = tmp_path / "cache.db"
         movie = pending_import(infohash="h", series_id=0, file_episode_map={}, seadex_files=())
         _cache_left_with(cache, Arr.RADARR, movie)
