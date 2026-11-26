@@ -117,7 +117,7 @@ from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
-from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
+from pearlarr.torrent_service import TorrentService
 from pearlarr.tvdb_orders import AIRED_ORDER, NO_ORDERS, CachedOrders, EpisodeDetails, OrderRow, OrdersByName
 from pearlarr.wait_types import (
     NO_HAND_IMPORT_FILES,
@@ -766,35 +766,6 @@ def sonarr_client_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-don
     ]
 
 
-def _real_torrents(logger: logging.Logger, web: httpx.Client, categories: ArrCategoryResolver) -> TorrentService:
-    """A real, client-less `TorrentService` (`qbit=None` -> dry-run no-op add)."""
-
-    return TorrentService(qbit=None, web=web, categories=categories, tags=[], logger=logger)
-
-
-def make_services(**overrides: Any) -> ArrRunServices:
-    """A bare `ArrRunServices` carrying only the attributes its methods read."""
-
-    logger = make_logger()
-
-    config = _split_config(overrides)
-    defaults: dict[str, Any] = {
-        "logger": logger,
-        "_config": config,
-        # The real __init__ always sets the authoritative arr and an ArrRunState. Override _state=... for a run state.
-        "arr": Arr.SONARR,
-        "_state": ArrRunState(arr=Arr.SONARR),
-        # The real __init__ mints these too. Without them the dirty-aware / selection-aware skip predicates fail.
-        "_dirty_anilist_ids": set[int](),
-        "_selection_changed": False,
-        "_clock": FakeClock(),
-        # `bind_arr_run` tells the torrent service who imports.
-        "_torrents": _real_torrents(logger, httpx.Client(), make_categories()),
-    }
-    defaults.update(overrides)
-    return make_bare_instance(ArrRunServices, **defaults)
-
-
 def make_resolver(config: AppConfig, web: httpx.Client, *, anime_ids: AnimeIdsByName | None = None) -> MappingResolver:
     """A real resolver over the Anime-IDs rows in `anime_ids`, given inline, and none by default.
 
@@ -925,51 +896,6 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     return SeadexReleaseFilter(deps=deps, state=state)
 
 
-# A truthy placeholder for a logged-in qBittorrent client, so is_dry_run() is False.
-CLIENT_SENTINEL = object()
-
-
-def _lower_hash(infohash: str | None) -> str | None:
-    """A scripted hash as the release carries it (lowercased)."""
-
-    return None if infohash is None else infohash.lower()
-
-
-class FakeTorrents:
-    """Mimics `TorrentService.add`: a per-hash scripted `(outcome, name)` or full `AddResult`.
-
-    It records each release's hash in `calls` and whether it was asked as a dry run in `dry_runs`.
-    """
-
-    def __init__(
-        self,
-        by_hash: dict[str | None, tuple[AddStatus, str | None] | AddResult],
-        *,
-        raises: dict[str | None, Exception] | None = None,
-    ) -> None:
-        # The SeaDex boundary lowercases hashes, so a scripted mixed-case hash is read lowercased too.
-        self._by_hash = {_lower_hash(h): scripted for h, scripted in by_hash.items()}
-        self._raises = {_lower_hash(h): exc for h, exc in (raises or {}).items()}
-        self.calls: list[str | None] = []
-        self.dry_runs: list[bool] = []
-
-    def add(
-        self,
-        *,
-        item: Release,
-        dry_run: bool,
-    ) -> AddResult:
-        """Return the scripted `AddResult` for the release's infohash, or raise its scripted error."""
-
-        infohash = item.infohash
-        self.calls.append(infohash)
-        self.dry_runs.append(dry_run)
-        if infohash in self._raises:
-            raise self._raises[infohash]
-        scripted = self._by_hash[infohash]
-        return scripted if isinstance(scripted, AddResult) else AddResult(*scripted)
-
-
 def one_release_dict(*, srg: str, infohash: str) -> SeadexDict:
     """A one-release `SeadexDict` marked to grab, its tracker pinned to `NYAA`."""
 
@@ -1058,38 +984,12 @@ def grab_request(**overrides: Any) -> GrabRequest:
     return GrabRequest(**defaults)
 
 
-def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
-    """A bare `GrabPipeline` carrying only what its methods read, `_state` a blocking run, not a dry run.
+def make_grab_pipeline(deps: ArrRunDeps, state: ArrRunState) -> GrabPipeline:
+    """A real `GrabPipeline` over `deps` on `state`, its pending import store bound to `state` as `ArrRunServices` binds it."""
 
-    Its AniList client is scripted and knows no title unless `anilist_client` is given, so no lookup leaves the test.
-    """
-
-    config = _split_config(overrides)
-    logger = make_logger()
-    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
-    web = httpx.Client()
-    anilist_client = overrides.pop("anilist_client", None) or ScriptedAniListClient(title=None)
-    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=anilist_client)
-    defaults: dict[str, Any] = {
-        "_config": config,
-        "_planner": make_planner(),
-        "cache_store": cache_store,
-        "_torrents": _real_torrents(logger, web, make_categories(config)),
-        "_anilist": anilist,
-        # No discord/webhook url: a disabled, best-effort no-op notifier.
-        "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),
-        "_reporter": _real_reporter(cache_store, anilist),
-        "logger": logger,
-        "qbit": CLIENT_SENTINEL,
-        "_state": ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
-    }
-    defaults.update(overrides)
-    if "_pending_imports" not in defaults:
-        # The pending import store binds the FINAL store + state, exactly as the real ctor + bind_arr_run do.
-        pending_imports = PendingImportStore(defaults["cache_store"])
-        pending_imports.bind_arr_run(defaults["_state"])
-        defaults["_pending_imports"] = pending_imports
-    return make_bare_instance(GrabPipeline, **defaults)
+    pending_imports = PendingImportStore(deps.cache_store)
+    pending_imports.bind_arr_run(state)
+    return GrabPipeline(deps=deps, state=state, pending_imports=pending_imports)
 
 
 def make_import_wait_manager(deps: ArrRunDeps, *, state: ArrRunState, strategy: ImportCompleter) -> ImportWaitManager:

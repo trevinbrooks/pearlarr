@@ -17,16 +17,15 @@ from pearlarr.import_wait import ImportWaitManager
 from pearlarr.output import Severity, TitleHeader
 from pearlarr.output.events import TitleState
 from pearlarr.pending_import import PendingImport
-from pearlarr.torrent_service import AddStatus
 from pearlarr.wait_types import NO_PROGRESS, ImportProgress, ImportWaitMode, Outcome, PendingImportState
 
 from .builders import (
     SEP,
     FakeCacheStore,
-    FakeTorrents,
     attempt_result,
     grab_request,
     make_grab_pipeline,
+    make_run_deps,
     one_release_dict,
     pending_import,
     pending_import_update,
@@ -177,11 +176,10 @@ class TestReportImportsForSeries:
         # The grab starts its pending import and its title block reports it, so the series report leaves it be.
         state = ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING)
         store = FakeCacheStore()
-        pipeline = make_grab_pipeline(
-            _torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}), cache_store=store, _state=state
-        )
+        qbit = FakeQbit({"h1": [FakeTorrent(is_complete=True, content_path="/d", name="Show")]})
+        pipeline = make_grab_pipeline(make_run_deps(cache_store=store, qbit=qbit.client()), state)
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h1": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=qbit,
             strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)]),
             store=store,
             state=state,
