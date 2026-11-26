@@ -807,13 +807,15 @@ def make_run_deps(
     xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
     anime_ids: AnimeIdsByName | None = None,
+    anilist_client: AniListClient | None = None,
 ) -> ArrRunDeps:
     """A real `ArrRunDeps` for an `arr` run over typed fakes, built the way a run builds it.
 
     With no `config`, the arr's url and api_key are set and nothing else. `qbit` is the run's qBittorrent client,
     held by the deps and the torrent service both. None, the default, is a run with no qBittorrent configured (a
     dry run). The notifier posts to the config's Discord and wait webhook URLs, a no-op when neither is set.
-    Its AniList client is scripted and knows no title, and the reporter shares its gateway, as a run's does.
+    Its AniList client is `anilist_client`, by default a scripted one that knows no title, and the reporter shares
+    its gateway, as a run's does.
     `categories` swaps in a resolver that reads the arr's clients, in place of the config passthrough.
 
     The mappings are the Anime-IDs rows in `anime_ids`, given inline as a config can give them, and none by default.
@@ -828,7 +830,9 @@ def make_run_deps(
         )
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
-    anilist = AniListGateway(cache_store=cache_store, logger=logger, client=ScriptedAniListClient(title=None))
+    anilist = AniListGateway(
+        cache_store=cache_store, logger=logger, client=anilist_client or ScriptedAniListClient(title=None)
+    )
     # One shared client backs both deps.http and deps.web. conftest's close_leaked_handles closes it at teardown.
     http = httpx.Client()
     # No transport: the config passthrough (no download-client fetch under test). Shared with
