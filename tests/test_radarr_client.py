@@ -52,7 +52,7 @@ def test_movie_files_decodes_resources_and_builds_request() -> None:
     files = _make_client().movie_files(7)
 
     assert files == [MovieFile(release_group="SubsPlease", size=123), MovieFile(release_group=None, size=456)]
-    assert route.calls.last.request.url.params["movieId"] == "7"
+    assert dict(route.calls.last.request.url.params) == {"movieId": "7"}
 
 
 @respx.mock

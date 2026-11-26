@@ -124,7 +124,7 @@ def test_all_series_all_invalid_payload_raises_contract_error() -> None:
 def test_queue_decodes_records_and_builds_request() -> None:
     """`queue()` pulls the whole queue in one paged request and narrows each record to a `QueueRecord` view."""
 
-    route = respx.get(f"{_BASE}/queue", params={"page": "1"}).respond(json=sonarr_fixture("queue.json"))
+    route = respx.get(f"{_BASE}/queue").respond(json=sonarr_fixture("queue.json"))
     client = _make_client()
     records = client.queue()
 
@@ -136,9 +136,11 @@ def test_queue_decodes_records_and_builds_request() -> None:
         state="downloading",
         status="ok",
     )
-    url = str(route.calls.last.request.url)
-    assert "pageSize=1000" in url
-    assert "includeUnknownSeriesItems=true" in url
+    assert dict(route.calls.last.request.url.params) == {
+        "page": "1",
+        "pageSize": "1000",
+        "includeUnknownSeriesItems": "true",
+    }
 
 
 def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
@@ -201,9 +203,7 @@ def test_queue_delete_builds_request() -> None:
     client = _make_client()
 
     assert client.queue_delete(1516314797) is DeleteOutcome.OK
-    url = str(route.calls.last.request.url)
-    assert "removeFromClient=false" in url
-    assert "blocklist=false" in url
+    assert dict(route.calls.last.request.url.params) == {"removeFromClient": "false", "blocklist": "false"}
 
 
 @respx.mock
@@ -237,10 +237,11 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     # sorted: the lone S00 special leads, S01E12 trails (decode + order in one).
     assert (episodes[0].season_number, episodes[0].episode_number, episodes[0].id) == (0, 1, 8475)
     assert (episodes[-1].season_number, episodes[-1].episode_number, episodes[-1].id) == (1, 12, 8487)
-    url = str(route.calls.last.request.url)
-    assert "seriesId=228" in url
-    assert "includeImages=false" in url
-    assert "includeEpisodeFile=true" in url
+    assert dict(route.calls.last.request.url.params) == {
+        "seriesId": "228",
+        "includeImages": "false",
+        "includeEpisodeFile": "true",
+    }
 
 
 @respx.mock
@@ -307,8 +308,6 @@ def test_parse_decodes_season_episode() -> None:
     assert info == ParsedFileInfo(
         season_number=1,
         episode_numbers=(1,),
-        absolute_episode_numbers=(),
-        special=False,
         series_title="Saijaku Muhai no Bahamut",
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
         series_id=228,
@@ -332,7 +331,6 @@ def test_parse_decodes_absolute() -> None:
         season_number=0,
         episode_numbers=(),
         absolute_episode_numbers=(14,),
-        special=False,
         series_title="To Glimmer-Zu",
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=14, id=2886),),
         series_id=72,
@@ -480,9 +478,10 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     )
     assert first.quality is not None
     assert first.rejections[0].reason == "Unknown Series"
-    url = str(route.calls.last.request.url)
-    assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
-    assert "filterExistingFiles=false" in url
+    assert dict(route.calls.last.request.url.params) == {
+        "downloadId": "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+        "filterExistingFiles": "false",
+    }
     # The fetch must use the long ManualImport timeout (slow remote mounts).
     timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
     assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
@@ -524,11 +523,10 @@ def test_folder_fetch_sends_folder_and_never_download_or_series_id() -> None:
 
     assert candidates is not None
     assert len(candidates) == 2
-    url = str(route.calls.last.request.url)
-    assert "folder=%2Fremote%2Ftorrents%2FShow+S01" in url
-    assert "filterExistingFiles=false" in url
-    assert "downloadId" not in url
-    assert "seriesId" not in url
+    assert dict(route.calls.last.request.url.params) == {
+        "folder": "/remote/torrents/Show S01",
+        "filterExistingFiles": "false",
+    }
     # The fetch must use the long ManualImport timeout (slow remote mounts).
     timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
     assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
@@ -581,12 +579,13 @@ def test_history_for_download_decodes_and_pins_paging() -> None:
     assert page is not None
     assert [r.event_type for r in page.records] == ["downloadFolderImported", "grabbed"]
     assert page.records[0].date == "2026-06-20T06:15:30Z"
-    url = str(route.calls.last.request.url)
-    assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
-    assert "page=1" in url
-    assert "pageSize=100" in url
-    assert "sortKey=date" in url
-    assert "sortDirection=descending" in url
+    assert dict(route.calls.last.request.url.params) == {
+        "downloadId": "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+        "page": "1",
+        "pageSize": "100",
+        "sortKey": "date",
+        "sortDirection": "descending",
+    }
 
 
 @respx.mock
