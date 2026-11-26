@@ -6,11 +6,14 @@
 """Tests for the Pearlarr CLI commands, checked by what a user sees.
 
 Most tests run the real CLI through `CliRunner` and read its exit code, its
-stdout and stderr, the log file, and the files it writes or leaves alone. A run
-goes through `_invoke_offline`, which refuses every outbound request, so a run
-that gets past where it should stop fails instead of reaching the network. The
-cache and config commands are also called as plain functions, which return the
-bool the CLI turns into its exit code.
+stdout and stderr, the log file, and the files it writes or leaves alone. A
+test calls the command's function instead, which returns the bool the CLI
+turns into its exit code, when a run would go on to an arr, when the runner
+can't build the situation (a terminal, say), or when only that bool tells a
+skipped run from one that exits. The cache and config commands are also called
+as plain functions. `_invoke_offline` runs the CLI with every httpx request
+refused, so a run that gets past where it should stop fails instead of
+reaching the network.
 """
 
 import json
@@ -119,9 +122,10 @@ def _nothing_configured_line(config: Path) -> str:
 
 
 def _invoke_offline(*args: str) -> Result:
-    """Invoke the CLI with every outbound request refused, failing the test if one was made.
+    """Invoke the CLI with every httpx request refused, failing the test if one was made.
 
-    A run that gets past where it should stop then fails here instead of reaching the network.
+    A run that gets past where it should stop then fails here instead of reaching the network. Only
+    qBittorrent's client uses requests instead, and no config here gives it credentials.
     """
 
     with respx.mock(assert_all_called=False) as router:
@@ -440,10 +444,10 @@ class _RunArrsRecorder:
 
 
 class TestRunSingleSelection:
-    """No selection flag asks for every arr. A flag or an id narrows the run to its arr.
+    """What `run single`'s flags ask the run for: the arrs, the dry run and the wait mode.
 
-    `run_arrs` is faked out, so these pin only what the flags ask for. What a
-    run does with an arr that isn't configured is pinned on `configured_arrs` below.
+    `run_arrs` is faked out, since a real run would go on to the arrs. An old id
+    flag or an unknown wait mode is a usage error, and nothing runs.
     """
 
     @pytest.fixture
@@ -601,7 +605,7 @@ def _write_config_fetching_anime_ids() -> None:
     """A current config with Sonarr configured and the anime ids file as the one mapping source on."""
 
     _write_current_config(
-        "sonarr:\n  url: http://127.0.0.1:9\n  api_key: k\nmappings:\n  anime_lists: false\n  anibridge: false\n"
+        "sonarr:\n  url: http://sonarr.invalid\n  api_key: k\nmappings:\n  anime_lists: false\n  anibridge: false\n"
     )
 
 
@@ -1054,13 +1058,7 @@ class TestLogFormatWiring:
 
 
 class TestMissingConfigExitsNonzero:
-    """A virgin data dir: exit 1 with the template written, never a silent retry.
-
-    Driven end-to-end through CliRunner: the `typer.Exit` raised inside
-    `load_shared_config`'s FileNotFoundError handler must escape `run_arrs`'
-    finallys (boot region, web client, run lock all release) and reach typer as
-    exit code 1 - pinning the whole propagation path, not just the helper.
-    """
+    """A virgin data dir: exit 1 with the template written, never a silent retry, in both run modes."""
 
     def test_run_single_writes_the_template_and_exits_one(self) -> None:
         result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
@@ -1300,8 +1298,8 @@ class TestLooseConfigPermissions:
 class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
-    `ensure_data_dir`/`setup_logger` run before any logger exists, so the
-    report must go straight to stderr. `config init`'s template copy and
+    The data dir and its log file are checked before any logger exists, so the
+    report goes straight to stderr. `config init`'s template copy and
     `cache restore`'s copy get the same treatment. An unreadable CONFIG in a
     healthy dir instead keeps the skip+retry contract - exiting would kill the
     scheduled daemon - while `config validate` reports it and exits 1.
@@ -1444,7 +1442,7 @@ class TestDataDirLine:
 
 
 class TestScheduledLifecycle:
-    """The run commands' lifecycle: config handling, the SIGTERM handler both install, run events, the help text."""
+    """Around a run: the scheduled loop's lines and retry, log retention, a dry run's config, SIGTERM and the help."""
 
     @staticmethod
     def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1666,7 +1664,6 @@ def test_commands_verify_tls_against_the_os_trust_store() -> None:
 
 
 def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The renderer reproduces the pre-hub typer.echo block byte-for-byte:
     # 17-column padded labels and a two-decimal MiB size.
     monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
     write_cache_db(tmp_path)
