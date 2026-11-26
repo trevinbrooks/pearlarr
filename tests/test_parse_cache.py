@@ -108,8 +108,9 @@ class TestSeriesHash:
 class TestParseFreshness:
     """A stored parse with matched episodes is read for the 30-day TTL.
 
-    One with none (pinned with `series_fp`) is read only under the same series hash and the short backstop. A legacy
-    row carrying no whole parse is never read.
+    One with none (pinned with `series_fp`) is read only under the same series hash and the short backstop. A row
+    older builds stored without a whole parse or without one of its fields, or one this build can't validate, is never
+    read.
     """
 
     @pytest.mark.parametrize(
@@ -140,6 +141,14 @@ class TestParseFreshness:
             # re-parse once however recently they were stamped.
             pytest.param(
                 {"fetched_at": _stamp(1), "episodes": [{"season": 1, "episode": 1}]}, None, id="a-legacy-episode-list"
+            ),
+            # The model would read the missing title as "", so the key decides.
+            pytest.param(_untitled(_of_series(7)), None, id="a-parse-without-a-series-title"),
+            # Every field is present, so the key check passes it and validation is what misses.
+            pytest.param(
+                {"fetched_at": _stamp(1), "parse": {**parse_to_json(_of_series(7)), "episode_numbers": "one"}},
+                None,
+                id="a-parse-this-build-cannot-validate",
             ),
         ],
     )
@@ -181,25 +190,6 @@ class TestParseCacheRows:
         same_hash = rows.read(_NAME, window=_window("fp"))
         another_hash = rows.read(_NAME, window=_window("other"))
         assert (same_hash, another_hash) == (info, under_another_hash)
-
-    def test_unreadable_parse_reads_as_a_miss(self) -> None:
-        # A row whose values this build cannot validate re-parses: every field is present, so the key check passes
-        # it and validation is what misses.
-        row: dict[str, object] = {
-            "fetched_at": _stamp(1),
-            "parse": {**parse_to_json(_of_series(7)), "episode_numbers": "one"},
-        }
-        store = FakeCacheStore(sonarr_parse={_NAME: row})
-
-        assert ParseCacheRows(store).read(_NAME, window=_window()) is None
-
-    def test_a_parse_without_a_series_title_is_stale_for_the_warm_check_and_the_read(self) -> None:
-        # The model would read the missing title as "", so the key decides, inside the TTL.
-        store = FakeCacheStore(sonarr_parse={_NAME: _untitled(_of_series(7))})
-        rows = ParseCacheRows(store)
-
-        assert not rows.is_fresh(_NAME, window=_window())
-        assert rows.read(_NAME, window=_window()) is None
 
 
 _LIBRARY = (SonarrSeries(id=1),)
@@ -271,7 +261,7 @@ class TestParsedFilesCache:
             "u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 200, _of_series(1, episode=2)))
         }
 
-    def test_names_not_yet_stored_go_to_sonarr_at_once(self) -> None:
+    def test_a_name_never_asked_and_one_stored_stale_go_to_sonarr_at_once(self) -> None:
         # Each answer waits, 30 seconds at most, for the other name to be asked, so asking one at a time fails.
         both_asked = threading.Barrier(2, timeout=30.0)
 
@@ -281,7 +271,9 @@ class TestParsedFilesCache:
             return _of_series(1)
 
         sonarr = FakeSonarrClient(parse_fn=answer)
+        stale = _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1, series_hash=_HASH)
+        cache = FakeCacheStore(sonarr_parse={_NAME: stale})
 
-        gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
+        gathered = _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
 
         assert gathered == {"u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 100, _of_series(1)))}
