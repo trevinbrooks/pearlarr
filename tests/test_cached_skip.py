@@ -14,7 +14,7 @@ and a row sent on to a check loses its stamp until a check caches the title.
 import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Final, override
+from typing import Final
 
 import httpx
 import pytest
@@ -35,6 +35,7 @@ from .builders import (
     FakeSeaDexSource,
     FakeTorrents,
     ScriptedAniListClient,
+    anilist_body,
     grab_request,
     make_anilist_gateway,
     make_config,
@@ -73,21 +74,28 @@ def _checked() -> CachedTitleUpdate:
     }
 
 
-def _cached_row(*, fallback_satisfied: bool = False) -> CachedTitleUpdate:
-    """Title 7's row as a Sonarr check leaves it."""
+def _cached_row(*, named: bool = True, fallback_satisfied: bool = False) -> CachedTitleUpdate:
+    """Title 7's row as a Sonarr check leaves it, or stored with no name when not `named`."""
 
     row = _checked()
     row["fallback_satisfied"] = fallback_satisfied
+    if not named:
+        del row["name"]
     return row
 
 
-def _services(cache: FakeCacheStore, *, settings: AppConfig = _SETTINGS) -> ArrRunServices:
+def _services(
+    cache: FakeCacheStore, *, settings: AppConfig = _SETTINGS, anilist_name: str | None = None
+) -> ArrRunServices:
     """One run's services over the cache, built as bootstrap builds them for each run.
 
-    qBittorrent is set up, so the run is no dry run and what it caches is what the next run reads.
+    AniList knows title 7 by `anilist_name`, and nothing when it is None. qBittorrent is set up, so the run is no dry
+    run and what it caches is what the next run reads.
     """
 
     deps = make_run_deps(config=settings, cache_store=cache, qbit=FakeQbit().client())
+    if anilist_name is not None:
+        deps.anilist.answers[7] = anilist_body(7, anilist_name)
     return ArrRunServices(deps, Arr.SONARR)
 
 
@@ -136,19 +144,6 @@ _SENT_ON: Final[tuple[bool, list[int | None]]] = (False, [])
 """False, so the strategy checks the title, and nothing shown for it yet."""
 
 
-class _RecordingCacheStore(FakeCacheStore):
-    """The in-memory store, also recording each `update_cached_title` payload so one merged write can be asserted."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.updates: list[CachedTitleUpdate] = []
-
-    @override
-    def update_cached_title(self, arr: Arr, anilist_id: int, update: CachedTitleUpdate) -> None:
-        self.updates.append(update)
-        super().update_cached_title(arr, anilist_id, update)
-
-
 class _RecordingReporter:
     """Records the title each `log_cached_title` call reports as cached."""
 
@@ -158,17 +153,6 @@ class _RecordingReporter:
     def log_cached_title(self, state: ArrRunState, anilist_id: int) -> None:
         del state
         self.cached.append(anilist_id)
-
-
-@dataclass(frozen=True, slots=True)
-class _BackfillCase:
-    """One cached-title backfill: the stored row, what AniList resolves, the single write, the wire calls, the name after."""
-
-    stored: CachedTitleUpdate
-    anilist: str | None
-    updates: list[CachedTitleUpdate]
-    queries: list[int]
-    name: str | None
 
 
 _FRESH = datetime(2021, 1, 1)
@@ -233,80 +217,65 @@ class TestLeavingATitleAlone:
         assert deps.anilist.answers == {}, "asked AniList about a title whose row has its name"
 
 
-class TestIsUnchanged:
-    """An unchanged title backfills the url/coverage and the name its row lacks, once."""
+class TestAnOlderRowIsFilledIn:
+    """An unchanged title's row picks up the url, episodes and name an older run didn't store.
+
+    Nothing else checks an unchanged title again, so this is the one place an older row can get them.
+    """
+
+    _COVERAGE_NOW = "S01 E01-E13"
+    """Title 7's episodes in Sonarr now.
+
+    One more than its row was cached with: a series numbered as aired gains episodes without its titles being sent on.
+    """
 
     @pytest.mark.parametrize(
-        "case",
+        ("stored", "anilist_name", "after"),
         [
+            # The bare stamp is the whole row a run wrote before urls were stored.
             pytest.param(
-                _BackfillCase(
-                    stored={"updated_at": _FRESH},
-                    anilist=None,
-                    updates=[{"url": "sd-url", "coverage": "S01"}],
-                    queries=[7],
-                    name=None,
-                ),
-                id="url and coverage a legacy row lacks",
+                {"updated_at": _CACHED_ON},
+                None,
+                (None, _URL, _COVERAGE_NOW),
+                id="a row from before urls were stored gets the url and episodes",
             ),
             pytest.param(
-                _BackfillCase(
-                    stored={"url": "u", "updated_at": _FRESH},
-                    anilist="Resolved",
-                    updates=[{"name": "Resolved"}],
-                    queries=[7],
-                    name="Resolved",
-                ),
-                id="name a row written during an outage lacks",
+                _cached_row(named=False),
+                "Show",
+                ("Show", _URL, _COVERAGE),
+                id="a row stored with no name gets AniList's name",
             ),
             pytest.param(
-                _BackfillCase(
-                    stored={"updated_at": _FRESH},
-                    anilist="Resolved",
-                    updates=[{"url": "sd-url", "coverage": "S01", "name": "Resolved"}],
-                    queries=[7],
-                    name="Resolved",
-                ),
-                id="both merged into one write",
+                {"updated_at": _CACHED_ON},
+                "Show",
+                ("Show", _URL, _COVERAGE_NOW),
+                id="a row from before urls were stored gets AniList's name too",
             ),
             pytest.param(
-                _BackfillCase(
-                    stored={"name": "Kept", "url": "u", "updated_at": _FRESH},
-                    anilist="Resolved",
-                    updates=[],
-                    queries=[],
-                    name="Kept",
-                ),
-                id="a stored name spares the lookup",
+                _cached_row(),
+                "Renamed",
+                ("Show", _URL, _COVERAGE),
+                id="a stored name is kept",
             ),
             pytest.param(
-                _BackfillCase(
-                    stored={"url": "u", "updated_at": _FRESH},
-                    anilist=None,
-                    updates=[],
-                    queries=[7],
-                    name=None,
-                ),
-                id="nothing to resolve writes nothing",
+                _cached_row(named=False),
+                None,
+                (None, _URL, _COVERAGE),
+                id="no name is stored while AniList has none",
             ),
         ],
     )
-    def test_backfills_once_in_a_single_write(self, case: _BackfillCase) -> None:
-        # Nothing else checks a fresh cached title again, so the unchanged check is where an older row
-        # picks up its url/coverage and a row written while AniList was unreachable picks up its name.
-        cache = _RecordingCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, case.stored)
-        cache.updates.clear()
-        client = ScriptedAniListClient(case.anilist)
-        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _anilist=make_anilist_gateway(client))
+    def test_an_unchanged_titles_row_gets_what_it_lacks(
+        self, stored: CachedTitleUpdate, anilist_name: str | None, after: tuple[str | None, str, str]
+    ) -> None:
+        cache = _holding(stored)
+        run = _services(cache, anilist_name=anilist_name)
 
-        assert run.is_unchanged(7, make_entry_record(updated_at=_FRESH, url="sd-url"), lambda: "S01") is True
+        assert run.is_unchanged(7, _ENTRY, lambda: self._COVERAGE_NOW) is True
 
-        assert cache.updates == case.updates
-        assert client.query_calls == case.queries
-        persisted = cache.get_cached_title(Arr.SONARR, 7)
-        assert persisted is not None
-        assert persisted.name == case.name
+        row = cache.get_cached_title(Arr.SONARR, 7)
+        assert row is not None
+        assert (row.name, row.url, row.coverage) == after
 
 
 class TestACheckedTitleLosesItsStamp:
