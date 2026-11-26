@@ -333,7 +333,7 @@ class TestSpecialAliases:
 
 
 # --------------------------------------------------------------------------- #
-# anime_ids: SQL lookups must equal the former reverse-index merge
+# Kometa Anime-IDs, and how the sources merge
 # --------------------------------------------------------------------------- #
 
 AMAP: AnimeIdsByName = {
@@ -374,112 +374,87 @@ def _anime_oracle(amap: AnimeIdsByName) -> Callable[[ExternalIds], dict[int, Tit
     return lookup
 
 
-class TestAnimeIdsParity:
-    """The SQL `anime_ids` lookups reproduce the former reverse-index merge oracle.
+_RECORD_A = TitleMapping(100, tvdb_season=2, tvdb_epoffset=3, imdb_id="tt100", anidb_id=50)
 
-    Covers null-season coalescing and anilist-less candidate sets.
+
+class TestAnimeIdsLookup:
+    """A lookup finds every Kometa record its ids reach, the first record of each AniList title.
+
+    Covers explicit nulls and the library filter's sets.
     """
 
     @pytest.mark.parametrize(
-        "ids",
+        ("ids", "expected"),
         [
-            ExternalIds(tvdb=200),
-            ExternalIds(imdb="tt100"),
-            ExternalIds(tmdb_movie=7000),
-            ExternalIds(tvdb=200, imdb="tt100"),
-            ExternalIds(tvdb=424242),  # no match -> empty
+            pytest.param(ExternalIds(tvdb=200), {100: _RECORD_A, 101: TitleMapping(101)}, id="series"),
+            pytest.param(
+                ExternalIds(tvdb=200, imdb="tt100"),
+                {100: _RECORD_A, 101: TitleMapping(101), 102: TitleMapping(102, imdb_id="tt100")},
+                id="series with an imdb id",
+            ),
+            pytest.param(
+                ExternalIds(tmdb_movie=7000, imdb="tt7000"),
+                {103: TitleMapping(103, tmdb_movie_id=7000)},
+                id="movie by its tmdb id",
+            ),
+            pytest.param(
+                ExternalIds(tmdb_movie=4242, imdb="tt100"),
+                {100: _RECORD_A, 102: TitleMapping(102, imdb_id="tt100")},
+                id="movie by its imdb id",
+            ),
+            pytest.param(ExternalIds(tvdb=424242), {}, id="unknown"),
         ],
     )
-    def test_lookup_matches_oracle(self, ids: ExternalIds) -> None:
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=AMAP,
-                anidb=False,
-                anibridge=False,
-            ),
-        )
-        try:
-            assert resolver.mappings_from_anime_ids(ids) == _anime_oracle(AMAP)(ids)
-        finally:
-            resolver.close()
+    def test_a_lookup_finds_every_record_its_ids_reach(
+        self, ids: ExternalIds, expected: dict[int, TitleMapping]
+    ) -> None:
+        assert _resolver(anime=AMAP).resolve(ids).kept == expected
 
-    def test_explicit_null_season_coalesces_to_sentinel(self) -> None:
-        # A present-but-null tvdb_season / tvdb_epoffset (an explicit JSON null, not
-        # an absent key) must not abort the populate against the NOT NULL columns. It
-        # coalesces to the same -1 / 0 sentinel an absent key gets, so the run still
-        # works exactly as the pre-SQL code (which carried the None through harmlessly).
+    def test_an_explicit_null_season_reads_as_no_season(self) -> None:
+        # Kometa writes some records with explicit nulls. They read like a record without the keys.
         amap = {"N": {"anilist_id": 500, "tvdb_id": 5000, "tvdb_season": None, "tvdb_epoffset": None}}
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=amap,
-                anidb=False,
-                anibridge=False,
-            ),
-        )
-        try:
-            mapping = resolver.mappings_from_anime_ids(ExternalIds(tvdb=5000))[500]
-            assert mapping.tvdb_season == -1
-            assert mapping.tvdb_epoffset == 0
-        finally:
-            resolver.close()
+
+        assert _resolver(anime=amap).resolve(ExternalIds(tvdb=5000)).kept == {500: TitleMapping(500)}
 
     def test_candidate_sets_include_objects_without_anilist(self) -> None:
         # The former full-dict walk added external ids even from anilist-less objects
         # (object E). The SQL distinct must keep that, even though lookups skip them.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=AMAP,
-                anidb=False,
-                anibridge=False,
-            ),
-        )
-        try:
-            assert resolver.known_external_ids("tvdb_id") == {200, 999}
-            assert resolver.known_external_ids("imdb_id") == {"tt100"}
-            assert resolver.known_external_ids("tmdb_movie_id") == {7000}
-            assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=999)) == {}  # E has no anilist
-        finally:
-            resolver.close()
+        resolver = _resolver(anime=AMAP)
+
+        assert resolver.known_external_ids("tvdb_id") == {200, 999}
+        assert resolver.known_external_ids("imdb_id") == {"tt100"}
+        assert resolver.known_external_ids("tmdb_movie_id") == {7000}
+        assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=999)) == {}  # E has no anilist
 
 
 class TestResolveMerge:
     """`resolve` merges AniBridge (winning) with anime-ids fallback, sets ignored ids aside, and sorts by id."""
 
     def test_anibridge_wins_then_anime_fills_then_the_ignored_are_set_aside_and_sorted(self) -> None:
-        # 269 resolves in both sources for tvdb 74796. AniBridge must win (it is
-        # queried first). 270 is AniBridge-only. Ignored ids are set aside with their
-        # mappings. The result is sorted by AniList id.
-        amap = {"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}}
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids={270},
-            web=_WEB,
-            sources=MappingSources(
-                anime=amap,
-                anidb=False,
-                anibridge=GRAPH,
+        # Series 74796: AniBridge's ranges for 269 win over Kometa's season 7, Kometa alone has 100, and AniBridge
+        # alone has 270, which the ignore list sets aside.
+        anime = {
+            "x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7},
+            "y": {"anilist_id": 100, "tvdb_id": 74796, "tvdb_season": 1},
+        }
+        resolver = _resolver(anime=anime, anibridge=GRAPH, ignore={270})
+
+        resolved = resolver.resolve(ExternalIds(tvdb=74796))
+
+        assert list(resolved.kept.items()) == [
+            (100, TitleMapping(100, tvdb_season=1)),
+            (
+                269,
+                TitleMapping(
+                    269,
+                    tvdb_mappings={2: [(1, 21)], 3: [(1, 9), (11, 12)]},
+                    imdb_id="tt0269",
+                    anidb_id=1234,
+                    source=_ANIBRIDGE,
+                ),
             ),
-        )
-        try:
-            resolved = resolver.resolve(ExternalIds(tvdb=74796))
-            assert list(resolved.ignored) == [270]
-            assert resolved.ignored[270].anilist_id == 270
-            mappings = resolved.kept
-            assert list(mappings) == [269]  # 270 set aside, sorted
-            # AniBridge won for 269 -> EPISODE_RANGES kind (not the anime-ids season 7).
-            assert mappings[269].kind is MappingKind.EPISODE_RANGES
-            assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
-        finally:
-            resolver.close()
+        ]
+        assert resolved.ignored == {270: TitleMapping(270, tvdb_mappings={1: []}, tmdb_movie_id=888, source=_ANIBRIDGE)}
 
 
 class _IgnoredIdLog:
