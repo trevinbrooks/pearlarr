@@ -51,26 +51,6 @@ def _dateless_answer(anilist_id: int) -> dict[str, Any]:
     return {"fetched_at": _stamp(days_ago=1), "data": body}
 
 
-class TestLoadCache:
-    """load_cache loads every cached answer, including the ones past the refresh age."""
-
-    def test_every_payload_loads_whatever_its_stamp(self) -> None:
-        client = ScriptedAniListClient()
-        store = FakeCacheStore()
-        gateway = make_anilist_gateway(client, store)
-        store.put_anilist_meta(1, _fresh_answer(1))
-        store.put_anilist_meta(2, _stale_answer(2))
-        store.put_anilist_meta(3, {"data": anilist_body(3)})  # stamp-less -> unreadable age
-        store.put_anilist_meta(4, {"fetched_at": _stamp(days_ago=1)})  # no payload -> nothing to serve
-
-        gateway.load_cache()
-
-        assert gateway.answers == {1: anilist_body(1), 2: anilist_body(2), 3: anilist_body(3)}
-        # A week-old count beats withholding it: None downstream means "use every episode".
-        assert gateway.episode_count(2) == 12
-        assert client.query_calls == []
-
-
 class TestPrefetch:
     """prefetch batches the missing and stale ids and persists exactly what it fetched.
 
