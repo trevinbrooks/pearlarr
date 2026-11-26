@@ -1,13 +1,10 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-"""Tests for the OutputHub (`output.hub`).
+"""Tests for the OutputHub and the process hub registry around it.
 
-Pin the dispatch contract (every renderer, emit order), per-event containment
-with N strikes + per-run reset (never process-latching), the once= dedup
-store, SeverityCounter mark/counts_since, set_level fan-out, the console
-renderer swap on a format change at begin_run, and the combiner: renderers
-run without the hub lock, concurrent emits hand off to the active drainer, and
-lifecycle calls wait out an in-flight drain.
+Every renderer is handed every event in emit order. One that raises takes a strike, the others get a note about
+it, and on its third strike it sits out the rest of the run. The rest covers emits from inside a renderer and from
+other threads, interrupts mid-dispatch, the queue's cap, once-keys, the severity tally, the lifecycle calls, the
+stderr fallback, the console swap, install and uninstall, and hub_note.
 """
 
 import io
@@ -142,7 +139,7 @@ class _GatedRenderer(_QuietRenderer):
         if self._armed:
             self._armed = False
             self.entered.set()
-            # The wait must outlast any CI scheduling stall: 5 seconds once ran out on a loaded Windows runner.
+            # The wait must outlast a CI scheduling stall, which can pass 5 seconds on a loaded Windows runner.
             # A gate that runs out raises into the hub, which contains it, so that event never reaches the log.
             assert self.release.wait(timeout=30.0), "gate never released"
         self.log.append(type(event).__name__)
@@ -352,7 +349,7 @@ def test_the_final_strike_says_the_renderer_is_disabled() -> None:
     ]
 
 
-# --- re-entrancy -----------------------------------------------------------------------
+# --- re-entrancy ---------------------------------------------------------------------
 
 
 def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
@@ -370,7 +367,7 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
     ]
 
 
-# --- the combiner (dispatch outside the hub lock) -------------------------------------
+# --- concurrent emits ----------------------------------------------------------------
 
 
 def _emit_held_at(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
@@ -632,7 +629,7 @@ def test_a_once_keyed_diagnostic_shed_at_the_cap_lands_when_emitted_again() -> N
     assert hub.counts.mark() == SeverityTally(info=10_001, warning=1)
 
 
-# --- once= dedup ---------------------------------------------------------------------
+# --- once-keys -----------------------------------------------------------------------
 
 
 def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
@@ -714,7 +711,7 @@ def test_file_only_diagnostics_are_never_counted() -> None:
     assert hub.counts.mark() == SeverityTally(error=1)
 
 
-# --- levels + lifecycle -------------------------------------------------------------
+# --- levels and lifecycle -------------------------------------------------------------
 
 
 def _begin_run(hub: OutputHub) -> None:
@@ -1033,7 +1030,7 @@ def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file
     assert console.closes == 0
 
 
-# --- the process registry (install/uninstall) -----------------------------------
+# --- install and uninstall -----------------------------------------------------------
 
 
 def test_install_hub_closes_the_previously_installed_hub() -> None:
@@ -1059,7 +1056,7 @@ def test_uninstall_hub_closes_the_outgoing_hub_and_restores_the_default() -> Non
     assert current_hub() is default
 
 
-# --- hub_note (the raw first-party logging replacement) -------------------------------
+# --- hub_note ------------------------------------------------------------------------
 
 
 def test_hub_note_with_exc_captures_the_trace() -> None:
