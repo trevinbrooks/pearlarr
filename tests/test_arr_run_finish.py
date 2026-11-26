@@ -286,7 +286,7 @@ class TestWhatARunSaves:
         assert strategy.removal_calls == ["h"]
         assert _saved_pending_imports(cache, Arr.SONARR) == set()
 
-    def test_a_years_old_pending_import_survives_the_arr_run_start_and_is_reported(self, tmp_path: Path) -> None:
+    def test_a_pending_import_left_years_ago_is_shown_and_kept(self, tmp_path: Path) -> None:
         # No age ends a pending import: one an earlier run left years ago and still downloading is shown and kept.
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, replace(_pending("h"), added_at="2000-01-01 00:00:00"))
