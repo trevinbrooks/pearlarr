@@ -20,6 +20,8 @@ that id actually flowed end to end (a vacuous run that resolved nothing would
 still return True - the recorded calls are what make this non-hollow).
 """
 
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -27,14 +29,17 @@ import httpx
 import pytest
 import respx
 import yaml
-from respx.models import Call
+from respx.models import Call, Route
 from seadex import EntryRecord
 
 import pearlarr.arr_run_services as run_services
 import pearlarr.torrent_service as torrents
 from pearlarr.cli import run_single
+from pearlarr.config import AppConfig
 from pearlarr.output import current_hub
+from pearlarr.paths import DATA_DIR_ENV
 from pearlarr.skyhook_client import SKYHOOK_URL
+from pearlarr.tracker_links import TrackerLink
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config, make_entry_record, make_torrent_record
@@ -46,7 +51,9 @@ _TVDB = 299502
 _ANILIST = 20920
 _BASE = "http://sonarr.test/api/v3"
 _ANILIST_URL = "https://graphql.anilist.co"
-_NYAA_RELEASE_URL = "https://nyaa.si/1"
+_NYAA_RELEASE_URL = "https://nyaa.si/view/1"
+# The .torrent link Nyaa serves for the release page above.
+_NYAA_TORRENT = "https://nyaa.si/download/1.torrent"
 
 # A minimal valid AniList batch body (data.Page.media) so the real title-prefetch
 # succeeds in one request instead of retrying a blocked endpoint.
@@ -69,13 +76,86 @@ _ANILIST_BODY: dict[str, object] = {
 }
 
 
-def test_sonarr_run_drives_real_composition_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # The SeaDex entry the resolved id maps to: one grabbable Nyaa release whose
-    # single file the Sonarr matching will parse (driving the real /parse adapter).
+@dataclass(frozen=True)
+class _Asked:
+    """What the faked SeaDex and Nyaa leaves were asked."""
+
+    seadex_queries: list[str] = field(default_factory=list[str])
+    nyaa_pages: list[str] = field(default_factory=list[str])
+
+
+def _fake_seadex_and_nyaa(monkeypatch: pytest.MonkeyPatch, entry: EntryRecord, link: TrackerLink) -> _Asked:
+    """Answer every SeaDex lookup with `entry` and every Nyaa page with `link`."""
+
+    asked = _Asked()
+
+    class _FakeSeaDexEntry:
+        """Fake of the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
+
+        def __init__(self) -> None: ...
+
+        def from_filter(self, query: str) -> list[EntryRecord]:
+            asked.seadex_queries.append(query)
+            return [entry]
+
+        def from_id(self, anilist_id: int) -> EntryRecord:
+            del anilist_id
+            return entry
+
+    def _fake_nyaa_link(url: str, client: httpx.Client) -> TrackerLink:
+        del client
+        asked.nyaa_pages.append(url)
+        return link
+
+    monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
+    monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_nyaa_link)
+    return asked
+
+
+def _write_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config: AppConfig) -> None:
+    """Make `tmp_path` the data dir and write `config` as the config.yml `run_single` reads there.
+
+    The JSON dump masks secrets, so the file's API keys and password read `**********`. Nothing here checks them.
+    """
+
+    monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path))
+    (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
+
+
+def _sonarr_config(**settings: str) -> AppConfig:
+    """Sonarr's connection and the one inline tvdb->anilist mapping, plus `settings`.
+
+    The mapping lets the REAL resolver resolve a live id with no network (anidb/anibridge disabled).
+    """
+
+    return make_config(
+        url="http://sonarr.test",
+        api_key="testkey",
+        anime_ids={"Bahamut": {"anilist_id": _ANILIST, "tvdb_id": _TVDB}},
+        anime_lists=False,
+        anibridge=False,
+        **settings,
+    )
+
+
+@dataclass(frozen=True)
+class _SonarrEdges:
+    """The faked edges of a Sonarr run over the Bahamut series, and what they were asked."""
+
+    asked: _Asked
+    series: Route
+    orders: Route
+
+
+@pytest.fixture
+def sonarr_edges(monkeypatch: pytest.MonkeyPatch) -> Iterator[_SonarrEdges]:
+    """SeaDex's entry for the series, and the Sonarr, AniList and SkyHook HTTP the run reads, mocked for the test.
+
+    The entry has one grabbable Nyaa release whose single file the Sonarr matching will parse (driving the real
+    /parse adapter). respx covers every endpoint: the Sonarr reads use the httpx-based ArrHttp, the AniList POST
+    and SkyHook GET the shared web client.
+    """
+
     entry = make_entry_record(
         anilist_id=_ANILIST,
         torrents=(
@@ -85,50 +165,11 @@ def test_sonarr_run_drives_real_composition_root(
             ),
         ),
     )
-
-    # Fake the two external leaves. Both record so the resolved id's flow is provable.
-    filter_calls: list[str] = []
-    nyaa_calls: list[str] = []
-
-    class _FakeSeaDexEntry:
-        """Fake of the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
-
-        def __init__(self) -> None: ...
-
-        def from_filter(self, query: str) -> list[EntryRecord]:
-            filter_calls.append(query)
-            return [entry]
-
-        def from_id(self, anilist_id: int) -> EntryRecord:
-            del anilist_id
-            return entry
-
-    def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:
-        del client
-        nyaa_calls.append(url)
-        return ("magnet:?xt=urn:btih:" + "a" * 40, "Undefeated Bahamut Chronicle - S01E01 [1080p]")
-
-    monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
-    monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
-
-    # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
-    # qBittorrent unset -> dry run, and the one inline tvdb->anilist mapping that lets
-    # the REAL resolver resolve a live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-    config = make_config(
-        url="http://sonarr.test",
-        api_key="testkey",
-        anime_ids={"Bahamut": {"anilist_id": _ANILIST, "tvdb_id": _TVDB}},
-        anime_lists=False,
-        anibridge=False,
+    asked = _fake_seadex_and_nyaa(
+        monkeypatch, entry, TrackerLink(_NYAA_TORRENT, "Undefeated Bahamut Chronicle - S01E01 [1080p]")
     )
-    (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
-
-    # The Sonarr + AniList + SkyHook HTTP boundary. respx covers every endpoint: the
-    # Sonarr reads use the httpx-based ArrHttp, the AniList POST and SkyHook GET the
-    # shared web client.
     with respx.mock:
-        series_route = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
+        series = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
         register_sonarr_reads(
             _BASE,
             episodes=sonarr_fixture("episodes_228_bahamut.json"),
@@ -136,30 +177,38 @@ def test_sonarr_run_drives_real_composition_root(
         )
         respx.post(_ANILIST_URL).respond(json=_ANILIST_BODY)
         # The series lists only the official order, so the fill asks for nothing else.
-        orders_route = respx.get(f"{SKYHOOK_URL}/{_TVDB}/official").respond(
-            json=skyhook_fixture("tvdb_299502_official.json")
-        )
+        orders = respx.get(f"{SKYHOOK_URL}/{_TVDB}/official").respond(json=skyhook_fixture("tvdb_299502_official.json"))
+        yield _SonarrEdges(asked, series, orders)
 
-        result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
 
-        # respx's CallList extends bare list, so name the element type here.
-        respx_fired = {
-            f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
-        }
+def test_sonarr_run_drives_real_composition_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    sonarr_edges: _SonarrEdges,
+) -> None:
+    # qBittorrent unset, so the run is a dry run.
+    _write_config(monkeypatch, tmp_path, _sonarr_config())
 
+    result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
+
+    # respx's CallList extends bare list, so name the element type here.
+    respx_fired = {
+        f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
+    }
     # The real composition root ran one full Sonarr run with zero real network.
     assert result is True
     # The inline tvdb->anilist mapping resolved id 20920 and the gateway was consulted
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
-    assert any(str(_ANILIST) in query for query in filter_calls)
+    assert any(str(_ANILIST) in query for query in sonarr_edges.asked.seadex_queries)
     # The real Sonarr adapters drove the library fetch + per-file parse over the wire.
-    assert series_route.call_count == 1
+    assert sonarr_edges.series.call_count == 1
     assert f"GET {_BASE}/episode" in respx_fired
     assert f"GET {_BASE}/parse" in respx_fired
     # The series' TVDB orders were fetched at boot.
-    assert orders_route.call_count == 1
+    assert sonarr_edges.orders.call_count == 1
     # The resolved entry's release reached the (dry run) grab at the torrent source.
-    assert nyaa_calls == [_NYAA_RELEASE_URL]
+    assert sonarr_edges.asked.nyaa_pages == [_NYAA_RELEASE_URL]
     # ...and the whole run logged no error (a swallowed failure would tally on
     # the run's hub, which run_single installed).
     assert current_hub().counts.mark().errors == 0
@@ -226,36 +275,11 @@ def test_radarr_run_drives_real_composition_root(
             ),
         ),
     )
+    asked = _fake_seadex_and_nyaa(monkeypatch, entry, TrackerLink(_NYAA_TORRENT, "Your Name (2016) [BD 1080p]"))
 
-    # Fake the two external leaves. Both record so the resolved id's flow is provable.
-    filter_calls: list[str] = []
-    nyaa_calls: list[str] = []
-
-    class _FakeSeaDexEntry:
-        """Fake of the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
-
-        def __init__(self) -> None: ...
-
-        def from_filter(self, query: str) -> list[EntryRecord]:
-            filter_calls.append(query)
-            return [entry]
-
-        def from_id(self, anilist_id: int) -> EntryRecord:
-            del anilist_id
-            return entry
-
-    def _fake_get_nyaa_torrent(url: str, client: httpx.Client) -> tuple[str, str]:
-        del client
-        nyaa_calls.append(url)
-        return ("magnet:?xt=urn:btih:" + "b" * 40, "Your Name (2016) [BD 1080p]")
-
-    monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
-    monkeypatch.setattr(torrents, "fetch_nyaa_link", _fake_get_nyaa_torrent)
-
-    # A real config.yml on disk: Radarr creds, qBittorrent unset -> dry run, and
-    # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a
-    # live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
+    # Radarr creds, qBittorrent unset -> dry run, and the one inline tmdb->anilist
+    # mapping that lets the REAL resolver resolve a live id with no network
+    # (anidb/anibridge disabled).
     config = make_config(
         radarr_url="http://radarr.test",
         radarr_api_key="testkey",
@@ -264,7 +288,7 @@ def test_radarr_run_drives_real_composition_root(
         anibridge=False,
         sleep_time=0,
     )
-    (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
+    _write_config(monkeypatch, tmp_path, config)
 
     # The Radarr + AniList HTTP boundary. respx covers every endpoint: the
     # Radarr reads use the httpx-based ArrHttp (the empty moviefile read ->
@@ -281,12 +305,12 @@ def test_radarr_run_drives_real_composition_root(
     assert result is True
     # The inline tmdb->anilist mapping resolved id 21519 and the gateway was consulted
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
-    assert any(str(_RADARR_ANILIST) in query for query in filter_calls)
+    assert any(str(_RADARR_ANILIST) in query for query in asked.seadex_queries)
     # The real Radarr client drove the library fetch + the movie-file read.
     assert movie_route.call_count == 1
     assert moviefile_route.call_count == 1
     # The resolved entry's release reached the (dry run) grab at the torrent source.
-    assert nyaa_calls == [_NYAA_RELEASE_URL]
+    assert asked.nyaa_pages == [_NYAA_RELEASE_URL]
     # ...and the whole run logged no error (a swallowed failure would tally on
     # the run's hub, which run_single installed).
     assert current_hub().counts.mark().errors == 0
