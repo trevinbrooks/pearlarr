@@ -1,13 +1,14 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The tests read the strategy's private collaborators (_episodes / _parse / _reads / _reconciler),
-# which strict re-flags. The repo disables reportPrivateUsage for tests.
+# The tests read the strategy's private collaborators (_episodes / _parse / _reads), which strict re-flags.
+# The repo disables reportPrivateUsage for tests.
 """Each series' TVDB orders through a run's reads and the Sonarr strategy: what is fetched, what grab and import get.
 
 The grab is served a file's parse too, matched as an aired Sonarr matches it.
 
-A test of the reads alone builds them alone (`_reads`). One that asks for a title's episodes, the parse cache, the
-import or a whole run builds the strategy (`_sync`).
+A test of the reads alone builds them alone (`_reads`). One that asks for a title's episodes, a fetch or the parse
+cache builds the strategy (`_sync`), whose collaborators share one read of each series. A whole run is driven
+through `drive_arr_run` (`_run`).
 """
 
 from collections.abc import Iterable, Mapping
@@ -54,7 +55,6 @@ from .builders import (
     FakeSeaDexSource,
     anilist_body,
     drive_arr_run,
-    known_torrent,
     make_config,
     make_entry_record,
     make_pending_follower,
@@ -68,8 +68,6 @@ from .builders import (
     stand_in_ep,
     stored_orders,
     stored_scene_mappings,
-    title_window,
-    torrent_evidence,
     two_claim_pending_import,
 )
 from .fakes import (
@@ -230,7 +228,6 @@ def test_a_series_numbered_by_another_order_with_nothing_stored_has_no_view() ->
     assert strat._reads.aired_series(1) is NoView.ORDERS_UNREAD
     assert strat._reads.series_index(1) is None
     assert strat._episodes.title_episodes(1, 500, _SEASON_ONE) is NoView.ORDERS_UNREAD
-    assert strat._series_indexes({1}) == {}
 
 
 def _scene(episodes: tuple[SonarrEpisode, ...]) -> list[tuple[int, tuple[int | None, int | None, int | None]]]:
@@ -517,13 +514,10 @@ def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come() -> None:
 
 
 def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_release_needs_it() -> None:
-    # A torrent SeaDex lists under a title of series 1 too is grabbed by a title of series 2. Only series 1 has
-    # stored orders, and its rows are out of step with them.
-    cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50), _series(2, 60)], cache, _skyhook(_ORDERS), sonarr=sonarr)
-    strat._reads.aired_series(1)
+    # Series 1's rows are out of step with its stored orders. A torrent with a title of it has no index of it to be
+    # placed by, and a file name Sonarr matched to it has no aired match.
+    reads = _aired_over_dvd_rows(_skyhook(_ORDERS))
+    reads.aired_series(1)
     named_as_series_one = ParsedFileInfo(
         season_number=1,
         episode_numbers=(2,),
@@ -532,12 +526,7 @@ def test_a_series_with_no_view_for_the_rest_of_the_run_is_unread_wherever_a_rele
         series_id=1,
     )
 
-    indexes = strat._series_indexes({1, 2})
-    listed = known_torrent(indexes=indexes, evidence=torrent_evidence(title_window(500, (11, 12), series_id=1)))
-
-    assert set(indexes) == {2}
-    assert listed.order(title_window(600, (11, 12), series_id=2)) is None
-    assert strat._reads.aired_parse(named_as_series_one) is NoView.READ_FAILED
+    assert (reads.series_index(1), reads.aired_parse(named_as_series_one)) == (None, NoView.READ_FAILED)
 
 
 def test_the_import_is_not_given_rows_out_of_step_with_the_order_the_library_read_names() -> None:
@@ -586,17 +575,14 @@ def test_a_sonarr_that_sends_no_order_has_its_rows_taken_as_they_come() -> None:
     [pytest.param(True, id="aired-view"), pytest.param(False, id="no-view")],
 )
 def test_the_import_reads_a_series_numbered_by_another_order_as_sonarr_numbers_it(stored: bool) -> None:
+    # The import posts Sonarr's own episode ids, so it reads the rows as Sonarr sends them, view or no view.
     cache = FakeCacheStore()
     if stored:
         cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
         cache.put_scene_mappings(50, stored_scene_mappings())
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50, season_type="dvd")], cache, sonarr=sonarr)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache, sonarr=FakeSonarrClient(episodes=list(_DVD_ROWS)))
 
-    statuses = strat._reconciler._read(pending_import(series_id=1))
-
-    assert statuses is not None
-    assert statuses.snapshot.by_series[1].episodes.key_by_id == {11: (1, 1), 12: (1, 2)}
+    assert reads.read_episodes(1) == _DVD_ROWS
 
 
 @pytest.mark.parametrize(
@@ -706,9 +692,9 @@ def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the
 
     assert strat._episodes.prefetch_orders([1, 2]) == 0
 
-    indexes = strat._series_indexes({1, 2})
-    assert indexes[1].orders["dvd"].id_by_key == {(1, 1): 12, (1, 2): 11}
-    assert indexes[2].orders == {}
+    first, second = strat._reads.series_index(1), strat._reads.series_index(2)
+    assert first is not None and second is not None
+    assert (first.orders["dvd"].id_by_key, second.orders) == ({(1, 1): 12, (1, 2): 11}, {})
 
 
 _TWO_SEASONS = (
@@ -860,14 +846,14 @@ def test_a_parse_not_of_a_series_in_another_order_comes_back_as_it_is(series_id:
 def test_a_parse_reads_the_same_whatever_the_run_read_of_its_series_before() -> None:
     # One run has read nothing of series 1, one checked a title of it, and one re-read it in an import poll after.
     info = ParsedFileInfo(season_number=2, episode_numbers=(2,), series_title="Show", series_id=1)
-    unread = _synced_in_one_season()
-    checked = _synced_in_one_season()
-    checked._episodes.title_episodes(1, 500, _SEASON_ONE)
-    polled = _synced_in_one_season()
-    polled._episodes.title_episodes(1, 500, _SEASON_ONE)
-    polled._reads.read_episodes(1)
+    unread = _reads_in_one_season()
+    checked = _reads_in_one_season()
+    checked.aired_series(1)
+    polled = _reads_in_one_season()
+    polled.aired_series(1)
+    polled.read_episodes(1)
 
-    answers = [strat._reads.aired_parse(info) for strat in (unread, checked, polled)]
+    answers = [reads.aired_parse(info) for reads in (unread, checked, polled)]
 
     assert answers == [info.with_matched((_matched(2, 2, 15),))] * 3
 
@@ -926,11 +912,12 @@ def test_a_listed_file_of_a_series_in_another_order_carries_its_aired_matches() 
 
 
 def test_the_parse_cache_keeps_sonarrs_own_answer_for_a_series_in_another_order() -> None:
-    strat = _synced_in_one_season(_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+    cache = _stored_as_one_season()
+    strat = _sync([_in_one_season()], cache, sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
 
     strat._parse.parsed_files(_listing(_FIFTH))
 
-    row = strat._parse.cache_store.get_sonarr_parse(_FIFTH)
+    row = cache.get_sonarr_parse(_FIFTH)
     assert row is not None
     assert row["parse"] == parse_to_json(_FIFTH_BY_SONARR)
 
