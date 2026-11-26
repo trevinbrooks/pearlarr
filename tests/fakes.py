@@ -382,12 +382,9 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
         # title's hold and the run tally.
         self._cap_services = services
         self._supports_blocking_wait = supports_blocking_wait
-        # Reassign to None mid-test to script the failure path.
-        self.history: list[HistoryRecord] | None = [] if history is None else history
-        self.history_calls: list[str] = []
+        self._history = [] if history is None else history
         # Assign to script the titles the start-of-run hook names.
         self.check_again: set[int] = set()
-        self.start_of_run_calls: list[list[int]] = []
 
     @override
     def get_items(self) -> list[FakeArrItem]:
@@ -399,7 +396,6 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
     @override
     def start_of_run(self, items: list[FakeArrItem]) -> set[int]:
-        self.start_of_run_calls.append([item.id for item in items])
         return set(self.check_again)
 
     @override
@@ -430,8 +426,7 @@ class FakeStrategy(ArrStrategy[FakeArrItem]):
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        self.history_calls.append(date)
-        return self.history
+        return self._history
 
     @override
     def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
