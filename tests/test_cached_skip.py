@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# These read the hub's private run context (run._ctx). Strict re-flags that and
-# the repo disables reportPrivateUsage for tests.
 """The cached-title short-circuit (`ArrRunServices.is_unchanged`) and the title interfaces around it.
 
 Pins the decision, made from a single `CacheStore.get_cached_title` read: a cached
@@ -28,17 +25,7 @@ from pearlarr.output.events import TitleState
 from pearlarr.pending_import import TitleNames
 from pearlarr.tvdb_orders import AIRED_ORDER
 
-from .builders import (
-    FakeCacheStore,
-    FakeSeaDexSource,
-    ScriptedAniListClient,
-    anilist_body,
-    make_anilist_gateway,
-    make_config,
-    make_entry_record,
-    make_run_deps,
-    make_services,
-)
+from .builders import FakeCacheStore, FakeSeaDexSource, anilist_body, make_config, make_entry_record, make_run_deps
 from .fakes import RecordingHub, install_recording_hub
 from .wait_fakes import FakeQbit
 
@@ -136,9 +123,6 @@ _LEFT_ALONE: Final[tuple[bool, list[int | None]]] = (True, [7])
 """True to the strategy, which stops there, and an unchanged block shown for the title."""
 _SENT_ON: Final[tuple[bool, list[int | None]]] = (False, [])
 """False, so the strategy checks the title, and nothing shown for it yet."""
-
-
-_FRESH = datetime(2021, 1, 1)
 
 
 class TestLeavingATitleAlone:
@@ -378,49 +362,48 @@ def test_the_run_counts_every_title_it_starts_on_even_one_seadex_couldnt_be_aske
     assert run.state.stats.checked == 2
 
 
-class TestResolveTitle:
-    """`resolve_title` shows AniList's name, else the arr's, else the id form."""
-
-    @staticmethod
-    def _run(client: ScriptedAniListClient, arr_title: str = "") -> ArrRunServices:
-        run = make_services(_anilist=make_anilist_gateway(client))
-        run._state.arr_title = arr_title
-        return run
+class TestTheTitlesName:
+    """A title goes by AniList's name, else Sonarr's, else its id, and only AniList's name is cached."""
 
     @pytest.mark.parametrize(
-        ("anilist", "arr_title", "display"),
+        ("anilist_name", "arr_title", "title"),
         [
-            pytest.param("Resolved", "Series", "Resolved", id="anilist title"),
-            pytest.param(None, "Series", "Series", id="arr title"),
-            pytest.param(None, "", "AniList #5", id="id form"),
+            pytest.param(
+                "Resolved",
+                "Series",
+                Title(anilist_id=7, name="Resolved", names=TitleNames("Series", ("Resolved",))),
+                id="AniList knows it",
+            ),
+            pytest.param(
+                None,
+                "Series",
+                Title(anilist_id=7, name="Series", names=TitleNames("Series", ())),
+                id="only Sonarr knows it",
+            ),
+            pytest.param(None, "", Title(anilist_id=7, name="AniList #7", names=TitleNames("", ())), id="neither does"),
         ],
     )
-    def test_climbs_the_ladder(self, anilist: str | None, arr_title: str, display: str) -> None:
-        run = self._run(ScriptedAniListClient(anilist), arr_title=arr_title)
+    def test_goes_by_anilists_name_else_sonarrs_else_its_id(
+        self, anilist_name: str | None, arr_title: str, title: Title
+    ) -> None:
+        run = _services(FakeCacheStore(), anilist_name=anilist_name)
+        run.state.arr_title = arr_title
 
-        assert run.resolve_title(5) == Title(
-            anilist_id=5, name=display, names=TitleNames(arr_title, (anilist,) if anilist else ())
-        )
-
-
-class TestNewCacheDetails:
-    """`new_cached_title_update` builds the cached title update, carrying a name only when AniList resolved one."""
+        assert run.resolve_title(7) == title
 
     @pytest.mark.parametrize(
-        ("anilist", "name"),
+        ("anilist_name", "update"),
         [
-            pytest.param("Resolved", {"name": "Resolved"}, id="resolved title rides as the name"),
-            pytest.param(None, {}, id="fallback title is never stored"),
+            pytest.param("Show", {"name": "Show", "updated_at": _CACHED_ON}, id="AniList knows it"),
+            pytest.param(None, {"updated_at": _CACHED_ON}, id="AniList knows nothing"),
         ],
     )
-    def test_carries_the_name_only_when_anilist_resolved_it(self, anilist: str | None, name: CachedTitleUpdate) -> None:
-        # A fallback label must not clobber a name a prior run stored (the merge
-        # keeps the omitted field), nor persist an id form a later run would have to undo.
-        entry = make_entry_record(updated_at=_FRESH)
-        run = make_services()
+    def test_carries_the_name_only_when_anilist_resolved_it(
+        self, anilist_name: str | None, update: CachedTitleUpdate
+    ) -> None:
+        # The write merges into the row, so leaving the name out keeps one an earlier run stored, where Sonarr's name
+        # or the id form would replace it.
+        run = _services(FakeCacheStore(), anilist_name=anilist_name)
+        run.state.arr_title = "Series"
 
-        title = Title(anilist_id=5, name="Series", names=TitleNames("Series", (anilist,) if anilist else ()))
-
-        details = run.new_cached_title_update(title, entry)
-
-        assert details == {**name, "updated_at": entry.updated_at}
+        assert run.new_cached_title_update(run.resolve_title(7), _ENTRY) == update
