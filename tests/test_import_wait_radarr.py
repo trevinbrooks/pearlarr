@@ -20,6 +20,7 @@ from .builders import (
     make_config,
     make_import_wait_manager,
     make_radarr_sync,
+    make_run_deps,
     pending_import,
     radarr_history_record,
 )
@@ -46,13 +47,17 @@ def _radarr_reconcile_manager(
     config = make_config(radarr_post_import_category=post_import_category)
     radarr = FakeRadarrClient()
     radarr.history_since_return = history
-    return make_import_wait_manager(
+    deps = make_run_deps(
         config=config,
-        qbit=qbit,
         cache_store=store,
+        qbit=qbit.client(),
+        arr=Arr.RADARR,
         categories=make_categories(config, Arr.RADARR),
-        strategy=make_radarr_sync(radarr=radarr, config=config, cache_store=store),
+    )
+    return make_import_wait_manager(
+        deps,
         state=ArrRunState(arr=Arr.RADARR),
+        strategy=make_radarr_sync(radarr=radarr, config=config, cache_store=store),
     )
 
 
@@ -75,7 +80,7 @@ class TestCrossArrCategoryGate:
             strategy=RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)]),
             store=store,
             stored_pending_imports=[sonarr_pending],
-            post_import_category="pearlarr-done",
+            config=make_config(post_import_category="pearlarr-done"),
         )
         store.put_pending_import_row(Arr.RADARR, radarr_pending.infohash, radarr_pending.to_json())
 
@@ -119,7 +124,7 @@ class TestCrossArrCategoryGate:
             strategy=strategy,
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7, awaiting_cleanup=awaiting_cleanup)],
-            post_import_category="pearlarr-done",
+            config=make_config(post_import_category="pearlarr-done"),
         )
         movie = pending_import(infohash="h", series_id=0, awaiting_cleanup=radarr_awaiting_cleanup)
         store.put_pending_import_row(Arr.RADARR, "h", movie.to_json())

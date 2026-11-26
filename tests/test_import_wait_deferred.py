@@ -22,7 +22,7 @@ from pearlarr.wait_types import (
     PendingImportState,
 )
 
-from .builders import FakeCacheStore, attempt_result, pending_import
+from .builders import FakeCacheStore, attempt_result, make_config, pending_import
 from .fakes import FakeClock
 from .wait_fakes import (
     FakeQbit,
@@ -192,7 +192,7 @@ class TestRunDeferred:
             qbit=FakeQbit({"h": [FakeTorrent(progress=0.5)]}),
             strategy=RecordingStrategy(),
             stored_pending_imports=[pending_import(infohash="h")],
-            download_timeout=1,
+            config=make_config(download_timeout=1),
             clock=_AutoTickClock(step=30),
         )
 

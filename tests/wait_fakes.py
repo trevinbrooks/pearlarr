@@ -1,8 +1,8 @@
 # pyright: strict
 """Fakes and a manager builder shared by the import wait tests.
 
-`make_orchestration_manager` builds the wait manager bare, without its constructor, over a scripted qBittorrent
-(`FakeQbit`), a recording strategy and a `FakeClock`, so no wait sleeps for real.
+`make_orchestration_manager` builds the wait manager over a run's real deps, a scripted qBittorrent (`FakeQbit`),
+a recording strategy and a `FakeClock`, so no wait sleeps for real.
 """
 
 import copy
@@ -13,16 +13,25 @@ from typing import cast, override
 import pytest
 import qbittorrentapi
 
+from pearlarr.arr_categories import ArrCategoryResolver
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.arr_strategy import ImportCompleter
-from pearlarr.config import Arr
+from pearlarr.config import AppConfig, Arr
 from pearlarr.import_wait import ImportWaitManager
 from pearlarr.output import Phase, TorrentView, WaitSnapshot
 from pearlarr.pending_import import PendingImport
 from pearlarr.wait_types import NO_ATTEMPT, NO_PROGRESS, AttemptKind, AttemptResult, EffectStatus, ImportProgress
 from pearlarr.wait_view import WaitView
 
-from .builders import FakeCacheStore, make_import_wait_manager, pending_import
+from .builders import (
+    FakeCacheStore,
+    make_categories,
+    make_config,
+    make_fetched_categories,
+    make_import_wait_manager,
+    make_run_deps,
+    pending_import,
+)
 from .fakes import FakeClock, FakeStrategy
 
 
@@ -269,26 +278,41 @@ def make_orchestration_manager(
     clock: FakeClock | None = None,
     store: FakeCacheStore | None = None,
     state: ArrRunState | None = None,
-    **config_overrides: object,
+    config: AppConfig | None = None,
+    categories: ArrCategoryResolver | None = None,
 ) -> ImportWaitManager:
-    """A wait manager over carried-over pending imports and this run's grabs, the reporter real.
+    """A wait manager over carried-over pending imports and this run's grabs, built over a run's real deps.
 
     `stored_pending_imports` are the rows earlier runs left. `grabbed` are this run's grabs, stored too and on
     the run list. The store is a fresh fake and the state a fresh Sonarr arr run unless a test passes the one it
-    reads back. Every other keyword is a config setting.
+    reads back. `config` is the run's, with nothing set by default. `categories` is the arr's resolver: by default
+    fetchless with no `qbit`, and with one, read as if the arr's own client carried the config's categories.
+    Each keyword is one part of the situation the wait tests vary, so each stays its own.
     """
 
     cache_store = store if store is not None else FakeCacheStore()
     state = state if state is not None else ArrRunState(arr=Arr.SONARR)
     state.grabbed_this_run.update({pending.infohash: pending for pending in grabbed or []})
-    mgr = make_import_wait_manager(
-        qbit=qbit,
+    config = config or make_config()
+    client = None if qbit is None else qbit.client()
+    if categories is None:
+        settings = config.for_arr(Arr.SONARR)
+        categories = (
+            make_categories(config)
+            if client is None
+            else make_fetched_categories(
+                config, grab=settings.torrent_category, post_import=settings.post_import_category, qbit=client
+            )
+        )
+    deps = make_run_deps(
+        config=config,
         cache_store=cache_store,
+        qbit=client,
+        arr=state.arr,
         clock=clock if clock is not None else FakeClock(),
-        strategy=strategy,
-        state=state,
-        **config_overrides,
+        categories=categories,
     )
+    mgr = make_import_wait_manager(deps, state=state, strategy=strategy)
     for stored in [*(stored_pending_imports or []), *(grabbed or [])]:
         cache_store.put_pending_import_row(state.arr, stored.infohash, stored.to_json())
     return mgr
@@ -346,11 +370,13 @@ def run_blocking_wait(
         strategy=strategy,
         store=store,
         grabbed=[pending_import(infohash="h")],
-        download_timeout=download_timeout,
-        import_timeout=import_timeout,
-        import_poll_interval=30,
-        progress_poll_interval=progress_poll_interval,
-        post_import_category=post_import_category,
+        config=make_config(
+            download_timeout=download_timeout,
+            import_timeout=import_timeout,
+            import_poll_interval=30,
+            progress_poll_interval=progress_poll_interval,
+            post_import_category=post_import_category,
+        ),
         clock=FakeClock(step=step),
     )
     view = RecordingWaitView()

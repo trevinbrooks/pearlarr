@@ -17,7 +17,7 @@ from pearlarr.config import Arr
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity
 from pearlarr.wait_types import AttemptKind, EffectStatus, ImportProgress, Outcome, PauseReason
 
-from .builders import SEP, FakeCacheStore, attempt_result, pending_import
+from .builders import SEP, FakeCacheStore, attempt_result, make_config, pending_import
 from .fakes import FakeClock, diagnostic_messages, install_recording_hub
 from .wait_fakes import (
     CategoryQbit,
@@ -514,8 +514,7 @@ class TestBlockingWaitDownloadBars:
             qbit=FakeQbit({"h": [self._POLLED, _DONE]}, download_progress={"h": [refreshed]}),
             strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)]),
             grabbed=[pending_import(infohash="h")],
-            import_poll_interval=30,
-            progress_poll_interval=5,
+            config=make_config(import_poll_interval=30, progress_poll_interval=5),
             clock=FakeClock(step=5),
         )
         view = RecordingWaitView()
@@ -540,8 +539,7 @@ class TestBlockingWaitDownloadBars:
             ),
             strategy=RecordingStrategy(),
             grabbed=[pending_import(infohash="a"), pending_import(infohash="b")],
-            import_poll_interval=30,
-            progress_poll_interval=5,
+            config=make_config(import_poll_interval=30, progress_poll_interval=5),
             clock=FakeClock(step=5),
         )
         view = RecordingWaitView()
@@ -562,8 +560,7 @@ class TestBlockingWaitDownloadBars:
             ),
             strategy=RecordingStrategy(attempts=[importing, attempt_result(all_done=True)]),
             grabbed=[pending_import(infohash="dl"), pending_import(infohash="imp")],
-            import_poll_interval=30,
-            progress_poll_interval=5,
+            config=make_config(import_poll_interval=30, progress_poll_interval=5),
             clock=FakeClock(step=5),
         )
         view = RecordingWaitView()

@@ -79,7 +79,7 @@ class TestPostImportCategory:
             store=store,
             state=state,
             stored_pending_imports=[pending_import(infohash="h", series_id=7)],
-            post_import_category=post_import_category,
+            config=make_config(post_import_category=post_import_category),
         )
 
     @pytest.mark.parametrize(
@@ -156,7 +156,7 @@ class TestPostImportCategory:
             strategy=strategy,
             store=store,
             grabbed=[pending],
-            post_import_category="pearlarr-done",
+            config=make_config(post_import_category="pearlarr-done"),
             clock=FakeClock(step=30),
         )
 
@@ -197,8 +197,7 @@ class TestRemoveFromQueue:
             strategy=strategy,
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7)],
-            remove_from_queue=remove_from_queue,
-            post_import_category="pearlarr-done",
+            config=make_config(remove_from_queue=remove_from_queue, post_import_category="pearlarr-done"),
         )
 
         mgr.report_imports_for_series(7)
@@ -584,7 +583,7 @@ class TestCleanupRetryVerification:
             strategy=strategy,
             store=store,
             stored_pending_imports=[_OWED_CLEANUP],
-            post_import_category="pearlarr-done",
+            config=make_config(post_import_category="pearlarr-done"),
         )
 
         mgr.finish_cleanups()
@@ -641,7 +640,7 @@ class TestCleanupRetryVerification:
             store=store,
             state=state,
             stored_pending_imports=[_OWED_CLEANUP],
-            post_import_category="pearlarr-done",
+            config=make_config(post_import_category="pearlarr-done"),
         )
 
         mgr.finish_cleanups()

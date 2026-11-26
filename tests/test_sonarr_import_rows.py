@@ -20,6 +20,7 @@ from pearlarr.wait_types import NO_PROGRESS, AttemptKind, AttemptResult, ImportP
 from .builders import (
     FakeCacheStore,
     make_import_wait_manager,
+    make_run_deps,
     make_sonarr_sync,
     manual_candidate,
     pending_import,
@@ -374,11 +375,9 @@ class TestImportOverEpisodeFiles:
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         store.put_guards(Arr.SONARR, claim.anilist_id, claim.guards)
         state = ArrRunState(arr=Arr.SONARR)
+        qbit = FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_import_wait_manager(
-            qbit=FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]}),
-            cache_store=store,
-            strategy=strat,
-            state=state,
+            make_run_deps(cache_store=store, qbit=qbit.client()), state=state, strategy=strat
         )
 
         mgr.report_imports_for_series(claim.series_id)
@@ -404,11 +403,9 @@ class TestImportOverEpisodeFiles:
         )
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
         state = ArrRunState(arr=Arr.SONARR)
+        qbit = FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]})
         mgr = make_import_wait_manager(
-            qbit=FakeQbit({pending.infohash: [FakeTorrent(is_complete=True, content_path="/d")]}),
-            cache_store=store,
-            strategy=strat,
-            state=state,
+            make_run_deps(cache_store=store, qbit=qbit.client()), state=state, strategy=strat
         )
 
         mgr.finish_cleanups()
