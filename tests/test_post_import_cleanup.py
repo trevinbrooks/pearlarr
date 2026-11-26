@@ -417,7 +417,7 @@ class TestMoveKeepsAnUnseenTorrentOut:
 
         assert qbit.set_category_calls == []
         assert strategy.removal_calls == []
-        assert store.get_pending_import_rows(Arr.SONARR)["h"].get("awaiting_cleanup") is True
+        assert stored_awaiting_cleanup(store) == {"h": True}
 
 
 class TestCloseRetrySchedule:
