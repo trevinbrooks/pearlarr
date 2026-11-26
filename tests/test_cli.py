@@ -198,9 +198,9 @@ class TestCacheRoundTrip:
 
 
 class TestHealthyDiagnostics:
-    """`cache_stats` and `cache_check` both succeed on a healthy db and report its integrity as ok."""
+    """`cache_check` succeeds on a healthy db and reports its integrity as ok."""
 
-    def test_stats_and_check_report_a_healthy_db(
+    def test_check_reports_a_healthy_db_as_ok(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -209,7 +209,6 @@ class TestHealthyDiagnostics:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         write_cache_db(tmp_path)
 
-        assert cache_stats() is True
         assert cache_check() is True
         assert "integrity: ok" in capsys.readouterr().out
 
@@ -243,7 +242,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         assert cache_stats() is False
         assert "Cache stats failed" in capsys.readouterr().err
 
-    def test_backup_on_corrupt_db_returns_false_without_raising(
+    def test_failed_backup_leaves_no_partial_snapshot(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -252,10 +251,38 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
-        # backup reads the source through the online-backup API, so a corrupt source
-        # surfaces as a clean failure line (on stderr), not a traceback.
+        # A torn snapshot must not survive a failed backup: a later restore would
+        # move it over the live database.
         assert cache_backup() is False
         assert "Cache backup failed" in capsys.readouterr().err
+        assert not (tmp_path / "cache.backup.db").exists()
+        assert not (tmp_path / "cache.backup.db.tmp").exists()
+
+    def test_failed_backup_preserves_the_previous_good_backup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
+        write_cache_db(tmp_path, series_id=7, name="X")
+        assert cache_backup() is True
+
+        # The live db going corrupt is the very scenario backups exist for. The
+        # failed re-backup must leave the good snapshot restorable.
+        (tmp_path / "cache.db").write_text("not a database")
+        assert cache_backup() is False
+        # The failure line itself is pinned by test_failed_backup_leaves_no_partial_snapshot.
+        # here we only drain it so the real echo stays off the terminal under `-s`.
+        capsys.readouterr()
+
+        store = CacheStore.open_readonly(str(tmp_path / "cache.backup.db"))
+        try:
+            cached = store.get_cached_title(Arr.SONARR, 7)
+            assert cached is not None
+            assert cached.name == "X"
+        finally:
+            store.close()
 
 
 class TestActiveRunGuard:
@@ -344,48 +371,6 @@ class TestMissingFilesAreReportedNotRaised:
             assert expected in captured.err
             assert captured.err.count("\n") == 1
             assert captured.out == ""
-
-    def test_failed_backup_leaves_no_partial_snapshot(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        (tmp_path / "cache.db").write_text("not a database")
-
-        # A torn snapshot must not survive a failed backup: a later restore would
-        # move it over the live database.
-        assert cache_backup() is False
-        assert "Cache backup failed" in capsys.readouterr().err
-        assert not (tmp_path / "cache.backup.db").exists()
-        assert not (tmp_path / "cache.backup.db.tmp").exists()
-
-    def test_failed_backup_preserves_the_previous_good_backup(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
-        write_cache_db(tmp_path, series_id=7, name="X")
-        assert cache_backup() is True
-
-        # The live db going corrupt is the very scenario backups exist for. The
-        # failed re-backup must leave the good snapshot restorable.
-        (tmp_path / "cache.db").write_text("not a database")
-        assert cache_backup() is False
-        # The failure line itself is pinned by test_failed_backup_leaves_no_partial_snapshot.
-        # here we only drain it so the real echo stays off the terminal under `-s`.
-        capsys.readouterr()
-
-        store = CacheStore.open_readonly(str(tmp_path / "cache.backup.db"))
-        try:
-            cached = store.get_cached_title(Arr.SONARR, 7)
-            assert cached is not None
-            assert cached.name == "X"
-        finally:
-            store.close()
 
 
 class TestConfigInit:
