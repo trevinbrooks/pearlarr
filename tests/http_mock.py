@@ -90,8 +90,15 @@ def nyaa_disposition(file_name: str) -> dict[str, str]:
     return {"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
 
 
-def serve_nyaa_torrents(names: Mapping[int, str]) -> None:
+def serve_nyaa_torrents(*numbers: int) -> None:
+    """Nyaa serving each numbered release's torrent file, named for its number, on the ambient respx router."""
+
+    serve_named_nyaa_torrents({number: f"Release {number}" for number in numbers})
+
+
+def serve_named_nyaa_torrents(names: Mapping[int, str]) -> None:
     """Nyaa serving each release's torrent file under its name, `names[number]`, on the ambient respx router."""
 
     for number, name in names.items():
         respx.head(nyaa_torrent_link(number)).respond(headers=nyaa_disposition(f"{name}.torrent"))
+
