@@ -30,10 +30,9 @@ from pearlarr.arr_models import (
 )
 from pearlarr.boundary import BoundaryContractError
 from pearlarr.output import Severity
-from pearlarr.pending_import import NO_TVDB_IDS, PendingImport
 from pearlarr.sonarr_client import SonarrClient
 
-from .builders import title_claim
+from .builders import pending_import
 from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture
 
@@ -58,21 +57,6 @@ def _make_client() -> SonarrClient:
             sleep=lambda _s: None,
         ),
         logger=logging.getLogger("pearlarr.test"),
-    )
-
-
-def _make_pending_import(*, infohash: str, title: str) -> PendingImport:
-    """A minimal `PendingImport` carrying only the fields the ManualImport fetch reads."""
-
-    return PendingImport(
-        infohash=infohash,
-        release_group="",
-        is_dual_audio=False,
-        seadex_files=(),
-        added_at="",
-        file_episode_map={},
-        claims=(title_claim(title=title),),
-        tvdb_ids=NO_TVDB_IDS,
     )
 
 
@@ -430,10 +414,7 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     It narrows each candidate to its `path` / `quality` / `rejections`.
     """
 
-    pending = _make_pending_import(
-        infohash="abcdef0123456789abcdef0123456789abcdef01",
-        title="Yamada-kun",
-    )
+    pending = pending_import(infohash="abcdef0123456789abcdef0123456789abcdef01")
     route = respx.get(f"{_BASE}/manualimport").respond(json=sonarr_fixture("manualimport_yamada.json"))
     candidates = _make_client().manual_import_candidates_by_download_id(pending=pending)
 
@@ -465,7 +446,7 @@ def test_manual_import_candidates_non_200_returns_none_silently() -> None:
     """
 
     recording = install_recording_hub()
-    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
+    pending = pending_import(infohash="a" * 40)
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     assert _make_client().manual_import_candidates_by_download_id(pending=pending) is None
     assert diagnostic_messages(recording, Severity.WARNING) == []
@@ -637,7 +618,7 @@ def test_wait_path_polls_make_exactly_one_attempt() -> None:
     manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     history = respx.get(f"{_BASE}/history").respond(status_code=500)
     client = _make_client()
-    pending = _make_pending_import(infohash="a" * 40, title="Yamada-kun")
+    pending = pending_import(infohash="a" * 40)
 
     assert client.manual_import_candidates_by_download_id(pending=pending) is None
     assert manualimport.call_count == 1
