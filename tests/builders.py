@@ -621,7 +621,11 @@ def make_entry_record(
     notes: str = "",
     comparisons: tuple[str, ...] = (),
 ) -> EntryRecord:
-    """A real `seadex.EntryRecord` (frozen msgspec) with all 13 fields defaulted."""
+    """A real `seadex.EntryRecord` (frozen msgspec) with all 13 fields defaulted.
+
+    It was created thirty days before `updated_at`, so code reading one of the two stamps can't pass for reading the
+    other.
+    """
 
     stamp = updated_at if updated_at is not None else datetime(2026, 1, 1)
     return EntryRecord(
@@ -629,7 +633,7 @@ def make_entry_record(
         collection_id="col",
         collection_name="col-name",
         comparisons=comparisons,
-        created_at=stamp,
+        created_at=stamp - timedelta(days=30),
         id="entry1",
         is_incomplete=is_incomplete,
         notes=notes,
