@@ -36,7 +36,6 @@ from pearlarr.anilist_client import (
     lacks_air_dates,
     media_from_body,
 )
-from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
@@ -322,27 +321,71 @@ _SKIPPING = "skipping further lookups this run"
 
 
 @respx.mock
-@pytest.mark.usefixtures("slept")
-def test_rate_limit_wait_is_narrated() -> None:
-    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never marks AniList unreachable."""
+@pytest.mark.parametrize(
+    ("first", "waited", "line"),
+    [
+        pytest.param(
+            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "42"}),
+            42,
+            "AniList rate-limited - waiting 42s (retry 1/3)",
+            id="retry-after",
+        ),
+        pytest.param(
+            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "0"}),
+            1,
+            "AniList rate-limited - waiting 1s (retry 1/3)",
+            id="under a second",
+        ),
+        pytest.param(
+            httpx.Response(429, json=_THROTTLED, headers={"Retry-After": "120"}),
+            60,
+            "AniList rate-limited - waiting 60s (retry 1/3)",
+            id="past a minute",
+        ),
+        pytest.param(
+            httpx.Response(503, text="<html>Service Unavailable</html>", headers={"Retry-After": "5"}),
+            5,
+            "AniList returned HTTP 503 - waiting 5s (retry 1/3)",
+            id="503",
+        ),
+    ],
+)
+def test_a_retry_waits_out_retry_after_kept_between_a_second_and_a_minute(
+    slept: list[float], first: httpx.Response, waited: int, line: str
+) -> None:
+    """The user is told why and how long, so a long wait doesn't look like a hang."""
 
     recording = install_recording_hub()
-    success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
-    route = respx.post(API_URL)
-    route.side_effect = [
-        httpx.Response(429, json={"data": None}, headers={"Retry-After": "42"}),
-        httpx.Response(200, json=success),
-    ]
-    client = _client()
+    respx.post(API_URL).mock(side_effect=[first, httpx.Response(200, json=_FOUND)])
 
-    body = client.query(2)
+    _client().query(1)
 
-    assert body == success
-    assert client.unreachable is False
-    (waited,) = recording.of_type(Diagnostic)
-    assert waited.severity is Severity.INFO
-    assert waited.message == f"AniList rate-limited - waiting 42s (retry 1/{MAX_RETRIES})"
-    assert waited.origin == LOG_NAME
+    assert slept == [waited]
+    assert [(d.severity, d.message) for d in recording.of_type(Diagnostic)] == [(Severity.INFO, line)]
+
+
+@respx.mock
+def test_without_retry_after_each_wait_doubles(slept: list[float]) -> None:
+    """Three server errors in a row are waited out, and the answer to the last retry comes back."""
+
+    bad_gateway = httpx.Response(502, text="<html>Bad Gateway</html>")
+    respx.post(API_URL).mock(side_effect=[bad_gateway, bad_gateway, bad_gateway, httpx.Response(200, json=_FOUND)])
+
+    assert _client().query(1) == _FOUND
+    # Each wait has up to a second of jitter on top.
+    assert [int(wait) for wait in slept] == [1, 2, 4]
+
+
+@respx.mock
+def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -> None:
+    """A dropped connection is asked again after a short wait that only the debug log mentions."""
+
+    recording = install_recording_hub()
+    respx.post(API_URL).mock(side_effect=[httpx.ConnectError("connection refused"), httpx.Response(200, json=_FOUND)])
+
+    assert _client().query(1) == _FOUND
+    assert [int(wait) for wait in slept] == [1]
+    assert [d.severity for d in recording.of_type(Diagnostic)] == [Severity.DEBUG]
 
 
 @respx.mock
