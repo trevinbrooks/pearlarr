@@ -1539,14 +1539,13 @@ class TestScheduledLifecycle:
         assert recorder.registered == [(signal.SIGTERM, signal.SIG_IGN)]
 
     def test_a_scheduled_run_states_its_number_and_the_next_run_time(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The number opens the console's lines, so it came after the run began
-        # and sits in this run's log file, not in the last run's.
+        # The number opens this run's log file, not the last run's.
         _write_current_config()
         before = datetime.now().astimezone()
 
-        result, _ = _run_scheduled_once(monkeypatch)
+        _run_scheduled_once(monkeypatch)
 
-        lines = _lines(result.stdout)
+        lines = _lines(Path(resolve_paths().log_dir, "Pearlarr.log").read_text(encoding="utf-8"))
         assert lines[0] == "INFO [run] scheduled run started number=1"
         prefix = "INFO [run] next run scheduled at="
         assert lines[-1].startswith(prefix)
