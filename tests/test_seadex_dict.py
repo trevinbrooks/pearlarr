@@ -18,14 +18,12 @@ from pearlarr.config import Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.releases import SeadexDict
 
 from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
     make_config,
     make_entry_record,
-    make_planner,
     make_release_filter,
     make_run_deps,
     make_torrent_record,
@@ -74,6 +72,13 @@ def _entry(*torrents: TorrentRecord) -> EntryRecord:
     """A real `EntryRecord` wrapping the given torrents (replaces the duck-typed fake)."""
 
     return make_entry_record(torrents=torrents)
+
+
+def _offered(entry: EntryRecord) -> dict[str, set[str]]:
+    """The releases fallback mode's build offers for `entry`, by group."""
+
+    built = make_release_filter(private_releases="fallback").build(entry)
+    return {group: set(group_releases.releases) for group, group_releases in built.items()}
 
 
 class TestGetSeadexDict:
@@ -487,153 +492,114 @@ class TestPrivateFallback:
         assert result["B"].releases["b_pub"].is_fallback is True
 
 
-PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
-PUB_URL = "https://nyaa.si/view/1"
-PUB_HASH = "f" * 40
-
-
 class TestFolderLayoutCoverage:
-    """Coverage compares file-size multisets.
+    """Public releases cover a private one when they carry each of its file sizes as many times as it does.
 
-    A folder-nested torrent is covered by its flat twin, and a torrent whose
-    files SeaDex named differently is still covered, while a torrent carrying
-    genuinely different bytes is not.
+    A cross-seed that nests a file in a folder covers the flat torrent, and so does one whose files SeaDex named
+    differently, while one carrying other bytes does not. A private release its group's public releases cover is
+    dropped and brings no fallback. One not covered stays, and the best public releases not preferred are offered
+    beside it.
     """
 
-    def _built(
-        self,
-        priv_files: tuple[str, ...],
-        pub_files: tuple[str, ...],
-        anilist_id: int,
-        *,
-        priv_sizes: tuple[int, ...] | None = None,
-        pub_sizes: tuple[int, ...] | None = None,
-    ) -> SeadexDict:
-        # One "Pick" release cross-seeded private+public with the given
-        # layouts, plus a non-preferred public "Alt" the fallback could offer.
+    PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
+    PUB_URL = "https://nyaa.si/view/1"
+    ALT_URL = "https://nyaa.si/view/2"
+
+    def _pick_entry(self, *, private: tuple[tuple[str, int], ...], public: tuple[tuple[str, int], ...]) -> EntryRecord:
+        """SeaDex prefers Pick's release, cross-seeded private and public with these (name, size) files.
+
+        It also lists Alt's public release, which is not preferred.
+        """
+
         priv = make_torrent_record(
             release_group="Pick",
             tracker=Tracker.ANIMEBYTES,
-            url=PRIV_URL,
+            url=self.PRIV_URL,
             infohash=None,
-            file_names=priv_files,
-            file_size=999,
-            file_sizes=priv_sizes,
+            file_names=tuple(name for name, _ in private),
+            file_sizes=tuple(size for _, size in private),
             is_best=True,
         )
         pub_twin = make_torrent_record(
             release_group="Pick",
             tracker=Tracker.NYAA,
-            url=PUB_URL,
-            infohash=PUB_HASH,
-            file_names=pub_files,
-            file_size=999,
-            file_sizes=pub_sizes,
+            url=self.PUB_URL,
+            infohash="f" * 40,
+            file_names=tuple(name for name, _ in public),
+            file_sizes=tuple(size for _, size in public),
             is_best=True,
         )
         alt = make_torrent_record(
             release_group="Alt",
             tracker=Tracker.NYAA,
-            url="https://nyaa.si/view/2",
+            url=self.ALT_URL,
             infohash="e" * 40,
             file_names=("Pick.S01E01.alt.mkv",),
             file_size=555,
             is_best=False,
         )
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-        )
-        return filt.build(make_entry_record(anilist_id=anilist_id, torrents=(priv, pub_twin, alt)))
+        return make_entry_record(torrents=(priv, pub_twin, alt))
 
-    def test_covered_private_pick_offers_no_fallback_and_prunes(self) -> None:
-        # A file-path comparison misreads the folder-nested private torrent
-        # as uncovered and pulls in the Alt fallback; a size comparison must
-        # not, and the same comparison prunes the private release its twin covers.
-        sd = self._built(
-            priv_files=("NC/Pick NCED01.mkv", "Pick - S01E01.mkv"),
-            pub_files=("Pick NCED01.mkv", "Pick - S01E01.mkv"),
-            anilist_id=91,
-            priv_sizes=(70, 90),
-            pub_sizes=(70, 90),
+    def test_a_file_nested_in_a_folder_is_covered_by_the_same_file_listed_flat(self) -> None:
+        entry = self._pick_entry(
+            private=(("NC/Pick NCED01.mkv", 70), ("Pick - S01E01.mkv", 90)),
+            public=(("Pick NCED01.mkv", 70), ("Pick - S01E01.mkv", 90)),
         )
 
-        assert set(sd) == {"Pick"}
-        assert set(sd["Pick"].releases) == {PUB_URL}
+        assert _offered(entry) == {"Pick": {self.PUB_URL}}
 
     def test_a_torrent_carrying_fewer_copies_is_not_coverage(self) -> None:
-        # Two files of one size are two files: a twin carrying only one does
-        # not cover the private torrent, so the fallback is still offered and
-        # the private release survives the prune.
-        sd = self._built(
-            priv_files=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
-            pub_files=("Pick - 01.mkv",),
-            anilist_id=92,
-            priv_sizes=(100, 100),
-            pub_sizes=(100,),
+        # Two files of one size are two files, and the public torrent carries one.
+        entry = self._pick_entry(
+            private=(("S01/Pick - 01.mkv", 100), ("S02/Pick - 01.mkv", 100)),
+            public=(("Pick - 01.mkv", 100),),
         )
 
-        assert "Alt" in sd
-        assert PRIV_URL in sd["Pick"].releases
+        assert _offered(entry) == {"Pick": {self.PRIV_URL, self.PUB_URL}, "Alt": {self.ALT_URL}}
 
     def test_files_seadex_named_differently_still_cover(self) -> None:
-        # Real data: a per-special AB torrent and the public torrent it belongs to
-        # disagree about WHICH special each file is, so the same bytes carry
-        # swapped episode names. The public torrent still has the private torrent's
-        # file, and reading it as uncovered warns about a release the library
-        # already has - and can never grab, because it is private.
-        sd = self._built(
-            priv_files=("Show S00E03.mkv",),
-            pub_files=("Show S00E03.mkv", "Show S00E02.mkv"),
-            anilist_id=93,
-            priv_sizes=(1464436971,),
-            pub_sizes=(938809391, 1464436971),
+        # Seen on SeaDex: a per-special private torrent and the public torrent it belongs to disagree about which
+        # special each file is, so the same bytes carry swapped episode names. Read as not covered, the private
+        # release would warn about a file the library already has.
+        entry = self._pick_entry(
+            private=(("Show S00E03.mkv", 1464436971),),
+            public=(("Show S00E03.mkv", 938809391), ("Show S00E02.mkv", 1464436971)),
         )
 
-        assert set(sd["Pick"].releases) == {PUB_URL}
+        assert _offered(entry) == {"Pick": {self.PUB_URL}}
 
     def test_a_different_release_at_the_same_names_is_not_coverage(self) -> None:
-        # Same names, different bytes: a re-encode is not the release the
-        # private torrent carries, so it cannot cover it.
-        sd = self._built(
-            priv_files=("Pick - 01.mkv",),
-            pub_files=("Pick - 01.mkv",),
-            anilist_id=94,
-            priv_sizes=(100,),
-            pub_sizes=(200,),
-        )
+        # Same names, other bytes: a re-encode is not the release the private torrent carries.
+        entry = self._pick_entry(private=(("Pick - 01.mkv", 100),), public=(("Pick - 01.mkv", 200),))
 
-        assert PRIV_URL in sd["Pick"].releases
+        assert _offered(entry) == {"Pick": {self.PRIV_URL, self.PUB_URL}, "Alt": {self.ALT_URL}}
 
     def test_coverage_split_across_two_public_torrents_still_covers(self) -> None:
-        # The public side genuinely carries both of the private release's files,
-        # one torrent each. The elementwise-max merge must still read that as
-        # covered - reading it as a gap grabs a fallback nobody needed.
+        # Pick's private batch carries both cours, and its public release one torrent per cour.
+        second_cour_url = "https://nyaa.si/view/3"
         priv = make_torrent_record(
             release_group="Pick",
             tracker=Tracker.ANIMEBYTES,
-            url=PRIV_URL,
+            url=self.PRIV_URL,
             infohash=None,
             file_names=("S01/Pick - 01.mkv", "S02/Pick - 01.mkv"),
             file_sizes=(100, 200),
             is_best=True,
         )
         first_cour = make_torrent_record(
-            release_group="PubOne",
+            release_group="Pick",
             tracker=Tracker.NYAA,
-            url=PUB_URL,
-            infohash=PUB_HASH,
+            url=self.PUB_URL,
+            infohash="f" * 40,
             file_names=("Pick - 01.mkv",),
             file_sizes=(100,),
             is_best=True,
         )
         second_cour = make_torrent_record(
-            release_group="PubTwo",
+            release_group="Pick",
             tracker=Tracker.NYAA,
-            url="https://nyaa.si/view/3",
-            infohash="f" * 40,
+            url=second_cour_url,
+            infohash="d" * 40,
             file_names=("Pick - 01.mkv",),
             file_sizes=(200,),
             is_best=True,
@@ -641,21 +607,14 @@ class TestFolderLayoutCoverage:
         alt = make_torrent_record(
             release_group="Alt",
             tracker=Tracker.NYAA,
-            url="https://nyaa.si/view/2",
+            url=self.ALT_URL,
             infohash="e" * 40,
             file_names=("Pick.S01E01.alt.mkv",),
             is_best=False,
         )
-        filt = make_release_filter(
-            private_releases="fallback",
-            want_best=True,
-            prefer_dual_audio=False,
-            planner=make_planner(),
-        )
+        entry = make_entry_record(torrents=(priv, first_cour, second_cour, alt))
 
-        sd = filt.build(make_entry_record(anilist_id=94, torrents=(priv, first_cour, second_cour, alt)))
-
-        assert "Alt" not in sd
+        assert _offered(entry) == {"Pick": {self.PUB_URL, second_cour_url}}
 
 
 class TestInteractivePick:
