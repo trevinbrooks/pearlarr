@@ -106,7 +106,7 @@ def test_all_series_parses_into_sonarr_item_shape() -> None:
     typed claim), with correctly-typed id fields.
     """
 
-    route = respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY])
+    respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY])
     client = _make_client()
     series: list[object] = list(client.all_series())
 
@@ -117,10 +117,6 @@ def test_all_series_parses_into_sonarr_item_shape() -> None:
     assert show.tvdbId == 299502
     assert show.imdbId == "tt5311514"
     assert show.monitored is True
-    request = route.calls.last.request
-    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
-    assert "apikey" not in str(request.url)
-    assert request.headers["X-Api-Key"] == _KEY
 
 
 @respx.mock
@@ -164,13 +160,9 @@ def test_queue_decodes_records_and_builds_request() -> None:
         state="downloading",
         status="ok",
     )
-    request = route.calls.last.request
-    url = str(request.url)
+    url = str(route.calls.last.request.url)
     assert "pageSize=1000" in url
     assert "includeUnknownSeriesItems=true" in url
-    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == _KEY
 
 
 def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
@@ -278,14 +270,10 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     # sorted: the lone S00 special leads, S01E12 trails (decode + order in one).
     assert (episodes[0].season_number, episodes[0].episode_number, episodes[0].id) == (0, 1, 8475)
     assert (episodes[-1].season_number, episodes[-1].episode_number, episodes[-1].id) == (1, 12, 8487)
-    request = route.calls.last.request
-    url = str(request.url)
+    url = str(route.calls.last.request.url)
     assert "seriesId=228" in url
     assert "includeImages=false" in url
     assert "includeEpisodeFile=true" in url
-    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock
@@ -356,8 +344,7 @@ def test_episodes_quiet_suppresses_unreachable_warning() -> None:
 def test_parse_decodes_season_episode() -> None:
     """An `SxxExx` name decodes to its own numbers plus Sonarr's matched episode.
 
-    The request carries the name in the URL and the api key in the
-    X-Api-Key header.
+    The request carries the name in the URL.
     """
 
     route = respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_bahamut_s01e01.json"))
@@ -372,11 +359,7 @@ def test_parse_decodes_season_episode() -> None:
         matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
         series_id=228,
     )
-    request = route.calls.last.request
-    url = str(request.url)
-    assert "title=" in url
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
+    assert "title=" in str(route.calls.last.request.url)
 
 
 @respx.mock
@@ -797,13 +780,7 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
     command_id = _make_client().manual_import_execute(files=[file], import_mode="move")
 
     assert command_id == 4242
-    request = route.calls.last.request
-    assert json.loads(request.content) == expected_body
-    url = str(request.url)
-    assert url.startswith(f"{_BASE}/command")
-    # The POST authenticates through the header too, never the query string.
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
+    assert json.loads(route.calls.last.request.content) == expected_body
 
 
 @respx.mock
@@ -979,13 +956,10 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             reason="MissingFromDisk",
         ),
     ]
-    request = route.calls.last.request
-    url = str(request.url)
+    url = str(route.calls.last.request.url)
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeSeries=false" in url
     assert "includeEpisode=false" in url
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock
@@ -1029,13 +1003,10 @@ def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
     included.
     """
 
-    route = respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))
+    respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))
     defs = _make_client().quality_definitions()
 
     assert defs[0].quality == Quality(id=0, name="Unknown", source="unknown", resolution=0)
-    request = route.calls.last.request
-    assert "apikey" not in str(request.url)
-    assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock

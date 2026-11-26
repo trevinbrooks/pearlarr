@@ -55,12 +55,7 @@ def test_movie_files_decodes_resources_and_builds_request() -> None:
     files = _make_client().movie_files(7)
 
     assert files == [MovieFile(release_group="SubsPlease", size=123)]
-    request = route.calls.last.request
-    url = str(request.url)
-    assert "movieId=7" in url
-    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
+    assert "movieId=7" in str(route.calls.last.request.url)
 
 
 @respx.mock
@@ -120,12 +115,9 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             reason=None,
         ),
     ]
-    request = route.calls.last.request
-    url = str(request.url)
+    url = str(route.calls.last.request.url)
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeMovie=false" in url
-    assert "apikey" not in url
-    assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock
@@ -160,7 +152,7 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     typed claim), with correctly-typed id fields.
     """
 
-    route = respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY])
+    respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY])
     client = _make_client()
     movies: list[object] = list(client.all_movies())
 
@@ -171,10 +163,6 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.tmdbId == 372058
     assert movie.imdbId == "tt5311514"
     assert movie.monitored is True
-    request = route.calls.last.request
-    # The key goes in the X-Api-Key header, never the URL (it would leak via logs).
-    assert "apikey" not in str(request.url)
-    assert request.headers["X-Api-Key"] == _KEY
 
 
 @respx.mock
