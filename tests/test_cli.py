@@ -36,7 +36,7 @@ import typer
 from typer.testing import CliRunner, Result
 
 from pearlarr.boot_flow import BootFlow
-from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config, run_arrs
+from pearlarr.bootstrap import _rewrite_old_config, configured_arrs, load_shared_config
 from pearlarr.cache import CacheStore
 from pearlarr.cli import (
     _handle_sigterm,
@@ -1238,16 +1238,15 @@ class TestConfigAutoMigrate:
         assert "details in the log" not in notice.message
 
     def test_a_dry_run_leaves_the_file_alone_behind_a_note(self) -> None:
-        recording = install_recording_hub()
-        config = _write_data_dir_config(_OLD_SCHEMA_CONFIG)
+        config = _write_data_dir_config(_OLD_SCHEMA_NO_ARRS)
 
-        _rewrite_old_config(str(config), self._load(config), dry_run=True)
+        result = _invoke_offline("run", "single", "--dry-run")
 
-        assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_CONFIG
-        assert sorted(p.name for p in config.parent.iterdir()) == ["config.yml"]
-        (note,) = [d for d in recording.of_type(Diagnostic) if not d.file_only]
-        assert note.severity is Severity.INFO
-        assert note.message == "Config uses an older schema - left unchanged on a dry run"
+        assert config.read_text(encoding="utf-8") == _OLD_SCHEMA_NO_ARRS
+        assert not os.path.exists(f"{config}.bak")
+        assert [line for line in _lines(result.stdout) if " schema " in line] == [
+            "INFO [Pearlarr] Config uses an older schema - left unchanged on a dry run during=boot"
+        ]
 
     @_needs_posix_permissions
     def test_an_unwritable_file_falls_back_in_memory_with_a_short_warning(self) -> None:
@@ -1448,16 +1447,7 @@ class TestDataDirLine:
 
 
 class TestScheduledLifecycle:
-    """Around a run: the scheduled loop's lines and retry, log retention, a dry run's config, SIGTERM and the help."""
-
-    @staticmethod
-    def _stub_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
-        """Stop the run right after the config load (no network)."""
-
-        def refuse_resolver(*args: object, **kwargs: object) -> None:
-            return None
-
-        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+    """Around a run: the scheduled loop's lines and retry, log retention, SIGTERM and the help."""
 
     def test_invalid_config_still_skips_and_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Only the missing file exits: an invalid config is likely mid-edit, so
@@ -1473,31 +1463,6 @@ class TestScheduledLifecycle:
             )
         ]
         assert slept == [6 * 3600]
-
-    def test_a_dry_run_never_rewrites_the_config_file(
-        self,
-        logger: logging.Logger,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # Live repro of the original bug: --dry-run rewrote an 81 B old-schema
-        # file to the full 12 kB template. The file must stay byte-identical.
-        recording = install_recording_hub()
-        old = _OLD_SCHEMA_CONFIG
-        _write_data_dir_config(old)
-        paths = resolve_paths()
-        self._stub_resolver(monkeypatch)
-
-        run_arrs(
-            [ArrTarget(Arr.SONARR)],
-            paths=paths,
-            logger=logger,
-            file_log_renderer=FileLogRenderer(paths.log_dir),
-            dry_run=True,
-        )
-
-        assert Path(paths.config_file).read_text(encoding="utf-8") == old
-        assert not os.path.exists(paths.config_file + ".bak")
-        assert any("left unchanged on a dry run" in d.message for d in recording.of_type(Diagnostic))
 
     def test_a_run_deletes_log_backups_older_than_the_retention(self) -> None:
         _write_current_config("advanced:\n  log_retention_days: 3\n")
