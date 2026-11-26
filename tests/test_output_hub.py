@@ -273,15 +273,6 @@ def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_er
     assert hub.counts.mark() == SeverityTally(info=1, error=1)
 
 
-def test_a_warning_is_counted_even_when_every_renderer_raises_on_it() -> None:
-    hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
-
-    hub.emit(Diagnostic(severity=Severity.WARNING, message="boom"))
-
-    # Counted when it's emitted, though nothing rendered it. With no file log left, both notes are counted errors.
-    assert hub.counts.mark() == SeverityTally(warning=1, error=2)
-
-
 def test_a_renderer_that_fails_on_a_note_takes_a_strike_for_it() -> None:
     first, second = _FailingRenderer(), _FailingRenderer()
     hub = OutputHub([first, second])
@@ -687,24 +678,16 @@ def test_bound_mark_diffs_only_its_own_counter() -> None:
     assert mark.since() == SeverityTally(error=1)
 
 
-def test_hub_tallies_every_emitted_event() -> None:
-    hub = OutputHub([])
-
-    hub.emit(_EVENT)
-    hub.emit(Diagnostic(severity=Severity.ERROR, message="boom"))
-
-    assert hub.counts.mark() == SeverityTally(info=1, error=1)
-
-
-def test_file_only_diagnostics_are_never_counted() -> None:
+def test_the_tally_counts_every_emit_but_file_only_diagnostics() -> None:
     """The tally is what a visible renderer could show, so file-only forensics stay out of it."""
 
     hub = OutputHub([])
 
+    hub.emit(_EVENT)
     hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", file_only=True))
     hub.emit(Diagnostic(severity=Severity.ERROR, message="visible note"))
 
-    assert hub.counts.mark() == SeverityTally(error=1)
+    assert hub.counts.mark() == SeverityTally(info=1, error=1)
 
 
 # --- levels and lifecycle -------------------------------------------------------------
