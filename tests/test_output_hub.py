@@ -39,7 +39,6 @@ from pearlarr.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from pearlarr.output.hub import QUEUE_CAP
 from pearlarr.paths import resolve_paths
 
 from .fakes import RecordingHub, RecordingRenderer, install_recording_hub
@@ -509,95 +508,81 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     assert gated.log == ["PearlarrStarted", "begin_run", "set_level"]
 
 
-def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
-    gated, observer = _GatedRenderer(), RecordingRenderer()
-    hub = OutputHub([gated, observer])
-    mark = hub.counts.mark()
+# --- overflow ---------------------------------------------------------------------
+
+_FULL_QUEUE = [Diagnostic(severity=Severity.INFO, message=f"q{i}") for i in range(10_000)]
+_OVERFLOW_NOTE = Diagnostic(
+    severity=Severity.WARNING,
+    message="output queue overflowed at 10000 events; shedding newest events until it drains",
+    origin="output.hub",
+    file_only=True,
+)
+
+
+def _hold_full_queue(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
+    """Hold _EVENT mid-handle on a drainer thread, fill the queue behind it to its cap, and return the thread."""
 
     drainer = _emit_held_at(hub, gated)
+    for event in _FULL_QUEUE:
+        hub.emit(event)
+    return drainer
 
-    # Fill the stalled queue to the cap, then two more that must be shed.
-    for i in range(QUEUE_CAP):
-        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-    hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
-    hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
 
+def test_a_full_queue_sheds_new_diagnostics_with_one_note() -> None:
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
+
+    drainer = _hold_full_queue(hub, gated)
+    hub.emit(Diagnostic(severity=Severity.INFO, message="shed"))
+    hub.emit(Diagnostic(severity=Severity.INFO, message="shed too"))
     _release(gated, drainer)
 
-    messages = [d.message for d in observer.of_type(Diagnostic)]
-    assert f"q{QUEUE_CAP - 1}" in messages  # everything under the cap still renders
-    assert "dropped-1" not in messages and "dropped-2" not in messages
-    assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
-    # Shed events were still counted at enqueue. The note itself is never counted.
-    since = hub.counts.counts_since(mark)
-    assert (since.info, since.warning) == (QUEUE_CAP + 3, 0)
+    assert observer.events == [_EVENT, *_FULL_QUEUE, _OVERFLOW_NOTE]
+    # The two shed still count toward the run's tally. The note is file-only, so it doesn't.
+    assert hub.counts.mark() == SeverityTally(info=10_003)
 
 
-def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """At the cap, only diagnostics shed.
+def test_a_full_queue_never_sheds_a_structural_event() -> None:
+    """An arr run's close is one of the events the open scopes are built from, so it's queued past the cap."""
 
-    An open-scopes input (ArrRunFinished) is appended even past the cap, so the
-    open scopes can never be corrupted.
-    """
-
-    cap = 3
-    monkeypatch.setattr("pearlarr.output.hub.QUEUE_CAP", cap)
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
-
-    drainer = _emit_held_at(hub, gated)
-
-    # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
-    for i in range(cap):
-        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
     structural = ArrRunFinished(arr=Arr.SONARR)
-    hub.emit(structural)  # non-diagnostic at the cap: appended, never shed
 
+    drainer = _hold_full_queue(hub, gated)
+    hub.emit(structural)
     _release(gated, drainer)
 
-    assert structural in observer.events
-    messages = [d.message for d in observer.of_type(Diagnostic)]
-    assert all("overflowed" not in m for m in messages)  # a structural never trips the note
+    assert observer.events == [_EVENT, *_FULL_QUEUE, structural]  # and no note
 
 
-def test_overflow_sheds_diagnostics_and_restarts_the_note_per_episode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with one note per episode.
+def test_each_overflow_gets_its_own_note_once_the_queue_drains() -> None:
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
 
-    The note resets once a drain empties the queue.
-    """
+    for _ in range(2):
+        gated.arm()
+        drainer = _hold_full_queue(hub, gated)
+        hub.emit(Diagnostic(severity=Severity.INFO, message="shed"))
+        _release(gated, drainer)
 
-    cap = 3
-    monkeypatch.setattr("pearlarr.output.hub.QUEUE_CAP", cap)
-    gate, observer = _GatedRenderer(), RecordingRenderer()
-    hub = OutputHub([gate, observer])
-    mark = hub.counts.mark()
+    assert observer.events.count(_OVERFLOW_NOTE) == 2
 
-    def run_overflow_episode() -> None:
-        gate.arm()
-        drainer = _emit_held_at(hub, gate)
-        for i in range(cap):  # fill to the cap
-            hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-        hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
-        hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
-        _release(gate, drainer)
 
-    run_overflow_episode()
-    messages = [d.message for d in observer.of_type(Diagnostic)]
-    assert f"q{cap - 1}" in messages  # everything under the cap still renders
-    assert "dropped-1" not in messages and "dropped-2" not in messages
-    assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
-    assert hub._overflowing is False  # the drain emptied the queue and reset the note
+def test_a_once_keyed_diagnostic_shed_at_the_cap_lands_when_emitted_again() -> None:
+    """It's shed whole: its key isn't taken and it isn't counted, so the next emit of it is the one shown and counted."""
 
-    run_overflow_episode()
-    messages = [d.message for d in observer.of_type(Diagnostic)]
-    assert sum("overflowed" in m for m in messages) == 2  # a fresh note for the new episode
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
+    keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
-    # Shed diagnostics were counted at enqueue. The note itself is never counted.
-    # Per episode: _EVENT + cap diagnostics + 2 dropped = cap + 3 info.
-    since = hub.counts.counts_since(mark)
-    assert (since.info, since.warning) == (2 * (cap + 3), 0)
+    drainer = _hold_full_queue(hub, gated)
+    hub.emit(keyed)
+    _release(gated, drainer)
+    hub.emit(keyed)
+
+    assert observer.events[-2:] == [_OVERFLOW_NOTE, keyed]
+    assert hub.counts.mark() == SeverityTally(info=10_001, warning=1)
 
 
 # --- once= dedup ---------------------------------------------------------------------
@@ -925,34 +910,6 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
 
 
 # --- the p4 re-review pins (hub core) --------------------------------------------
-
-
-def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> None:
-    """A once-keyed diagnostic arriving during an overflow episode must not consume its dedup key (or its count).
-
-    It sheds WHOLE, so the post-drain re-emit is the one rendered and the one
-    tallied.
-    """
-
-    gated, observer = _GatedRenderer(), RecordingRenderer()
-    hub = OutputHub([gated, observer])
-    mark = hub.counts.mark()
-    keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
-
-    drainer = _emit_held_at(hub, gated)
-    for i in range(QUEUE_CAP):
-        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
-    hub.emit(keyed)  # at the cap: shed whole - key unregistered, uncounted
-
-    _release(gated, drainer)
-
-    hub.emit(keyed)  # the queue drained: the re-emit must land
-
-    messages = [d.message for d in observer.of_type(Diagnostic)]
-    assert messages.count("SeaDex unreachable") == 1
-    # Exactly ONE keyed warning tallied (the shed one was uncounted. The
-    # overflow note is file_only forensics and never counts).
-    assert hub.counts.counts_since(mark).warning == 1
 
 
 class _LifecycleCaller(_QuietRenderer):
