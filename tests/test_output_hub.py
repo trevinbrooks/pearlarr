@@ -787,6 +787,42 @@ def test_an_emit_from_inside_a_lifecycle_call_dispatches_once_the_call_is_done(
     assert emitter.log == logged
 
 
+class _LifecycleCaller(_QuietRenderer):
+    """On each PearlarrStarted it's handed, emits a follow-up and then sets the level from inside `handle`.
+
+    It's handed its hub rather than finding the process hub. A set_level that waited on its own drain would leave a
+    thread holding the drain lock for good, and closing an installed hub at teardown would then wait on it forever.
+    """
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if isinstance(event, PearlarrStarted) and self.hub is not None:
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
+            self.hub.set_level(logging.WARNING)
+
+
+def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
+    """`set_level` from inside a renderer's handle neither waits on its own drain, flushes inside it, nor keeps its drain lock."""
+
+    recorder = RecordingRenderer()
+    caller = _LifecycleCaller()
+    hub = OutputHub([caller, recorder])
+    caller.hub = hub
+
+    # On a thread of its own: a set_level that waited on its own drain would never return.
+    emitter = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
+    emitter.start()
+    emitter.join(timeout=30.0)
+    assert not emitter.is_alive(), "set_level inside handle waited on its own drain"
+    hub.emit(_AFTER)  # dispatches only if the drain lock came back
+
+    # The in-flight event finishes its fan-out before the follow-up it queued, and nothing goes out twice.
+    assert recorder.events == [_EVENT, Diagnostic(severity=Severity.INFO, message="queued behind"), _AFTER]
+
+
 class _FailingBeginRun(_FailingRenderer):
     """Raises from begin_run too, after logging it."""
 
@@ -843,6 +879,30 @@ def test_close_is_idempotent_and_reaches_every_renderer() -> None:
     hub.close()
 
     assert (first.closes, second.closes) == (1, 1)
+
+
+class _NoisyCloser(_QuietRenderer):
+    """Emits a file-only teardown note through the process hub from inside its own `close`."""
+
+    @override
+    def close(self) -> None:
+        emit_to_hub(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
+
+
+def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
+    """The file renderers close last, so a note from another renderer's close still reaches the file.
+
+    Renderers that raise from close or handle along the way stop none of it.
+    """
+
+    file_log = _FileLog()
+    hub = OutputHub([_FailingFileLog(), _FailingCloseRenderer(), _NoisyCloser(), file_log])
+    install_hub(hub)
+
+    hub.close()
+
+    assert file_log.events == [Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True)]
+    assert file_log.closed
 
 
 def test_a_closed_hub_drops_every_later_call() -> None:
@@ -1070,69 +1130,6 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
     (note,) = recording.of_type(Diagnostic)
     assert note.trace is not None
     assert "ValueError: boom" in note.trace.plain
-
-
-# --- the p4 re-review pins (hub core) --------------------------------------------
-
-
-class _LifecycleCaller(_QuietRenderer):
-    """On each PearlarrStarted it's handed, emits a follow-up and then sets the level from inside `handle`.
-
-    It's handed its hub rather than finding the process hub. A set_level that waited on its own drain would leave a
-    thread holding the drain lock for good, and closing an installed hub at teardown would then wait on it forever.
-    """
-
-    def __init__(self) -> None:
-        self.hub: OutputHub | None = None
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, PearlarrStarted) and self.hub is not None:
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
-            self.hub.set_level(logging.WARNING)
-
-
-def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
-    """`set_level` from inside a renderer's handle neither waits on its own drain, flushes inside it, nor keeps its drain lock."""
-
-    recorder = RecordingRenderer()
-    caller = _LifecycleCaller()
-    hub = OutputHub([caller, recorder])
-    caller.hub = hub
-
-    # On a thread of its own: a set_level that waited on its own drain would never return.
-    emitter = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
-    emitter.start()
-    emitter.join(timeout=30.0)
-    assert not emitter.is_alive(), "set_level inside handle waited on its own drain"
-    hub.emit(_AFTER)  # dispatches only if the drain lock came back
-
-    # The in-flight event finishes its fan-out before the follow-up it queued, and nothing goes out twice.
-    assert recorder.events == [_EVENT, Diagnostic(severity=Severity.INFO, message="queued behind"), _AFTER]
-
-
-class _NoisyCloser(_QuietRenderer):
-    """Emits a file-only teardown note through the process hub from inside its own `close`."""
-
-    @override
-    def close(self) -> None:
-        emit_to_hub(Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True))
-
-
-def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
-    """The file renderers close last, so a note from another renderer's close still reaches the file.
-
-    Renderers that raise from close or handle along the way stop none of it.
-    """
-
-    file_log = _FileLog()
-    hub = OutputHub([_FailingFileLog(), _FailingCloseRenderer(), _NoisyCloser(), file_log])
-    install_hub(hub)
-
-    hub.close()
-
-    assert file_log.events == [Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True)]
-    assert file_log.closed
 
 
 def test_hub_note_without_exc_keeps_the_trace_none() -> None:
