@@ -127,61 +127,47 @@ class _EmittingRenderer(_QuietRenderer):
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="second"))
 
 
-class _LockProbeRenderer(_QuietRenderer):
-    """`handle()` checks the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
-
-    def __init__(self) -> None:
-        self.hub: OutputHub | None = None
-        self.lock_was_free: list[bool] = []
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        hub = self.hub
-        assert hub is not None
-        acquired: list[bool] = []
-
-        def probe() -> None:
-            if hub._lock.acquire(blocking=False):
-                hub._lock.release()
-                acquired.append(True)
-            else:
-                acquired.append(False)
-
-        helper = threading.Thread(target=probe, daemon=True)
-        helper.start()
-        helper.join(timeout=30.0)
-        self.lock_was_free.extend(acquired)
-
-
 class _GatedRenderer(_QuietRenderer):
-    """Blocks inside `handle` (on the first event only) until released.
+    """Blocks inside `handle` until released, then logs the event type and the thread that handled it.
 
-    Records each handled event with its handling thread plus lifecycle calls,
-    in one order log.
+    It blocks on the first event it's handed, and again on the next one after each `arm()`. Lifecycle calls go in
+    the same log.
     """
 
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
-        self.handled: list[tuple[str, threading.Thread]] = []
         self.log: list[str] = []
-        self._blocked_once = False
+        self.threads: list[threading.Thread] = []
+        self._armed = True
+
+    def arm(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+        self._armed = True
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        name = type(event).__name__
-        self.handled.append((name, threading.current_thread()))
-        if not self._blocked_once:
-            self._blocked_once = True
+        if self._armed:
+            self._armed = False
             self.entered.set()
-            # The backstop must outlast any CI scheduling stall (5.0s once expired
-            # mid-test on a loaded Windows runner and read as a hub bug).
+            # The wait must outlast any CI scheduling stall: 5 seconds once ran out on a loaded Windows runner.
+            # A gate that runs out raises into the hub, which contains it, so that event never reaches the log.
             assert self.release.wait(timeout=30.0), "gate never released"
-        self.log.append(f"handled:{name}")
+        self.log.append(type(event).__name__)
+        self.threads.append(threading.current_thread())
 
     @override
     def begin_run(self) -> None:
-        self.log.append("cycle")
+        self.log.append("begin_run")
+
+    @override
+    def set_level(self, level: int) -> None:
+        self.log.append("set_level")
+
+    @override
+    def close(self) -> None:
+        self.log.append("close")
 
 
 class _InterruptOnceRenderer(_QuietRenderer):
@@ -195,31 +181,6 @@ class _InterruptOnceRenderer(_QuietRenderer):
         self.calls += 1
         if self.calls == 1:
             raise KeyboardInterrupt
-
-
-class _ReArmableGate(_QuietRenderer):
-    """Blocks inside `handle` once per active episode until released.
-
-    `arm()` restarts it for the next episode - the overflow-note-per-episode
-    reset check.
-    """
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self._armed = True
-
-    def arm(self) -> None:
-        self.entered.clear()
-        self.release.clear()
-        self._armed = True
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        if self._armed:
-            self._armed = False
-            self.entered.set()
-            assert self.release.wait(timeout=30.0), "gate never released"
 
 
 # --- dispatch ---------------------------------------------------------------------
@@ -494,40 +455,36 @@ def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> 
 # --- the combiner (dispatch outside the hub lock) -------------------------------------
 
 
-def test_handle_runs_without_the_hub_lock_held() -> None:
-    probe = _LockProbeRenderer()
-    hub = OutputHub([probe])
-    probe.hub = hub
-
-    hub.emit(_EVENT)
-
-    assert probe.lock_was_free == [True]
-
-
-def _emit_held_at(hub: OutputHub, entered: threading.Event) -> threading.Thread:
-    """Emit on a daemon thread and return it once a gated renderer holds the event mid-handle."""
+def _emit_held_at(hub: OutputHub, gated: _GatedRenderer) -> threading.Thread:
+    """Emit _EVENT on a drainer thread and return the thread once the gated renderer holds the event mid-handle."""
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
     drainer.start()
-    assert entered.wait(timeout=30.0)
+    assert gated.entered.wait(timeout=30.0)
     return drainer
+
+
+def _release(gated: _GatedRenderer, drainer: threading.Thread) -> None:
+    """Open the gate and wait for the drainer thread to finish."""
+
+    gated.release.set()
+    drainer.join(timeout=30.0)
+    assert not drainer.is_alive()
 
 
 def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     gated = _GatedRenderer()
     hub = OutputHub([gated])
+    drainer = _emit_held_at(hub, gated)
 
-    drainer = _emit_held_at(hub, gated.entered)
+    # This emit returns at once without dispatching: the drainer thread still holds the drain lock.
+    hub.emit(Diagnostic(severity=Severity.INFO, message="from main"))
+    assert gated.log == []
 
-    # B's emit returns immediately without dispatching: A still owns the drain lock.
-    hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
-    assert [name for name, _ in gated.handled] == ["PearlarrStarted"]
-
-    gated.release.set()
-    drainer.join(timeout=30.0)
-    assert not drainer.is_alive()
-    assert [name for name, _ in gated.handled] == ["PearlarrStarted", "Diagnostic"]
-    assert gated.handled[1][1] is drainer  # A's drain loop delivered B's event
+    _release(gated, drainer)
+    # The drainer delivered both. Had this thread's emit waited on the held renderer, the gate would have run out.
+    assert gated.log == ["PearlarrStarted", "Diagnostic"]
+    assert gated.threads == [drainer, drainer]
 
 
 def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
@@ -590,19 +547,18 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     gated = _GatedRenderer()
     hub = OutputHub([gated])
 
-    drainer = _emit_held_at(hub, gated.entered)
+    drainer = _emit_held_at(hub, gated)
 
     lifecycle = threading.Thread(target=lambda: hub.begin_run(console_format="plain", level=logging.INFO), daemon=True)
     lifecycle.start()
     # A bounded chance for a broken (non-waiting) begin_run to interleave.
     lifecycle.join(timeout=0.2)
     assert lifecycle.is_alive()  # parked until the drain finishes
-    assert "cycle" not in gated.log
+    assert gated.log == []
 
-    gated.release.set()
-    drainer.join(timeout=30.0)
+    _release(gated, drainer)
     lifecycle.join(timeout=30.0)
-    assert gated.log == ["handled:PearlarrStarted", "cycle"]
+    assert gated.log == ["PearlarrStarted", "begin_run", "set_level"]
 
 
 def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
@@ -610,7 +566,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     hub = OutputHub([gated, observer])
     mark = hub.counts.mark()
 
-    drainer = _emit_held_at(hub, gated.entered)
+    drainer = _emit_held_at(hub, gated)
 
     # Fill the stalled queue to the cap, then two more that must be shed.
     for i in range(QUEUE_CAP):
@@ -618,9 +574,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
     hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
 
-    gated.release.set()
-    drainer.join(timeout=30.0)
-    assert not drainer.is_alive()
+    _release(gated, drainer)
 
     messages = [d.message for d in observer.of_type(Diagnostic)]
     assert f"q{QUEUE_CAP - 1}" in messages  # everything under the cap still renders
@@ -643,7 +597,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
 
-    drainer = _emit_held_at(hub, gated.entered)
+    drainer = _emit_held_at(hub, gated)
 
     # _EVENT is blocked mid-handle (already popped). Fill the pending queue to the cap.
     for i in range(cap):
@@ -651,9 +605,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     structural = ArrRunFinished(arr=Arr.SONARR)
     hub.emit(structural)  # non-diagnostic at the cap: appended, never shed
 
-    gated.release.set()
-    drainer.join(timeout=30.0)
-    assert not drainer.is_alive()
+    _release(gated, drainer)
 
     assert structural in observer.events
     messages = [d.message for d in observer.of_type(Diagnostic)]
@@ -670,20 +622,18 @@ def test_overflow_sheds_diagnostics_and_restarts_the_note_per_episode(
 
     cap = 3
     monkeypatch.setattr("pearlarr.output.hub.QUEUE_CAP", cap)
-    gate, observer = _ReArmableGate(), RecordingRenderer()
+    gate, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gate, observer])
     mark = hub.counts.mark()
 
     def run_overflow_episode() -> None:
         gate.arm()
-        drainer = _emit_held_at(hub, gate.entered)
+        drainer = _emit_held_at(hub, gate)
         for i in range(cap):  # fill to the cap
             hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
         hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
         hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
-        gate.release.set()
-        drainer.join(timeout=30.0)
-        assert not drainer.is_alive()
+        _release(gate, drainer)
 
     run_overflow_episode()
     messages = [d.message for d in observer.of_type(Diagnostic)]
@@ -1041,14 +991,12 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
     mark = hub.counts.mark()
     keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
-    drainer = _emit_held_at(hub, gated.entered)
+    drainer = _emit_held_at(hub, gated)
     for i in range(QUEUE_CAP):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
     hub.emit(keyed)  # at the cap: shed whole - key unregistered, uncounted
 
-    gated.release.set()
-    drainer.join(timeout=30.0)
-    assert not drainer.is_alive()
+    _release(gated, drainer)
 
     hub.emit(keyed)  # the queue drained: the re-emit must land
 
