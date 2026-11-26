@@ -40,7 +40,6 @@ from .wait_fakes import (
     FakeTorrent,
     QbitStep,
     RecordingStrategy,
-    RecordingWaitView,
     make_orchestration_manager,
     stored_awaiting_cleanup,
 )
@@ -111,7 +110,7 @@ class TestReportImportsForSeries:
             qbit=FakeQbit({}),
             strategy=RecordingStrategy(),
             store=store,
-            stored_pending_imports=[pending_import(infohash="h", series_id=7)],
+            stored_pending_imports=[pending_import(series_id=7)],
         )
         recording = install_recording_hub()
 
@@ -138,7 +137,7 @@ class TestReportImportsForSeries:
     def test_a_pending_import_the_series_report_skips_is_left_alone(self, series_id: int, state: ArrRunState) -> None:
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=FakeQbit({"h": [FakeTorrent()]}),
             strategy=RecordingStrategy(),
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=series_id)],
@@ -197,7 +196,7 @@ class TestReportImportsForSeries:
         recording = install_recording_hub()
 
         mgr.report_imports_for_series(7)
-        result = mgr.run_blocking(view=RecordingWaitView())
+        result = mgr.run_blocking()
 
         assert recording.of_type(TitleHeader) == []
         assert result is not None
@@ -210,7 +209,7 @@ def _report_series_7(mgr: ImportWaitManager) -> None:
 
 
 def _run_end_pass(mgr: ImportWaitManager) -> None:
-    mgr.run_deferred(view=RecordingWaitView())
+    mgr.run_deferred()
 
 
 class TestGoneTorrentHasItsTitlesCheckedAgain:
