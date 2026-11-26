@@ -944,13 +944,17 @@ class TestLogLevelWiring:
 
         assert [line for line in _lines(result.stdout) if line in _SKIP_NOTES] == _SKIP_NOTES
 
-    def test_the_cli_level_holds_from_the_first_line(self) -> None:
+    @pytest.mark.parametrize("command", ["single", "scheduled"])
+    def test_the_cli_level_holds_from_the_first_line(self, command: str) -> None:
         # The flag is known before the config is read, so the opening lines obey it too.
-        config = _write_current_config()
+        result = _invoke_offline("run", command, "--log-level", "warning")  # a fresh data dir: no config
 
-        result = _invoke_offline("run", "single", "--log-level", "warning")
-
-        assert _lines(result.stdout) == [_nothing_configured_line(config)]
+        assert _lines(result.stdout) == [
+            (
+                f"ERROR [Pearlarr] No config file at {resolve_paths().config_file} - a template was written - "
+                "fill it in and re-run during=boot"
+            )
+        ]
 
 
 class _StopScheduledLoop(Exception):
