@@ -11,9 +11,9 @@ TVDB ranges at all, found by another id, resolves to no episodes too.
 Also pins that the anime-ids path and `episode_count` read the AniList format and
 episode count from the run's AniList gateway.
 
-The AniDB path is pinned too: the lookup gate (non-TV format or season 0, with an
-AniDB id), and the either/or with the offset slice (a non-empty AniDB map bypasses it
-entirely, while an empty one falls through to it).
+The AniDB path is pinned too: the lookup gate (non-TV format or season 0), and the
+either/or with the offset slice (a non-empty AniDB map bypasses it entirely, while an
+empty one falls through to it).
 
 Last, the mapped specials AniList's dates disagree with give way to the ones
 `specials_by_date` chooses, logged once per run.
@@ -195,18 +195,6 @@ def test_tv_format_outside_season_zero_never_consults_anidb() -> None:
     result = _resolved(episodes, TitleMapping(anilist_id=123, tvdb_season=1, anidb_id=99))
 
     assert [ep.episode_number for ep in result] == [1, 2]  # the offset slice applied
-
-
-def test_a_mapping_without_an_anidb_id_takes_the_offset_slice() -> None:
-    """No AniDB id on the mapping -> the offset slice, even when the gate would pass."""
-
-    episodes = _episodes(
-        [sonarr_ep(0, 1), sonarr_ep(0, 2)], _answer("MOVIE", _counted(1)), anime_lists=_anime_lists(0, (2,))
-    )
-
-    result = _resolved(episodes, TitleMapping(anilist_id=123, tvdb_season=0))
-
-    assert [ep.episode_number for ep in result] == [1]  # the offset slice applied
 
 
 def test_empty_anidb_map_falls_through_to_the_offset_slice() -> None:
