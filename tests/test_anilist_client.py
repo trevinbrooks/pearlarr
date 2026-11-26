@@ -387,7 +387,7 @@ def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_war
 @pytest.mark.parametrize(
     ("media", "lacks"),
     [
-        pytest.param({"id": 7, "episodes": 12}, True, id="an id and no startDate key"),
+        pytest.param({"id": 7}, True, id="an id and no startDate key"),
         # AniList answers a date it doesn't know with null parts, and the key is still there.
         pytest.param({"id": 7, "startDate": {"year": None, "month": None, "day": None}}, False, id="null date parts"),
         pytest.param(None, False, id="no such id"),
