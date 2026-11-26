@@ -1766,12 +1766,6 @@ def make_sonarr_episodes(
     return episodes
 
 
-def every_series(in_sonarr: list[SonarrItem]) -> list[SonarrItem]:
-    """Every series Sonarr lists, in place of `SonarrEpisodes.mapped_series` when each has an AniList mapping."""
-
-    return in_sonarr
-
-
 def seed_series_episodes(reads: SeriesReads, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:
     """Hold each series' rows as read this run, as a prefetch leaves them."""
 
@@ -1835,8 +1829,12 @@ def make_sonarr_sync(
     skyhook_client: AbstractSkyHookClient | None = None,
     xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
+    anime_ids: AnimeIdsByName | None = None,
 ) -> SonarrStrategy:
-    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`."""
+    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`.
+
+    Its titles are mapped by the Anime-IDs rows in `anime_ids` (`make_run_deps`).
+    """
 
     deps = make_run_deps(
         config=config,
@@ -1845,6 +1843,7 @@ def make_sonarr_sync(
         skyhook_client=skyhook_client,
         xem_client=xem_client,
         categories=categories,
+        anime_ids=anime_ids,
     )
     services = ArrRunServices(deps, Arr.SONARR)
     strat = SonarrStrategy(
