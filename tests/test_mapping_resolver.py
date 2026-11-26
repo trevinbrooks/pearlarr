@@ -347,8 +347,6 @@ AMAP: AnimeIdsByName = {
     "F": {"anilist_id": 103, "tmdb_movie_id": 7000},
 }
 
-_RECORD_A = TitleMapping(100, tvdb_season=2, tvdb_epoffset=3, imdb_id="tt100", anidb_id=50)
-
 
 class TestAnimeIdsLookup:
     """A lookup finds every Kometa record its ids reach, the first record of each AniList title.
@@ -357,37 +355,31 @@ class TestAnimeIdsLookup:
     """
 
     @pytest.mark.parametrize(
-        ("ids", "expected"),
+        ("ids", "found"),
         [
-            pytest.param(ExternalIds(tvdb=200), {100: _RECORD_A, 101: TitleMapping(101)}, id="series"),
-            pytest.param(
-                ExternalIds(tvdb=200, imdb="tt100"),
-                {100: _RECORD_A, 101: TitleMapping(101), 102: TitleMapping(102, imdb_id="tt100")},
-                id="series with an imdb id",
-            ),
-            pytest.param(
-                ExternalIds(tmdb_movie=7000, imdb="tt7000"),
-                {103: TitleMapping(103, tmdb_movie_id=7000)},
-                id="movie by its tmdb id",
-            ),
-            pytest.param(
-                ExternalIds(tmdb_movie=4242, imdb="tt100"),
-                {100: _RECORD_A, 102: TitleMapping(102, imdb_id="tt100")},
-                id="movie by its imdb id",
-            ),
-            pytest.param(ExternalIds(tvdb=424242), {}, id="unknown"),
+            pytest.param(ExternalIds(tvdb=200, imdb="tt100"), [100, 101, 102], id="series with an imdb id"),
+            pytest.param(ExternalIds(tmdb_movie=7000, imdb="tt7000"), [103], id="movie by its tmdb id"),
+            pytest.param(ExternalIds(tmdb_movie=4242, imdb="tt100"), [100, 102], id="movie by its imdb id"),
+            pytest.param(ExternalIds(tvdb=999), [], id="a record without an anilist id"),
+            pytest.param(ExternalIds(tvdb=424242), [], id="unknown"),
         ],
     )
-    def test_a_lookup_finds_every_record_its_ids_reach(
-        self, ids: ExternalIds, expected: dict[int, TitleMapping]
-    ) -> None:
-        assert _resolver(anime=AMAP).resolve(ids).kept == expected
+    def test_a_lookup_finds_every_record_its_ids_reach(self, ids: ExternalIds, found: list[int]) -> None:
+        assert list(_resolver(anime=AMAP).resolve(ids).kept) == found
+
+    def test_a_series_lookup_reads_each_titles_season_offset_and_ids(self) -> None:
+        assert _resolver(anime=AMAP).resolve(ExternalIds(tvdb=200)).kept == {
+            100: TitleMapping(100, tvdb_season=2, tvdb_epoffset=3, imdb_id="tt100", anidb_id=50),
+            101: TitleMapping(101),
+        }
 
     def test_an_explicit_null_season_reads_as_no_season(self) -> None:
-        # Kometa writes some records with explicit nulls. They read like a record without the keys.
+        # A record whose season and offset are null reads like one without the keys.
         amap = {"N": {"anilist_id": 500, "tvdb_id": 5000, "tvdb_season": None, "tvdb_epoffset": None}}
 
-        assert _resolver(anime=amap).resolve(ExternalIds(tvdb=5000)).kept == {500: TitleMapping(500)}
+        assert _resolver(anime=amap).resolve(ExternalIds(tvdb=5000)).kept == {
+            500: TitleMapping(500, tvdb_season=-1, tvdb_epoffset=0)
+        }
 
     def test_candidate_sets_include_objects_without_anilist(self) -> None:
         # The former full-dict walk added external ids even from anilist-less objects
