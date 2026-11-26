@@ -506,7 +506,7 @@ class TestExternalDetailParity:
         # closes it, a post emits scope-free (col-0 by design, like _post).
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
-        harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.open_title_block(state, "Show", make_entry_record())
         harness.reporter.post(self.FACT_SITES[0].fact)
         harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the title scope
         harness.reporter.post(next(site.fact for site in self.FACT_SITES if isinstance(site.fact, GrabFailed)))
@@ -686,8 +686,8 @@ class TestScopeLifecycle:
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
         harness.reporter.log_arr_item_start(Arr.SONARR, "Show", 1, 1)
-        harness.reporter.open_title_block(state, "First", make_entry_record(url="https://releases.moe/1"))
-        harness.reporter.open_title_block(state, "Second", make_entry_record(url="https://releases.moe/2"))
+        harness.reporter.open_title_block(state, "First", make_entry_record())
+        harness.reporter.open_title_block(state, "Second", make_entry_record())
         harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)
 
         boundaries = [e for e in harness.events if isinstance(e, (ScopeOpened, ScopeClosed))]
@@ -718,7 +718,7 @@ class TestScopeLifecycle:
         # A second boundary with no open title emits no spurious ScopeClosed.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
-        harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.open_title_block(state, "Show", make_entry_record())
         harness.reporter.log_arr_item_start(Arr.SONARR, "A", 1, 1)  # closes the title scope
         harness.reporter.log_arr_item_start(Arr.SONARR, "B", 1, 1)  # nothing left to close
 
@@ -730,7 +730,7 @@ class TestScopeLifecycle:
         # under this title (live-verified), not col-0.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
-        harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.open_title_block(state, "Show", make_entry_record())
         harness.reporter.log_seadex_action(
             {},
             [GrabResult(outcome=AddStatus.ADDED, name="X", group="G")],
@@ -758,7 +758,7 @@ class TestScopeLifecycle:
         # the summary: a still-open TITLE scope would misplace its diagnostics.
         harness = _Harness()
         state = ArrRunState(arr=Arr.SONARR)
-        harness.reporter.open_title_block(state, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.open_title_block(state, "Show", make_entry_record())
         harness.reporter.log_max_torrents_added(5)
 
         opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
