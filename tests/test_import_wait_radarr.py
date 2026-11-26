@@ -29,7 +29,6 @@ from .wait_fakes import (
     CategoryQbit,
     FakeTorrent,
     RecordingStrategy,
-    RecordingWaitView,
     make_orchestration_manager,
 )
 
@@ -65,8 +64,8 @@ class TestCrossArrCategoryGate:
         # movie. The Sonarr import must NOT move the category while the Radarr
         # pending import still claims the hash; the later Radarr reconcile fires the move.
         store = FakeCacheStore()
-        sonarr_pending = pending_import(infohash="h", anilist_id=11, series_id=7, title="Series")
-        radarr_pending = pending_import(infohash="h", anilist_id=22, series_id=0, title="Movie")
+        sonarr_pending = pending_import(infohash="h", series_id=7)
+        radarr_pending = pending_import(infohash="h", series_id=0)
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
 
         # Sonarr run: its part is confirmed (files done) and drops, but the Radarr
@@ -93,7 +92,7 @@ class TestCrossArrCategoryGate:
             post_import_category="pearlarr-done",
         )
 
-        radarr_mgr.run_deferred(view=RecordingWaitView())
+        radarr_mgr.run_deferred()
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert store.get_pending_import_rows(Arr.RADARR) == {}
@@ -166,7 +165,7 @@ class TestRadarrReconcile:
         mgr = _radarr_reconcile_manager(qbit=qbit, history=history, store=store, post_import_category="pearlarr-done")
 
         mgr.finish_cleanups()
-        mgr.run_deferred(view=RecordingWaitView())
+        mgr.run_deferred()
 
         assert qbit.set_category_calls == moves
         assert [bool(row.get("awaiting_cleanup")) for row in store.get_pending_import_rows(Arr.RADARR).values()] == kept
