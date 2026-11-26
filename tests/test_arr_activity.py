@@ -320,10 +320,7 @@ class TestRead:
         assert cache.get_history_checkpoint(Arr.SONARR) == stored
 
 
-_ENTRIES = {
-    anilist_id: make_entry_record(anilist_id=anilist_id, url=f"https://releases.moe/{anilist_id}")
-    for anilist_id in (1, 2)
-}
+_ENTRIES = {anilist_id: make_entry_record(anilist_id=anilist_id) for anilist_id in (1, 2)}
 """SeaDex's entries of the `_CachedLibrary` titles."""
 
 
@@ -351,7 +348,10 @@ class _CachedLibrary(FakeStrategy):
 
 
 def _cache_left_unchanged(checkpoint: HistoryCheckpoint | None = None) -> FakeCacheStore:
-    """A cache an earlier run left both `_CachedLibrary` titles unchanged in, with `checkpoint` its activity read's."""
+    """A cache an earlier run left both `_CachedLibrary` titles unchanged in, with `checkpoint` its activity read's.
+
+    Each row has the url a run writes, so the gate never fills one in as it does for an older row.
+    """
 
     cache = FakeCacheStore()
     for anilist_id, entry in _ENTRIES.items():
@@ -361,7 +361,7 @@ def _cache_left_unchanged(checkpoint: HistoryCheckpoint | None = None) -> FakeCa
     return cache
 
 
-def _left_unchanged(recording: RecordingHub) -> list[int | None]:
+def _shown_unchanged(recording: RecordingHub) -> list[int | None]:
     """The titles the run showed as unchanged, so left unchecked."""
 
     return [header.anilist_id for header in recording.of_type(TitleHeader) if header.state is TitleState.UNCHANGED]
@@ -435,7 +435,7 @@ class TestWhatARunChecksAgain:
 
         drive_arr_run(deps, lambda services: _CachedLibrary(services, history, situation.check_again))
 
-        assert _left_unchanged(recording) == unchanged
+        assert _shown_unchanged(recording) == unchanged
         assert _activity_note(recording) == note
 
     def test_a_checkpoint_held_by_an_unreachable_seadex_replays_its_history_on_the_next_healthy_run(self) -> None:
@@ -452,5 +452,5 @@ class TestWhatARunChecksAgain:
         healthy = make_run_deps(cache_store=cache, qbit=FakeQbit().client(), seadex=FakeSeaDexSource(_ENTRIES))
         drive_arr_run(healthy, lambda services: _CachedLibrary(services, history, frozenset()))
 
-        assert _left_unchanged(recording) == [2]
+        assert _shown_unchanged(recording) == [2]
         assert cache.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint(history[0].date, 1)
