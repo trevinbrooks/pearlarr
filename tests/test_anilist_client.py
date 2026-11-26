@@ -61,8 +61,8 @@ def _client() -> AniListClient:
     "body",
     [
         pytest.param(_NOT_FOUND, id="unknown id"),
-        # What `query` hands back from the request AniList refused.
-        pytest.param({"data": None}, id="dataless"),
+        # What `query` hands back when it gives up on a rate limit.
+        pytest.param(_THROTTLED, id="given up"),
     ],
 )
 def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, object]) -> None:
