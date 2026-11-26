@@ -142,18 +142,21 @@ class TestPrefetch:
         # The boot step's bar claims only the batches AniList answered.
         assert progress.updates == []
 
-    def test_unreachable_keeps_stale_rows_and_serves_them(self) -> None:
+    @pytest.mark.parametrize(
+        "stored",
+        [pytest.param(_stale_answer(1), id="aged"), pytest.param(_dateless_answer(1), id="without-dates")],
+    )
+    def test_unreachable_keeps_stale_rows_and_serves_them(self, stored: dict[str, Any]) -> None:
         store = FakeCacheStore()
         gateway = make_anilist_gateway(ScriptedAniListClient(failing=frozenset({1})), store)
-        aged = _stale_answer(1)
-        store.put_anilist_meta(1, aged)
+        store.put_anilist_meta(1, stored)
         gateway.load_cache()
 
         gateway.prefetch([1], dry_run=False)
 
-        # Nothing evicted: the aged row is what serves this run.
-        assert dict(store.iter_anilist_meta()) == {1: aged}
-        # The aged count still answers: the alternative is grabbing every episode.
+        # Nothing evicted: the stored row is what serves this run.
+        assert dict(store.iter_anilist_meta()) == {1: stored}
+        # The stored count still answers: the alternative is grabbing every episode.
         assert gateway.episode_count(1) == 12
 
     @pytest.mark.parametrize("asked", [pytest.param([1, 2], id="asked-for"), pytest.param([2], id="not-asked-for")])
