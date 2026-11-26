@@ -1826,25 +1826,11 @@ def make_sonarr_sync(
     cache_store: AbstractCacheStore | None = None,
     series_episodes: dict[int, list[SonarrEpisode]] | None = None,
     clock: Clock | None = None,
-    skyhook_client: AbstractSkyHookClient | None = None,
-    xem_client: AbstractXemClient | None = None,
     categories: ArrCategoryResolver | None = None,
-    anime_ids: AnimeIdsByName | None = None,
 ) -> SonarrStrategy:
-    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`.
+    """A `SonarrStrategy` built through its real `__init__`, injecting typed clients and seeding `series_episodes`."""
 
-    Its titles are mapped by the Anime-IDs rows in `anime_ids` (`make_run_deps`).
-    """
-
-    deps = make_run_deps(
-        config=config,
-        cache_store=cache_store,
-        clock=clock,
-        skyhook_client=skyhook_client,
-        xem_client=xem_client,
-        categories=categories,
-        anime_ids=anime_ids,
-    )
+    deps = make_run_deps(config=config, cache_store=cache_store, clock=clock, categories=categories)
     services = ArrRunServices(deps, Arr.SONARR)
     strat = SonarrStrategy(
         deps,
