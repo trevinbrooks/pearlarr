@@ -16,12 +16,9 @@ location).
 """
 
 import json
-import logging
 import threading
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import replace
-from typing import cast, override
+from typing import cast
 
 import httpx
 import pytest
@@ -35,10 +32,9 @@ from pearlarr.arr_http import (
     DeleteOutcome,
     make_arr_client,
 )
-from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity
 
-from .fakes import RecordingHub, bind_arr_http
+from .fakes import FakeClock, RecordingHub, bind_arr_http
 
 _URL = "http://arr.test"
 
@@ -145,7 +141,7 @@ def test_shape_helpers_reject_the_wrong_shape() -> None:
 
 @respx.mock
 def test_warn_template_with_literal_braces_is_safe() -> None:
-    # Migration call sites embed filenames/display names, which can carry braces
+    # Call sites embed filenames/display names, which can carry braces
     # ("Steins;{Gate}"). The fail-open warning must never crash on them.
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     http, recording = _bind()
@@ -188,48 +184,6 @@ def test_get_timeout_override_is_sent_with_the_request() -> None:
 # --- retries=0 poll handle + failure coalescing --------------------------------
 
 
-class _RecordingHandler(logging.Handler):
-    """Captures the module logger's records directly (propagation-independent).
-
-    `caplog` listens on the root logger, but the app logger tree carries
-    `propagate=False` once any test has run `setup_logger`.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.DEBUG)
-        self.records: list[logging.LogRecord] = []
-
-    @override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-@contextmanager
-def _debug_records() -> Generator[list[logging.LogRecord]]:
-    """Capture the arr_http module logger's DEBUG lines for one test."""
-
-    logger = logging.getLogger(f"{LOG_NAME}.arr_http")
-    handler = _RecordingHandler()
-    old_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield handler.records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(old_level)
-
-
-class _ManualClock:
-    """A hand-advanced monotonic clock for streak-cadence tests."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def read(self) -> float:
-        return self.now
-
-
 @respx.mock
 def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
     """`replace(http, retries=0)` makes exactly ONE attempt. The primary still retries.
@@ -250,37 +204,44 @@ def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
     ]
 
 
+@respx.mock
 def test_replace_shares_the_failure_streaks() -> None:
-    """The no-retry handle and the primary share ONE streak dict (`is`).
+    """A failure on the no-retry poll handle closes with a recovery note on the primary's next success.
 
-    Guards the init=False trap: `dataclasses.replace` re-runs `default_factory`
-    for init=False fields, silently un-sharing the streak dict (which would
-    double-fire re-warns and recovery notes across the two handles).
+    `dataclasses.replace` re-runs `default_factory` for init=False fields, so a streak kept on the handle
+    itself would split in two and its warnings and recovery notes double up.
     """
 
-    http, _ = _bind()
-    assert replace(http, retries=0).streaks is http.streaks
+    route = respx.get(f"{_URL}/api/v3/thing")
+    route.side_effect = [httpx.Response(404), httpx.Response(200, json=[])]
+    http, recording = _bind()
+
+    assert replace(http, retries=0).get_json("/api/v3/thing", warn="poll ({detail})") is None
+    assert http.get_json("/api/v3/thing", warn="poll ({detail})") == []
+    assert [note.message for note in recording.of_type(Diagnostic)] == [
+        "poll (status code 404)",
+        "poll - recovered after 1 failure (0s)",
+    ]
 
 
 @respx.mock
 def test_repeat_failures_coalesce_then_recover() -> None:
-    """fail/fail/recover: one warning, a DEBUG repeat, one recovery note with the total."""
+    """A repeat failure stays quiet, the next success notes the total, and a failure after that warns afresh."""
 
     route = respx.get(f"{_URL}/api/v3/thing")
-    route.side_effect = [httpx.Response(404), httpx.Response(404), httpx.Response(200, json=[1])]
+    route.side_effect = [httpx.Response(404), httpx.Response(404), httpx.Response(200, json=[1]), httpx.Response(404)]
     http, recording = _bind()
 
-    with _debug_records() as records:
-        assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
-        assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
-        assert http.get_json("/api/v3/thing", warn="miss ({detail})") == [1]
+    assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
+    assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
+    assert http.get_json("/api/v3/thing", warn="miss ({detail})") == [1]
+    assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
 
     assert [(note.severity, note.message) for note in recording.of_type(Diagnostic)] == [
         (Severity.WARNING, "miss (status code 404)"),
         (Severity.INFO, "miss - recovered after 2 failures (0s)"),
+        (Severity.WARNING, "miss (status code 404)"),
     ]
-    assert [record.getMessage() for record in records] == ["miss (status code 404) - failure 2 in a row"]
-    assert http.streaks.active == {}  # the streak closed with the recovery
 
 
 @respx.mock
@@ -304,8 +265,6 @@ def test_interleaved_keys_keep_independent_streaks() -> None:
         "b-broke (status code 404)",
         "a-broke - recovered after 2 failures (0s)",
     ]
-    # b's streak stays open and coalescing: three failures, ONE warning.
-    assert http.streaks.active[("b-broke ({detail})", "status code 404")].count == 3
 
 
 @respx.mock
@@ -314,11 +273,11 @@ def test_rewarns_at_the_bound_cadence() -> None:
 
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     primary, recording = _bind()
-    clock = _ManualClock()
-    http = replace(primary, clock=clock.read, rewarn_s=60.0)
+    clock = FakeClock()
+    http = replace(primary, clock=clock.monotonic, rewarn_s=60.0)
 
     for at in (0.0, 30.0, 59.0, 60.0, 90.0, 125.0):
-        clock.now = at
+        clock.t = at
         assert http.get_json("/api/v3/thing", warn="down ({detail})") is None
 
     notes = recording.of_type(Diagnostic)
@@ -332,15 +291,16 @@ def test_rewarns_at_the_bound_cadence() -> None:
 
 @respx.mock
 def test_concurrent_failures_keep_an_exact_streak_count() -> None:
-    """Concurrent sweep threads hammer one failing key. The count stays exact.
+    """Concurrent sweep threads hammer one failing key, and the recovery note counts every failure.
 
-    Pins the streak lock: `streak.count += 1` is a read-modify-write that
-    would drop increments unlocked (the shared client pool serves
-    `SONARR_FETCH_WORKERS` threads).
+    `streak.count += 1` is a read-modify-write that would drop increments unlocked (the shared client pool
+    serves `SONARR_FETCH_WORKERS` threads). The fake clock holds the note's age at 0s however long the
+    threads take.
     """
 
-    respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
-    http, recording = _bind()
+    route = respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
+    primary, recording = _bind()
+    http = replace(primary, clock=FakeClock().monotonic)
     workers, per_worker = 8, 25
     barrier = threading.Barrier(workers, timeout=30.0)
 
@@ -356,9 +316,12 @@ def test_concurrent_failures_keep_an_exact_streak_count() -> None:
         thread.join(timeout=30.0)
         assert not thread.is_alive(), "a worker never finished its reads"
 
-    assert http.streaks.active[("down ({detail})", "status code 404")].count == workers * per_worker
-    # Exactly ONE first-failure warning. Every repeat coalesced away.
-    assert [note.message for note in recording.of_type(Diagnostic)] == ["down (status code 404)"]
+    route.respond(json=[])
+    assert http.get_json("/api/v3/thing", warn="down ({detail})") == []
+    assert [note.message for note in recording.of_type(Diagnostic)] == [
+        "down (status code 404)",
+        f"down - recovered after {workers * per_worker} failures (0s)",
+    ]
 
 
 # --- post_json() (single attempt, never retried) ------------------------------
@@ -446,7 +409,7 @@ def test_delete_404_is_gone_and_quiet() -> None:
 
 @respx.mock
 def test_delete_404_after_a_failure_closes_the_streak() -> None:
-    """GONE is a success for the streak dict: it ends an open delete streak with the recovery note."""
+    """A 404 after a failed delete means the item is gone, so it ends the failure streak with a recovery note."""
 
     route = respx.delete(f"{_URL}/api/v3/queue/7")
     route.side_effect = [httpx.Response(500), httpx.Response(404)]
@@ -458,7 +421,6 @@ def test_delete_404_after_a_failure_closes_the_streak() -> None:
         (Severity.WARNING, "rm (status code 500)"),
         (Severity.INFO, "rm - recovered after 1 failure (0s)"),
     ]
-    assert http.streaks.active == {}
 
 
 @respx.mock
@@ -558,7 +520,7 @@ def test_history_since_failure_returns_none_with_one_warning() -> None:
 def test_make_httpx_client_pins_the_transport_policy() -> None:
     """The factory pins no-redirects: the key must never follow one.
 
-    It also fixes the (connect, read) timeout split every arr call used to pass per-request.
+    It also fixes the connect and read timeouts every arr call shares.
     """
 
     client = make_arr_client()
