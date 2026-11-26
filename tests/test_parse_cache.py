@@ -172,7 +172,10 @@ class TestParseFreshness:
 
 
 class TestParseCacheRows:
-    """The parse-cache leaf: fresh-only reads and shape-owning writes."""
+    """A written parse reads back as Sonarr gave it.
+
+    One with no matched episodes reads back only under the series hash it was written under.
+    """
 
     @pytest.mark.parametrize(
         ("info", "under_another_hash"),
@@ -182,7 +185,7 @@ class TestParseCacheRows:
             pytest.param(_of_series(7).with_matched(()), None, id="a-series-and-no-episode"),
         ],
     )
-    def test_a_written_parse_with_no_matched_episode_reads_back_only_under_its_series_hash(
+    def test_a_written_parse_reads_back_under_another_series_hash_only_with_matched_episodes(
         self, info: ParsedFileInfo, under_another_hash: ParsedFileInfo | None
     ) -> None:
         rows = ParseCacheRows(FakeCacheStore())
