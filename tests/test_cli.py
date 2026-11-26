@@ -624,6 +624,14 @@ def _write_runnable_config() -> None:
     _write_data_dir_config("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS)
 
 
+def _write_config_fetching_anime_ids() -> None:
+    """A current config with Sonarr configured and the anime ids file as the one mapping source on."""
+
+    _write_current_config(
+        "sonarr:\n  url: http://127.0.0.1:9\n  api_key: k\nmappings:\n  anime_lists: false\n  anibridge: false\n"
+    )
+
+
 class TestRunFailuresAreCleanAndNonzero:
     """Every failed arr run returns False (exit 1) with a one-liner, not a traceback."""
 
@@ -694,44 +702,34 @@ class TestRunFailuresAreCleanAndNonzero:
         assert "hunter2" not in out
         assert "Traceback" not in out
 
-    def test_a_mapping_source_failure_fails_the_run(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        import pearlarr.mappings as mappings_mod
+    def test_a_mapping_source_failure_fails_the_run(self) -> None:
+        # A cached anime ids file that won't parse: still fresh, so nothing is
+        # downloaded, and reading it fails.
+        _write_config_fetching_anime_ids()
+        Path(resolve_paths().data_dir, "anime_ids.json").write_text("{not json", encoding="utf-8")
 
-        def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
-            raise RuntimeError("source down")
+        result = _invoke_offline("run", "single", "--sonarr")
 
-        monkeypatch.setattr(mappings_mod, "MappingResolver", fail_resolver)
-        _write_runnable_config()
+        assert result.exit_code == 1
+        assert "ERROR [Pearlarr] Could not fetch/parse the mapping sources - skipping this run during=boot" in (
+            _lines(result.stdout)
+        )
 
-        assert run_single(sonarr=True) is False
-        assert "Could not fetch/parse the mapping sources" in capsys.readouterr().out
+    def test_a_mapping_download_network_failure_reports_cleanly(self) -> None:
+        # A brand-new user with no network hits the first-ever source download,
+        # which has no cached copy to fall back on. That must surface as one line
+        # with a hint, not a traceback.
+        _write_config_fetching_anime_ids()
 
-    def test_a_mapping_download_network_failure_reports_cleanly(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        # A brand-new user with no network hits the FIRST-ever source download
-        # (the refresh path falls open to the cached copy, a first download has
-        # none): the downloader translates the httpx failure into an OSError,
-        # which must surface as a one-line hint, not a ten-frame traceback.
-        import pearlarr.mappings as mappings_mod
+        with respx.mock(assert_all_called=False) as router:
+            router.route().mock(side_effect=httpx.ConnectError("no network"))
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--sonarr"])
 
-        def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
-            raise OSError("download failed: ConnectError")
-
-        monkeypatch.setattr(mappings_mod, "MappingResolver", fail_resolver)
-        _write_runnable_config()
-
-        assert run_single(sonarr=True) is False
-        out = capsys.readouterr().out
-        assert "Could not download the mapping sources" in out
-        assert "check your network connection" in out
-        assert "Traceback" not in out
+        assert result.exit_code == 1
+        assert _lines(result.stdout)[-1] == (
+            "ERROR [Pearlarr] Could not download the mapping sources (download failed: ConnectError) "
+            "- check your network connection - skipping this run during=boot"
+        )
 
     def test_an_invalid_config_fails_the_run_listing_the_keys(
         self,
