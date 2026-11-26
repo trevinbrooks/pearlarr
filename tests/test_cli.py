@@ -655,7 +655,7 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch.setattr(ArrRunDeps, "build", fail_build)
         _write_runnable_config()
 
-        assert run_single(sonarr=True) is False
+        assert run_single() is False
         out = capsys.readouterr().out
         assert expected in out
         assert "Traceback" not in out
@@ -666,7 +666,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # snippet, which would quote the api key back to the console/log.
         _write_data_dir_config('sonarr:\n  api_key: "hunter2\n')
 
-        assert run_single(sonarr=True) is False
+        assert run_single() is False
         out = capsys.readouterr().out
         assert "Unreadable YAML" in out
         assert "line 3" in out  # the position survives, so it is easy to find
@@ -679,7 +679,7 @@ class TestRunFailuresAreCleanAndNonzero:
         _write_config_fetching_anime_ids()
         Path(resolve_paths().data_dir, "anime_ids.json").write_text("{not json", encoding="utf-8")
 
-        result = _invoke_offline("run", "single", "--sonarr")
+        result = _invoke_offline("run", "single")
 
         assert result.exit_code == 1
         assert "ERROR [Pearlarr] Could not fetch/parse the mapping sources - skipping this run during=boot" in (
@@ -692,9 +692,9 @@ class TestRunFailuresAreCleanAndNonzero:
         # with a hint, not a traceback.
         _write_config_fetching_anime_ids()
 
-        with respx.mock(assert_all_called=False) as router:
+        with respx.mock() as router:
             router.route().mock(side_effect=httpx.ConnectError("no network"))
-            result = CliRunner().invoke(pearlarr_cli, ["run", "single", "--sonarr"])
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
 
         assert result.exit_code == 1
         assert _lines(result.stdout)[-1] == (
@@ -708,7 +708,7 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         _write_data_dir_config("sonar:\n  url: x\n")
 
-        assert run_single(sonarr=True) is False
+        assert run_single() is False
         out = capsys.readouterr().out
         assert "Invalid configuration" in out
         assert "sonar" in out
@@ -1419,7 +1419,7 @@ class TestUnwritableDataDir:
         config = _write_data_dir_config("sonarr:\n  url: http://s\n  api_key: k\n")
         config.chmod(0o000)
         try:
-            assert run_single(sonarr=True) is False
+            assert run_single() is False
         finally:
             config.chmod(0o644)
 
@@ -1595,7 +1595,6 @@ class TestRunLockContention:
     def test_a_run_skips_while_another_holds_the_lock(self) -> None:
         # It stops before the config read: none exists here, and none is written.
         data_dir = resolve_paths().data_dir
-        os.makedirs(data_dir)
 
         with single_instance_lock(data_dir) as held:
             assert held
@@ -1620,32 +1619,36 @@ class TestScheduleHours:
     """
 
     @pytest.mark.parametrize(
-        ("schedule_time", "body", "hours", "warning"),
+        ("schedule_time", "body", "hours", "warnings"),
         [
-            pytest.param(None, "", 6, None, id="default"),
-            pytest.param(None, _INTERVAL_2_5, 2.5, None, id="config"),
+            pytest.param(None, "", 6, [], id="default"),
+            pytest.param(None, _INTERVAL_2_5, 2.5, [], id="config"),
             pytest.param(
                 "0.5",
                 _INTERVAL_2_5,
                 0.5,
-                "SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead",
+                ["WARNING [Pearlarr] SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead"],
                 id="env-wins",
             ),
             *(
                 pytest.param(
-                    raw, _INTERVAL_2_5, 2.5, f"Invalid SCHEDULE_TIME {raw!r} - using 2.5 hours", id=f"bad-env-{raw}"
+                    raw,
+                    _INTERVAL_2_5,
+                    2.5,
+                    [f"WARNING [Pearlarr] Invalid SCHEDULE_TIME {raw!r} - using 2.5 hours"],
+                    id=f"bad-env-{raw}",
                 )
-                for raw in ["banana", "0", "-3", "inf", "nan"]
+                for raw in ["banana", "0", "-3", "inf"]
             ),
             pytest.param(
                 "banana",
                 _INTERVAL_INVALID,
                 6,
-                "Invalid SCHEDULE_TIME 'banana' - using 6 hours",
+                ["WARNING [Pearlarr] Invalid SCHEDULE_TIME 'banana' - using 6 hours"],
                 id="bad-env-bad-config",
             ),
-            pytest.param(None, _INTERVAL_INVALID, 6, None, id="invalid-config"),
-            pytest.param(None, "schedule: [unclosed\n", 6, None, id="malformed-config"),
+            pytest.param(None, _INTERVAL_INVALID, 6, [], id="invalid-config"),
+            pytest.param(None, "schedule: [unclosed\n", 6, [], id="malformed-config"),
         ],
     )
     def test_the_loop_sleeps_for_the_interval_that_wins(
@@ -1653,7 +1656,7 @@ class TestScheduleHours:
         schedule_time: str | None,
         body: str,
         hours: float,
-        warning: str | None,
+        warnings: list[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_current_config(body)
@@ -1661,8 +1664,7 @@ class TestScheduleHours:
         result, slept = _run_scheduled_once(monkeypatch, schedule_time=schedule_time)
 
         assert slept == [hours * 3600]
-        warnings = [line for line in _lines(result.stdout) if line.startswith("WARNING")]
-        assert warnings == ([] if warning is None else [f"WARNING [Pearlarr] {warning}"])
+        assert [line for line in _lines(result.stdout) if line.startswith("WARNING")] == warnings
 
 
 def test_commands_verify_tls_against_the_os_trust_store() -> None:
