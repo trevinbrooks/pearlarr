@@ -6,7 +6,7 @@ a recording strategy and a `FakeClock`, so no wait sleeps for real.
 """
 
 import copy
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast, override
 
@@ -52,7 +52,8 @@ class FakeTorrent:
     by the batched `poll_download_progress` (which keys its result off it), and
     `FakeQbit`'s batch read answers each row under the hash it was asked for.
     `category` is read by the post-import move alone, and blank is an
-    uncategorized torrent, as qBittorrent reports one.
+    uncategorized torrent, as qBittorrent reports one. `name` and `added_on` (epoch seconds) are
+    read by a grab that finds the torrent already in qBittorrent.
     """
 
     def __init__(
@@ -67,9 +68,13 @@ class FakeTorrent:
         completed: int | None = None,
         size: int | None = None,
         category: str = "",
+        name: str = "",
+        added_on: int | None = None,
     ) -> None:
         self.state_enum = FakeStateEnum(is_complete=is_complete, is_errored=is_errored)
         self.category = category
+        self.name = name
+        self.added_on = added_on
         self.progress = progress
         self.content_path = content_path
         self.dlspeed = dlspeed
@@ -99,6 +104,10 @@ class FakeQbit:
     A batch read never consumes a poll script (and vice versa), so a test scripts torrent
     lifecycles declaratively without caring which read comes first. Hash matching is
     case-insensitive on both reads (real qBittorrent is).
+
+    `torrents_add` records the link of each torrent it is asked to add in `added` and answers "Ok.", or what
+    `add_answers` scripts for that link: a rejection, or an error to raise. A torrent it takes is not listed
+    straight after, as qBittorrent lists one only once it has read the file the link serves.
     """
 
     def __init__(
@@ -106,11 +115,14 @@ class FakeQbit:
         torrents: dict[str, list[QbitStep]] | None = None,
         *,
         download_progress: dict[str, list[QbitStep]] | None = None,
+        add_answers: Mapping[str, str | Exception] | None = None,
     ) -> None:
         self._torrents = {h.casefold(): list(steps) for h, steps in (torrents or {}).items()}
         self._download_progress = {h.casefold(): list(steps) for h, steps in (download_progress or {}).items()}
         self._heavy_index: dict[str, int] = {}
         self._batch_index: dict[str, int] = {}
+        self._add_answers: Mapping[str, str | Exception] = add_answers or {}
+        self.added: list[str] = []
 
     @staticmethod
     def _next(steps: list[QbitStep], index: dict[str, int], key: str) -> FakeTorrent:
@@ -154,6 +166,14 @@ class FakeQbit:
                 row.hash = infohash
                 rows.append(row)
         return rows
+
+    def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
+        del category, tags
+        self.added.append(urls)
+        answer = self._add_answers.get(urls, "Ok.")
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     def client(self) -> qbittorrentapi.Client:
         """This fake as the SDK client it stands in for."""

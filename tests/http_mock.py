@@ -1,7 +1,7 @@
 # pyright: strict
-"""Reusable `respx` scaffolding for the Sonarr HTTP boundary.
+"""Reusable `respx` scaffolding for the Sonarr and Nyaa HTTP boundaries.
 
-Shared by the end-to-end smoke (`test_e2e_smoke`) and the adapter tests (T1.3),
+Shared by the end-to-end smoke (`test_e2e_smoke`), the adapter tests and the grab tests,
 so the per-endpoint registration lives in one importable place instead of being
 duplicated inline. The bodies come from the captured fixtures in
 `tests/fixtures/sonarr/` (real Sonarr responses), so a test only names the
@@ -11,8 +11,10 @@ own call site.
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
 import httpx
 import respx
@@ -73,3 +75,22 @@ def register_sonarr_reads(
     respx.get(f"{base}/qualitydefinition").respond(json=quality_definitions or [])
     respx.get(f"{base}/language").respond(json=languages or [])
     respx.get(f"{base}/history/since").respond(json=[])
+
+
+def nyaa_torrent_link(number: int) -> str:
+    """The link Nyaa serves release `number`'s torrent file at, the one a grab hands qBittorrent."""
+
+    return f"https://nyaa.si/download/{number}.torrent"
+
+
+def serve_nyaa_torrents(names: Mapping[int, str]) -> None:
+    """Nyaa serving each release's torrent file under its name, `names[number]`, on the ambient respx router.
+
+    The header is the one Nyaa sends: the file name twice, percent-encoded, the second as RFC 6266 `filename*`.
+    """
+
+    for number, name in names.items():
+        encoded = quote(f"{name}.torrent")
+        respx.head(nyaa_torrent_link(number)).respond(
+            headers={"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
+        )

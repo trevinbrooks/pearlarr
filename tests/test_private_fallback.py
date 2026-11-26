@@ -19,26 +19,21 @@ import re
 from dataclasses import dataclass
 
 import pytest
+import respx
 from seadex import EntryRecord, Tracker
 
 from pearlarr.arr_models import ArrFiles, SonarrEpisode
 from pearlarr.arr_run_services import ArrRunServices
-from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.output import NeedsActionCause, ReleaseSkipped, Severity, TitleDetail
 from pearlarr.releases import PlacedEpisode, SeadexDict, SkipReason
 
 from .builders import (
-    AddStatus,
     FakeCacheStore,
-    FakeTorrents,
     arr_files,
     grab_request,
     make_config,
     make_entry_record,
-    make_grab_pipeline,
-    make_planner,
-    make_release_filter,
     make_run_deps,
     make_torrent_record,
     placed_episode,
@@ -46,6 +41,8 @@ from .builders import (
     title_is_cached,
 )
 from .fakes import install_recording_hub
+from .http_mock import nyaa_torrent_link, serve_nyaa_torrents
+from .wait_fakes import FakeQbit
 
 # What the plan's notices and the needs-action rows say of a private-only skip.
 PLAIN_NOTICE = "private-only (private releases not supported)"
@@ -196,42 +193,45 @@ def _outcome(
 ) -> _Outcome:
     """The outcome of a run's check of `entry`'s title against `library` under `private_releases`.
 
-    qBittorrent adds every public release asked for. The run stores the title's row in `cache`, for a later run to
-    read.
+    qBittorrent holds none of the entry's torrents and adds every one asked for, each served by Nyaa. The run stores
+    the title's row in `cache`, for a later run to read.
     """
 
     cache = cache if cache is not None else FakeCacheStore()
     recording = install_recording_hub()
-    state = ArrRunState(arr=library.arr)
-    release_filter = make_release_filter(
-        private_releases=private_releases, planner=make_planner(arr=library.arr), state=state
+    qbit = FakeQbit()
+    deps = make_run_deps(
+        config=make_config(private_releases=private_releases), cache_store=cache, qbit=qbit.client(), arr=library.arr
     )
-    seadex_dict = release_filter.build(entry)
-    if library.episodes is not None:
-        _place_by_name(seadex_dict)
-    plan = release_filter.plan_grabs(seadex_dict, library.files, library.episodes)
-    group_by_hash: dict[str | None, str] = {t.infohash: t.release_group for t in entry.torrents if t.infohash}
-    torrents = FakeTorrents({infohash: (AddStatus.ADDED, group) for infohash, group in group_by_hash.items()})
-    pipeline = make_grab_pipeline(
-        cache_store=cache, _state=state, _torrents=torrents, private_releases=private_releases
-    )
+    services = ArrRunServices(deps, library.arr)
+    # Each public torrent is Nyaa release number `n` (`_entry`), and Nyaa names its file after the group.
+    nyaa_groups = {
+        int(t.url.removeprefix("https://nyaa.si/view/")): t.release_group for t in entry.torrents if t.infohash
+    }
+    group_by_link = {nyaa_torrent_link(n): group for n, group in nyaa_groups.items()}
 
-    pipeline.grab_and_cache(
-        grab_request(
-            anilist_id=entry.anilist_id,
-            entry=entry,
-            seadex_dict=plan.seadex_dict,
-            update={"updated_at": entry.updated_at},
+    with respx.mock:
+        serve_nyaa_torrents(nyaa_groups)
+        seadex_dict = services.get_seadex_dict(entry)
+        if library.episodes is not None:
+            _place_by_name(seadex_dict)
+        plan = services.plan_grabs(seadex_dict, library.files, library.episodes)
+        services.grab_and_cache(
+            grab_request(
+                anilist_id=entry.anilist_id,
+                entry=entry,
+                seadex_dict=plan.seadex_dict,
+                update={"updated_at": entry.updated_at},
+            )
         )
-    )
 
     row = cache.get_cached_title(library.arr, entry.anilist_id)
     cached = title_is_cached(row, entry)
     return _Outcome(
-        added=tuple(group_by_hash[infohash] for infohash in torrents.calls),
+        added=tuple(group_by_link[link] for link in qbit.added),
         details=tuple(_Detail(d.label, d.value.text, d.severity) for d in recording.of_type(TitleDetail)),
         skips=tuple(_Skip(skip.group, skip.reason) for skip in recording.of_type(ReleaseSkipped)),
-        needs_action=tuple(_Row(r.group, r.reason, r.cause) for r in state.stats.needs_action),
+        needs_action=tuple(_Row(r.group, r.reason, r.cause) for r in services.state.stats.needs_action),
         cached=cached,
         fallback_marker=row is not None and cached and row.fallback_satisfied,
     )
