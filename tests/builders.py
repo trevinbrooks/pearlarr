@@ -40,7 +40,7 @@ from pearlarr.arr_models import (
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
-from pearlarr.arr_strategy import ArrStrategy
+from pearlarr.arr_strategy import ArrStrategy, ImportCompleter
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import (
     _CACHED_TITLE_COLUMNS,
@@ -59,7 +59,7 @@ from pearlarr.episode_state import EpisodeFileStatus, EpisodeSnapshot, EpisodeSt
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
 from pearlarr.grab_placement import FetchedSeadex, KnownTorrent, PendingImportUpdate, TitleFacts, TorrentFacts
-from pearlarr.import_wait import ImportWaitManager, PostImportCleanup, WaitPollers
+from pearlarr.import_wait import ImportWaitManager
 from pearlarr.library_read import LibraryRead
 from pearlarr.mappings import AnimeIdsByName, MappingResolver, MappingSources
 from pearlarr.notify import Notifier
@@ -1092,66 +1092,15 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     return make_bare_instance(GrabPipeline, **defaults)
 
 
-def _categories_like_config(config: AppConfig, qbit: qbittorrentapi.Client | None) -> ArrCategoryResolver:
-    """The Sonarr resolver for `config`: fetchless without `qbit`, else seeded with the config's own categories."""
+def make_import_wait_manager(deps: ArrRunDeps, *, state: ArrRunState, strategy: ImportCompleter) -> ImportWaitManager:
+    """A real `ImportWaitManager` over `deps`, bound to `state` and `strategy` as a run binds it.
 
-    if qbit is None:
-        return make_categories(config)
-    settings = config.for_arr(Arr.SONARR)
-    return make_fetched_categories(
-        config, grab=settings.torrent_category, post_import=settings.post_import_category, qbit=qbit
-    )
-
-
-def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
-    """A bare `ImportWaitManager` over real sub-objects, config keys routed through `AppConfig`.
-
-    Constructs the pending import store, pollers and cleanup on the SAME store, binds the pending import store as
-    `ArrRunServices` would, and ends with `begin_run`, so every sub-object shares the one state (and strategy) a run
-    would.
+    Its pending import store is over the deps' cache store and bound to `state`, as `ArrRunServices` binds it.
     """
 
-    config = overrides.pop("config", None) or _split_config(overrides)
-    logger = overrides.pop("logger", None) or make_logger()
-    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
-    qbit = overrides.pop("qbit", None)
-    clock = overrides.pop("clock", None) or FakeClock()
-    # `ArrRunDeps.categories` as a run would have it. With no qBittorrent it is fetchless and the config
-    # category passes through. With one, it reads as if the arr's own client carried the config's categories.
-    categories = overrides.pop("categories", None) or _categories_like_config(config, qbit)
-    # The production placeholder before a run binds one. Tests driving the import hook pass their own.
-    strategy = overrides.pop("strategy", None)
-    state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
-    reporter = overrides.pop("reporter", None) or _real_reporter(
-        cache_store, AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=httpx.Client()))
-    )
-    if overrides:
-        msg = f"unknown make_import_wait_manager overrides: {sorted(overrides)}"
-        raise TypeError(msg)
-
-    pending_imports = PendingImportStore(cache_store)
+    pending_imports = PendingImportStore(deps.cache_store)
     pending_imports.bind_arr_run(state)
-    pollers = make_bare_instance(WaitPollers, _qbit=qbit, _logger=logger, strategy=None)
-    cleanup = make_bare_instance(
-        PostImportCleanup,
-        _imports=config.imports,
-        _categories=categories,
-        _qbit=qbit,
-        _clock=clock,
-        _logger=logger,
-        _pending_imports=pending_imports,
-        _pollers=pollers,
-    )
-    mgr = make_bare_instance(
-        ImportWaitManager,
-        imports=config.imports,
-        clock=clock,
-        logger=logger,
-        _reporter=reporter,
-        _pending_imports=pending_imports,
-        pollers=pollers,
-        _cleanup=cleanup,
-    )
+    mgr = ImportWaitManager(deps=deps, state=state, pending_imports=pending_imports)
     mgr.bind_arr_run(state, strategy)
     return mgr
 

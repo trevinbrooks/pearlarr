@@ -14,6 +14,7 @@ from .builders import (
     FakeCacheStore,
     attempt_result,
     files_left_for_hand_import,
+    make_config,
     order_only_hand_import_files,
     pending_import,
 )
@@ -90,9 +91,7 @@ class TestUnplacedRowFinish:
             strategy=strategy,
             store=store,
             grabbed=[pending_import(infohash="h"), pending_import(infohash="slow")],
-            download_timeout=3600,
-            import_timeout=600,
-            import_poll_interval=30,
+            config=make_config(download_timeout=3600, import_timeout=600, import_poll_interval=30),
             clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
@@ -116,7 +115,11 @@ class TestLeftForHandImportRowFinish:
 
         strategy = RecordingStrategy(attempts=[attempt_result(all_done=False, left_for_hand_import=cls._LEFT)])
         mgr = make_orchestration_manager(
-            qbit=qbit, strategy=strategy, store=store, state=state, post_import_category="pearlarr-done"
+            qbit=qbit,
+            strategy=strategy,
+            store=store,
+            state=state,
+            config=make_config(post_import_category="pearlarr-done"),
         )
         return mgr.run_deferred()
 
