@@ -119,10 +119,9 @@ def test_redirect_is_never_followed() -> None:
 
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=302, headers={"Location": "http://evil.test/login"})
     elsewhere = respx.get("http://evil.test/login")
-    primary, recording = _bind()
+    http, recording = _bind()
 
-    with make_arr_client() as client:
-        assert replace(primary, client=client).get_json("/api/v3/thing", warn="bounced ({detail})") is None
+    assert http.get_json("/api/v3/thing", warn="bounced ({detail})") is None
     assert elsewhere.call_count == 0
     assert _one_warning(recording).message == "bounced (status code 302)"
 
@@ -175,10 +174,10 @@ def test_warn_none_fails_open_silently() -> None:
 
 
 @respx.mock
-def test_get_timeout_override_is_sent_with_the_request() -> None:
-    """`timeout=` overrides the client-level timeout for that request only.
+def test_a_request_gets_the_run_timeouts_unless_it_sets_its_own() -> None:
+    """A request that sets no `timeout=` gets the run's connect and read timeouts, so no call site can forget one.
 
-    Used for the 120s ManualImport folder fetches. The default is the client's timeout.
+    One that sets it, as the ManualImport folder fetches do with 120s, gets that for itself alone.
     """
 
     seen: list[dict[str, float | None]] = []
@@ -193,7 +192,7 @@ def test_get_timeout_override_is_sent_with_the_request() -> None:
     assert http.get_json("/api/v3/manualimport", warn=None, timeout=120) == []
     assert http.get_json("/api/v3/manualimport", warn=None) == []
     assert seen[0] == {"connect": 120, "read": 120, "write": 120, "pool": 120}
-    assert seen[1] == {"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}
+    assert seen[1] == {"connect": 5.0, "read": 30.0, "write": 30.0, "pool": 5.0}
 
 
 # --- retries=0 poll handle + failure coalescing --------------------------------
