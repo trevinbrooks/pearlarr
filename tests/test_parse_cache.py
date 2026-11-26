@@ -8,7 +8,7 @@ under the series hash of the library it was stored under.
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 
 import pytest
@@ -203,10 +203,10 @@ def _parse_cache(sonarr: FakeSonarrClient, cache: FakeCacheStore) -> SonarrParse
     return SonarrParseCache(make_run_deps(cache_store=cache), sonarr, make_series_reads(sonarr, library=_LIBRARY))
 
 
-def _listing(files: Mapping[str, int]) -> SeadexDict:
-    """One group's release `u`, listing each of `files` with its size."""
+def _listing(files: Mapping[str, int], urls: Sequence[str] = ("u",)) -> SeadexDict:
+    """One group's release at each of `urls`, each listing every one of `files` with its size."""
 
-    return {"GroupA": rg_group({"u": make_release(files=list(files), size=list(files.values()))})}
+    return {"GroupA": rg_group({url: make_release(files=list(files), size=list(files.values())) for url in urls})}
 
 
 class TestParsedFilesCache:
@@ -249,17 +249,17 @@ class TestParsedFilesCache:
 
         assert sonarr.parse_calls == [_OTHER_NAME]
 
-    def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
-        # Video files only, each with its own listed size and its parse.
+    def test_each_video_file_is_paired_with_its_size_and_a_parse_asked_for_once(self) -> None:
+        # Video files only, each with its own listed size and its parse. Both urls list the same files, as a release's
+        # public and private torrents do.
         answers = {_NAME: _of_series(1), _OTHER_NAME: _of_series(1, episode=2)}
         sonarr = FakeSonarrClient(parse_fn=answers.get)
-        listing = _listing({_NAME: 100, "[X] Show - 01.ass": 1, "[X] OST - 01.flac": 2, _OTHER_NAME: 200})
+        files = {_NAME: 100, "[X] Show - 01.ass": 1, "[X] OST - 01.flac": 2, _OTHER_NAME: 200}
 
-        gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(listing)
+        gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(_listing(files, urls=("u", "v")))
 
-        assert gathered == {
-            "u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 200, _of_series(1, episode=2)))
-        }
+        paired = (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 200, _of_series(1, episode=2)))
+        assert (gathered, sorted(sonarr.parse_calls)) == ({"u": paired, "v": paired}, [_NAME, _OTHER_NAME])
 
     def test_a_name_never_asked_and_one_stored_stale_go_to_sonarr_at_once(self) -> None:
         # Each answer waits, 30 seconds at most, for the other name to be asked, so asking one at a time fails.
