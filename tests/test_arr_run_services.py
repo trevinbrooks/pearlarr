@@ -6,11 +6,19 @@ the lines the fake only records, and that the fake overrides every public member
 check and the services' other title interfaces are in `test_cached_skip.py`.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
+
+import httpx
+
+from pearlarr.anibridge import AniBridgeGraph
 from pearlarr.arr_run_services import ArrRunServices
+from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
+from pearlarr.mappings import ExternalIds, MappingResolver, MappingSources
 from pearlarr.output import Accent, StyledValue, TitleDetail
 
-from .builders import make_run_deps
+from .builders import make_run_deps, make_services
 from .fakes import install_recording_hub
 from .title_check_builders import FakeRunServices
 
@@ -62,3 +70,71 @@ def test_the_services_log_the_files_left_out_as_a_note_detail_labeled_aired() ->
             StyledValue("aired episodes not in Sonarr's order: S01 E02 (1 of 2 files, NAN0)", Accent.NOTE),
         )
     ]
+
+
+# One inert shared client for the resolver ctors (inline sources: nothing downloads).
+_WEB = httpx.Client()
+
+GRAPH: AniBridgeGraph = {
+    "anilist:269": {
+        "tvdb_show:74796:s2": {"21-41": "1-21"},
+        "tvdb_show:74796:s3": {"42-52": "1-9,11-12"},
+        "anidb:1234": {},
+        "imdb_show:tt0269": {},
+        # Providers a lookup doesn't read. Real graphs carry them.
+        "mal:111": {},
+        "tmdb_show:5000:s1": {"1-12": "1-12"},
+    },
+    "anilist:270": {
+        "tvdb_show:74796:s1": {},
+        "tmdb_movie:888": {},
+        "tvdb_movie:999": {},
+    },
+}
+
+
+class _IgnoredIdLog:
+    """Records each `log_ignored_anilist_id` call's AniList id."""
+
+    def __init__(self) -> None:
+        self.ids: list[int] = []
+
+    def log_ignored_anilist_id(self, state: ArrRunState, anilist_id: int) -> None:
+        del state
+        self.ids.append(anilist_id)
+
+
+class TestArrRunServicesIgnoredIds:
+    """The run's two reads of one series' mappings: the titles it checks, and every title its listings fetch reads."""
+
+    @staticmethod
+    @contextmanager
+    def _services(log: _IgnoredIdLog) -> Generator[ArrRunServices]:
+        # tvdb 74796 maps 269 (both sources) and 270 (AniBridge only), and 270 is on the ignore list.
+        resolver = MappingResolver(
+            refresh_days=1,
+            ignore_anilist_ids={270},
+            web=_WEB,
+            sources=MappingSources(
+                anime={"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}},
+                anidb=False,
+                anibridge=GRAPH,
+            ),
+        )
+        try:
+            yield make_services(_resolver=resolver, _reporter=log)
+        finally:
+            resolver.close()
+
+    def test_the_checked_titles_leave_out_the_ignored_one_and_log_it(self) -> None:
+        log = _IgnoredIdLog()
+        with self._services(log) as services:
+            assert list(services.title_mappings(ExternalIds(tvdb=74796))) == [269]
+        assert log.ids == [270]
+
+    def test_the_listing_read_gets_the_ignored_title_set_apart_and_logs_nothing(self) -> None:
+        log = _IgnoredIdLog()
+        with self._services(log) as services:
+            resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
+        assert (list(resolved.kept), list(resolved.ignored)) == ([269], [270])
+        assert log.ids == []
