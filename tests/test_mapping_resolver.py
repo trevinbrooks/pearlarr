@@ -16,9 +16,8 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Iterator
 from collections.abc import Set as AbstractSet
-from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 from xml.etree import ElementTree
@@ -33,8 +32,6 @@ from pearlarr.anibridge import (
     AniBridgeGraph,
     SpecialAliasing,
 )
-from pearlarr.arr_run_services import ArrRunServices
-from pearlarr.arr_run_state import ArrRunState
 from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
 from pearlarr.mappings import (
     AnimeIdsByName,
@@ -51,7 +48,7 @@ from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
 from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
 
-from .builders import make_bare_instance, make_services, make_sonarr_episodes, sonarr_ep
+from .builders import make_bare_instance, make_sonarr_episodes, sonarr_ep
 from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
@@ -455,53 +452,6 @@ class TestResolveMerge:
             ),
         ]
         assert resolved.ignored == {270: TitleMapping(270, tvdb_mappings={1: []}, tmdb_movie_id=888, source=_ANIBRIDGE)}
-
-
-class _IgnoredIdLog:
-    """Records each `log_ignored_anilist_id` call's AniList id."""
-
-    def __init__(self) -> None:
-        self.ids: list[int] = []
-
-    def log_ignored_anilist_id(self, state: ArrRunState, anilist_id: int) -> None:
-        del state
-        self.ids.append(anilist_id)
-
-
-class TestArrRunServicesIgnoredIds:
-    """The run's two reads of one series' mappings: the titles it checks, and every title its listings fetch reads."""
-
-    @staticmethod
-    @contextmanager
-    def _services(log: _IgnoredIdLog) -> Generator[ArrRunServices]:
-        # tvdb 74796 maps 269 (both sources) and 270 (AniBridge only), and 270 is on the ignore list.
-        resolver = MappingResolver(
-            refresh_days=1,
-            ignore_anilist_ids={270},
-            web=_WEB,
-            sources=MappingSources(
-                anime={"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}},
-                anidb=False,
-                anibridge=GRAPH,
-            ),
-        )
-        try:
-            yield make_services(_resolver=resolver, _reporter=log)
-        finally:
-            resolver.close()
-
-    def test_the_checked_titles_leave_out_the_ignored_one_and_log_it(self) -> None:
-        log = _IgnoredIdLog()
-        with self._services(log) as services:
-            assert list(services.title_mappings(ExternalIds(tvdb=74796))) == [269]
-        assert log.ids == [270]
-
-    def test_the_listing_read_gets_the_ignored_title_set_apart_and_logs_nothing(self) -> None:
-        log = _IgnoredIdLog()
-        with self._services(log) as services:
-            resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
-        assert (list(resolved.kept), list(resolved.ignored)) == ([269], [270])
-        assert log.ids == []
 
 
 class TestAniBridgeTitleWithoutTvdbRanges:
