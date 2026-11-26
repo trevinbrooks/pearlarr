@@ -419,32 +419,22 @@ class TestAniBridgeTitleWithoutTvdbRanges:
     A series takes Kometa's season for it when Kometa has one, and covers none of its episodes when Kometa has none.
     """
 
-    def test_sonarr_context_kometa_overrides_a_mapping_without_tvdb_mappings(self) -> None:
-        # Kometa has the season for title 400 on the series' TVDB id.
+    @pytest.mark.parametrize(
+        "season", [pytest.param(2, id="a later season"), pytest.param(0, id="a movie the series lists as a special")]
+    )
+    def test_a_series_takes_kometas_season_for_the_title(self, season: int) -> None:
         resolver = _resolver(
-            anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
-            anibridge={"anilist:400": {"imdb_show:tt400": {}}},
+            anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": season}},
+            anibridge={"anilist:400": {"imdb_movie:tt400": {}}},
         )
 
         mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt400")).kept
 
-        assert mappings == {400: TitleMapping(400, tvdb_season=2, imdb_id="tt400")}
-
-    def test_sonarr_movie_as_special_keeps_kometa_season_zero(self) -> None:
-        # A movie the series lists as a special: Kometa maps title 600 to season 0, and AniBridge reaches it by the
-        # movie's IMDb id, which the series shares. AniBridge's mapping would read as season -1 and cover no special.
-        resolver = _resolver(
-            anime={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
-            anibridge={"anilist:600": {"imdb_movie:tt600": {}}},
-        )
-
-        mappings = resolver.resolve(ExternalIds(tvdb=555, imdb="tt600")).kept
-
-        assert mappings == {600: TitleMapping(600, tvdb_season=0, imdb_id="tt600")}
+        assert mappings == {400: TitleMapping(400, tvdb_season=season)}
 
     def test_with_no_kometa_record_the_title_keeps_anibridges_mapping_without_ranges(self) -> None:
         # test_mapping_episodes shows such a mapping resolves to no episodes.
-        resolver = _resolver(anibridge={"anilist:500": {"imdb_show:tt500": {}}})
+        resolver = _resolver(anibridge={"anilist:500": {"imdb_movie:tt500": {}}})
 
         mappings = resolver.resolve(ExternalIds(tvdb=777, imdb="tt500")).kept
 
