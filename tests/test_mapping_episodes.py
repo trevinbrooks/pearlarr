@@ -110,7 +110,7 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
 
     episodes = _episodes([sonarr_ep(1, 1), sonarr_ep(1, 2)], _answer("TV", _counted(1)))
 
-    result = _resolved(episodes, TitleMapping(anilist_id=123, tvdb_season=1))
+    result = _resolved(episodes, TitleMapping(anilist_id=123))
 
     # The gateway's episode count drove the offset slice (2 eps -> 1).
     assert [ep.episode_number for ep in result] == [1]
