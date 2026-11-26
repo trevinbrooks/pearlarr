@@ -49,9 +49,7 @@ class TestImportCompletedPayload:
     def test_a_file_holding_two_episodes_is_posted_for_both(self) -> None:
         # A double-length premiere ships as one file that holds two episodes.
         name = "Show - 01-02 [1080p].mkv"
-        pending = pending_import(
-            file_episode_map={name: [101, 102]}, seadex_files=[name], ordered_episode_ids=(101, 102)
-        )
+        pending = pending_import(file_episode_map={name: [101, 102]}, seadex_files=[name])
         strat, sonarr = make_sonarr_for_import(candidates=[manual_candidate(f"/d/{name}")])
 
         strat.import_completed(pending, "/d", AttemptKind.ORDINARY)
@@ -94,10 +92,7 @@ class TestImportCompletedPayload:
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
     def test_languages_follow_dual_audio_flag(self) -> None:
-        pending = pending_import(
-            is_dual_audio=True,
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
+        pending = pending_import(is_dual_audio=True)
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
         languages = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
         strat, sonarr = make_sonarr_for_import(
@@ -242,9 +237,7 @@ class TestImportCompletedFailures:
 
     def test_failed_execute_retries(self) -> None:
         # Sonarr rejected the import command (busy / locked) -> retry, not give up.
-        pending = pending_import(
-            file_episode_map={"Show - 01 [1080p].mkv": [101]},
-        )
+        pending = pending_import()
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
         strat, sonarr = make_sonarr_for_import(candidates=[candidate], cmd_id=None)
 
