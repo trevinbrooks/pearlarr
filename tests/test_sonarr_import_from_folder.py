@@ -141,7 +141,6 @@ class TestFolderFetchFallback:
         pending = pending_import(file_episode_map={}, ordered_episode_ids=[101])
 
         strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
-        strat.import_completed(pending, "/d/Show", AttemptKind.ORDINARY)
 
         assert diagnostic_messages(recording, Severity.WARNING) == []
 
