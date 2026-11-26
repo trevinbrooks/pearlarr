@@ -7,6 +7,7 @@ under the series hash of the library it was stored under.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -29,6 +30,7 @@ from pearlarr.stamps import stamp_of
 
 from .builders import (
     FakeCacheStore,
+    make_config,
     make_release,
     make_run_deps,
     make_series_reads,
@@ -261,19 +263,36 @@ class TestParsedFilesCache:
         paired = (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 200, _of_series(1, episode=2)))
         assert (gathered, sorted(sonarr.parse_calls)) == ({"u": paired, "v": paired}, [_NAME, _OTHER_NAME])
 
-    def test_a_name_never_asked_and_one_stored_stale_go_to_sonarr_at_once(self) -> None:
-        # Each answer waits, 30 seconds at most, for the other name to be asked, so asking one at a time fails.
-        both_asked = threading.Barrier(2, timeout=30.0)
+    @pytest.mark.parametrize(
+        ("sleep_time", "wait", "met"),
+        [
+            # Each ask waits up to `wait` seconds for the other. Unthrottled the two meet; the long wait keeps a slow
+            # machine from failing them.
+            pytest.param(0, 30.0, [_NAME, _OTHER_NAME], id="unthrottled"),
+            # Throttled they go one at a time, so neither can meet the other however long it waits. The short wait
+            # keeps the run quick. On a slow machine two asks at once can still miss each other, so this row can let
+            # through a warm that ignores the throttle, but it never fails one that keeps it.
+            pytest.param(1, 0.01, [], id="throttled"),
+        ],
+    )
+    def test_a_name_never_asked_and_one_stored_stale_go_to_sonarr_at_once_unless_throttled(
+        self, sleep_time: int, wait: float, met: list[str]
+    ) -> None:
+        both_asked = threading.Barrier(2)
+        asked_together: list[str] = []
 
         def answer(name: str) -> ParsedFileInfo:
-            del name
-            both_asked.wait()
+            with contextlib.suppress(threading.BrokenBarrierError):
+                both_asked.wait(timeout=wait)
+                asked_together.append(name)
             return _of_series(1)
 
         sonarr = FakeSonarrClient(parse_fn=answer)
         stale = _record(_NO_SERIES, days_ago=SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1, series_hash=_HASH)
         cache = FakeCacheStore(sonarr_parse={_NAME: stale})
+        deps = make_run_deps(config=make_config(sleep_time=sleep_time), cache_store=cache)
+        parse_cache = SonarrParseCache(deps, sonarr, make_series_reads(sonarr, library=_LIBRARY))
 
-        gathered = _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
+        parse_cache.parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
 
-        assert gathered == {"u": (ListedFile(_NAME, 100, _of_series(1)), ListedFile(_OTHER_NAME, 100, _of_series(1)))}
+        assert sorted(asked_together) == met
