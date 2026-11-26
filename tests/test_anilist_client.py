@@ -1,9 +1,8 @@
 # pyright: strict
-"""The AniList wire client: what each query sends and what a run gets back for each answer.
+"""The AniList wire client: what it sends, what it hands back, when it asks again, and when it gives up for the run.
 
-It covers the requests themselves, the answers that come back as sent, the rate limits and failures that are
-asked for again and how long each wait is, the answers that mark AniList unreachable for the run, and how a
-stored answer reads as an `AniListMediaNode`. respx answers every request.
+The last tests read an answer with no usable Media or date as an `AniListMediaNode`. What a found Media's fields
+read as is shown in `test_anilist_gateway.py`, through the gateway that reads them. respx answers every request.
 """
 
 import json
@@ -73,7 +72,10 @@ def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, objec
 
 
 def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_warning() -> None:
-    """AniList sends episodes as a number, so only a stored answer the node now reads differently looks like this."""
+    """AniList's schema doesn't send a Media like this one.
+
+    If a Media ever doesn't fit the node, the user sees a warning in place of a failed run.
+    """
 
     recording = install_recording_hub()
 
@@ -95,6 +97,8 @@ def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_war
 def test_a_stored_media_without_a_start_date_key_lacks_its_air_dates(
     media: dict[str, object] | None, lacks: bool
 ) -> None:
+    """A Media stored by a query that didn't ask for air dates is asked for again, so its episodes can be dated."""
+
     assert lacks_air_dates({"data": {"Media": media}}) is lacks
 
 
@@ -406,5 +410,10 @@ def test_refusal_message_is_collapsed_and_clamped() -> None:
         pytest.param({"year": 2020, "month": 2, "day": 30}, id="no such day"),
     ],
 )
-def test_an_anilist_date_without_every_part_is_no_date(raw: dict[str, int | None] | None) -> None:
+def test_an_anilist_date_that_names_no_real_day_is_no_date(raw: dict[str, int | None] | None) -> None:
+    """A date that names no real day reads as none, and the rest of the Media still reads.
+
+    AniList sends null for a part it doesn't know.
+    """
+
     assert AniListMediaNode.model_validate({"id": 1, "startDate": raw}) == AniListMediaNode(id=1)
