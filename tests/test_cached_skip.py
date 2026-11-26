@@ -20,10 +20,10 @@ import pytest
 from seadex import EntryRecord
 
 from pearlarr.arr_run_services import ArrRunServices
-from pearlarr.arr_run_state import ArrRunState, Title
+from pearlarr.arr_run_state import Title
 from pearlarr.cache import CachedTitle, CachedTitleUpdate
 from pearlarr.config import AppConfig, Arr
-from pearlarr.output import Accent, StyledValue, TitleDetail, TitleHeader
+from pearlarr.output import Accent, StyledValue, TitleDetail, TitleHeader, TitleRow
 from pearlarr.output.events import TitleState
 from pearlarr.pending_import import TitleNames
 from pearlarr.tvdb_orders import AIRED_ORDER
@@ -300,29 +300,6 @@ class TestWhatTheNextRunChecks:
         assert _services(cache).is_unchanged(7, _ENTRY, lambda: _COVERAGE) is True
 
 
-class _TailReporter:
-    """Records the no-releases / no-entry / SeaDex-unreachable outcomes the shared tails report."""
-
-    def __init__(self) -> None:
-        self.no_releases_ctxs: list[ArrRunState] = []
-        self.no_sd_entry_ids: list[int] = []
-        self.seadex_unreachable_ids: list[int] = []
-
-    def log_no_seadex_releases(self, state: ArrRunState) -> bool:
-        self.no_releases_ctxs.append(state)
-        return True
-
-    def log_no_sd_entry(self, state: ArrRunState, anilist_id: int) -> bool:
-        del state
-        self.no_sd_entry_ids.append(anilist_id)
-        return True
-
-    def log_seadex_unreachable(self, state: ArrRunState, anilist_id: int) -> bool:
-        del state
-        self.seadex_unreachable_ids.append(anilist_id)
-        return True
-
-
 _NO_RELEASES = TitleDetail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
 
 
@@ -366,37 +343,39 @@ class TestATitleWithNoReleases:
         assert cache.get_cached_title(Arr.SONARR, 7) is None
 
 
-class TestBeginCheck:
-    """`begin_check` reports no entry vs an unreachable SeaDex distinctly, and resets skip flags/tallies on a hit."""
+@pytest.mark.parametrize(
+    ("seadex", "entry", "shown"),
+    [
+        pytest.param(FakeSeaDexSource({7: _ENTRY}), _ENTRY, [], id="an entry on SeaDex"),
+        pytest.param(FakeSeaDexSource(), None, [TitleRow(TitleState.NO_ENTRY, "AniList #7")], id="no entry on SeaDex"),
+        # An unreachable SeaDex must never read as "no entry".
+        pytest.param(
+            FakeSeaDexSource(unreachable=True),
+            None,
+            [TitleRow(TitleState.NOT_CHECKED, "AniList #7")],
+            id="SeaDex unreachable",
+        ),
+    ],
+)
+def test_a_check_starts_by_finding_the_titles_entry(
+    seadex: FakeSeaDexSource, entry: EntryRecord | None, shown: list[TitleRow]
+) -> None:
+    # A title with no entry to check stops there, shown with the reason.
+    recording = install_recording_hub()
+    run = ArrRunServices(make_run_deps(seadex=seadex), Arr.SONARR)
 
-    def test_no_seadex_entry_reports_and_returns_none(self) -> None:
-        reporter = _TailReporter()
-        run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)
+    assert (run.begin_check(7), recording.of_type(TitleRow)) == (entry, shown)
 
-        assert run.begin_check(5) is None
-        assert reporter.no_sd_entry_ids == [5]
-        assert reporter.seadex_unreachable_ids == []
-        assert run._state.stats.checked == 1
 
-    def test_seadex_unreachable_reports_distinctly_and_returns_none(self) -> None:
-        # A SeaDex-unreachable title must never be reported as "no entry" - it
-        # takes the unreachable reporter hook and its own tally.
-        reporter = _TailReporter()
-        run = make_services(_seadex=FakeSeaDexSource(unreachable=True), _reporter=reporter)
+def test_the_run_counts_every_title_it_starts_on_even_one_seadex_couldnt_be_asked_about() -> None:
+    # The summary gives that total, then a "not checked" line for the titles SeaDex couldn't be asked about. An
+    # unreachable SeaDex still answers for the entries the run fetched before it went down.
+    run = ArrRunServices(make_run_deps(seadex=FakeSeaDexSource({7: _ENTRY}, unreachable=True)), Arr.SONARR)
 
-        assert run.begin_check(5) is None
-        assert reporter.seadex_unreachable_ids == [5]
-        assert reporter.no_sd_entry_ids == []
-        assert run._state.stats.checked == 1
+    run.begin_check(7)
+    run.begin_check(8)
 
-    def test_entry_found_resets_skip_flags_and_tallies(self) -> None:
-        entry = make_entry_record()
-        run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
-        run._state.per_title.private_only_skipped = True  # leftover flag from a previous title
-
-        assert run.begin_check(5) is entry
-        assert run._state.per_title.private_only_skipped is False
-        assert run._state.stats.checked == 1
+    assert run.state.stats.checked == 2
 
 
 class TestResolveTitle:
