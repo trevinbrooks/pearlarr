@@ -1772,12 +1772,6 @@ def seed_series_episodes(reads: SeriesReads, series_episodes: Mapping[int, list[
         reads.store(series_id, rows)
 
 
-def held_series_episodes(episodes: SonarrEpisodes) -> dict[int, list[SonarrEpisode]]:
-    """The rows the run holds, by series id, off the reads the episode collaborator warms."""
-
-    return {series_id: read.rows for series_id, read in episodes._reads._series.items()}
-
-
 _NO_EPISODE_DETAILS: Mapping[int, EpisodeDetails] = MappingProxyType({})
 
 

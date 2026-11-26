@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# These set the episode collaborator's private config (eps._config).
-# Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
 Covers the parse cache rows (freshness, the leaf's reads and writes), the
@@ -12,26 +9,19 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum, auto
 from typing import override
 
 import pytest
-from seadex import EntryRecord
 
 from pearlarr.aired_view import AiredSeries, NoView
 from pearlarr.arr_http import SONARR_FETCH_WORKERS, fetch_workers
-from pearlarr.arr_models import (
-    AlternateTitle,
-    MatchedEpisode,
-    ParsedFileInfo,
-    SeasonTypeCount,
-    SonarrEpisode,
-    SonarrSeries,
-)
+from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode, SonarrItem, SonarrSeries
 from pearlarr.arr_run_services import ArrRunServices
-from pearlarr.config import Arr
+from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_placement import ListedFile
-from pearlarr.mappings import ExternalIds, TitleMapping
 from pearlarr.parse_cache import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_NO_EPISODES_TTL_DAYS,
@@ -40,24 +30,20 @@ from pearlarr.parse_cache import (
     parse_to_json,
 )
 from pearlarr.releases import SeadexDict
-from pearlarr.seadex_gateway import SeaDexNoEntry
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.stamps import stamp_of
-from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.video_files import is_video_candidate
 
 from .builders import (
     FakeCacheStore,
-    held_series_episodes,
+    FakeSeaDexSource,
     make_config,
     make_entry_record,
     make_release,
     make_run_deps,
     make_series_reads,
-    make_services,
-    make_sonarr_episodes,
     rg_group,
     sonarr_ep,
 )
@@ -240,76 +226,41 @@ def test_fetch_workers_are_one_under_a_sleep_throttle(sleep_time: int, workers: 
     assert fetch_workers(make_config(sleep_time=sleep_time)) == workers
 
 
-class _Series:
-    """A fake Sonarr series satisfying the `SonarrItem` protocol surface."""
+class _Failure(Enum):
+    """How a Sonarr episode read fails."""
 
-    id: int
-    title: str = ""
-    imdbId: str | None
-    monitored: bool
-    tvdbId: int
-    tmdbId: int
-    seasonType: str = AIRED_ORDER
-    seasonTypes: tuple[SeasonTypeCount, ...] = ()
-    alternateTitles: tuple[AlternateTitle, ...] = ()
-    totalEpisodeCount: int | None = None
-    order_sent: bool = False
-
-    def __init__(self, **kw: object) -> None:
-        self.__dict__.update(kw)
-
-
-def _item(series_id: int, *, monitored: bool = True) -> _Series:
-    return _Series(
-        id=series_id,
-        title=f"Series {series_id}",
-        imdbId=None,
-        monitored=monitored,
-        tvdbId=series_id,
-        tmdbId=series_id,
-    )
-
-
-def _eps_for(series_id: int) -> list[SonarrEpisode]:
-    """A distinguishable one-episode list per series (episode_number == series id)."""
-
-    return [sonarr_ep(1, series_id)]
-
-
-def _ids(*anilist_ids: int) -> dict[int, TitleMapping]:
-    """A `{anilist_id -> mapping}` dict. Only the keys are read by the prefetch gate."""
-
-    return {aid: TitleMapping(anilist_id=aid) for aid in anilist_ids}
+    NO_ANSWER = auto()
+    RAISES = auto()
 
 
 class _Sonarr(FakeSonarrClient):
-    """A scripted Sonarr client for the prefetch warm.
+    """Sonarr holding one episode per series, numbered by the series id, recording each read and whether it was quiet.
 
-    By default `episodes(sid)` returns a distinguishable one-episode list per
-    series (`_eps_for`). `return_none` turns every fetch into a transient
-    failure, and `raise_on` makes the listed ids raise (the worker-failure
-    case). Records each `(series_id, quiet)` call so the dedup / not-fetched /
-    quiet assertions read recorded state.
+    A read of a series in `failing` fails as its value says.
     """
 
-    def __init__(self, *, return_none: bool = False, raise_on: set[int] | None = None) -> None:
+    def __init__(self, failing: Mapping[int, _Failure] | None = None) -> None:
         super().__init__()
-        self.return_none = return_none
-        self.raise_on: set[int] = set(raise_on or set())
-        self.calls: list[tuple[int, bool]] = []
+        self.failing: dict[int, _Failure] = dict(failing or {})
+        self.reads: list[tuple[int, bool]] = []
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        self.calls.append((series_id, quiet))
-        if series_id in self.raise_on:
-            raise ValueError("boom")
-        if self.return_none:
-            return None
-        return _eps_for(series_id)
+        self.reads.append((series_id, quiet))
+        match self.failing.get(series_id):
+            case _Failure.RAISES:
+                raise ValueError("boom")
+            case _Failure.NO_ANSWER:
+                return None
+            case None:
+                return [sonarr_ep(1, series_id)]
 
 
 class _GatedSonarr(_Sonarr):
-    """A `_Sonarr` whose fetches after the first block until `gate` is set, so a single worker can't run ahead."""
+    """A `_Sonarr` whose reads after the first wait for `gate`, so the one worker can't run ahead of the stop.
+
+    The wait is bounded once: a gate that never opens fails the test in 30 seconds, never hangs it.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -317,8 +268,21 @@ class _GatedSonarr(_Sonarr):
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        if self.calls:
-            assert self.gate.wait(30.0), "gate never opened"
+        if self.reads and not self.gate.wait(30.0):
+            self.gate.set()
+        return super().episodes(series_id, quiet=quiet)
+
+
+class _TogetherSonarr(_Sonarr):
+    """A `_Sonarr` whose every read waits, 30 seconds at most, until two reads are under way."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._both_started = threading.Barrier(2, timeout=30.0)
+
+    @override
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        self._both_started.wait()
         return super().episodes(series_id, quiet=quiet)
 
 
@@ -334,308 +298,168 @@ class _StopOnFirstProgress:
         raise SystemExit(0)
 
 
-class _Services:
-    """A fake of the arr run services the prefetch consults.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Run:
+    """The library a run's prefetch reads, and what SeaDex, the cache and the run hold for its titles."""
 
-    `title_mappings` resolves a series' tvdb id to its `{anilist_id -> mapping}`
-    dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
-    always-mapped helper). `title_needs_check` is the per-title needs-check gate
-    (`needs_scan=None` reports every title as needing a check).
-    """
+    series: tuple[int, ...] = (1,)
+    """The library's series, by id (each its own TVDB id)."""
+    titles: Mapping[int, int] = field(default_factory=lambda: {7: 1})
+    """Each AniList title the mappings know, with the series it maps to."""
+    without_entry: tuple[int, ...] = ()
+    """The titles SeaDex has no entry for."""
+    unchanged: tuple[int, ...] = ()
+    """The titles cached under their entry's current update."""
+    files_changed: tuple[int, ...] = ()
+    """The titles whose files changed in Sonarr since the last run."""
+    unmonitored: tuple[int, ...] = ()
+    """The series Sonarr doesn't monitor."""
+    settings: AppConfig = field(default_factory=make_config)
 
-    def __init__(
-        self,
-        *,
-        mapping: dict[int, dict[int, TitleMapping]] | None = None,
-        identity: bool = False,
-        needs_scan: set[int] | None = None,
-    ) -> None:
-        self._mapping = mapping or {}
-        self._identity = identity
-        self._needs_scan = needs_scan
 
-    def title_mappings(
-        self,
-        ids: ExternalIds,
-        log_ignored: bool = True,
-    ) -> dict[int, TitleMapping]:
-        del log_ignored
-        assert ids.tvdb is not None  # the prefetch always keys on the series' tvdb id
-        if self._identity:
-            return {ids.tvdb: TitleMapping(anilist_id=ids.tvdb)}
-        return self._mapping.get(ids.tvdb, {})
+_TWO_SERIES = _Run(series=(1, 2), titles={7: 1, 8: 2})
+"""Two series of one title each, neither title checked before."""
 
-    def title_needs_check(self, anilist_id: int) -> bool:
-        if self._needs_scan is None:
-            return True
-        return anilist_id in self._needs_scan
+
+def _episodes(sonarr: _Sonarr, run: _Run) -> tuple[SonarrEpisodes, SeriesReads]:
+    """The run's episode collaborator over `sonarr` and the reads it warms, built as a run builds them."""
+
+    entries = {aid: make_entry_record(anilist_id=aid) for aid in run.titles}
+    cache = FakeCacheStore()
+    for aid in run.unchanged:
+        cache.update_cached_title(Arr.SONARR, aid, {"updated_at": entries[aid].updated_at})
+    deps = make_run_deps(
+        config=run.settings,
+        cache_store=cache,
+        seadex=FakeSeaDexSource({aid: entry for aid, entry in entries.items() if aid not in run.without_entry}),
+        anime_ids={f"Title {aid}": {"anilist_id": aid, "tvdb_id": sid} for aid, sid in run.titles.items()},
+    )
+    services = ArrRunServices(deps, Arr.SONARR)
+    services.mark_dirty(run.files_changed)
+    reads = make_series_reads(sonarr)
+    return SonarrEpisodes(deps, sonarr, services, reads), reads
+
+
+def _library(run: _Run) -> list[SonarrItem]:
+    return [SonarrSeries(id=sid, tvdbId=sid, monitored=sid not in run.unmonitored) for sid in run.series]
 
 
 class TestPrefetchEpisodes:
-    """`SonarrEpisodes.prefetch` warms only mapped, monitored series with a title to check, deduped by id.
+    """`SonarrEpisodes.prefetch` reads at once the episodes of each series the run will check.
 
-    It tolerates a raising or `None`-returning worker (that series stays
-    unwarmed, the rest still warm) and reports the attempted (not cached)
-    count via progress.
+    A series whose read fails is read again when the check asks for it, and the count and the progress take in
+    every read made.
     """
 
-    def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
+    @pytest.mark.parametrize(
+        ("run", "reads"),
+        [
+            pytest.param(_Run(), [(1, True)], id="a-title-never-checked"),
+            pytest.param(_Run(unchanged=(7,)), [], id="its-title-unchanged"),
+            pytest.param(_Run(titles={7: 1, 8: 1}, unchanged=(7,)), [(1, True)], id="one-of-its-two-titles-unchanged"),
+            pytest.param(_Run(titles={}), [], id="no-anilist-mapping"),
+            pytest.param(_Run(without_entry=(7,)), [], id="no-seadex-entry"),
+            pytest.param(
+                _Run(without_entry=(7,), settings=make_config(ignore_seadex_update_times=True)),
+                [],
+                id="no-seadex-entry-update-times-ignored",
+            ),
+            pytest.param(_Run(without_entry=(7,), files_changed=(7,)), [], id="no-seadex-entry-files-changed"),
+            pytest.param(
+                _Run(unmonitored=(1,), settings=make_config(sonarr_ignore_unmonitored=True)),
+                [],
+                id="unmonitored-and-ignored",
+            ),
+            pytest.param(_Run(unmonitored=(1,)), [(1, True)], id="unmonitored-not-ignored"),
+        ],
+    )
+    def test_a_series_is_read_only_when_one_of_its_titles_will_be_checked(
+        self, run: _Run, reads: list[tuple[int, bool]]
+    ) -> None:
         sonarr = _Sonarr()
-        # Only "mapped" series resolve to a non-empty AniList mapping. needs_scan
-        # defaults to "every title needs a check".
-        services = _Services(mapping={sid: _ids(1) for sid in mapped})
-        eps = make_sonarr_episodes(
-            sonarr=sonarr,
-            _services=services,
-            _config=make_config(sleep_time=sleep_time),
-        )
-        return eps, sonarr
+        episodes, _ = _episodes(sonarr, run)
 
-    def test_warms_only_mapped_series(self) -> None:
-        eps, _ = self._eps(mapped={1, 2})
-        eps.prefetch([_item(1), _item(2), _item(3)])
-        assert held_series_episodes(eps) == {1: _eps_for(1), 2: _eps_for(2)}
+        episodes.prefetch(_library(run))
 
-    def test_leaves_out_unmonitored_when_ignored(self) -> None:
-        eps, _ = self._eps(mapped={1, 2})
-        eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
-        eps.prefetch([_item(1, monitored=False), _item(2)])
-        assert held_series_episodes(eps) == {2: _eps_for(2)}
+        assert sonarr.reads == reads
 
-    def test_dedups_series_ids(self) -> None:
-        eps, sonarr = self._eps(mapped={1})
-        eps.prefetch([_item(1), _item(1)])
-        assert len(sonarr.calls) == 1
+    @pytest.mark.parametrize(
+        ("failing", "reads"),
+        [
+            pytest.param({}, [(1, True)], id="answered"),
+            pytest.param({1: _Failure.NO_ANSWER}, [(1, True), (1, False)], id="no-answer"),
+            pytest.param({1: _Failure.RAISES}, [(1, True), (1, False)], id="raises"),
+        ],
+    )
+    def test_the_check_reads_a_series_again_only_when_the_prefetch_could_not(
+        self, failing: Mapping[int, _Failure], reads: list[tuple[int, bool]]
+    ) -> None:
+        run = _Run()
+        sonarr = _Sonarr(failing)
+        episodes, series_reads = _episodes(sonarr, run)
+        episodes.prefetch(_library(run))
+        sonarr.failing.clear()  # Sonarr answers again by the time the check asks
 
-    def test_none_result_not_cached(self) -> None:
-        # series 9 is a candidate (resolves a mapping) but episodes() returns None.
-        eps, sonarr = self._eps(mapped={9})
-        sonarr.return_none = True
-        eps.prefetch([_item(9)])
-        assert held_series_episodes(eps) == {}
+        view = series_reads.aired_series(1)
 
-    def test_raising_series_does_not_abort_sweep(self) -> None:
-        # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
-        # whole concurrent sweep. That series is left unwarmed, the rest still warm.
-        eps, sonarr = self._eps(mapped={1, 2})
-        sonarr.raise_on = {1}
-        warmed = eps.prefetch([_item(1), _item(2)])
+        assert isinstance(view, AiredSeries)
+        assert (view.in_sonarr, sonarr.reads) == ((sonarr_ep(1, 1),), reads)
 
-        assert held_series_episodes(eps) == {2: _eps_for(2)}  # 1 raised -> unwarmed, 2 warmed
-        assert warmed == 2  # both attempted
+    def test_a_read_with_no_answer_still_counts_as_done(self) -> None:
+        sonarr = _Sonarr({2: _Failure.NO_ANSWER})
+        episodes, _ = _episodes(sonarr, _TWO_SERIES)
+        progress = RecordingProgress()
 
-    def test_sequential_path_matches_concurrent(self) -> None:
-        eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
-        eps.prefetch([_item(1), _item(2)])
-        assert held_series_episodes(eps) == {1: _eps_for(1), 2: _eps_for(2)}
+        warmed = episodes.prefetch(_library(_TWO_SERIES), progress=progress)
 
-    def test_returns_warmed_count(self) -> None:
-        # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
-        eps, _ = self._eps(mapped={1, 2})
-        assert eps.prefetch([_item(1), _item(2), _item(3)]) == 2
+        assert (warmed, progress.updates) == (2, [(0.5, "1/2"), (1.0, "2/2")])
 
-    def test_drives_progress_per_series(self) -> None:
-        eps, _ = self._eps(mapped={1, 2})
-        rec = RecordingProgress()
-        eps.prefetch([_item(1), _item(2), _item(3)], progress=rec)
-        # One drive per warmed series, ending complete. Completion order is
-        # nondeterministic, so assert on the count + the final value, not the
-        # intermediate sequence.
-        assert len(rec.updates) == 2
-        assert rec.updates[-1] == (1.0, "2/2")
+    def test_unthrottled_reads_are_under_way_at_once(self) -> None:
+        # Each read waits for the other to start, so reading one series at a time fails.
+        sonarr = _TogetherSonarr()
+        episodes, _ = _episodes(sonarr, _TWO_SERIES)
+
+        episodes.prefetch(_library(_TWO_SERIES))
+
+        assert sorted(sonarr.reads) == [(1, True), (2, True)]
 
     def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
         sonarr = _GatedSonarr()
-        series = range(1, 21)
-        eps = make_sonarr_episodes(
-            sonarr=sonarr,
-            _services=_Services(mapping={sid: _ids(1) for sid in series}),
-            _config=make_config(sleep_time=2),  # one worker
-        )
+        # One worker, and a third series it can't have started by the stop.
+        run = _Run(series=(1, 2, 3), titles={7: 1, 8: 2, 9: 3}, settings=make_config(sleep_time=2))
+        episodes, _ = _episodes(sonarr, run)
 
         with pytest.raises(SystemExit):
-            eps.prefetch([_item(sid) for sid in series], progress=_StopOnFirstProgress(sonarr.gate))
+            episodes.prefetch(_library(run), progress=_StopOnFirstProgress(sonarr.gate))
 
         # The first fetch, plus at most the one the worker had in hand.
-        assert len(sonarr.calls) <= 2
-
-    def test_count_is_attempted_not_cached(self) -> None:
-        # series 9 is a candidate (resolves a mapping) but episodes() returns None.
-        # It's still attempted, so it counts toward the return value + the bar.
-        eps, sonarr = self._eps(mapped={9})
-        sonarr.return_none = True
-        rec = RecordingProgress()
-        assert eps.prefetch([_item(9)], progress=rec) == 1
-        assert held_series_episodes(eps) == {}  # nothing cached
-        assert rec.updates[-1] == (1.0, "1/1")  # but progress still completed
+        assert sonarr.reads in ([(1, True)], [(1, True), (2, True)])
 
 
 class TestAiredSeriesRead:
     """`aired_series` fetches a cold series once per run and reports a failed fetch as `NoView.READ_FAILED`."""
 
-    @staticmethod
-    def _reads(*, return_none: bool = False) -> tuple[SeriesReads, _Sonarr]:
-        sonarr = _Sonarr(return_none=return_none)
-        return make_series_reads(sonarr), sonarr
-
     def test_second_call_serves_the_run_cache(self) -> None:
-        reads, sonarr = self._reads()
+        sonarr = _Sonarr()
+        reads = make_series_reads(sonarr)
 
-        first = reads.aired_series(1)
-        assert isinstance(first, AiredSeries)
-        assert first.in_sonarr == tuple(_eps_for(1))
-        assert reads.aired_series(1) is first
-        assert sonarr.calls == [(1, False)]
+        reads.aired_series(1)
+        view = reads.aired_series(1)
+
+        assert isinstance(view, AiredSeries)
+        assert (view.in_sonarr, sonarr.reads) == ((sonarr_ep(1, 1),), [(1, False)])
 
     def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
         # A failed read is the unreadable list, distinct from a series with no episodes:
         # every verdict that depends on the episode index places nothing on it instead of reading empty.
-        reads, _ = self._reads(return_none=True)
+        sonarr = _Sonarr({1: _Failure.NO_ANSWER})
+        reads = make_series_reads(sonarr)
 
-        assert reads.aired_series(1) is NoView.READ_FAILED
-        assert reads.series_index(1) is None
-        assert reads.last_known_episodes(1) == []
-
-
-def _entry(dt: datetime) -> EntryRecord:
-    """A real SeaDex entry stamped at `dt` (only `updated_at` is read)."""
-
-    return make_entry_record(updated_at=dt)
-
-
-class _Seadex:
-    """A fake SeaDex gateway returning one fixed entry (or a not-found) for any anilist_id."""
-
-    def __init__(self, entry: EntryRecord | None) -> None:
-        self._entry = entry
-
-    def entry(self, anilist_id: int) -> EntryRecord | SeaDexNoEntry:
-        del anilist_id
-        return self._entry if self._entry is not None else SeaDexNoEntry.NOT_FOUND
-
-
-class TestTitleNeedsCheck:
-    """`ArrRunServices.title_needs_check` mirrors the per-title loop's no-entry + `is_unchanged` gates.
-
-    It is side-effect-free, so `prefetch_episodes` warms only the series the loop would actually
-    check (the SeaDex-modification-times fix). Pinned against the same
-    cases as `is_unchanged`.
-    """
-
-    @staticmethod
-    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> ArrRunServices:
-        return make_services(_seadex=_Seadex(entry), cache_store=cache, **cfg)
-
-    def test_no_seadex_entry_does_not_need_check(self) -> None:
-        run = self._run(entry=None, cache=FakeCacheStore())
-        assert run.title_needs_check(7) is False
-
-    def test_uncached_title_needs_check(self) -> None:
-        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=FakeCacheStore())
-        assert run.title_needs_check(7) is True
-
-    def test_cached_and_matching_does_not_need_check(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
-        assert run.title_needs_check(7) is False
-
-    def test_cached_but_changed_needs_check(self) -> None:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
-        assert run.title_needs_check(7) is True
-
-    def test_ignore_update_times_forces_a_check_when_entry_exists(self) -> None:
-        # A matching cached title is normally left unchecked. ignore_seadex_update_times
-        # makes the loop re-check it, so the predicate must report needs-check.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = self._run(
-            entry=_entry(datetime(2021, 1, 1)),
-            cache=cache,
-            ignore_seadex_update_times=True,
+        assert (reads.aired_series(1), reads.series_index(1), sonarr.reads) == (
+            NoView.READ_FAILED,
+            None,
+            [(1, False), (1, False)],
         )
-        assert run.title_needs_check(7) is True
-
-    def test_ignore_update_times_still_needs_no_check_when_no_entry(self) -> None:
-        # No SeaDex entry -> begin_check would stop regardless of the flag.
-        run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
-        assert run.title_needs_check(7) is False
-
-    def test_dirty_id_needs_check_despite_matching_cache(self) -> None:
-        # An arr-side file change re-warms the id even when the cache matches.
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
-        run.mark_dirty([7])
-        assert run.title_needs_check(7) is True
-
-    def test_dirty_id_without_seadex_entry_still_needs_no_check(self) -> None:
-        # The no-entry short-circuit stays first: dirty or not, no entry -> no check.
-        run = self._run(entry=None, cache=FakeCacheStore())
-        run.mark_dirty([7])
-        assert run.title_needs_check(7) is False
-
-    @staticmethod
-    def _marked_cache() -> FakeCacheStore:
-        cache = FakeCacheStore()
-        cache.update_cached_title(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1), "fallback_satisfied": True})
-        return cache
-
-    def test_warn_mode_fallback_marker_needs_check(self) -> None:
-        # Prefetch must agree with is_unchanged's warn-mode resurfacing of
-        # fallback-satisfied titles, or the re-checked title goes un-warmed.
-        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="warn")
-        assert run.title_needs_check(7) is True
-
-    def test_fallback_mode_fallback_marker_does_not_need_check(self) -> None:
-        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="fallback")
-        assert run.title_needs_check(7) is False
-
-
-class TestPrefetchLeavesOutUnchanged:
-    """`prefetch_episodes` warms only series with at least one title to check.
-
-    A series whose every title is unchanged (or has no entry) is no longer
-    fetched, the regression this change fixes.
-    """
-
-    def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, _Sonarr]:
-        # Each series maps to a single anilist_id equal to its id, so a series is warmed
-        # iff that id is in `needs_scan`.
-        sonarr = _Sonarr()
-        services = _Services(identity=True, needs_scan=needs_scan)
-        eps = make_sonarr_episodes(
-            sonarr=sonarr,
-            _services=services,
-            _config=make_config(sleep_time=0),
-        )
-        return eps, sonarr
-
-    def test_leaves_out_series_with_no_title_to_check(self) -> None:
-        eps, sonarr = self._eps(needs_scan={1})
-        assert eps.prefetch([_item(1), _item(2)]) == 1
-        assert held_series_episodes(eps) == {1: _eps_for(1)}  # series 2 never fetched
-        assert sonarr.calls == [(1, True)]
-
-    def test_warms_none_when_all_unchanged(self) -> None:
-        eps, sonarr = self._eps(needs_scan=set())
-        assert eps.prefetch([_item(1), _item(2)]) == 0
-        assert held_series_episodes(eps) == {}
-        assert sonarr.calls == []
-
-    def test_warms_series_with_any_title_to_check(self) -> None:
-        # A series whose mapping carries a title needing a check alongside an unchanged one is warmed.
-        sonarr = _Sonarr()
-        services = _Services(mapping={5: _ids(10, 11)}, needs_scan={11})
-        eps = make_sonarr_episodes(
-            sonarr=sonarr,
-            _services=services,
-            _config=make_config(sleep_time=0),
-        )
-        assert eps.prefetch([_item(5)]) == 1
-        assert held_series_episodes(eps) == {5: _eps_for(5)}
 
 
 _LIBRARY = (SonarrSeries(id=1),)
