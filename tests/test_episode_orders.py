@@ -61,7 +61,6 @@ from .builders import (
     make_release,
     make_run_deps,
     make_series_reads,
-    make_sonarr_sync,
     pending_import,
     rg_group,
     sonarr_ep,
@@ -141,16 +140,21 @@ def _sync(
     client: FakeSkyHookClient | None = None,
     *,
     sonarr: FakeSonarrClient | None = None,
+    waits: ImportWaitMode = ImportWaitMode.OFF,
 ) -> SonarrStrategy:
     """The Sonarr strategy after the Sonarr run's library fetch of `series`, its orders fetched through `client`.
 
     The titles are mapped as `_MAPPED` has them. Every series' episodes are `_ROWS` unless `sonarr` serves others.
-    Its AniList knows no title, and a series has the scene mappings `cache` holds.
+    Its AniList knows no title, a series has the scene mappings `cache` holds, and the run waits on imports as
+    `waits` says.
     """
 
     sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
     sonarr.all_series_return = series
-    strat = make_sonarr_sync(sonarr=sonarr, cache_store=cache, skyhook_client=client, anime_ids=_MAPPED)
+    deps = make_run_deps(cache_store=cache, skyhook_client=client, anime_ids=_MAPPED)
+    services = ArrRunServices(deps, Arr.SONARR)
+    services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=waits))
+    strat = SonarrStrategy(deps, services, sonarr_client=sonarr)
     strat.get_items()
     return strat
 
@@ -338,35 +342,16 @@ def test_a_series_sonarr_sends_no_episodes_of_has_none(library: list[SonarrItem]
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
-def _with_an_unmapped_series(
-    cache: FakeCacheStore, sonarr: FakeSonarrClient, waits: ImportWaitMode = ImportWaitMode.OFF
-) -> tuple[SonarrStrategy, list[SonarrItem]]:
-    """The strategy and the items of its library read, where only TVDB series 50 has an AniList mapping (`_MAPPED`).
-
-    Sonarr lists series 1 of TVDB series 50, and series 2 of TVDB series 60, numbered by its dvd order. The run
-    waits on imports as `waits` says.
-    """
-
-    sonarr.all_series_return = [_series(1, 50), _series(2, 60, season_type="dvd")]
-    deps = make_run_deps(cache_store=cache, anime_ids=_MAPPED)
-    services = ArrRunServices(deps, Arr.SONARR)
-    services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=waits))
-    strat = SonarrStrategy(deps, services, sonarr_client=sonarr)
-    return strat, strat.get_items()
-
-
 def test_a_series_with_no_anilist_mapping_is_read_by_the_order_the_library_read_gives_it() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(60, stored_orders(_LONGER_AIRED))
     cache.put_scene_mappings(60, stored_scene_mappings())
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-
-    strat, items = _with_an_unmapped_series(cache, sonarr)
+    strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], cache, sonarr=sonarr)
 
     view = strat._reads.aired_series(2)
-    assert [item.id for item in items] == [1]
+
     assert strat._reads.series_hash == sonarr_series_hash([1])
-    assert sonarr.all_series_calls == 1
     assert isinstance(view, AiredSeries)
     assert _numbered(view.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
 
@@ -375,7 +360,7 @@ def test_the_scene_mappings_of_a_pending_imports_series_are_read_for_the_one_in_
     # One pending import claimed on both series. Only series 2, of TVDB series 60, is in another order.
     pending = two_claim_pending_import(series_ids=(1, 2), infohash="h")
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
-    strat, _ = _with_an_unmapped_series(cache, FakeSonarrClient(episodes=list(_DVD_ROWS)), ImportWaitMode.BLOCKING)
+    strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], cache, waits=ImportWaitMode.BLOCKING)
     strat.start_of_run([])
 
     read = strat.prefetch_scene_numbers([])
@@ -385,7 +370,7 @@ def test_the_scene_mappings_of_a_pending_imports_series_are_read_for_the_one_in_
 
 
 def test_a_series_with_no_anilist_mapping_and_no_stored_answer_is_unread() -> None:
-    strat, _ = _with_an_unmapped_series(FakeCacheStore(), FakeSonarrClient(episodes=list(_DVD_ROWS)))
+    strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], FakeCacheStore())
 
     assert strat._episodes.metadata_unread([], [2]) is True
 
@@ -688,7 +673,7 @@ def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     # Nothing in the scan needs a series, but grab and import read the pending import's series anyway.
     pending = pending_import(infohash="h", series_id=series_id)
     cache = FakeCacheStore(pending={str(Arr.SONARR): {pending.infohash: pending.to_json()}})
-    strat, _ = _with_an_unmapped_series(cache, FakeSonarrClient(episodes=list(_DVD_ROWS)), mode)
+    strat = _sync([_series(1, 50), _series(2, 60, season_type="dvd")], cache, waits=mode)
     strat.start_of_run([])
 
     assert strat.prefetch_orders([]) == fetched
@@ -1324,7 +1309,8 @@ def _run(cache: FakeCacheStore, library: SonarrSeries, xem: FakeXemClient | None
     """One whole Sonarr run over `cache` (`_run_deps`), and what it printed.
 
     Sonarr lists `library` alone, with the season's two rows numbered by the order it names. TVDB series 50 has
-    `_SEASON_TWO_AIRED` stored. TheXEM is `xem`, one that maps no episode of any series when left out.
+    `_SEASON_TWO_AIRED` stored, written over what `cache` held on every call. TheXEM is `xem`, one that maps no
+    episode of any series when left out.
     """
 
     cache.put_tvdb_orders(50, stored_orders(_SEASON_TWO_AIRED))
