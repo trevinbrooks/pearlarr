@@ -1035,7 +1035,8 @@ class TestGrabFailureContainment:
         serve_nyaa_torrents({2: "Show-RG"})
         state = _run_state()
         entries = {1: make_entry_record(), 2: make_entry_record()}
-        services = ArrRunServices(make_run_deps(seadex=FakeSeaDexSource(entries), qbit=FakeQbit().client()), Arr.SONARR)
+        qbit = FakeQbit()
+        services = ArrRunServices(make_run_deps(seadex=FakeSeaDexSource(entries), qbit=qbit.client()), Arr.SONARR)
         services.bind_arr_run(state)
 
         for anilist_id, release in ((1, _release(1)), (2, _release(2))):
@@ -1050,6 +1051,7 @@ class TestGrabFailureContainment:
                 )
             )
 
+        assert qbit.added == [nyaa_torrent_link(2)]
         assert [row.cause for row in state.stats.needs_action] == [NeedsActionCause.GRAB_FAILED]
         assert (_cached_at(services, 1), _cached_at(services, 2)) == (None, _UPDATED_AT)
 
