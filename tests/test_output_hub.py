@@ -14,6 +14,7 @@ import io
 import logging
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from typing import ClassVar, override
 
@@ -176,7 +177,7 @@ def test_every_renderer_sees_every_event_in_order() -> None:
 
 
 class _FileLog(_QuietRenderer):
-    """A file log renderer: keeps every event it's handed."""
+    """A file log renderer: keeps each event it's handed until it's closed."""
 
     writes_file_only: ClassVar[bool] = True
 
@@ -186,23 +187,24 @@ class _FileLog(_QuietRenderer):
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        self.events.append(event)
+        if not self.closed:
+            self.events.append(event)
 
     @override
     def close(self) -> None:
         self.closed = True
 
 
-class _FailingFileLog(_FailingRenderer):
-    """A file log renderer that raises from every handle, as one writing to a dying disk would."""
+class _FailingFileLog(_FailingCloseRenderer):
+    """A file log renderer that raises from every handle and from close, as one writing to a dying disk would."""
 
     writes_file_only: ClassVar[bool] = True
 
 
 class _LifecycleEmitter(_QuietRenderer):
-    """Emits through the process hub from inside begin_run, as a logging call there does through the bridge.
+    """Emits through the process hub from inside begin_run and set_level, as a logging call there does through the bridge.
 
-    The log holds "begin_run" once that call returns, and the type of each event it's handed.
+    The log holds each of those calls once it returns, and the type of each event it's handed.
     """
 
     def __init__(self) -> None:
@@ -216,6 +218,11 @@ class _LifecycleEmitter(_QuietRenderer):
     def begin_run(self) -> None:
         emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
         self.log.append("begin_run")
+
+    @override
+    def set_level(self, level: int) -> None:
+        emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
+        self.log.append("set_level")
 
 
 # --- containment --------------------------------------------------------------------
@@ -362,22 +369,6 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
     ]
 
 
-def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> None:
-    """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown debug) must not start a nested drain.
-
-    Starting one against a half-mutated subscriber list is unsafe. The
-    lifecycle body holds the drain lock and drains the stragglers after.
-    """
-
-    emitter = _LifecycleEmitter()
-    hub = OutputHub([emitter])
-    install_hub(hub)
-
-    hub.begin_run(console_format="plain", level=logging.INFO)
-
-    assert emitter.log == ["begin_run", "Diagnostic"]  # enqueued, not dispatched mid-lifecycle
-
-
 # --- the combiner (dispatch outside the hub lock) -------------------------------------
 
 
@@ -506,24 +497,6 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypa
 
     hub.emit(_AFTER)  # drains the stranded event and the new one, in order
     assert survivor.events == [_EVENT, _AFTER]
-
-
-def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
-    gated = _GatedRenderer()
-    hub = OutputHub([gated])
-
-    drainer = _emit_held_at(hub, gated)
-
-    lifecycle = threading.Thread(target=lambda: hub.begin_run(console_format="plain", level=logging.INFO), daemon=True)
-    lifecycle.start()
-    # A bounded chance for a broken (non-waiting) begin_run to interleave.
-    lifecycle.join(timeout=0.2)
-    assert lifecycle.is_alive()  # parked until the drain finishes
-    assert gated.log == []
-
-    _release(gated, drainer)
-    lifecycle.join(timeout=30.0)
-    assert gated.log == ["PearlarrStarted", "begin_run", "set_level"]
 
 
 # --- overflow ---------------------------------------------------------------------
@@ -688,45 +661,147 @@ def test_file_only_diagnostics_are_never_counted() -> None:
 # --- levels + lifecycle -------------------------------------------------------------
 
 
+def _begin_run(hub: OutputHub) -> None:
+    hub.begin_run(console_format="plain", level=logging.INFO)
+
+
+def _set_level(hub: OutputHub) -> None:
+    hub.set_level(logging.INFO)
+
+
 def test_set_level_fans_out_to_every_renderer() -> None:
-    renderer = RecordingRenderer()
-    hub = OutputHub([renderer])
+    first, second = RecordingRenderer(), RecordingRenderer()
+    hub = OutputHub([first, second])
 
     hub.set_level(logging.DEBUG)
 
-    assert renderer.levels == [logging.DEBUG]
+    assert first.levels == [logging.DEBUG]
+    assert second.levels == [logging.DEBUG]
+    assert hub.level == logging.DEBUG
 
 
-def test_begin_run_turns_over_renderers_and_applies_the_level() -> None:
-    renderer = RecordingRenderer()
-    hub = OutputHub([renderer])
+def test_begin_run_turns_over_every_renderer_and_applies_the_level_once() -> None:
+    stable, console = RecordingRenderer(), RecordingRenderer()
+    hub = OutputHub([stable], console_factory=lambda console_format: console)
 
-    hub.begin_run(console_format="plain", level=logging.WARNING)
+    hub.begin_run(console_format="rich", level=logging.WARNING)
 
-    assert renderer.runs_begun == 1
-    assert renderer.levels == [logging.WARNING]
+    assert (stable.runs_begun, stable.levels) == (1, [logging.WARNING])
+    assert (console.runs_begun, console.levels) == (1, [logging.WARNING])  # the console just built, too
+
+
+@pytest.mark.parametrize(
+    ("call", "logged"),
+    [
+        pytest.param(_begin_run, ["begin_run", "set_level"], id="begin_run"),
+        pytest.param(_set_level, ["set_level"], id="set_level"),
+        pytest.param(OutputHub.close, ["close"], id="close"),
+    ],
+)
+def test_a_lifecycle_call_waits_for_the_active_drain(call: Callable[[OutputHub], None], logged: list[str]) -> None:
+    gated = _GatedRenderer()
+    hub = OutputHub([gated])
+    drainer = _emit_held_at(hub, gated)
+
+    lifecycle = threading.Thread(target=lambda: call(hub), daemon=True)
+    lifecycle.start()
+    lifecycle.join(timeout=0.2)  # a bounded chance for a call that doesn't wait to run
+    assert lifecycle.is_alive()
+
+    _release(gated, drainer)
+    lifecycle.join(timeout=30.0)
+    assert gated.log == ["PearlarrStarted", *logged]
+
+
+@pytest.mark.parametrize(
+    ("call", "logged"),
+    [
+        pytest.param(_begin_run, ["begin_run", "set_level", "Diagnostic", "Diagnostic"], id="begin_run"),
+        pytest.param(_set_level, ["set_level", "Diagnostic"], id="set_level"),
+    ],
+)
+def test_an_emit_from_inside_a_lifecycle_call_dispatches_once_the_call_is_done(
+    call: Callable[[OutputHub], None], logged: list[str]
+) -> None:
+    """Dispatching it mid-call would hand it to renderers while the call is still changing them."""
+
+    emitter = _LifecycleEmitter()
+    hub = OutputHub([emitter])
+    install_hub(hub)
+
+    call(hub)
+
+    assert emitter.log == logged
+
+
+class _FailingBeginRun(_FailingRenderer):
+    """Raises from begin_run too, after logging it."""
+
+    @override
+    def begin_run(self) -> None:
+        super().begin_run()
+        raise RuntimeError("turnover bug")
+
+
+class _FailingSetLevel(_FailingRenderer):
+    """Raises from set_level too."""
+
+    @override
+    def set_level(self, level: int) -> None:
+        raise RuntimeError("level bug")
+
+
+@pytest.mark.parametrize(
+    ("flaky_type", "call", "logged"),
+    [
+        pytest.param(_FailingBeginRun, _begin_run, ["begin_run", "close"], id="begin_run"),
+        pytest.param(_FailingSetLevel, _set_level, ["close"], id="set_level"),
+    ],
+)
+def test_a_renderer_raising_from_a_lifecycle_call_strikes_out_and_the_call_goes_on(
+    flaky_type: type[_FailingRenderer], call: Callable[[OutputHub], None], logged: list[str]
+) -> None:
+    flaky, survivor = flaky_type(), RecordingRenderer()
+    hub = OutputHub([flaky, survivor], strike_limit=1)  # one strike is enough to see it
+
+    call(hub)
+    hub.emit(_EVENT)
+
+    assert flaky.log == logged  # struck out and closed, so it never sees the event
+    assert (survivor.levels, survivor.events) == ([logging.INFO], [_EVENT])
+
+
+def test_a_struck_out_renderer_is_closed_only_once() -> None:
+    flaky = _FailingSetLevel()
+    hub = OutputHub([flaky])
+    for _ in range(3):
+        hub.emit(_EVENT)
+
+    hub.set_level(logging.DEBUG)  # set_level still reaches it, and it raises a fourth time
+
+    assert flaky.log == ["PearlarrStarted"] * 3 + ["close"]
 
 
 def test_close_is_idempotent_and_reaches_every_renderer() -> None:
-    renderer = RecordingRenderer()
-    hub = OutputHub([renderer])
+    first, second = RecordingRenderer(), RecordingRenderer()
+    hub = OutputHub([first, second])
 
     hub.close()
     hub.close()
 
-    assert renderer.closed
+    assert (first.closes, second.closes) == (1, 1)
 
 
-def test_a_closed_hub_drops_emits_and_scheduled_run_turnovers() -> None:
+def test_a_closed_hub_drops_every_later_call() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
     hub.close()
 
     hub.emit(_EVENT)
     hub.begin_run(console_format="plain", level=logging.INFO)
+    hub.set_level(logging.DEBUG)
 
-    assert renderer.events == []
-    assert renderer.runs_begun == 0
+    assert (renderer.events, renderer.runs_begun, renderer.levels) == ([], 0, [])
 
 
 # --- timestamps ------------------------------------------------------------------------
@@ -859,7 +934,7 @@ def test_begin_run_swaps_the_console_renderer_only_on_format_change() -> None:
     assert [fmt for fmt, _ in built] == ["rich", "plain"]
     rich_console, plain_console = built[0][1], built[1][1]
     assert rich_console.events == [_EVENT]
-    assert rich_console.closed  # the replaced console is torn down
+    assert rich_console.closes == 1  # the replaced console is torn down
     assert plain_console.events == [_EVENT]
     assert stable_renderer.events == [_EVENT, _EVENT]  # the stable renderer saw both
 
@@ -899,7 +974,7 @@ def test_a_failing_console_factory_keeps_the_old_console_renderer_and_notes_file
     assert _untraced(file_log.events) == [note, _EVENT]
     # The old console keeps rendering. It's handed the file-only note too, and a real console drops those itself.
     assert _untraced(console.events) == [note, _EVENT]
-    assert not console.closed
+    assert console.closes == 0
 
 
 # --- the process registry (install/uninstall) -----------------------------------
@@ -914,7 +989,7 @@ def test_install_hub_closes_the_previously_installed_hub() -> None:
     try:
         # A repeat run single in one process must not leak the prior hub's
         # open FileLogRenderer. A re-install of the SAME hub never self-closes.
-        assert first_renderer.closed
+        assert first_renderer.closes == 1
         install_hub(second)
         second.emit(_EVENT)
         assert second_renderer.events == [_EVENT]
@@ -929,7 +1004,7 @@ def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
 
     uninstall_hub()
 
-    assert renderer.closed
+    assert renderer.closes == 1
     # The renderer-less default survives repeated uninstalls (never closed):
     # a post-uninstall emit still silently drops rather than raising.
     uninstall_hub()
@@ -1004,36 +1079,19 @@ class _NoisyCloser(_QuietRenderer):
 
 
 def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it() -> None:
-    """`close()` closes the file renderers LAST.
+    """The file renderers close last, so a note from another renderer's close still reaches the file.
 
-    A diagnostic emitted from another renderer's close path (a contained
-    teardown failure) still reaches the file.
+    Renderers that raise from close or handle along the way stop none of it.
     """
 
-    file_recorder = _FileLog()
-    hub = OutputHub([file_recorder, _NoisyCloser()])
+    file_log = _FileLog()
+    hub = OutputHub([_FailingFileLog(), _FailingCloseRenderer(), _NoisyCloser(), file_log])
     install_hub(hub)
 
     hub.close()
 
-    assert [d.message for d in file_recorder.events if isinstance(d, Diagnostic)] == ["teardown failed"]
-    assert file_recorder.closed
-    hub.emit(_EVENT)  # fully closed: drops silently
-    assert not any(isinstance(e, PearlarrStarted) for e in file_recorder.events)
-
-
-def test_begin_run_applies_the_level_to_a_fresh_console_exactly_once() -> None:
-    """The swap-time `set_level` died (`begin_run`'s tail applies the run level to every sub).
-
-    One bug must cost the fresh console ONE strike, not two.
-    """
-
-    fresh = RecordingRenderer()
-    hub = OutputHub([], console_factory=lambda console_format: fresh)
-
-    hub.begin_run(console_format="rich", level=logging.DEBUG)
-
-    assert fresh.levels == [logging.DEBUG]
+    assert file_log.events == [Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True)]
+    assert file_log.closed
 
 
 def test_hub_note_without_exc_keeps_the_trace_none() -> None:
