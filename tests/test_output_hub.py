@@ -543,10 +543,10 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypa
         raise KeyboardInterrupt
 
     # That window is a few bytecodes wide, so the only way to land in it is to stand in for the drain.
-    monkeypatch.setattr(hub, "_drain", interrupted_drain)
-    with pytest.raises(KeyboardInterrupt):
-        hub.emit(_EVENT)
-    monkeypatch.undo()
+    with monkeypatch.context() as patch:
+        patch.setattr(hub, "_drain", interrupted_drain)
+        with pytest.raises(KeyboardInterrupt):
+            hub.emit(_EVENT)
 
     hub.emit(_AFTER)  # drains the stranded event and the new one, in order
     assert survivor.events == [_EVENT, _AFTER]
