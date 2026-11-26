@@ -36,10 +36,10 @@ from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
     FakeCacheStore,
+    FakeSeaDexSource,
     ScriptedAniListClient,
     drive_arr_run,
     grab_request,
-    make_anilist_gateway,
     make_bare_instance,
     make_config,
     make_run_deps,
@@ -271,72 +271,55 @@ class TestNotifyWaitCompleteContainment:
         assert warning.trace is not None
 
 
-class TestBootNotes:
-    """The two prefetch steps' boot step notes must be truthful when a source is unreachable.
+_NOTED = OutcomeKind.IMPORTED
+"""The outcome a boot step that finished with a note shows."""
 
-    The boot flow emits events, so the finished (label, detail, outcome) is
-    read off the recorded `BootStepFinished` stream (conftest's autouse
-    teardown uninstalls the hub after every test). SeaDex is the flag-only
-    fake. The AniList gateway is real over the shared scripted client, so its
-    note reads whether AniList is unreachable the way the run does.
+_WARNED = OutcomeKind.LEFT
+"""The outcome a boot step that finished with a warning shows."""
+
+
+class TestBootNotes:
+    """Each boot step ends on a note of what it fetched, or on a warning when its source was unreachable.
+
+    An unreachable source's step never claims a count it didn't fetch.
     """
 
-    @staticmethod
-    def _step(recording: RecordingHub, label: str) -> BootStepFinished:
-        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == label]
-        return step
-
-    @staticmethod
-    def _run(
-        logger: logging.Logger,
-        *,
-        seadex: FakeGateway | None = None,
-        client: ScriptedAniListClient | None = None,
-    ) -> RecordingHub:
-        strategy = FakeStrategy(
-            items=[FakeArrItem()],
-            anilist_ids={1: TitleMapping(anilist_id=1)},
+    @pytest.mark.parametrize(
+        ("titles", "seadex_unreachable", "anilist_failing", "anilist_step", "seadex_step"),
+        [
+            pytest.param({1}, False, frozenset[int](), ("1 title", _NOTED), ("1 entry", _NOTED), id="healthy"),
+            pytest.param(set[int](), False, frozenset[int](), ("cached", _NOTED), ("cached", _NOTED), id="no-titles"),
+            pytest.param({1}, True, frozenset[int](), ("1 title", _NOTED), ("unreachable", _WARNED), id="no-seadex"),
+            pytest.param({1}, False, frozenset({1}), ("unavailable", _WARNED), ("1 entry", _NOTED), id="no-anilist"),
+        ],
+    )
+    def test_each_boot_step_notes_what_it_fetched_or_warns_that_its_source_was_unreachable(
+        self,
+        titles: set[int],
+        seadex_unreachable: bool,
+        anilist_failing: frozenset[int],
+        anilist_step: tuple[str, OutcomeKind],
+        seadex_step: tuple[str, OutcomeKind],
+    ) -> None:
+        # Both series map the same titles, so each prefetch fetches each title once.
+        library = FakeStrategy(
+            items=[FakeArrItem(item_id=1), FakeArrItem(item_id=2)],
+            anilist_ids={anilist_id: TitleMapping(anilist_id=anilist_id) for anilist_id in titles},
         )
-        anilist = make_anilist_gateway(client) if client is not None else None
+        deps = make_run_deps(
+            seadex=FakeSeaDexSource(unreachable=seadex_unreachable),
+            anilist_client=ScriptedAniListClient(failing=anilist_failing),
+        )
         recording = install_recording_hub()
-        make_engine(FinalizeRecorder(), logger, seadex=seadex, anilist=anilist).run_arr(
-            strategy,
-            item_id=None,
-            dry_run=True,
-            boot=BootFlow(),
-        )
-        return recording
 
-    def test_seadex_unreachable_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
-        # The prefetch "return" is how many ids NEEDED fetching. With SeaDex unreachable
-        # none were actually fetched, so a count note would be a lie.
-        seadex = FakeGateway()
-        seadex.unreachable = True
+        drive_arr_run(deps, lambda _: library)
 
-        step = self._step(self._run(logger, seadex=seadex), "Fetching SeaDex entries")
-
-        assert step.detail == "unreachable"
-        assert step.outcome is OutcomeKind.LEFT  # finishes as a warning
-
-    def test_healthy_seadex_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
-        step = self._step(self._run(logger), "Fetching SeaDex entries")
-
-        assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
-        assert step.outcome is OutcomeKind.IMPORTED
-
-    def test_anilist_unreachable_notes_unavailable_not_a_count(self, logger: logging.Logger) -> None:
-        client = ScriptedAniListClient(failing=frozenset({1}))
-
-        step = self._step(self._run(logger, client=client), "Fetching AniList metadata")
-
-        assert step.detail == "unavailable"
-        assert step.outcome is OutcomeKind.LEFT
-
-    def test_healthy_anilist_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
-        step = self._step(self._run(logger, client=ScriptedAniListClient()), "Fetching AniList metadata")
-
-        assert step.detail == "1 title"  # the one mapped id needed fetching
-        assert step.outcome is OutcomeKind.IMPORTED
+        assert [(step.label, step.detail, step.outcome) for step in recording.of_type(BootStepFinished)] == [
+            ("Fetching Sonarr library", "2 series", _NOTED),
+            ("Checking Sonarr activity", "none", _NOTED),
+            ("Fetching AniList metadata", *anilist_step),
+            ("Fetching SeaDex entries", *seadex_step),
+        ]
 
 
 # One import event on the scanned item, so the activity read has a checkpoint to commit.
