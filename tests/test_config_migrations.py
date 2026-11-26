@@ -10,6 +10,7 @@ detection, each v0 conversion, the comment-preserving template splice, and
 `migrate_config_file`'s backup + atomic-rewrite contract.
 """
 
+import errno
 import os
 from pathlib import Path
 
@@ -551,6 +552,26 @@ class TestMigrateConfigFile:
         with pytest.raises(OSError, match="disk full"):
             migrate_config_file(path)
         assert Path(path).read_text(encoding="utf-8") == text
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
+
+    def test_a_backup_that_cannot_be_written_fails_with_its_own_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The disk fills before the backup lands, so the cleanup has no backup to remove. The error that
+        # comes out is still the full disk, which is the reason the log gives for the failed rewrite.
+        path = self._write(tmp_path, "seadex:\n  private_releases: allow\n")
+        real_open = os.open
+
+        def no_room_for_the_backup(target: str, flags: int, mode: int = 0o777) -> int:
+            if target.endswith(".bak"):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_open(target, flags, mode)
+
+        monkeypatch.setattr(config_mod.os, "open", no_room_for_the_backup)
+        with pytest.raises(OSError, match="No space left on device"):
+            migrate_config_file(path)
         assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yml"]
 
     def test_a_file_changed_since_the_load_is_refused(self, tmp_path: Path) -> None:
