@@ -7,6 +7,7 @@ when the run holds none of its rows.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -68,15 +69,22 @@ class _SlowSonarr(_Sonarr):
 
 
 class _TogetherSonarr(_Sonarr):
-    """A `_Sonarr` whose every read waits, 30 seconds at most, until two reads are under way."""
+    """A `_Sonarr` whose every read waits up to `wait` seconds for a second read to be under way.
 
-    def __init__(self) -> None:
+    `met` holds the series of each read that met another.
+    """
+
+    def __init__(self, wait: float) -> None:
         super().__init__()
-        self._both_started = threading.Barrier(2, timeout=30.0)
+        self._wait = wait
+        self._both_started = threading.Barrier(2)
+        self.met: list[int] = []
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        self._both_started.wait()
+        with contextlib.suppress(threading.BrokenBarrierError):
+            self._both_started.wait(timeout=self._wait)
+            self.met.append(series_id)
         return super().episodes(series_id, quiet=quiet)
 
 
@@ -105,10 +113,6 @@ class _Run:
     unmonitored: tuple[int, ...] = ()
     """The series Sonarr doesn't monitor."""
     settings: AppConfig = field(default_factory=make_config)
-
-
-_TWO_SERIES = _Run(series=(1, 2), titles={7: 1, 8: 2})
-"""Two series of one title each, neither title checked before."""
 
 
 def _library(run: _Run) -> list[SonarrItem]:
@@ -214,14 +218,25 @@ class TestPrefetchEpisodes:
 
         assert (warmed, progress.updates) == (2, [(0.5, "1/2"), (1.0, "2/2")])
 
-    def test_unthrottled_reads_are_under_way_at_once(self) -> None:
-        # Each read waits for the other to start, so reading one series at a time fails.
-        sonarr = _TogetherSonarr()
-        episodes, _ = _episodes(sonarr, _TWO_SERIES)
+    @pytest.mark.parametrize(
+        ("sleep_time", "wait", "met"),
+        [
+            # Unthrottled the two reads meet; the long wait keeps a slow machine from failing them.
+            pytest.param(0, 30.0, [1, 2], id="unthrottled"),
+            # Throttled they go one at a time, so neither can meet the other however long it waits. The short wait
+            # keeps the run quick. On a slow machine two reads at once can still miss each other, so this row can
+            # let through a prefetch that ignores the throttle, but it never fails one that keeps it.
+            pytest.param(1, 0.01, [], id="throttled"),
+        ],
+    )
+    def test_reads_are_under_way_at_once_unless_throttled(self, sleep_time: int, wait: float, met: list[int]) -> None:
+        sonarr = _TogetherSonarr(wait)
+        run = _Run(series=(1, 2), titles={7: 1, 8: 2}, settings=make_config(sleep_time=sleep_time))
+        episodes, _ = _episodes(sonarr, run)
 
-        episodes.prefetch(_library(_TWO_SERIES))
+        episodes.prefetch(_library(run))
 
-        assert sorted(sonarr.series_read) == [1, 2]
+        assert sorted(sonarr.met) == met
 
     def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
         # One worker, its reads after the first a tenth of a second long, so the stop on the first read's progress
