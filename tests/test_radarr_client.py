@@ -112,33 +112,27 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.monitored is True
 
 
-class _RecordingIdSets(KnownExternalIds):
-    """Recording `KnownExternalIds`: preset per-id-kind sets, calls recorded."""
+class _PresetIdSets(KnownExternalIds):
+    """The Anime-IDs candidate set for each id kind, preset."""
 
-    def __init__(self, sets: dict[str, set[int | str]]) -> None:
+    def __init__(self, sets: dict[IdKind, set[int | str]]) -> None:
         self._sets = sets
-        self.calls: list[str] = []
 
     @override
     def known_external_ids(self, kind: IdKind) -> AbstractSet[int | str]:
-        self.calls.append(kind)
         return self._sets.get(kind, set())
 
 
 def test_collect_anime_movies_wires_id_spaces() -> None:
-    """The candidate sets are pulled for (tmdb_movie_id, imdb_id), in that order.
-
-    An imdb-only match is kept, and `anibridge=None` degrades to empty sets.
-    """
+    """A movie is kept when its TMDB id or its IMDb id is a mapped one, each read from its own field."""
 
     movies: list[RadarrItem] = [
         RadarrMovie(id=1, title="Imdb Only", tmdbId=111, imdbId="tt1"),
-        RadarrMovie(id=2, title="Unmatched", tmdbId=222, imdbId="tt2"),
+        RadarrMovie(id=2, title="Tmdb Only", tmdbId=222, imdbId="tt2"),
+        RadarrMovie(id=3, title="Unmatched", tmdbId=333, imdbId="tt3"),
     ]
-    client = FakeRadarrClient(movies=movies)
-    id_sets = _RecordingIdSets({"imdb_id": {"tt1"}})
+    id_sets = _PresetIdSets({"tmdb_movie_id": {222}, "imdb_id": {"tt1"}})
 
-    kept = collect_anime_movies(client, id_sets, None)
+    kept = collect_anime_movies(FakeRadarrClient(movies=movies), id_sets, None)
 
-    assert id_sets.calls == ["tmdb_movie_id", "imdb_id"]
-    assert [m.id for m in kept] == [1]
+    assert [m.id for m in kept] == [1, 2]
