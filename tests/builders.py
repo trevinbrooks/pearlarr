@@ -3,7 +3,6 @@
 # The factories assemble objects by their private collaborator fields (strat._episodes), which strict re-flags.
 """Builders and a bare-instance factory for the characterization tests."""
 
-import dataclasses
 import json
 import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -188,17 +187,6 @@ def _resolve_setting(key: str) -> tuple[str, str]:
     if key in _FLAT_ALIASES:
         return _FLAT_ALIASES[key]
     return _FIELD_GROUP.get(key, "seadex"), key
-
-
-# The override keys make_services routes into self._config rather than onto the bare instance as an attribute.
-_CONFIG_SETTING_NAMES = frozenset(_FIELD_GROUP) | frozenset(_FLAT_ALIASES)
-
-
-def _split_config(overrides: dict[str, Any]) -> AppConfig:
-    """Pop the config-routed keys out of `overrides` (IN PLACE) and build the config."""
-
-    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
-    return make_config(**config_overrides)
 
 
 def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
@@ -882,18 +870,10 @@ def drive_arr_run[ItemT: ArrItem](
     )
 
 
-def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """A `SeadexReleaseFilter` over an assembled `ArrRunDeps`, with `state` and `planner` overridable."""
+def make_release_filter(*, config: AppConfig | None = None, state: ArrRunState | None = None) -> SeadexReleaseFilter:
+    """A real `SeadexReleaseFilter` over `make_run_deps(config=config)`, on `state` (a fresh Sonarr run by default)."""
 
-    config = _split_config(overrides)
-    state = overrides.pop("state", None) or ArrRunState(arr=Arr.SONARR)
-    deps = make_run_deps(config=config)
-    if "planner" in overrides:
-        deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
-    if overrides:
-        msg = f"unknown make_release_filter overrides: {sorted(overrides)}"
-        raise TypeError(msg)
-    return SeadexReleaseFilter(deps=deps, state=state)
+    return SeadexReleaseFilter(deps=make_run_deps(config=config), state=state or ArrRunState(arr=Arr.SONARR))
 
 
 def one_release_dict(*, srg: str, infohash: str) -> SeadexDict:
