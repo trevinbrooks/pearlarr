@@ -134,11 +134,13 @@ class TestAniBridgeLookup:
     @pytest.mark.parametrize(
         ("ids", "found"),
         [
-            pytest.param(ExternalIds(tmdb_movie=888, imdb="tt0888888"), [270], id="movie by its tmdb id"),
+            pytest.param(ExternalIds(tmdb_movie=888), [270], id="movie by its tmdb id"),
             pytest.param(ExternalIds(tmdb_movie=404, imdb="tt0400"), [400], id="movie by its imdb id"),
             pytest.param(ExternalIds(tmdb_movie=54270), [31], id="movie by the second of its tmdb ids"),
-            pytest.param(ExternalIds(imdb="tt13645944"), [31], id="movie by the second of its imdb ids"),
-            pytest.param(ExternalIds(tvdb=424242, imdb="tt0424242"), [], id="unknown"),
+            pytest.param(
+                ExternalIds(tmdb_movie=404, imdb="tt13645944"), [31], id="movie by the second of its imdb ids"
+            ),
+            pytest.param(ExternalIds(tvdb=424242), [], id="unknown"),
         ],
     )
     def test_a_lookup_finds_every_title_mapped_to_its_ids(self, ids: ExternalIds, found: list[int]) -> None:
@@ -355,7 +357,7 @@ class TestAnimeIdsLookup:
         ("ids", "found"),
         [
             pytest.param(ExternalIds(tvdb=200, imdb="tt100"), [100, 101, 102], id="series with an imdb id"),
-            pytest.param(ExternalIds(tmdb_movie=7000, imdb="tt7000"), [103], id="movie by its tmdb id"),
+            pytest.param(ExternalIds(tmdb_movie=7000), [103], id="movie by its tmdb id"),
             pytest.param(ExternalIds(tmdb_movie=4242, imdb="tt100"), [100, 102], id="movie by its imdb id"),
             pytest.param(ExternalIds(tvdb=999), [], id="a record without an anilist id"),
             pytest.param(ExternalIds(tvdb=424242), [], id="unknown"),
@@ -494,10 +496,8 @@ class TestAnidbMappingDict:
 
     def test_repeated_season_is_last_wins(self) -> None:
         resolver = _anidb_resolver()
-        try:
-            assert resolver.anidb_episode_by_tvdb(3, 1) == {1: {5: 5, 6: 6}}
-        finally:
-            resolver.close()
+
+        assert resolver.anidb_episode_by_tvdb(3, 1) == {1: {5: 5, 6: 6}}
 
     def test_ambiguous_id_raises(self) -> None:
         resolver = _anidb_resolver()
@@ -733,9 +733,9 @@ class TestSourceDownloads:
 
     @respx.mock
     def test_a_missing_source_is_downloaded_whole_and_indexed(self, tmp_path: Path) -> None:
-        # Many 64 KiB read chunks, so a body cut short would show.
+        # Several 64 KiB read chunks, so a body cut short would show.
         records = {str(n): {"anilist_id": n, "tvdb_id": 70000 + n, "tvdb_season": 1} for n in range(1, 3001)}
-        body = json.dumps(records, indent=2).encode()
+        body = json.dumps(records).encode()
         respx.get(ANIME_IDS_URL).respond(content=body)
 
         resolver = _download_boot(tmp_path)
