@@ -17,6 +17,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable, Generator, Iterator
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -25,9 +26,6 @@ from xml.etree import ElementTree
 import httpx
 import pytest
 import respx
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
-from hypothesis.strategies import DrawFn
 
 import pearlarr.mappings as m
 from pearlarr.anibridge import (
@@ -36,8 +34,6 @@ from pearlarr.anibridge import (
     AniBridgeGraph,
     SpecialAliases,
     SpecialAliasing,
-    TvdbMappings,
-    _parse_ranges,
 )
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
@@ -63,33 +59,139 @@ from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
 _WEB = httpx.Client()
 
+_ANIBRIDGE = MappingSource.ANIBRIDGE
+
+
+def _resolver(
+    *,
+    anime: AnimeIdsByName | bool = False,
+    anibridge: AniBridgeGraph | bool = False,
+    ignore: AbstractSet[int] = frozenset(),
+) -> MappingResolver:
+    """A resolver over inline sources, each off unless given, with AniDB off. The conftest closes it after the test."""
+
+    return MappingResolver(
+        refresh_days=1,
+        ignore_anilist_ids=set(ignore),
+        sources=MappingSources(anime=anime, anidb=False, anibridge=anibridge),
+        web=httpx.Client(),
+    )
+
+
 # --------------------------------------------------------------------------- #
-# AniBridge: SQL backing must equal the graph backing (the oracle)
+# AniBridge
 # --------------------------------------------------------------------------- #
 
 GRAPH: AniBridgeGraph = {
     "anilist:269": {
         "tvdb_show:74796:s2": {"21-41": "1-21"},
-        "tvdb_show:74796:s3": {"42-50": "1-9,11-12"},  # multi-segment range
+        "tvdb_show:74796:s3": {"42-52": "1-9,11-12"},
         "anidb:1234": {},
         "imdb_show:tt0269": {},
-        "mal:111": {},  # ignored provider: present in real data, must not break parsing
-        "tmdb_show:5000:s1": {"1-12": "1-12"},  # ignored provider
+        # Providers a lookup doesn't read. Real graphs carry them.
+        "mal:111": {},
+        "tmdb_show:5000:s1": {"1-12": "1-12"},
     },
     "anilist:270": {
-        "tvdb_show:74796:s1": {},  # same tvdb id, present-but-empty season
+        "tvdb_show:74796:s1": {},
         "tmdb_movie:888": {},
         "tvdb_movie:999": {},
     },
     "anilist:271": {
-        "tvdb_show:600:s1": {"1-": "1-"},  # open-ended range (end None)
+        "tvdb_show:600:s1": {"1-": "1-"},
     },
     "anilist:300": {
-        "tvdb_show:111:s1": {"1-5": "1-5"},  # two tvdb shows -> first choice matters
-        "tvdb_show:222:s1": {"1-5": "1-5"},
+        "tvdb_show:111:s1": {"1-5": "1-5"},
+        "tvdb_show:222:s1": {"6-10": "1-5"},
         "imdb_show:tt300": {},
     },
+    "anilist:400": {
+        "imdb_movie:tt0400": {},
+    },
 }
+
+
+class TestAniBridgeLookup:
+    """A lookup finds every title AniBridge maps an id to, with the ranges of the show on a TVDB lookup."""
+
+    @pytest.mark.parametrize(
+        ("ids", "expected"),
+        [
+            pytest.param(
+                ExternalIds(tvdb=74796, imdb="tt0269"),
+                {
+                    # Found by its IMDb id too, but the TVDB lookup's ranges stay.
+                    269: TitleMapping(
+                        269,
+                        tvdb_mappings={2: [(1, 21)], 3: [(1, 9), (11, 12)]},
+                        imdb_id="tt0269",
+                        anidb_id=1234,
+                        source=_ANIBRIDGE,
+                    ),
+                    # A season with no ranges covers the whole season, where a missing one covers none of it.
+                    270: TitleMapping(270, tvdb_mappings={1: []}, tmdb_movie_id=888, source=_ANIBRIDGE),
+                },
+                id="series",
+            ),
+            pytest.param(
+                ExternalIds(tvdb=600),
+                {271: TitleMapping(271, tvdb_mappings={1: [(1, None)]}, source=_ANIBRIDGE)},
+                id="series with an open-ended range",
+            ),
+            pytest.param(
+                ExternalIds(tvdb=111, imdb="tt300"),
+                {300: TitleMapping(300, tvdb_mappings={1: [(1, 5)]}, imdb_id="tt300", source=_ANIBRIDGE)},
+                id="series one of a title's two shows",
+            ),
+            pytest.param(
+                ExternalIds(tmdb_movie=888, imdb="tt0888888"),
+                {270: TitleMapping(270, tmdb_movie_id=888, source=_ANIBRIDGE)},
+                id="movie by its tmdb id",
+            ),
+            pytest.param(
+                ExternalIds(tmdb_movie=404, imdb="tt0400"),
+                {400: TitleMapping(400, imdb_id="tt0400", source=_ANIBRIDGE)},
+                id="movie by its imdb id",
+            ),
+            pytest.param(ExternalIds(tvdb=424242, imdb="tt0424242"), {}, id="unknown"),
+        ],
+    )
+    def test_a_lookup_finds_each_title_with_the_ranges_of_its_show(
+        self, ids: ExternalIds, expected: dict[int, TitleMapping]
+    ) -> None:
+        assert _resolver(anibridge=GRAPH).resolve(ids).kept == expected
+
+    def test_the_library_filter_keeps_every_id_a_title_is_found_by(self) -> None:
+        anibridge = _resolver(anibridge=GRAPH).anibridge
+        assert anibridge is not None
+
+        assert anibridge.known_external_ids("tvdb_id") == {74796, 600, 111, 222}
+        assert anibridge.known_external_ids("tmdb_movie_id") == {888}
+        assert anibridge.known_external_ids("imdb_id") == {"tt0269", "tt300", "tt0400"}
+
+
+class TestAniBridgeRanges:
+    """A title's target range string says which TVDB episodes of the season it covers."""
+
+    @pytest.mark.parametrize(
+        ("episodes", "covered"),
+        [
+            pytest.param({"1-12": "13-24"}, list(range(13, 25)), id="closed"),
+            pytest.param({"1-": "13-"}, list(range(13, 31)), id="open end"),
+            pytest.param({"1": "13"}, [13], id="one episode"),
+            pytest.param({"1-11": "13-17,19-24"}, [13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24], id="two pieces"),
+            # The ratio says how many source episodes a target one stands for, not which ones are covered.
+            pytest.param({"1-24": "13-24|2"}, list(range(13, 25)), id="ratio"),
+        ],
+    )
+    def test_a_target_range_covers_its_episodes(self, episodes: dict[str, str], covered: list[int]) -> None:
+        resolver = _resolver(anibridge={"anilist:2": {"tvdb_show:500:s1": episodes}})
+        ranges = resolver.resolve(ExternalIds(tvdb=500)).kept[2].tvdb_mappings
+        assert ranges is not None
+
+        found = [n for n in range(11, 31) if check_ep_by_anibridge(ep=sonarr_ep(1, n), tvdb_mappings=ranges)]
+
+        assert found == covered
 
 
 def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]:
@@ -99,237 +201,6 @@ def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]
     store = MappingStore.open(":memory:")
     store.replace_anibridge("d", graph_ab.to_rows())
     return graph_ab, AniBridge.from_store(store), store
-
-
-class TestAniBridgeParity:
-    """The SQL-backed `AniBridge` view reproduces the graph-backed oracle's lookups, sets, and season ranges."""
-
-    def test_lookups_and_sets_match_graph(self) -> None:
-        graph_ab, sql_ab, store = _ab_pair(GRAPH)
-        try:
-            for tvdb in (74796, 600, 111, 222, 424242):
-                assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb in (888, 4242):
-                assert sql_ab.lookup_by_tmdb_movie(tmdb) == graph_ab.lookup_by_tmdb_movie(tmdb)
-            for imdb in ("tt0269", "tt300", "ttZZZ"):
-                assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
-
-            assert sql_ab.all_tvdb_ids == graph_ab.all_tvdb_ids
-            assert sql_ab.all_tmdb_movie_ids == graph_ab.all_tmdb_movie_ids
-            assert sql_ab.all_imdb_ids == graph_ab.all_imdb_ids
-            assert len(sql_ab) == len(graph_ab)
-            assert bool(sql_ab) == bool(graph_ab)
-        finally:
-            store.close()
-
-    def test_open_ended_range_roundtrips_as_none(self) -> None:
-        _, sql_ab, store = _ab_pair(GRAPH)
-        try:
-            assert sql_ab.lookup_by_tvdb(600)[271]["tvdb_mappings"] == {1: [(1, None)]}
-        finally:
-            store.close()
-
-    def test_present_but_empty_season_roundtrips(self) -> None:
-        # The {season: []} ("whole season covered") vs {} ("not covered") distinction
-        # is opposite behavior downstream. It must survive the SQL round-trip.
-        graph_ab, sql_ab, store = _ab_pair(GRAPH)
-        try:
-            assert graph_ab.lookup_by_tvdb(74796)[270]["tvdb_mappings"] == {1: []}
-            assert sql_ab.lookup_by_tvdb(74796)[270]["tvdb_mappings"] == {1: []}
-        finally:
-            store.close()
-
-    def test_empty_graph_is_falsey(self) -> None:
-        _, sql_ab, store = _ab_pair({})
-        try:
-            assert not sql_ab
-            assert len(sql_ab) == 0
-        finally:
-            store.close()
-
-
-# --------------------------------------------------------------------------- #
-# Property-based: the invariants the example tables above sample only a few
-# points of. TestRealDataParity proves graph<->SQL parity over the real files
-# (gitignored, skipped in CI). These Hypothesis properties make the SAME parity
-# CI-enforced over generated graphs, and pin the range-containment boundaries
-# a `<=`->`<` off-by-one would silently drop.
-# --------------------------------------------------------------------------- #
-
-_SMALL_ID = st.integers(min_value=1, max_value=5)  # small pool -> shared ids across titles
-_IMDB_ID = st.sampled_from(("tt1", "tt2", "tt3"))
-_SEASON = st.integers(min_value=0, max_value=3)
-_EP = st.integers(min_value=1, max_value=40)
-
-
-@st.composite
-def _tgt_range(draw: DrawFn) -> str:
-    """A target episode-range string: single / closed / open-ended / multi-segment."""
-
-    a = draw(_EP)
-    b = draw(_EP)
-    kind = draw(st.sampled_from(("single", "closed", "open", "multi")))
-    if kind == "single":
-        return str(a)
-    if kind == "open":
-        return f"{a}-"
-    if kind == "closed":
-        return f"{min(a, b)}-{max(a, b)}"
-    c = draw(_EP)
-    d = draw(_EP)
-    return f"{min(a, b)}-{max(a, b)},{min(c, d)}-{max(c, d)}"
-
-
-class _SourceRange(NamedTuple):
-    """A source range a specials map may use, with how many numbers it covers."""
-
-    text: str
-    width: int
-
-
-_SPECIALS_KEYS = (_SourceRange("1", 1), _SourceRange("1-2", 2), _SourceRange("1-3", 3), _SourceRange("4-6", 3))
-
-
-@st.composite
-def _specials_target(draw: DrawFn, width: int) -> str:
-    """A specials target range: usually `width` numbers in a row, otherwise any `_tgt_range` or a ratio."""
-
-    kind = draw(st.sampled_from(("fit", "fit", "any", "ratio")))
-    start = draw(_EP)
-    if kind == "fit":
-        return str(start) if width == 1 else f"{start}-{start + width - 1}"
-    if kind == "ratio":
-        return f"{start}|2"
-    return draw(_tgt_range())
-
-
-@st.composite
-def _specials_ranges_pair(draw: DrawFn) -> tuple[dict[str, str], dict[str, str]]:
-    """A (TVDB, TMDB) pair of specials maps that share some source ranges and not others.
-
-    Each target is drawn as wide as its source or one wider, so some ranges fail the length check.
-    """
-
-    tvdb: dict[str, str] = {}
-    tmdb: dict[str, str] = {}
-    for source in draw(st.lists(st.sampled_from(_SPECIALS_KEYS), max_size=3, unique=True)):
-        width = source.width + draw(st.integers(min_value=0, max_value=1))
-        side = draw(st.sampled_from(("both", "both", "tvdb", "tmdb")))
-        if side != "tmdb":
-            tvdb[source.text] = draw(_specials_target(width))
-        if side != "tvdb":
-            tmdb[source.text] = draw(_specials_target(width))
-    return tvdb, tmdb
-
-
-@st.composite
-def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
-    """A structurally-valid anibridge graph over a small, collision-prone id pool.
-
-    The tiny external-id range forces shared tvdb/tmdb/imdb ids across
-    titles (reverse-index sets + first choice), and every tvdb season is drawn
-    either empty (present-but-empty `{season: []}`) or range-bearing - the exact
-    round-trip dimensions `to_rows`/`from_store` must preserve.
-    """
-
-    graph: AniBridgeGraph = {}
-    anilist_ids = draw(st.lists(st.integers(min_value=1, max_value=20), min_size=1, max_size=6, unique=True))
-    for anilist_id in anilist_ids:
-        targets: dict[str, dict[str, str]] = {}
-        for _ in range(draw(st.integers(min_value=0, max_value=3))):
-            season = draw(_SEASON)
-            ep_map: dict[str, str] = {} if draw(st.booleans()) else {"1-99": draw(_tgt_range())}
-            targets[f"tvdb_show:{draw(_SMALL_ID)}:s{season}"] = ep_map
-        if draw(st.booleans()):
-            # Ignored provider (like mal below): real graphs carry it. Parity must hold.
-            targets[f"tmdb_show:{draw(_SMALL_ID)}:s1"] = {}
-        if draw(st.booleans()):
-            # A TVDB and a TMDB specials map, which pair into aliases unless the loop above also drew a TVDB season 0.
-            tvdb_specials, tmdb_specials = draw(_specials_ranges_pair())
-            targets[f"tvdb_show:{draw(_SMALL_ID)}:s0"] = tvdb_specials
-            targets[f"tmdb_show:{draw(_SMALL_ID)}:s0"] = tmdb_specials
-        if draw(st.booleans()):
-            targets[f"tmdb_movie:{draw(_SMALL_ID)}"] = {}
-        if draw(st.booleans()):
-            targets[f"imdb_show:{draw(_IMDB_ID)}"] = {}
-        if draw(st.booleans()):
-            targets[f"imdb_movie:{draw(_IMDB_ID)}"] = {}
-        if draw(st.booleans()):
-            targets[f"anidb:{draw(_SMALL_ID)}"] = {}
-        if draw(st.booleans()):
-            targets[f"mal:{draw(_SMALL_ID)}"] = {}
-        graph[f"anilist:{anilist_id}"] = targets
-    return graph
-
-
-# The autouse data-dir / store-closing fixtures (conftest) are function-scoped, so
-# @given tests trip Hypothesis's function-scoped-fixture health check. Suppress it
-# (these :memory: cases never touch the data dir the fixture guards).
-_ALLOW_FIXTURES = settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
-
-
-class TestAniBridgeParityProperty:
-    """graph<->SQL parity over generated graphs.
-
-    The CI-enforced twin of `TestRealDataParity`, which only runs when the gitignored real files exist.
-    """
-
-    @_ALLOW_FIXTURES
-    @given(graph=_anibridge_graph())
-    def test_sql_backing_matches_graph_over_all_ids(self, graph: AniBridgeGraph) -> None:
-        graph_ab = AniBridge(graph)
-        store = MappingStore.open(":memory:")
-        try:
-            store.replace_anibridge("d", graph_ab.to_rows())
-            sql_ab = AniBridge.from_store(store)
-
-            assert sql_ab.all_tvdb_ids == graph_ab.all_tvdb_ids
-            assert sql_ab.all_tmdb_movie_ids == graph_ab.all_tmdb_movie_ids
-            assert sql_ab.all_imdb_ids == graph_ab.all_imdb_ids
-            assert len(sql_ab) == len(graph_ab)
-            assert bool(sql_ab) == bool(graph_ab)
-
-            for tvdb in graph_ab.all_tvdb_ids:
-                assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb_movie in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb_movie(tmdb_movie) == graph_ab.lookup_by_tmdb_movie(tmdb_movie)
-            for imdb in graph_ab.all_imdb_ids:
-                assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
-        finally:
-            store.close()
-
-
-class TestAniBridgeRangeContainment:
-    """`_parse_ranges` -> `check_ep_by_anibridge` boundary classification.
-
-    `_parse_ranges` has no direct test and `check_ep_by_anibridge` only trivial
-    ones. A `<=`->`<` regression drops the last episode of every closed cour and
-    passes the example suite. These pin the boundary set for both range shapes.
-    """
-
-    @_ALLOW_FIXTURES
-    @given(start=_EP, length=st.integers(min_value=0, max_value=20), season=_SEASON)
-    def test_closed_range_covers_start_through_end_only(self, start: int, length: int, season: int) -> None:
-        end = start + length
-        ranges = _parse_ranges(f"{start}-{end}")
-        assert ranges == [(start, end)]  # _parse_ranges pins the closed-range parse
-        mappings: TvdbMappings = {season: ranges}
-
-        # start and end included. The immediate neighbours excluded (catches <=/<).
-        assert check_ep_by_anibridge(ep=sonarr_ep(season, start), tvdb_mappings=mappings) is True
-        assert check_ep_by_anibridge(ep=sonarr_ep(season, end), tvdb_mappings=mappings) is True
-        assert check_ep_by_anibridge(ep=sonarr_ep(season, start - 1), tvdb_mappings=mappings) is False
-        assert check_ep_by_anibridge(ep=sonarr_ep(season, end + 1), tvdb_mappings=mappings) is False
-
-    @_ALLOW_FIXTURES
-    @given(start=_EP, episode=st.integers(min_value=0, max_value=80), season=_SEASON)
-    def test_open_ended_range_covers_from_start_upwards(self, start: int, episode: int, season: int) -> None:
-        ranges = _parse_ranges(f"{start}-")
-        assert ranges == [(start, None)]  # _parse_ranges pins the open-ended parse
-        mappings: TvdbMappings = {season: ranges}
-
-        covered = check_ep_by_anibridge(ep=sonarr_ep(season, episode), tvdb_mappings=mappings)
-        assert covered is (episode >= start)
 
 
 def _aliasing_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> SpecialAliasing | None:
