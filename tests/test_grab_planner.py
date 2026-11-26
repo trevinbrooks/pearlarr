@@ -85,10 +85,10 @@ class TestReleasesToGrab:
     """`releases_to_grab` is the one grab-set filter both arrs' pending import update builders share."""
 
     def test_only_hash_carrying_grabs_are_planned(self) -> None:
-        grabbed = make_release(url="u1", download=True, infohash="h1")
+        grabbed = make_release(download=True, infohash="h1")
         seadex = {
-            "A": rg_group({"u1": grabbed, "u2": make_release(url="u2", download=True, infohash=None)}),
-            "B": rg_group({"u3": make_release(url="u3", download=False, infohash="h3")}),
+            "A": rg_group({"u1": grabbed, "u2": make_release(download=True, infohash=None)}),
+            "B": rg_group({"u3": make_release(download=False, infohash="h3")}),
         }
 
         assert releases_to_grab(seadex) == [PlannedGrab("A", "u1", grabbed, "h1")]
