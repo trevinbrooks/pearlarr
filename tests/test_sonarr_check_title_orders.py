@@ -7,35 +7,31 @@ order says nothing of its numbers.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import pytest
 
 from pearlarr.aired_view import NoView
+from pearlarr.anilist_client import AniListBody
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode, SonarrSeries
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Severity
-from pearlarr.pending_follow import PendingFollower
 from pearlarr.releases import EpisodeKey, PrintedKey, SeadexDict, SkipReason
-from pearlarr.series_reads import SeriesReads
-from pearlarr.sonarr_episodes import SonarrEpisodes
-from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     FakeCacheStore,
-    ScriptedAniListClient,
-    make_anilist_gateway,
-    make_bare_instance,
+    FakeSeaDexSource,
+    anilist_body,
     make_config,
     make_entry_record,
-    make_logger,
     make_release,
     make_run_deps,
+    make_torrent_record,
     parsed_info,
     rg_group,
     sonarr_ep,
@@ -52,7 +48,6 @@ from .title_check_builders import (
     SERIES_7,
     STAND_IN_E2,
     FakeRunServices,
-    ScriptedListings,
     ScriptedParse,
     mapping_one_series,
     sonarr_checking,
@@ -237,12 +232,15 @@ def _sequel_in_dvd_order() -> _SeriesInSonarr:
     )
 
 
-def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int, int] | None = None) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5, the second season of series 7, over the run's own episode reads.
+def _check_second_season(
+    library: _SeriesInSonarr, *, one_episode_titles: Mapping[int, int] | None = None
+) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5, the second season of series 7, through a real `SonarrStrategy`.
 
-    The library read, the parse cache and each parse's matched episodes are the real ones. The plan grabs the
-    torrent, whose nth file is n thousand bytes, and AniList knows no title. `episode_by_size` is the episode id
-    SeaDex lists a one-episode release of each size for.
+    The library read, the parse cache, each parse's matched episodes and the series' listings are the real ones.
+    The plan grabs the torrent, whose nth file is n thousand bytes, and AniList has no answer for title 5. Each
+    key of `one_episode_titles` is an aired episode of the second season that AniList also lists as a title of
+    one episode, and SeaDex by one release of one file, of the size the key maps to.
     """
 
     names = list(library.parses)
@@ -253,34 +251,46 @@ def _check_second_season(library: _SeriesInSonarr, episode_by_size: Mapping[int,
     if library.orders is not None:
         cache.put_tvdb_orders(library.series.tvdbId, stored_orders(library.orders))
         cache.put_scene_mappings(library.series.tvdbId, stored_scene_mappings())
+    one_episode_titles = one_episode_titles or {}
+    # Title 100 + n is the aired S02En alone.
+    siblings = {
+        100 + n: TitleMapping(anilist_id=100 + n, tvdb_season=2, tvdb_epoffset=n - 1) for n in one_episode_titles
+    }
     run = FakeRunServices(
+        anilist_ids={5: TitleMapping(anilist_id=5, tvdb_season=2), **siblings},
         prologue_entry=make_entry_record(),
         seadex_dict=seadex,
         plan_marks=frozenset({GRAB_URL}),
         import_wait_mode=ImportWaitMode.BLOCKING,
         cache_store=cache,
     )
+    entries = {
+        100 + n: make_entry_record(
+            anilist_id=100 + n,
+            torrents=(
+                make_torrent_record(infohash=f"{n}" * 40, file_names=(f"Show Zoku - {n:02d}.mkv",), file_size=size),
+            ),
+        )
+        for n, size in one_episode_titles.items()
+    }
+    deps = mapping_one_series(
+        make_run_deps(cache_store=cache, seadex=FakeSeaDexSource(entries)), tvdb_id=library.series.tvdbId, anilist_id=5
+    )
+    for anilist_id in siblings:
+        deps.anilist.answers[anilist_id] = _one_episode(anilist_id)
     sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
-    deps = replace(
-        make_run_deps(cache_store=cache), anilist=make_anilist_gateway(ScriptedAniListClient(title=None), cache)
-    )
-    deps = mapping_one_series(deps, tvdb_id=library.series.tvdbId, anilist_id=5)
-    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
-    episodes = SonarrEpisodes(deps, sonarr, run, reads)
-    episodes.refresh_library()
-    strat = make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        _episodes=episodes,
-        _reads=reads,
-        _follower=PendingFollower(run.pending_imports, reads, make_logger()),
-        _parse=SonarrParseCache(deps, sonarr, reads),
-        _listings=ScriptedListings(episode_by_size=episode_by_size),
-        _config=make_config(),
-        logger=make_logger(),
-    )
+    strat = SonarrStrategy(deps, run, sonarr_client=sonarr)
+    strat.get_items()
     strat.check_title(library.series, 5, TitleMapping(anilist_id=5, tvdb_season=2))
     return run
+
+
+def _one_episode(anilist_id: int) -> AniListBody:
+    """AniList's answer for a title of one episode."""
+
+    body = anilist_body(anilist_id)
+    body["data"]["Media"]["episodes"] = 1
+    return body
 
 
 class TestSonarrCheckTitleOverSonarrsParses:
@@ -341,11 +351,11 @@ class TestSonarrCheckTitlePrintsSonarrsNumbers:
         assert run.numbers_orders == ["dvd"]
 
     def test_a_file_placed_by_size_over_its_name_is_warned_of_by_sonarrs_number(self) -> None:
-        # SeaDex lists a one-episode release of the first file's size for the aired S02E02, which Sonarr lists as
-        # S01E05, and one of the second file's size for the aired S02E01.
+        # AniList lists the aired S02E02, which Sonarr lists as S01E05, as a title of its own as well, and SeaDex its
+        # one release at the first file's size. It does the same for the aired S02E01 at the second file's size.
         recording = install_recording_hub()
 
-        _check_second_season(_sequel_in_dvd_order(), episode_by_size={1000: 15, 2000: 14})
+        _check_second_season(_sequel_in_dvd_order(), one_episode_titles={2: 1000, 1: 2000})
 
         assert diagnostic_messages(recording, Severity.WARNING) == [
             (

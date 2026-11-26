@@ -4,7 +4,7 @@
 The Sonarr checks share series 7 and the one torrent its title lists, and `sonarr_grab_run` drives a check of it.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import override
 
@@ -278,10 +278,10 @@ class FakeRunServices(ArrRunServices):
 
 
 class ScriptedListings:
-    """A scripted listings collaborator: no torrent listed and the given size matches, or SeaDex unreachable."""
+    """A scripted listings collaborator: no torrent listed and no size matched, or SeaDex unreachable."""
 
-    def __init__(self, episode_by_size: Mapping[int, int] | None = None, *, unreachable: bool = False) -> None:
-        self._read = None if unreachable else FetchedListings({}, episode_by_size or {})
+    def __init__(self, *, unreachable: bool = False) -> None:
+        self._read = None if unreachable else FetchedListings({}, {})
 
     def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
         del series_id, resolved
