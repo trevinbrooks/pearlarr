@@ -2,8 +2,9 @@
 """Tests for the run services the strategies call, and for the fake that stands in for them.
 
 The title check tests read what a strategy hands `FakeRunServices`. These pin the details the real services print for
-the lines the fake only records, and that the fake overrides every public member of the services. The cached-title
-check and the services' other title interfaces are in `test_cached_skip.py`.
+the lines the fake only records, the read of a series' titles for its listings, and that the fake overrides every
+public member of the services. The cached-title check and the services' other title interfaces are in
+`test_cached_skip.py`.
 """
 
 from collections.abc import Generator
@@ -15,10 +16,10 @@ from pearlarr.anibridge import AniBridgeGraph
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
-from pearlarr.mappings import ExternalIds, MappingResolver, MappingSources
+from pearlarr.mappings import ExternalIds, MappingResolver, MappingSources, ResolvedMappings, TitleMapping
 from pearlarr.output import Accent, StyledValue, TitleDetail
 
-from .builders import make_run_deps, make_services
+from .builders import make_config, make_run_deps, make_services
 from .fakes import install_recording_hub
 from .title_check_builders import FakeRunServices
 
@@ -132,9 +133,22 @@ class TestArrRunServicesIgnoredIds:
             assert list(services.title_mappings(ExternalIds(tvdb=74796))) == [269]
         assert log.ids == [270]
 
-    def test_the_listing_read_gets_the_ignored_title_set_apart_and_logs_nothing(self) -> None:
-        log = _IgnoredIdLog()
-        with self._services(log) as services:
-            resolved = services.mappings_with_ignored(ExternalIds(tvdb=74796))
-        assert (list(resolved.kept), list(resolved.ignored)) == ([269], [270])
-        assert log.ids == []
+
+def test_the_listing_read_gets_the_ignored_title_set_apart_and_logs_nothing() -> None:
+    # The series' listings still give an ignored title its window. The check's own read shows the title once.
+    config = make_config(ignore_anilist_ids={2})
+    deps = make_run_deps(
+        config=config,
+        anime_ids={
+            "Frieren": {"anilist_id": 1, "tvdb_id": 50, "tvdb_season": 1},
+            "Frieren Season 2": {"anilist_id": 2, "tvdb_id": 50, "tvdb_season": 2},
+        },
+    )
+    recording = install_recording_hub()
+
+    resolved = ArrRunServices(deps, Arr.SONARR).mappings_with_ignored(ExternalIds(tvdb=50))
+
+    assert resolved == ResolvedMappings(
+        kept={1: TitleMapping(1, tvdb_season=1)}, ignored={2: TitleMapping(2, tvdb_season=2)}
+    )
+    assert recording.events == []
