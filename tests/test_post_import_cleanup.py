@@ -115,7 +115,7 @@ class TestPostImportCategory:
         expected_sets: list[tuple[str, str]],
         expected_created: list[str],
     ) -> None:
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=set_errors)
+        qbit = CategoryQbit(TORRENT_H_COMPLETE, set_errors=set_errors)
         store = FakeCacheStore()
         state = ArrRunState(arr=Arr.SONARR)
         mgr = self._imported_manager(qbit, store=store, state=state, post_import_category=category)
@@ -132,7 +132,7 @@ class TestPostImportCategory:
         # The import still counts, and one warning names the effect left to finish.
         recording = install_recording_hub()
         errors: list[Exception] = [qbittorrentapi.APIConnectionError("down")] * 3
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}, set_errors=errors)
+        qbit = CategoryQbit(TORRENT_H_COMPLETE, set_errors=errors)
         store = FakeCacheStore()
         state = ArrRunState(arr=Arr.SONARR)
         mgr = self._imported_manager(qbit, store=store, state=state, post_import_category="pearlarr-done")
@@ -519,7 +519,7 @@ class TestCleanupRetry:
         strategy = RecordingStrategy()
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=FakeQbit(TORRENT_H_COMPLETE),
             strategy=strategy,
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7, awaiting_cleanup=True)],
