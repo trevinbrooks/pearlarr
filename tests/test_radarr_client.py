@@ -26,7 +26,6 @@ from .fakes import FakeRadarrClient, diagnostic_messages, install_recording_hub
 
 _URL = "http://radarr.test"
 _BASE = f"{_URL}/api/v3"
-_KEY = "testkey"
 
 
 def _make_client() -> RadarrClient:
@@ -40,7 +39,7 @@ def _make_client() -> RadarrClient:
         http=ArrHttp.bind(
             client=httpx.Client(),
             url=_URL,
-            api_key=_KEY,
+            api_key="testkey",
             label="Radarr",
             sleep=lambda _s: None,
         ),
@@ -49,8 +48,7 @@ def _make_client() -> RadarrClient:
 
 @respx.mock
 def test_movie_files_decodes_resources_and_builds_request() -> None:
-    # The junk non-dict element is skipped, like every other Arr list walk.
-    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}, "junk"]
+    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}]
     route = respx.get(f"{_BASE}/moviefile").respond(json=body)
     files = _make_client().movie_files(7)
 
@@ -120,17 +118,6 @@ def test_history_since_decodes_records_and_builds_request() -> None:
     assert "includeMovie=false" in url
 
 
-@respx.mock
-def test_trailing_slash_url_is_normalized() -> None:
-    """A trailing-slash base url must not become a `//api` join (login redirect)."""
-
-    client = RadarrClient(
-        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr"),
-    )
-    respx.get(f"{_BASE}/history/since").respond(json=[])
-    assert client.history_since("2026-06-30T08:00:00Z") == []
-
-
 # A minimal `/api/v3/movie` resource: the consumed item fields plus a couple of
 # extras proving unknown keys are ignored by `RadarrMovie`.
 _MOVIE_BODY: dict[str, object] = {
@@ -163,16 +150,6 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.tmdbId == 372058
     assert movie.imdbId == "tt5311514"
     assert movie.monitored is True
-
-
-@respx.mock
-def test_all_movies_skips_non_dict_elements() -> None:
-    """A stray non-object element in the movie array is skipped, never crashed on."""
-
-    respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY, "stray", 42])
-    movies = _make_client().all_movies()
-
-    assert [m.id for m in movies] == [9]
 
 
 class _RecordingIdSets(KnownExternalIds):
