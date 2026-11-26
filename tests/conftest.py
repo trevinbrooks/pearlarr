@@ -6,9 +6,11 @@ they're shaped by real use rather than guessed up front. The first is the
 isolated logger that replaces the single process-global `builders.make_logger`.
 """
 
+import ipaddress
 import logging
 import os
 import signal
+import socket
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -129,6 +131,43 @@ def refuse_long_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
         real_sleep(seconds)
 
     monkeypatch.setattr(time, "sleep", sleep)
+
+
+def _names_this_machine(host: object) -> bool:
+    """Whether a lookup's host is this machine: no host, `localhost`, or a loopback address."""
+
+    if host is None:
+        return True
+    name = host.decode() if isinstance(host, bytes) else str(host)
+    if name in {"", "localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _refusing_other_machines[**P, R](lookup: Callable[P, R]) -> Callable[P, R]:
+    """`lookup`, failing the test when its host is another machine."""
+
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> R:
+        host = args[0] if args else kwargs.get("host")
+        if not _names_this_machine(host):
+            pytest.fail(f"a real lookup of {host!r}: the test reached the network")
+        return lookup(*args, **kwargs)
+
+    return guarded
+
+
+@pytest.fixture(autouse=True)
+def refuse_the_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any test that looks up another machine, so a run that gets past its fakes fails instead of sending a request.
+
+    Every client here (httpx, and requests under qBittorrent's) looks its host up first, an address included.
+    This machine's own names pass through.
+    """
+
+    monkeypatch.setattr(socket, "getaddrinfo", _refusing_other_machines(socket.getaddrinfo))
 
 
 @pytest.fixture(autouse=True)
