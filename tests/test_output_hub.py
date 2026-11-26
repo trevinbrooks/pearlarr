@@ -22,7 +22,6 @@ from pearlarr.cli import _install_output_hub
 from pearlarr.config import Arr, LogFormat
 from pearlarr.log import LOG_NAME
 from pearlarr.output import (
-    STRIKE_LIMIT,
     ArrRunFinished,
     Diagnostic,
     Event,
@@ -70,20 +69,23 @@ class _QuietRenderer(Renderer):
 
 
 class _FailingRenderer(_QuietRenderer):
-    """A renderer whose handle always raises (the containment test double)."""
+    """Raises from every handle, and logs the type of each event it's handed and each begin_run and close."""
 
     def __init__(self) -> None:
-        self.calls = 0
-        self.closes = 0
+        self.log: list[str] = []
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        self.calls += 1
+        self.log.append(type(event).__name__)
         raise RuntimeError("render bug")
 
     @override
+    def begin_run(self) -> None:
+        self.log.append("begin_run")
+
+    @override
     def close(self) -> None:
-        self.closes += 1
+        self.log.append("close")
 
 
 class _InterruptingRenderer(_FailingRenderer):
@@ -93,23 +95,21 @@ class _InterruptingRenderer(_FailingRenderer):
 
 
 class _FailOnMarkerRenderer(_FailingRenderer):
-    """Raises on the marker event (PearlarrStarted) only.
-
-    Renders arr run boundary events (ArrRunFinished) cleanly, so an arr run's close between
-    failures neither strikes nor resets the strike count.
-    """
+    """Raises on PearlarrStarted only, so an arr run's close (ArrRunFinished) renders cleanly between failures."""
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        self.calls += 1
+        self.log.append(type(event).__name__)
         if isinstance(event, PearlarrStarted):
             raise RuntimeError("render bug")
 
 
 class _FailingCloseRenderer(_FailingRenderer):
+    """Raises from close too."""
+
     @override
     def close(self) -> None:
-        self.closes += 1
+        super().close()
         raise RuntimeError("close bug")
 
 
@@ -301,101 +301,58 @@ def test_losing_the_file_log_renderer_escalates_the_note_to_a_counted_visible_er
     assert hub.counts.counts_since(mark).errors == 1
 
 
-def test_three_strikes_quarantine_until_begin_run_restarts() -> None:
-    flaky, survivor = _FailingRenderer(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
+def test_a_renderer_strikes_out_on_its_third_failure_until_the_next_run() -> None:
+    """Striking out closes the renderer, so a struck-out live display stops repainting. begin_run restarts it."""
 
-    for _ in range(5):
+    flaky = _FailingRenderer()
+    hub = OutputHub([flaky, RecordingRenderer()])
+
+    for _ in range(4):
         hub.emit(_EVENT)
-    assert flaky.calls == STRIKE_LIMIT  # skipped after the third strike
-
     hub.begin_run(console_format="plain", level=logging.INFO)
-    hub.emit(_EVENT)
-    assert flaky.calls == STRIKE_LIMIT + 1  # reset, not process-latched
-
-
-def test_strikes_carry_across_an_arr_run_boundary_and_only_begin_run_restarts() -> None:
-    """An arr run's close (ArrRunFinished) is not a run turnover.
-
-    Strikes are a per-run budget: they accumulate across the ArrRunFinished
-    boundary, so the Nth strike quarantines regardless of the boundary, and
-    only `begin_run` resets them.
-    """
-
-    flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
-    sub = hub._subs[0]
-
-    # Arr run 1: one strike short of the limit - still active across the arr run boundary.
-    for _ in range(STRIKE_LIMIT - 1):
+    for _ in range(4):
         hub.emit(_EVENT)
-    assert sub.strikes == STRIKE_LIMIT - 1
 
-    # The arr run boundary renders cleanly: it neither strikes nor resets the count.
-    hub.emit(ArrRunFinished(arr=Arr.SONARR))
-    assert sub.strikes == STRIKE_LIMIT - 1
-    assert flaky.closes == 0
-
-    # Arr run 2: the carried-over count makes the next failure the Nth strike, so the
-    # crossing (quarantine + close) fires across the boundary - never reset by it.
-    hub.emit(_EVENT)
-    assert sub.strikes == STRIKE_LIMIT
-    assert flaky.closes == 1
-
-    calls_at_quarantine = flaky.calls
-    hub.emit(_EVENT)  # quarantined: skipped (not dispatched), not re-closed
-    assert flaky.calls == calls_at_quarantine
-    assert flaky.closes == 1
-
-    # Only a run turnover resets the renderer - the arr run boundary never did.
-    hub.begin_run(console_format="plain", level=logging.INFO)
-    assert sub.strikes == 0
-    hub.emit(_EVENT)
-    assert sub.strikes == 1
+    # Closed once at the third failure and skipped after it, in each run.
+    struck_out = ["PearlarrStarted"] * 3 + ["close"]
+    assert flaky.log == [*struck_out, "begin_run", *struck_out]
 
 
-def test_quarantine_closes_the_renderer_exactly_once_at_the_crossing() -> None:
-    """This test pins the live-leak fix: striking out closes the renderer (a struck boot Live must stop repainting).
+def test_strikes_carry_across_an_arr_run_boundary() -> None:
+    """An arr run's close (ArrRunFinished) is not a run turnover: a clean render between failures resets nothing."""
 
-    Only the crossing fires it - never skipped events.
-    """
+    flaky = _FailOnMarkerRenderer()
+    hub = OutputHub([flaky, RecordingRenderer()])
 
-    flaky, survivor = _FailingRenderer(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
+    for event in [_EVENT, _EVENT, ArrRunFinished(arr=Arr.SONARR), _EVENT, _EVENT]:
+        hub.emit(event)
 
-    for _ in range(STRIKE_LIMIT):
-        hub.emit(_EVENT)
-    assert flaky.closes == 1  # closed the moment the count crossed the limit
-
-    hub.emit(_EVENT)  # skipped while quarantined: close is not re-fired
-    assert flaky.closes == 1
-
-    hub.begin_run(console_format="plain", level=logging.INFO)
-    for _ in range(STRIKE_LIMIT):
-        hub.emit(_EVENT)
-    assert flaky.closes == 2  # reset, then a fresh strike-out closes again
+    assert flaky.log == ["PearlarrStarted", "PearlarrStarted", "ArrRunFinished", "PearlarrStarted", "close"]
 
 
-def test_a_raising_close_never_escapes_the_quarantine_crossing() -> None:
+def test_a_raising_close_never_escapes_the_strike_out() -> None:
     flaky = _FailingCloseRenderer()
     hub = OutputHub([flaky, RecordingRenderer()])
 
-    for _ in range(STRIKE_LIMIT):
-        hub.emit(_EVENT)  # must not raise even though close() itself raises
+    for _ in range(3):
+        hub.emit(_EVENT)  # the third failure's close raises inside the hub
 
-    assert flaky.closes == 1
+    assert flaky.log == ["PearlarrStarted"] * 3 + ["close"]
 
 
-def test_the_final_strike_announces_the_quarantine() -> None:
-    flaky, survivor = _FailingRenderer(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
+def test_the_final_strike_says_the_renderer_is_disabled() -> None:
+    survivor = RecordingRenderer()
+    hub = OutputHub([_FailingRenderer(), survivor])
 
-    for _ in range(STRIKE_LIMIT):
+    for _ in range(3):
         hub.emit(_EVENT)
 
-    notes = [e for e in survivor.events if isinstance(e, Diagnostic)]
-    assert "disabled until the next run" in notes[-1].message
-    assert all("disabled until the next run" not in note.message for note in notes[:-1])
+    failed = "renderer _FailingRenderer failed on PearlarrStarted: render bug"
+    assert [note.message for note in survivor.of_type(Diagnostic)] == [
+        failed,
+        failed,
+        f"{failed} (disabled until the next run)",
+    ]
 
 
 def test_keyboard_interrupt_still_propagates() -> None:
