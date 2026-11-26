@@ -18,6 +18,7 @@ import pytest
 import respx
 
 from pearlarr.arr_http import (
+    BACKOFF_BASE_S,
     GET_RETRIES,
     ArrAuthError,
     ArrHttp,
@@ -81,6 +82,22 @@ def test_retryable_status_retries_then_succeeds() -> None:
     assert http.get_json("/api/v3/thing", warn="nope ({detail})") == [1, 2]
     assert route.call_count == 2
     assert recording.of_type(Diagnostic) == []
+
+
+@respx.mock
+def test_retries_wait_twice_as_long_each_time_and_not_after_the_last() -> None:
+    """Each retry first waits twice as long as the one before, so a struggling arr isn't hammered.
+
+    The jitter added to each wait stays under one base wait, so counting whole base waits shows the
+    doubling. The last failed attempt isn't waited on: the read gives up at once.
+    """
+
+    respx.get(f"{_URL}/api/v3/thing").respond(status_code=503)
+    primary, _ = _bind()
+    waits: list[float] = []
+
+    assert replace(primary, sleep=waits.append).get_json("/api/v3/thing", warn="busy ({detail})") is None
+    assert [wait // BACKOFF_BASE_S for wait in waits] == [1, 2, 4]
 
 
 @respx.mock
@@ -464,6 +481,21 @@ def test_strict_get_connection_error_raises_naming_the_url() -> None:
 
     assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (request failed (ConnectError))"
     assert route.call_count == GET_RETRIES + 1  # transport errors still retry first
+
+
+@respx.mock
+def test_strict_get_unparseable_url_raises_naming_the_url() -> None:
+    """A config URL httpx can't parse, such as a mistyped port, stops the library read like an unreachable arr.
+
+    httpx's `InvalidURL` is no `HTTPError`, so it is caught on its own to fail like every other request error.
+    """
+
+    http, _ = bind_arr_http("http://localhost:89a9")
+
+    with pytest.raises(ArrUnreachableError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == "Could not reach Sonarr at http://localhost:89a9 (request failed (InvalidURL))"
 
 
 @respx.mock
