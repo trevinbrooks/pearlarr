@@ -9,6 +9,8 @@ from the captured `tests/fixtures/sonarr` JSON where one exists, so they match w
 
 import json
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -17,7 +19,7 @@ import pytest
 import respx
 from respx.models import Call
 
-from pearlarr.arr_http import GET_RETRIES, ArrHttp, DeleteOutcome
+from pearlarr.arr_http import GET_RETRIES, ArrHttp, ArrUnreachableError, DeleteOutcome
 from pearlarr.arr_models import (
     CommandResource,
     DownloadClientConfig,
@@ -603,47 +605,85 @@ def test_remote_path_mappings_non_200_returns_none() -> None:
     ]
 
 
-# --- wait-path no-retry handle -------------------------------------------------
+# --- which reads retry a failure -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Read:
+    """One of the client's GET reads: the path it reads and a call that makes it."""
+
+    path: str
+    call: Callable[[SonarrClient], object]
 
 
 @respx.mock
-def test_wait_path_polls_make_exactly_one_attempt() -> None:
-    """The three wait pass polls use the no-retry handle: ONE attempt each.
+@pytest.mark.parametrize(
+    "read",
+    [
+        pytest.param(
+            _Read("/manualimport", lambda c: c.manual_import_candidates_by_download_id(pending=pending_import())),
+            id="by-download-id",
+        ),
+        pytest.param(
+            _Read("/manualimport", lambda c: c.manual_import_candidates_by_folder(folder="/d", title="t")),
+            id="by-folder",
+        ),
+        pytest.param(
+            _Read("/history", lambda c: c.history_for_download(download_id="a" * 40)), id="history-for-download"
+        ),
+    ],
+)
+def test_wait_pass_polls_try_once(read: _Read) -> None:
+    """Each wait pass poll makes one attempt, since the poll loop is its retry.
 
-    manual_import_candidates / the folder fetch / the history read run inside
-    the wait pass's poll loop, which IS the retry mechanism, while in-call retries
-    would only stretch each poll and multiply identical warnings.
+    Retrying inside a poll would only stretch it and repeat its warning.
     """
 
-    manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
-    history = respx.get(f"{_BASE}/history").respond(status_code=500)
-    client = _make_client()
-    pending = pending_import(infohash="a" * 40)
+    route = respx.get(f"{_BASE}{read.path}").respond(status_code=500)
+    read.call(_make_client())
 
-    assert client.manual_import_candidates_by_download_id(pending=pending) is None
-    assert manualimport.call_count == 1
-    assert client.manual_import_candidates_by_folder(folder="/downloads/x", title="Yamada-kun") is None
-    assert manualimport.call_count == 2
-    assert client.history_for_download(download_id="a" * 40) is None
-    assert history.call_count == 1
+    assert route.call_count == 1
 
 
 @respx.mock
-def test_sweep_reads_keep_the_retry_budget() -> None:
-    """The non-wait reads (episodes, parse) use the primary retrying handle.
+@pytest.mark.parametrize(
+    "read",
+    [
+        pytest.param(_Read("/episode", lambda c: c.episodes(228)), id="episodes"),
+        pytest.param(_Read("/parse", lambda c: c.parse("Show.S01E01.mkv")), id="parse"),
+        pytest.param(_Read("/queue", lambda c: c.queue()), id="queue"),
+        pytest.param(_Read("/remotepathmapping", lambda c: c.remote_path_mappings()), id="remote-path-mappings"),
+        pytest.param(_Read("/qualitydefinition", lambda c: c.quality_definitions()), id="quality-definitions"),
+        pytest.param(_Read("/language", lambda c: c.languages()), id="languages"),
+        pytest.param(_Read("/command/9", lambda c: c.command_status(9)), id="command-status"),
+        pytest.param(_Read("/command", lambda c: c.list_commands()), id="list-commands"),
+        pytest.param(
+            _Read("/config/downloadclient", lambda c: c.download_client_config()), id="download-client-config"
+        ),
+        pytest.param(_Read("/history/since", lambda c: c.history_since("2026-06-30T08:00:00Z")), id="history-since"),
+    ],
+)
+def test_other_reads_retry_a_failure(read: _Read) -> None:
+    """Every read outside the wait pass's polls retries a failed attempt before it gives up.
 
-    `/parse` is a string parse, never a disk read, so one transport serves the
-    scan and the wait pass alike.
+    `/parse` is a string parse, never a disk read, so the wait pass shares the scan's retrying handle for it.
     """
 
-    episodes = respx.get(f"{_BASE}/episode").respond(status_code=500)
-    parse = respx.get(f"{_BASE}/parse").respond(status_code=500)
-    client = _make_client()
+    route = respx.get(f"{_BASE}{read.path}").respond(status_code=500)
+    read.call(_make_client())
 
-    assert client.episodes(1, quiet=True) is None
-    assert episodes.call_count == GET_RETRIES + 1
-    assert client.parse("Show.S01E01.mkv") is None
-    assert parse.call_count == GET_RETRIES + 1
+    assert route.call_count == GET_RETRIES + 1
+
+
+@respx.mock
+def test_all_series_retries_a_failure_before_raising() -> None:
+    """The library read retries a failed attempt too, so one passing failure doesn't stop the run."""
+
+    route = respx.get(f"{_BASE}/series").respond(status_code=500)
+    with pytest.raises(ArrUnreachableError):
+        _make_client().all_series()
+
+    assert route.call_count == GET_RETRIES + 1
 
 
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -
