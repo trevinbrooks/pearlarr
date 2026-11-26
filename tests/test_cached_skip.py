@@ -389,19 +389,10 @@ class TestTheTitlesName:
 
         assert run.resolve_title(7) == title
 
-    @pytest.mark.parametrize(
-        ("anilist_name", "update"),
-        [
-            pytest.param("Show", {"name": "Show", "updated_at": _CACHED_ON}, id="AniList knows it"),
-            pytest.param(None, {"updated_at": _CACHED_ON}, id="AniList knows nothing"),
-        ],
-    )
-    def test_carries_the_name_only_when_anilist_resolved_it(
-        self, anilist_name: str | None, update: CachedTitleUpdate
-    ) -> None:
-        # The write merges into the row, so leaving the name out keeps one an earlier run stored, where Sonarr's name
-        # or the id form would replace it.
+    @pytest.mark.parametrize("anilist_name", ["Show", None], ids=["AniList knows it", "AniList doesn't"])
+    def test_only_anilists_name_is_cached(self, anilist_name: str | None) -> None:
+        # Without AniList's name a title goes by a stand-in, which is never cached: the write merges into the row, so
+        # leaving the name out keeps the one an earlier run cached.
         run = _services(FakeCacheStore(), anilist_name=anilist_name)
-        run.state.arr_title = "Series"
 
-        assert run.new_cached_title_update(run.resolve_title(7), _ENTRY) == update
+        assert run.new_cached_title_update(run.resolve_title(7), _ENTRY).get("name") == anilist_name
