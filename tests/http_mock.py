@@ -83,14 +83,15 @@ def nyaa_torrent_link(number: int) -> str:
     return f"https://nyaa.si/download/{number}.torrent"
 
 
-def serve_nyaa_torrents(names: Mapping[int, str]) -> None:
-    """Nyaa serving each release's torrent file under its name, `names[number]`, on the ambient respx router.
+def nyaa_disposition(file_name: str) -> dict[str, str]:
+    """The download header Nyaa sends: the file name twice, percent-encoded, the second as RFC 6266 `filename*`."""
 
-    The header is the one Nyaa sends: the file name twice, percent-encoded, the second as RFC 6266 `filename*`.
-    """
+    encoded = quote(file_name)
+    return {"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
+
+
+def serve_nyaa_torrents(names: Mapping[int, str]) -> None:
+    """Nyaa serving each release's torrent file under its name, `names[number]`, on the ambient respx router."""
 
     for number, name in names.items():
-        encoded = quote(f"{name}.torrent")
-        respx.head(nyaa_torrent_link(number)).respond(
-            headers={"content-disposition": f"inline; filename=\"{encoded}\"; filename*=UTF-8''{encoded}"}
-        )
+        respx.head(nyaa_torrent_link(number)).respond(headers=nyaa_disposition(f"{name}.torrent"))
