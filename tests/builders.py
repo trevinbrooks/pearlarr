@@ -8,7 +8,7 @@ import json
 import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, override
@@ -22,6 +22,7 @@ from pearlarr.aired_view import stand_in
 from pearlarr.anibridge import NO_ALIASES, SpecialAliases
 from pearlarr.anilist_client import MAX_RETRIES, AniListAnswers, AniListBody, AniListClient
 from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.arr_activity import format_history_date
 from pearlarr.arr_categories import _CATEGORY_FIELDS, ArrCategoryResolver, CategorySources, _read_clients
 from pearlarr.arr_http import ArrHttp
 from pearlarr.arr_models import (
@@ -1704,6 +1705,19 @@ def radarr_history_record(download_id: str, *, event: str) -> HistoryRecord:
     """One Radarr `/history/since` record of `event`, keyed by the torrent's downloadId."""
 
     return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
+
+
+def sonarr_file_imported(series_id: int) -> HistoryRecord:
+    """Sonarr's `/history/since` record of a file imported into `series_id` an hour ago, its first history record.
+
+    The date is read off the clock, as the run's activity read asks for the history since a date it reads off the
+    clock too, and Sonarr sends no record from before that date.
+    """
+
+    date = format_history_date(datetime.now(UTC) - timedelta(hours=1))
+    return HistoryRecord.model_validate(
+        {"id": 1, "date": date, "seriesId": series_id, "eventType": "downloadFolderImported"}
+    )
 
 
 def make_series_reads(
