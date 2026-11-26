@@ -422,6 +422,18 @@ def test_post_json_non_json_body_fails_open() -> None:
 
 
 @respx.mock
+def test_delete_success_sends_key_in_header_only() -> None:
+    route = respx.delete(f"{_URL}/api/v3/queue/7").respond(json={})
+    http, recording = _bind()
+
+    assert http.delete("/api/v3/queue/7", warn="unused ({detail})") is DeleteOutcome.OK
+    request = route.calls.last.request
+    assert request.headers["X-Api-Key"] == "testkey"
+    assert "testkey" not in str(request.url)
+    assert recording.of_type(Diagnostic) == []
+
+
+@respx.mock
 def test_delete_404_is_gone_and_quiet() -> None:
     """A 404 means the target already left: GONE with zero diagnostics, not the failure warning."""
 
@@ -450,13 +462,20 @@ def test_delete_404_after_a_failure_closes_the_streak() -> None:
 
 
 @respx.mock
-def test_delete_non_2xx_fails_with_one_warning() -> None:
-    route = respx.delete(f"{_URL}/api/v3/queue/7").respond(status_code=500)
+@pytest.mark.parametrize(
+    ("failure", "warning"),
+    [
+        pytest.param(httpx.Response(500), "rm (status code 500)", id="non-2xx"),
+        pytest.param(httpx.ConnectError("boom"), "rm (request failed (ConnectError))", id="request-error"),
+    ],
+)
+def test_delete_failure_returns_failed_with_one_warning(failure: httpx.Response | Exception, warning: str) -> None:
+    route = respx.delete(f"{_URL}/api/v3/queue/7").mock(side_effect=[failure])
     http, recording = _bind()
 
     assert http.delete("/api/v3/queue/7", warn="rm ({detail})") is DeleteOutcome.FAILED
     assert route.call_count == 1  # one attempt, never retried
-    assert _one_warning(recording).message == "rm (status code 500)"
+    assert _one_warning(recording).message == warning
 
 
 # --- get_json_list_strict() (the fail-CLOSED library fetch) ------------------

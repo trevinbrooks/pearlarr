@@ -253,36 +253,22 @@ def test_queue_delete_builds_request() -> None:
     client = _make_client()
 
     assert client.queue_delete(1516314797) is DeleteOutcome.OK
-    request = route.calls.last.request
-    url = str(request.url)
+    url = str(route.calls.last.request.url)
     assert "removeFromClient=false" in url
     assert "blocklist=false" in url
-    assert request.headers["X-Api-Key"] == _KEY
 
 
 @respx.mock
 def test_queue_delete_non_200_fails_open() -> None:
-    """A failed delete warns and returns FAILED - the close is best-effort, never a crash."""
+    """A failed delete returns FAILED with a warning, never a crash: the close is best-effort."""
 
     respx.delete(f"{_BASE}/queue/7").respond(status_code=500)
-    assert _make_client().queue_delete(7) is DeleteOutcome.FAILED
-
-
-@respx.mock
-def test_queue_delete_request_error_fails_open() -> None:
-    respx.delete(f"{_BASE}/queue/7").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().queue_delete(7) is DeleteOutcome.FAILED
-
-
-@respx.mock
-def test_queue_delete_404_is_gone_and_quiet() -> None:
-    """An already-dismissed queue record reads GONE with zero diagnostics (the goal is met, not a failure)."""
-
     recording = install_recording_hub()
-    respx.delete(f"{_BASE}/queue/7").respond(status_code=404)
 
-    assert _make_client().queue_delete(7) is DeleteOutcome.GONE
-    assert diagnostic_messages(recording) == []
+    assert _make_client().queue_delete(7) is DeleteOutcome.FAILED
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Could not remove the finished download from Sonarr's queue (status code 500)",
+    ]
 
 
 # --- episodes() -------------------------------------------------------------
