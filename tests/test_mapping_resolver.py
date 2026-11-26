@@ -135,6 +135,7 @@ class TestAniBridgeLookup:
         ("ids", "found"),
         [
             pytest.param(ExternalIds(tmdb_movie=888), [270], id="movie by its tmdb id"),
+            # Radarr sends a TMDB id with every movie, so a movie found by IMDb carries one no title maps.
             pytest.param(ExternalIds(tmdb_movie=404, imdb="tt0400"), [400], id="movie by its imdb id"),
             pytest.param(ExternalIds(tmdb_movie=54270), [31], id="movie by the second of its tmdb ids"),
             pytest.param(
@@ -358,6 +359,7 @@ class TestAnimeIdsLookup:
         [
             pytest.param(ExternalIds(tvdb=200, imdb="tt100"), [100, 101, 102], id="series with an imdb id"),
             pytest.param(ExternalIds(tmdb_movie=7000), [103], id="movie by its tmdb id"),
+            # Radarr sends a TMDB id with every movie, so a movie found by IMDb carries one no record has.
             pytest.param(ExternalIds(tmdb_movie=4242, imdb="tt100"), [100, 102], id="movie by its imdb id"),
             pytest.param(ExternalIds(tvdb=999), [], id="a record without an anilist id"),
             pytest.param(ExternalIds(tvdb=424242), [], id="unknown"),
@@ -767,7 +769,7 @@ class TestSourceDownloads:
     ) -> None:
         # Age counts whole days on the local clock, so halves stay on their side of a day when the clocks change.
         source = tmp_path / ANIME_IDS_FILE
-        source.write_text(json.dumps(_FRIEREN))
+        source.write_text(json.dumps(_FRIEREN), encoding="utf-8")
         _aged(source, days=days)
         fresh = {**_FRIEREN, "Sousou no Frieren 2": {"anilist_id": 182255, "tvdb_id": 424536, "tvdb_season": 2}}
         respx_mock.get(ANIME_IDS_URL).respond(json=fresh)
@@ -789,7 +791,7 @@ class TestSourceDownloads:
     ) -> None:
         source = tmp_path / ANIME_IDS_FILE
         cached = json.dumps(_FRIEREN)
-        source.write_text(cached)
+        source.write_text(cached, encoding="utf-8")
         _aged(source, days=10)
         respx.get(ANIME_IDS_URL).mock(return_value=respond())
         recording = install_recording_hub()
@@ -799,7 +801,7 @@ class TestSourceDownloads:
         assert diagnostic_messages(recording, Severity.WARNING) == [
             f"Could not refresh anime_ids.json (download failed: {detail}) - using the cached copy"
         ]
-        assert source.read_text() == cached
+        assert source.read_text(encoding="utf-8") == cached
         assert not (tmp_path / f"{ANIME_IDS_FILE}.part").exists()
         assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
 
