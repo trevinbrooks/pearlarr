@@ -17,7 +17,6 @@ from pearlarr.series_listings import SeriesListings
 from .builders import (
     FakeSeaDexSource,
     make_entry_record,
-    make_sonarr_episodes,
     make_torrent_record,
     sonarr_ep,
     stand_in_ep,
@@ -227,9 +226,8 @@ class TestRead:
         assert read is not None
         assert read.listing(_H1) == torrent_listing(_window(1, 501))
 
+    def test_a_series_with_no_mapping_lists_every_hash_nowhere(self) -> None:
+        read = _reader(FakeSeaDexSource(), _windows({})).read(7, _mappings())
 
-def test_a_series_with_no_mapping_lists_every_hash_nowhere() -> None:
-    read = SeriesListings(FakeSeaDexSource(), make_sonarr_episodes(), frozenset(), _names).read(7, _mappings())
-
-    assert read is not None
-    assert read.listing(_H1) == EMPTY_LISTING
+        assert read is not None
+        assert read.listing(_H1) == EMPTY_LISTING
