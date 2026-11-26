@@ -87,7 +87,7 @@ from pearlarr.runlock import single_instance_lock
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import write_cache_db
-from .fakes import RecordingHub, diagnostic_messages, install_recording_hub
+from .fakes import RecordingHub, install_recording_hub
 
 
 def _starter_text() -> str:
@@ -1463,28 +1463,19 @@ class TestScheduledLifecycle:
         assert not os.path.exists(paths.config_file + ".bak")
         assert any("left unchanged on a dry run" in d.message for d in recording.of_type(Diagnostic))
 
-    def test_run_arrs_applies_the_configured_log_retention(
-        self,
-        logger: logging.Logger,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # The knob must reach the file log renderer with the CONFIGURED value, not a default.
-        install_recording_hub()
-        _write_data_dir_config("sonarr:\n  url: http://s\n  api_key: k\nadvanced:\n  log_retention_days: 3\n")
-        paths = resolve_paths()
-        applied: list[int] = []
-        original = FileLogRenderer.apply_retention_days
+    def test_a_run_deletes_log_backups_older_than_the_retention(self) -> None:
+        _write_current_config("advanced:\n  log_retention_days: 3\n")
+        logs = Path(resolve_paths().log_dir)
+        logs.mkdir()
+        now = time.time()
+        for name, days_old in [("Pearlarr.log.five-days-old", 5), ("Pearlarr.log.one-day-old", 1)]:
+            backup = logs / name
+            backup.write_text("an earlier run\n", encoding="utf-8")
+            os.utime(backup, (now - days_old * 86400, now - days_old * 86400))
 
-        def record(self: FileLogRenderer, days: int) -> None:
-            applied.append(days)
-            original(self, days)
+        _invoke_offline("run", "single")
 
-        monkeypatch.setattr(FileLogRenderer, "apply_retention_days", record)
-        self._stub_resolver(monkeypatch)
-
-        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir))
-
-        assert applied == [3]
+        assert sorted(path.name for path in logs.glob("Pearlarr.log.*")) == ["Pearlarr.log.one-day-old"]
 
     def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
@@ -1560,26 +1551,22 @@ class TestScheduledLifecycle:
 
 
 class TestRunLockContention:
-    """A second run against the same data dir warns once and returns False."""
+    """A second run against the same data dir warns once and exits 1."""
 
-    def test_run_arrs_skips_when_the_lock_is_already_held(self, logger: logging.Logger) -> None:
-        recording = install_recording_hub()
-        paths = resolve_paths()
-        os.makedirs(paths.data_dir)
+    def test_a_run_skips_while_another_holds_the_lock(self) -> None:
+        # It stops before the config read: none exists here, and none is written.
+        data_dir = resolve_paths().data_dir
+        os.makedirs(data_dir)
 
-        # Hold the run lock ourselves. run_arrs must find it taken and bail
-        # before ever reading the config (none exists here - a regression past
-        # the guard would raise the missing-config typer.Exit).
-        with single_instance_lock(paths.data_dir) as lock:
-            assert lock
-            result = run_arrs(
-                [ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_log_renderer=FileLogRenderer(paths.log_dir)
-            )
+        with single_instance_lock(data_dir) as held:
+            assert held
+            result = _invoke_offline("run", "single")
 
-        assert result is False
-        assert diagnostic_messages(recording, Severity.WARNING) == [
-            f"Another Pearlarr run is active in {paths.data_dir} - skipping this run",
+        assert result.exit_code == 1
+        assert _lines(result.stdout) == [
+            f"WARNING [Pearlarr] Another Pearlarr run is active in {data_dir} - skipping this run"
         ]
+        assert not os.path.exists(resolve_paths().config_file)
 
 
 _INTERVAL_2_5 = "schedule:\n  interval_hours: 2.5\n"
