@@ -78,7 +78,7 @@ from .builders import (
     sonarr_ep,
 )
 from .fakes import RecordingHub, install_recording_hub
-from .http_mock import nyaa_torrent_link, serve_named_nyaa_torrents, serve_nyaa_torrents
+from .http_mock import nyaa_lacks_torrents, nyaa_torrent_link, serve_named_nyaa_torrents, serve_nyaa_torrents
 from .wait_fakes import FakeQbit, FakeTorrent
 
 # Title 42 as its header sets it in a run, and the stamp its request caches it under.
@@ -976,7 +976,7 @@ class TestGrabFailureContainment:
     @respx.mock
     def test_a_tracker_answering_with_an_error_status_is_one_warning_naming_it(self) -> None:
         # Nyaa has no torrent file for the release, as when it was taken down.
-        respx.head(nyaa_torrent_link(1)).respond(404)
+        nyaa_lacks_torrents(1)
         pipeline = _pipeline(FakeQbit())
         recording = install_recording_hub()
 
@@ -990,7 +990,7 @@ class TestGrabFailureContainment:
     @respx.mock
     def test_a_failed_release_never_drops_the_next_and_leaves_the_title_uncached(self) -> None:
         # Containment is per release: the sibling after the failure still grabs, and the title retries next run.
-        respx.head(nyaa_torrent_link(1)).respond(404)
+        nyaa_lacks_torrents(1)
         serve_named_nyaa_torrents({2: "Show-RG"})
         qbit = FakeQbit()
         state = _run_state()
@@ -1006,7 +1006,7 @@ class TestGrabFailureContainment:
     @respx.mock
     def test_failed_only_title_stays_uncached_with_a_retry_row(self) -> None:
         # Nyaa has no file for either of the group's torrents, and the row names the group once.
-        respx.head(url__startswith="https://nyaa.si/download/").respond(404)
+        nyaa_lacks_torrents(1, 2)
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
 
@@ -1031,7 +1031,7 @@ class TestGrabFailureContainment:
     def test_a_failed_grab_on_one_title_never_keeps_the_next_title_uncached(self) -> None:
         # Two titles in one run, each through the real per-title head: the first title's add fails, the second's
         # goes through.
-        respx.head(nyaa_torrent_link(1)).respond(404)
+        nyaa_lacks_torrents(1)
         serve_nyaa_torrents(2)
         state = _run_state()
         entries = {1: make_entry_record(), 2: make_entry_record()}
@@ -1064,7 +1064,7 @@ def test_two_reasons_on_one_title_list_it_once_under_the_one_that_outranks_the_o
     # The losing release comes first, so the order they are met in decides nothing. Interactive, so a private
     # release reaches the add loop as a hand pick. A failed grab is a release Nyaa has no file for.
     first, second = _release(1, skipped=loses[0]), _release(2, skipped=wins[0])
-    respx.head(url__startswith="https://nyaa.si/download/").respond(404)
+    nyaa_lacks_torrents(1, 2)
     state = _run_state()
     pipeline = _pipeline(FakeQbit(), state=state, config=make_config(interactive=True))
 
@@ -1118,7 +1118,7 @@ class TestGrabPushesNotice:
         # tried.
         webhook = respx.post(_DISCORD_URL).respond()
         serve_nyaa_torrents(1)
-        respx.head(nyaa_torrent_link(2)).respond(404)
+        nyaa_lacks_torrents(2)
         pipeline = _notifying_pipeline(FakeQbit())
 
         pipeline.grab_and_cache(_grab_request({"PMR": _group(_release(1)), "Bad": _group(_release(2))}))

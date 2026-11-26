@@ -102,3 +102,9 @@ def serve_named_nyaa_torrents(names: Mapping[int, str]) -> None:
     for number, name in names.items():
         respx.head(nyaa_torrent_link(number)).respond(headers=nyaa_disposition(f"{name}.torrent"))
 
+
+def nyaa_lacks_torrents(*numbers: int) -> None:
+    """Nyaa answering 404 for each numbered release's torrent file, as it does for one taken down."""
+
+    for number in numbers:
+        respx.head(nyaa_torrent_link(number)).respond(404)
