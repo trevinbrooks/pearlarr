@@ -8,7 +8,6 @@ and the real files a run downloaded.
 """
 
 import json
-import logging
 import os
 import re
 import sys
@@ -44,7 +43,7 @@ from pearlarr.paths import resolve_paths
 from pearlarr.sonarr_episodes import check_ep_by_anibridge
 
 from .builders import sonarr_ep
-from .fakes import RecordingProgress, debug_logger, diagnostic_messages, install_recording_hub
+from .fakes import RecordingProgress, diagnostic_messages, install_recording_hub
 
 _ANIBRIDGE = MappingSource.ANIBRIDGE
 
@@ -525,7 +524,7 @@ def _offline() -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(_refuse))
 
 
-def _boot(data_dir: Path, sources: MappingSources, *, logger: logging.Logger | None = None) -> MappingResolver:
+def _boot(data_dir: Path, sources: MappingSources) -> MappingResolver:
     """A resolver booted as a run boots it, its source files and mappings.db in `data_dir`, with no web access.
 
     Its files never age out, so it reads the ones the test wrote.
@@ -537,14 +536,7 @@ def _boot(data_dir: Path, sources: MappingSources, *, logger: logging.Logger | N
         sources=sources,
         web=_offline(),
         mappings_db=str(data_dir / "mappings.db"),
-        logger=logger,
     )
-
-
-def _untimed(messages: list[str]) -> list[str]:
-    """Log lines with each parse time read as 0.00s."""
-
-    return [re.sub(r"\d+\.\d\ds", "0.00s", message) for message in messages]
 
 
 _COWBOY_BEBOP = '<anime anidbid="23" tvdbid="76885" defaulttvdbseason="1"><name>Cowboy Bebop</name><mapping-list>'
@@ -554,56 +546,39 @@ _ONE_PIECE = (
 )
 
 
-class TestAnidbSkipTallies:
-    """The boot line for an anime-lists file counts what it skipped by kind, and the rest still maps.
+class TestAnidbSkippedPieces:
+    """An anime-lists file still maps around the pieces the reader skips.
 
-    An anime with no usable AniDB id is malformed, which healthy upstream data never has. A mapping form the reader
-    doesn't take (the offset form, which has no text, or an AniDB episode spread over several TVDB ones) is
-    unsupported, and a healthy file has hundreds. Each skipped piece comes before a good one, so a skip that stopped
-    the read would show.
+    The reader skips an anime with no usable AniDB id, and a mapping form it doesn't take: the offset form, which has
+    no text, or an AniDB episode spread over several TVDB ones. Each skipped piece comes before a good one, so a skip
+    that stopped the read would show.
     """
 
     @pytest.mark.parametrize(
-        ("anime_list", "tally"),
+        "anime_list",
         [
             pytest.param(
-                f'<anime tvdbid="81797">{_ONE_PIECE}</anime>{_COWBOY_BEBOP}{_ITS_SPECIALS}',
-                ", 1 malformed skipped",
-                id="missing anidbid",
+                f'<anime tvdbid="81797">{_ONE_PIECE}</anime>{_COWBOY_BEBOP}{_ITS_SPECIALS}', id="missing anidbid"
             ),
             pytest.param(
                 f'<anime anidbid="69x" tvdbid="81797">{_ONE_PIECE}</anime>{_COWBOY_BEBOP}{_ITS_SPECIALS}',
-                ", 1 malformed skipped",
                 id="non-int anidbid",
             ),
             pytest.param(
                 f'{_COWBOY_BEBOP}<mapping anidbseason="1" tvdbseason="1" start="1" end="26" offset="0"/>{_ITS_SPECIALS}',
-                ", 1 unsupported mapping forms",
                 id="offset form",
             ),
             pytest.param(
                 f'{_COWBOY_BEBOP}<mapping anidbseason="1" tvdbseason="1">;3-6+7;</mapping>{_ITS_SPECIALS}',
-                ", 1 unsupported mapping forms",
                 id="multi-episode span",
             ),
         ],
     )
-    def test_summary_line_carries_nonzero_tallies_only(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, anime_list: str, tally: str
-    ) -> None:
+    def test_a_skipped_piece_leaves_the_rest_of_the_file_mapped(self, tmp_path: Path, anime_list: str) -> None:
         (tmp_path / ANIDB_MAPPINGS_FILE).write_text(f"<anime-list>{anime_list}</anime-list>", encoding="utf-8")
 
-        with caplog.at_level("DEBUG"):
-            resolver = _boot(
-                tmp_path,
-                MappingSources(anime=False, anidb=None, anibridge=False),
-                logger=debug_logger("pearlarr-anidb-tallies"),
-            )
+        resolver = _boot(tmp_path, MappingSources(anime=False, anidb=None, anibridge=False))
 
-        assert _untimed(caplog.messages) == [
-            "Parsing + indexing anime-lists ...",
-            f"Indexed anime-lists (1 mappings, 0.00s{tally})",
-        ]
         assert resolver.anidb_episode_by_tvdb(23, 0) == {0: {1: 1}}
 
 
@@ -637,47 +612,62 @@ class TestSourcesSummary:
         assert resolver.sources_summary() == note
 
 
+_SOURCE_FILES = {
+    ANIME_IDS_FILE: json.dumps(_FRIEREN),
+    ANIBRIDGE_MAPPINGS_FILE: json.dumps({"anilist:182255": {"tvdb_show:424536:s2": {"1-10": "1-10"}}}),
+    ANIDB_MAPPINGS_FILE: f"<anime-list>{_COWBOY_BEBOP}{_ITS_SPECIALS}</anime-list>",
+}
+
+
+def _booted_once(data_dir: Path) -> None:
+    """Write the three source files into `data_dir` and boot over them once, as the run before did."""
+
+    for name, text in _SOURCE_FILES.items():
+        (data_dir / name).write_text(text, encoding="utf-8")
+    _boot(data_dir, _FROM_FILES).close()
+
+
 class TestSourceHashGate:
     """A boot indexes a source file again only when its content changed."""
 
-    def test_unchanged_file_is_not_reparsed_changed_file_is(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        anime_ids = tmp_path / ANIME_IDS_FILE
-        anime_ids.write_text(json.dumps(_FRIEREN))
-        (tmp_path / ANIBRIDGE_MAPPINGS_FILE).write_text(
-            json.dumps({"anilist:182255": {"tvdb_show:424536:s2": {"1-10": "1-10"}}})
-        )
-        (tmp_path / ANIDB_MAPPINGS_FILE).write_text(f"<anime-list>{_COWBOY_BEBOP}{_ITS_SPECIALS}</anime-list>")
-        _boot(tmp_path, _FROM_FILES).close()
-        logger = debug_logger("pearlarr-source-hash-gate")
+    def test_an_unchanged_file_is_served_without_a_write(self, tmp_path: Path) -> None:
+        # Indexing a file writes the database, and a write to a read-only one warns.
+        _booted_once(tmp_path)
+        (tmp_path / "mappings.db").chmod(0o444)
+        recording = install_recording_hub()
 
-        with caplog.at_level("DEBUG"):
-            warm = _boot(tmp_path, _FROM_FILES, logger=logger)
+        resolver = _boot(tmp_path, _FROM_FILES)
 
-        assert caplog.messages == [
-            "anime_ids.json unchanged; using cached index",
-            "anime-lists unchanged; using cached index",
-            "anibridge mappings unchanged; using cached index",
-        ]
-        assert warm.resolve(ExternalIds(tvdb=424536)).kept == {
-            154587: TitleMapping(154587, tvdb_season=1),
-            182255: TitleMapping(182255, tvdb_mappings={2: [(1, 10)]}, source=_ANIBRIDGE),
-        }
-        assert warm.anidb_episode_by_tvdb(23, 0) == {0: {1: 1}}
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+        assert list(resolver.resolve(ExternalIds(tvdb=424536)).kept) == [154587, 182255]
+        assert resolver.anidb_episode_by_tvdb(23, 0) == {0: {1: 1}}
 
-        anime_ids.write_text(json.dumps({"Sousou no Frieren": {**_FRIEREN["Sousou no Frieren"], "tvdb_season": 2}}))
-        caplog.clear()
-        with caplog.at_level("DEBUG"):
-            changed = _boot(tmp_path, _FROM_FILES, logger=logger)
+    def test_a_changed_kometa_file_is_read_again(self, tmp_path: Path) -> None:
+        _booted_once(tmp_path)
+        changed = {"Sousou no Frieren": {"anilist_id": 154587, "tvdb_id": 424536, "tvdb_season": 2}}
+        (tmp_path / ANIME_IDS_FILE).write_text(json.dumps(changed), encoding="utf-8")
 
-        assert _untimed(caplog.messages) == [
-            "Parsing + indexing anime_ids.json ...",
-            "Indexed anime_ids.json (1 rows, 0.00s)",
-            "anime-lists unchanged; using cached index",
-            "anibridge mappings unchanged; using cached index",
-        ]
-        assert changed.resolve(ExternalIds(tvdb=424536)).kept[154587] == TitleMapping(154587, tvdb_season=2)
+        resolver = _boot(tmp_path, _FROM_FILES)
+
+        assert resolver.resolve(ExternalIds(tvdb=424536)).kept[154587].tvdb_season == 2
+
+    def test_a_changed_anibridge_file_is_read_again(self, tmp_path: Path) -> None:
+        _booted_once(tmp_path)
+        changed = {"anilist:182255": {"tvdb_show:424536:s3": {"1-10": "1-10"}}}
+        (tmp_path / ANIBRIDGE_MAPPINGS_FILE).write_text(json.dumps(changed), encoding="utf-8")
+
+        resolver = _boot(tmp_path, _FROM_FILES)
+
+        assert resolver.resolve(ExternalIds(tvdb=424536)).kept[182255].tvdb_mappings == {3: [(1, 10)]}
+
+    def test_a_changed_anime_lists_file_is_read_again(self, tmp_path: Path) -> None:
+        _booted_once(tmp_path)
+        changed = f'{_COWBOY_BEBOP}<mapping anidbseason="0" tvdbseason="0">;1-2;</mapping></mapping-list></anime>'
+        (tmp_path / ANIDB_MAPPINGS_FILE).write_text(f"<anime-list>{changed}</anime-list>", encoding="utf-8")
+
+        resolver = _boot(tmp_path, _FROM_FILES)
+
+        assert resolver.anidb_episode_by_tvdb(23, 0) == {0: {2: 1}}
 
 
 class TestUnwritableDbFallback:
