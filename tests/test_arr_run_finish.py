@@ -317,7 +317,7 @@ class TestWhatARunSends:
 
     @respx.mock
     def test_a_blocking_wait_that_finished_an_import_sends_the_wait_webhook(self, tmp_path: Path) -> None:
-        hook = respx.post(_WEBHOOK).respond(json={})
+        hook = respx.post(_WEBHOOK).respond()
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
         config = make_config(url="http://sonarr", api_key="key", wait_webhook_url=_WEBHOOK)
@@ -338,7 +338,7 @@ class TestWhatARunSends:
 
     @respx.mock
     def test_a_run_set_not_to_notify_sends_no_wait_webhook(self, tmp_path: Path) -> None:
-        hook = respx.post(_WEBHOOK).respond(json={})
+        hook = respx.post(_WEBHOOK).respond()
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
         config = make_config(url="http://sonarr", api_key="key", wait_webhook_url=_WEBHOOK, wait_notify=False)
