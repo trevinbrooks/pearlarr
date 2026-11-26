@@ -12,13 +12,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast, final, override
 
-import httpx
 import pytest
 import qbittorrentapi
 from rich.console import Console
 
 from pearlarr.aired_view import NoView
-from pearlarr.arr_http import ArrHttp, DeleteOutcome
+from pearlarr.arr_http import ArrHttp, DeleteOutcome, make_arr_client
 from pearlarr.arr_models import (
     AlternateTitle,
     ArrFiles,
@@ -223,10 +222,13 @@ def install_recording_hub() -> RecordingHub:
 
 
 def bind_arr_http(url: str = "http://arr.test") -> tuple[ArrHttp, RecordingHub]:
-    """A bound arr transport (backoff sleeps stubbed) and a fresh recording hub. Conftest closes the client."""
+    """An arr transport bound on the client a run builds (backoff sleeps stubbed), and a fresh recording hub.
+
+    Conftest closes the client.
+    """
 
     recording = install_recording_hub()
-    http = ArrHttp.bind(client=httpx.Client(), url=url, api_key="testkey", label="Sonarr", sleep=lambda _s: None)
+    http = ArrHttp.bind(client=make_arr_client(), url=url, api_key="testkey", label="Sonarr", sleep=lambda _s: None)
     return http, recording
 
 
