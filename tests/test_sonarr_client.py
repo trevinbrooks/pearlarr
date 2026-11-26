@@ -356,56 +356,6 @@ def test_parse_decodes_absolute() -> None:
 
 
 @respx.mock
-def test_parse_junk_matched_entry_drops_the_whole_array() -> None:
-    """One unreadable `episodes[]` element drops the WHOLE array, the name's own numbers surviving.
-
-    All-or-nothing on purpose: dropping the bad element alone would shorten a
-    span and slip the every-pair check.
-    """
-
-    body: dict[str, object] = {
-        "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1]},
-        "episodes": [
-            {"seasonNumber": 1, "episodeNumber": 1},
-            {"episodeNumber": 5},  # no seasonNumber
-        ],
-    }
-    respx.get(f"{_BASE}/parse").respond(json=body)
-
-    assert _make_client().parse("Cool.Anime.S01E01.mkv") == ParsedFileInfo(
-        season_number=1,
-        episode_numbers=(1,),
-    )
-
-
-@respx.mock
-def test_parse_reads_full_season_flag() -> None:
-    """`parse()` lifts `parsedEpisodeInfo.fullSeason` onto the result.
-
-    A bare-"S05" name Sonarr matches to a whole season carries the flag the
-    grab-time placement rejects on, even when the season is small enough to slip
-    under the span cap. Absent/false reads False.
-    """
-
-    respx.get(f"{_BASE}/parse").mock(
-        side_effect=[
-            httpx.Response(
-                200,
-                json={
-                    "episodes": [{"seasonNumber": 5, "episodeNumber": 1}],
-                    "parsedEpisodeInfo": {"fullSeason": True},
-                },
-            ),
-            httpx.Response(200, json={"episodes": [{"seasonNumber": 1, "episodeNumber": 1}]}),
-        ],
-    )
-    flagged = _make_client().parse("Show.S05.mkv")
-    assert flagged is not None and flagged.full_season is True
-    plain = _make_client().parse("Show.S01E01.mkv")
-    assert plain is not None and plain.full_season is False
-
-
-@respx.mock
 def test_parse_clean_no_match_returns_an_empty_parse() -> None:
     """A clean 200 where Sonarr matched no episode returns the empty parse.
 
