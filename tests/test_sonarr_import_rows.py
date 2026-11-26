@@ -298,9 +298,9 @@ class TestImportOnOwnOnlyRows:
 class TestImportOverEpisodeFiles:
     """Whether an episode that already holds a file is still owed this pending import's file.
 
-    An episode holding another episode's file, or a group its own claim calls outdated, is still owed. One holding
-    a file the guard trusts is not, whether the trust comes from a size matched at the grab or from guards stored
-    apart from the pending import. A pending import awaiting its cleanup whose files are gone is imported again.
+    An episode holding another episode's file, or a group only another claim on the series trusts, is still owed.
+    One holding a file the guard trusts is not, whether the trust comes from a size matched at the grab or from guards
+    stored apart from the pending import. A pending import awaiting its cleanup whose files are gone is imported again.
     """
 
     def test_an_episode_holding_this_torrents_file_for_another_episode_is_imported_over(self) -> None:
@@ -323,12 +323,12 @@ class TestImportOverEpisodeFiles:
         assert (result.imported_count, result.file_map_episode_count) == (1, 2)
 
     def test_two_claims_on_one_series_each_judge_their_own_episode_by_their_own_guards(self) -> None:
-        # A's plan marked group G outdated and B's releases carry G. G files sit on both windows' episodes, so
-        # A's episode still needs importing while B's is done. The series' merged guards would trust G for both.
+        # B's releases carry group G and A's don't. G files sit on both windows' episodes, so A's episode still
+        # needs importing while B's is done. The series' merged guards would trust G for both.
         pending = pending_import(
             file_episode_map={_SHOW_FILE: [101], _OTHER_FILE: [102]},
             claims=(
-                title_claim(anilist_id=1, ordered_episode_ids=(101,), guards=OwnedAtGrab(stale_groups=("G",))),
+                title_claim(anilist_id=1, ordered_episode_ids=(101,)),
                 title_claim(anilist_id=2, ordered_episode_ids=(102,), guards=OwnedAtGrab(entry_groups=("G",))),
             ),
         )
