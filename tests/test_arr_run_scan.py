@@ -18,7 +18,7 @@ from typing import override
 
 import pytest
 
-from pearlarr.arr_models import HistoryRecord, SonarrSeries
+from pearlarr.arr_models import SonarrSeries
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.cache import CacheStore
 from pearlarr.config import Arr
@@ -50,6 +50,7 @@ from .builders import (
     grab_request,
     make_config,
     make_run_deps,
+    sonarr_file_imported,
 )
 from .fakes import (
     FakeArrItem,
@@ -164,12 +165,6 @@ class TestWhichItemsAreChecked:
         assert _rows(recording) == [(TitleState.NO_MAPPING, "Frieren")]
 
 
-_FILE_IMPORTED = HistoryRecord(
-    id=1, date="2026-07-06T10:00:00Z", item_id=3, event_type="downloadFolderImported", download_id=None, reason=None
-)
-"""Sonarr's history record of a file imported into series 3, the one activity a run reads and checkpoints."""
-
-
 def test_an_ignored_title_is_shown_once_by_the_name_of_its_series() -> None:
     # Series 3 maps AniList 1 and 2, and 2 is ignored. The imported file has the activity read ask for its titles
     # before the scan, as the prefetch does. Title 1, with no SeaDex entry, keeps the series off an undecided case:
@@ -183,7 +178,7 @@ def test_an_ignored_title_is_shown_once_by_the_name_of_its_series() -> None:
         },
     )
     series = SonarrSeries.model_validate({"id": 3, "title": "Sousou no Frieren", "tvdbId": 50})
-    sonarr = FakeSonarrClient(all_series=[series], history_since=[_FILE_IMPORTED])
+    sonarr = FakeSonarrClient(all_series=[series], history_since=[sonarr_file_imported(3)])
     recording = install_recording_hub()
 
     drive_arr_run(deps, lambda services: SonarrStrategy(deps, services, sonarr_client=sonarr))
@@ -340,7 +335,7 @@ def _series_3(services: ArrRunServices | None = None) -> FakeStrategy:
         items=[FakeArrItem(item_id=3)],
         anilist_ids={11: TitleMapping(anilist_id=11)},
         services=services,
-        history=[_FILE_IMPORTED],
+        history=[sonarr_file_imported(3)],
     )
 
 
@@ -434,7 +429,9 @@ class _OrderFetching(FakeStrategy):
 
     def __init__(self, skyhook: SkyHookGateway) -> None:
         super().__init__(
-            items=[FakeArrItem(item_id=3)], anilist_ids={11: TitleMapping(anilist_id=11)}, history=[_FILE_IMPORTED]
+            items=[FakeArrItem(item_id=3)],
+            anilist_ids={11: TitleMapping(anilist_id=11)},
+            history=[sonarr_file_imported(3)],
         )
         self._skyhook = skyhook
 
