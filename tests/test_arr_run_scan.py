@@ -553,7 +553,7 @@ class TestPerItemCommit:
         ("qbit", "next_fetch"),
         [pytest.param(FakeQbit(), "cached", id="real"), pytest.param(None, "4 titles", id="dry-run")],
     )
-    def test_the_anilist_answers_the_prefetch_fetched_are_kept_before_the_scan(
+    def test_only_a_real_run_keeps_the_anilist_answers_its_prefetch_fetched_before_the_scan(
         self, tmp_path: Path, qbit: FakeQbit | None, next_fetch: str
     ) -> None:
         # Stopped in the first title, before any library item commits. The next run fetches only what wasn't kept.
