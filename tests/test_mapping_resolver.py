@@ -303,7 +303,7 @@ class TestSpecialAliases:
             "anilist:1": {
                 "tvdb_show:500:s0": {"1": "5"},
                 "tmdb_show:900:s0": {"1": "9"},
-                "imdb_show:tt1": {},
+                "imdb_movie:tt1": {},
             },
         }
 
@@ -457,6 +457,8 @@ ANIDB_XML = """<anime-list>
 
 
 def _anidb_resolver() -> MappingResolver:
+    """A resolver over `ANIDB_XML` alone. The conftest closes it after the test."""
+
     root = ElementTree.fromstring(ANIDB_XML)
     return MappingResolver(
         refresh_days=1,
@@ -596,11 +598,11 @@ class TestSourcesSummary:
         ("sources", "note"),
         [
             pytest.param(
-                MappingSources(anime=_FRIEREN, anidb=ElementTree.fromstring("<anime-list/>"), anibridge=GRAPH),
+                MappingSources(anime={}, anidb=ElementTree.fromstring("<anime-list/>"), anibridge={}),
                 "anime-ids · anime-lists · anibridge",
                 id="all three",
             ),
-            pytest.param(MappingSources(anime=False, anidb=False, anibridge=GRAPH), "anibridge", id="one"),
+            pytest.param(MappingSources(anime=False, anidb=False, anibridge={}), "anibridge", id="one"),
             pytest.param(MappingSources(anime=False, anidb=False, anibridge=False), "none enabled", id="none"),
         ],
     )
@@ -849,9 +851,9 @@ def _real_source_paths() -> _RealSources:
 
     base = resolve_paths().data_dir
     return _RealSources(
-        anime_ids=os.path.join(base, m.ANIME_IDS_FILE),
-        anidb=os.path.join(base, m.ANIDB_MAPPINGS_FILE),
-        anibridge=os.path.join(base, m.ANIBRIDGE_MAPPINGS_FILE),
+        anime_ids=os.path.join(base, ANIME_IDS_FILE),
+        anidb=os.path.join(base, ANIDB_MAPPINGS_FILE),
+        anibridge=os.path.join(base, ANIBRIDGE_MAPPINGS_FILE),
     )
 
 
@@ -901,7 +903,9 @@ def _is_ambiguous(resolver: MappingResolver, anidb_id: int) -> bool:
 class TestRealSourceFiles:
     """The real files read as the cases above say, over shapes nobody wrote down."""
 
-    def test_anibridge_sql_matches_graph_over_all_ids(self, real_sources: _RealSources) -> None:
+    def test_every_real_anibridge_id_reads_the_same_from_the_database_as_from_the_file(
+        self, real_sources: _RealSources
+    ) -> None:
         # The graph's own lookups read each title straight from the parsed file. A run asks the database instead.
         graph = AniBridge(json.loads(Path(real_sources.anibridge).read_text(encoding="utf-8")))
         served = _real_boot(MappingSources(anime=False, anidb=False, anibridge=None)).anibridge
@@ -919,7 +923,9 @@ class TestRealSourceFiles:
         ] == []
         assert [i for i in graph.all_imdb_ids if served.lookup_by_imdb(i) != graph.lookup_by_imdb(i)] == []
 
-    def test_every_real_anime_ids_record_is_found_by_its_ids(self, real_sources: _RealSources) -> None:
+    def test_every_real_kometa_record_is_found_by_its_ids_as_the_file_writes_them(
+        self, real_sources: _RealSources
+    ) -> None:
         records: AnimeIdsByName = json.loads(Path(real_sources.anime_ids).read_text(encoding="utf-8"))
         resolver = _real_boot(MappingSources(anime=None, anidb=False, anibridge=False))
 
@@ -933,7 +939,7 @@ class TestRealSourceFiles:
 
         assert missed == []
 
-    def test_an_anidb_id_is_ambiguous_exactly_when_the_real_file_lists_it_more_than_once(
+    def test_a_real_anidb_id_reads_as_ambiguous_only_when_the_file_lists_it_more_than_once(
         self, real_sources: _RealSources
     ) -> None:
         listed = Counter(
