@@ -175,6 +175,8 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
 
         run = sonarr_grab_run(store=FakeCacheStore(), episodes=episodes)
 
+        # The check ran through to its grab, past the title block and the row for files left out.
+        assert len(run.grab_requests) == 1
         assert (run.numbers_orders, run.left_out) == ([], [])
 
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
