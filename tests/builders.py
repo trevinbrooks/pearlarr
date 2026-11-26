@@ -229,14 +229,14 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     return len(stale)
 
 
-def anilist_body(anilist_id: int, title: str = "Resolved") -> AniListBody:
+def anilist_body(anilist_id: int, title: str | None = "Resolved", romaji: str | None = None) -> AniListBody:
     """A populated single-id AniList body: the run-cache value, and a stored answer's `data`."""
 
     return {
         "data": {
             "Media": {
                 "id": anilist_id,
-                "title": {"english": title},
+                "title": {"english": title, "romaji": romaji},
                 "coverImage": {"large": "https://img/large"},
                 "bannerImage": "https://img/banner",
                 "episodes": 12,
