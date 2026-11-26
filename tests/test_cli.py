@@ -10,7 +10,7 @@ stdout and stderr, the log file, and the files it writes or leaves alone. A
 test calls the command's function instead, which returns the bool the CLI
 turns into its exit code, when a run would go on to an arr, when the runner
 can't build the situation (a terminal, say), or when only that bool tells a
-skipped run from one that exits. The cache and config commands are also called
+skipped run from one that raises. The cache and config commands are also called
 as plain functions. `_invoke_offline` runs the CLI with every httpx request
 refused, so a run that gets past where it should stop fails instead of
 reaching the network.
@@ -679,20 +679,18 @@ class TestRunFailuresAreCleanAndNonzero:
         assert "hunter2" not in out
         assert "Traceback" not in out
 
-    def test_a_mapping_source_failure_fails_the_run(self) -> None:
+    def test_a_mapping_source_failure_fails_the_run(self, capsys: pytest.CaptureFixture[str]) -> None:
         # A cached anime ids file that won't parse: still fresh, so nothing is
         # downloaded, and reading it fails.
         _write_config_fetching_anime_ids()
         Path(resolve_paths().data_dir, "anime_ids.json").write_text("{not json", encoding="utf-8")
 
-        result = _invoke_offline("run", "single")
-
-        assert result.exit_code == 1
+        assert run_single() is False
         assert "ERROR [Pearlarr] Could not fetch/parse the mapping sources - skipping this run during=boot" in (
-            _lines(result.stdout)
+            _lines(capsys.readouterr().out)
         )
 
-    def test_a_mapping_download_network_failure_reports_cleanly(self) -> None:
+    def test_a_mapping_download_network_failure_reports_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         # A brand-new user with no network hits the first-ever source download,
         # which has no cached copy to fall back on. That must surface as one line
         # with a hint, not a traceback.
@@ -700,10 +698,9 @@ class TestRunFailuresAreCleanAndNonzero:
 
         with respx.mock() as router:
             router.route().mock(side_effect=httpx.ConnectError("no network"))
-            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
+            assert run_single() is False
 
-        assert result.exit_code == 1
-        assert _lines(result.stdout)[-1] == (
+        assert _lines(capsys.readouterr().out)[-1] == (
             "ERROR [Pearlarr] Could not download the mapping sources (download failed: ConnectError) "
             "- check your network connection - skipping this run during=boot"
         )
