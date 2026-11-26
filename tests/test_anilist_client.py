@@ -300,7 +300,6 @@ def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -
 
 
 @respx.mock
-@pytest.mark.usefixtures("slept")
 @pytest.mark.parametrize(
     ("effect", "returned"),
     [
@@ -308,7 +307,9 @@ def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -
         pytest.param(httpx.ConnectError("down"), {}, id="unreachable"),
     ],
 )
-def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, returned: dict[str, object]) -> None:
+def test_give_up_marks_anilist_unreachable(
+    slept: list[float], effect: httpx.Response | Exception, returned: dict[str, object]
+) -> None:
     """Exhausting the retries warns once and marks AniList unreachable: later calls never touch the wire."""
 
     recording = install_recording_hub()
@@ -321,6 +322,8 @@ def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, r
     assert client.query_batch([3, 4]) == {}
 
     assert route.call_count == 4
+    # A wait between each try, and none after the last.
+    assert [int(wait) for wait in slept] == [1, 2, 4]
     (warning,) = diagnostic_messages(recording, Severity.WARNING)
     assert warning == f"AniList request failed after 3 retries, {_SKIPPING}"
 
