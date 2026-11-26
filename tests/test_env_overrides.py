@@ -157,6 +157,15 @@ class TestErrorLinesNameTheVariable:
         error = self._error(tmp_path, "")
         assert error.startswith("  - advanced.sleep_time (set by PEARLARR_ADVANCED__SLEEP_TIME): Input should be")
 
+    def test_a_name_that_goes_below_a_plain_setting_names_its_variable(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PEARLARR_SONARR__URL__PORT", "8989")
+        error = self._error(tmp_path, "")
+        assert error.startswith("  - sonarr.url (set by PEARLARR_SONARR__URL__PORT): Input should be")
+
     def test_unknown_group_names_every_variable_under_it(
         self,
         tmp_path: Path,
