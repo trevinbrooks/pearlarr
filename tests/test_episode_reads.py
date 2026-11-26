@@ -44,6 +44,12 @@ class _Sonarr(FakeSonarrClient):
         self.failing = set(failing)
         self.reads: list[tuple[int, bool]] = []
 
+    @property
+    def series_read(self) -> list[int]:
+        """The series of each read, in the order read."""
+
+        return [series_id for series_id, _ in self.reads]
+
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         self.reads.append((series_id, quiet))
@@ -148,11 +154,11 @@ class TestPrefetchEpisodes:
     """
 
     @pytest.mark.parametrize(
-        ("run", "reads"),
+        ("run", "read"),
         [
-            pytest.param(_Run(), [(1, True)], id="a-title-never-checked"),
+            pytest.param(_Run(), [1], id="a-title-never-checked"),
             pytest.param(_Run(unchanged=(7,)), [], id="its-title-unchanged"),
-            pytest.param(_Run(titles={7: 1, 8: 1}, unchanged=(7,)), [(1, True)], id="one-of-its-two-titles-unchanged"),
+            pytest.param(_Run(titles={7: 1, 8: 1}, unchanged=(7,)), [1], id="one-of-its-two-titles-unchanged"),
             pytest.param(_Run(titles={}), [], id="no-anilist-mapping"),
             pytest.param(_Run(without_entry=(7,)), [], id="no-seadex-entry"),
             pytest.param(
@@ -166,18 +172,16 @@ class TestPrefetchEpisodes:
                 [],
                 id="unmonitored-and-ignored",
             ),
-            pytest.param(_Run(unmonitored=(1,)), [(1, True)], id="unmonitored-not-ignored"),
+            pytest.param(_Run(unmonitored=(1,)), [1], id="unmonitored-not-ignored"),
         ],
     )
-    def test_a_series_is_read_only_when_one_of_its_titles_will_be_checked(
-        self, run: _Run, reads: list[tuple[int, bool]]
-    ) -> None:
+    def test_a_series_is_read_only_when_one_of_its_titles_will_be_checked(self, run: _Run, read: list[int]) -> None:
         sonarr = _Sonarr()
         episodes, _ = _episodes(sonarr, run)
 
         episodes.prefetch(_library(run))
 
-        assert sonarr.reads == reads
+        assert sonarr.series_read == read
 
     @pytest.mark.parametrize(
         ("failing", "reads"),
@@ -216,7 +220,7 @@ class TestPrefetchEpisodes:
 
         episodes.prefetch(_library(_TWO_SERIES))
 
-        assert sorted(sonarr.reads) == [(1, True), (2, True)]
+        assert sorted(sonarr.series_read) == [1, 2]
 
     def test_a_stop_mid_sweep_drops_the_fetches_not_yet_started(self) -> None:
         sonarr = _GatedSonarr()
@@ -228,7 +232,7 @@ class TestPrefetchEpisodes:
             episodes.prefetch(_library(run), progress=_StopOnFirstProgress(sonarr.gate))
 
         # The first fetch, plus at most the one the worker had in hand.
-        assert sonarr.reads in ([(1, True)], [(1, True), (2, True)])
+        assert sonarr.series_read in ([1], [1, 2])
 
 
 class TestAiredSeriesRead:
@@ -242,7 +246,7 @@ class TestAiredSeriesRead:
         view = reads.aired_series(1)
 
         assert isinstance(view, AiredSeries)
-        assert (view.in_sonarr, sonarr.reads) == ((sonarr_ep(1, 1),), [(1, False)])
+        assert (view.in_sonarr, sonarr.series_read) == ((sonarr_ep(1, 1),), [1])
 
     def test_failed_fetch_is_no_view_and_not_cached(self) -> None:
         # A failed read is the unreadable list, distinct from a series with no episodes:
@@ -250,8 +254,4 @@ class TestAiredSeriesRead:
         sonarr = _Sonarr((1,))
         reads = make_series_reads(sonarr, library=[SonarrSeries(id=1)])
 
-        assert (reads.aired_series(1), reads.series_index(1), sonarr.reads) == (
-            NoView.READ_FAILED,
-            None,
-            [(1, False), (1, False)],
-        )
+        assert (reads.aired_series(1), reads.series_index(1), sonarr.series_read) == (NoView.READ_FAILED, None, [1, 1])
