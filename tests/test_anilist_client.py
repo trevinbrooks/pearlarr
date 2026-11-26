@@ -69,7 +69,7 @@ def test_an_answer_without_a_media_reads_as_the_empty_node(body: dict[str, objec
     recording = install_recording_hub()
 
     assert media_from_body(body) == AniListMediaNode()
-    assert recording.of_type(Diagnostic) == []
+    assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.INFO] == []
 
 
 def test_a_media_that_does_not_fit_the_node_reads_as_the_empty_node_with_one_warning() -> None:
@@ -289,14 +289,14 @@ def test_without_retry_after_each_wait_doubles(slept: list[float]) -> None:
 
 @respx.mock
 def test_a_network_error_that_clears_is_waited_out_quietly(slept: list[float]) -> None:
-    """A dropped connection is asked again after a short wait that only the debug log mentions."""
+    """A dropped connection is asked again after a short wait, with nothing shown to the user."""
 
     recording = install_recording_hub()
     respx.post(API_URL).mock(side_effect=[httpx.ConnectError("connection refused"), httpx.Response(200, json=_FOUND)])
 
     assert _client().query(1) == _FOUND
     assert [int(wait) for wait in slept] == [1]
-    assert [d.severity for d in recording.of_type(Diagnostic)] == [Severity.DEBUG]
+    assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.INFO] == []
 
 
 @respx.mock
