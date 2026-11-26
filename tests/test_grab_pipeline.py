@@ -299,7 +299,7 @@ class TestAGrab:
         torrents = FakeTorrents({})
         pipeline = _pipeline(torrents=torrents, state=state)
         # Not marked to grab: Sonarr has the release's files.
-        owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
+        owned = make_release()
 
         pipeline.grab_and_cache(_grab_request({"RG": _group(owned)}))
 
@@ -373,13 +373,13 @@ class TestGrabReleaseRegistersPending:
         first.grab_releases(
             _grab_request(
                 {"NAN0": _group(_release(1))},
-                pending_import_updates={"h1": pending_import_update("h1", anilist_id=11, title="Cour 1")},
+                pending_import_updates={"h1": pending_import_update("h1", anilist_id=11)},
             )
         )
         second = _pipeline(
             torrents=FakeTorrents({"h1": (AddStatus.ALREADY_IN_QBIT, "Show")}), state=state, cache_store=store
         )
-        update = pending_import_update("h1", anilist_id=22, title="Cour 2", stored=_stored(first, "h1"))
+        update = pending_import_update("h1", anilist_id=22, stored=_stored(first, "h1"))
 
         second.grab_releases(_grab_request({"NAN0": _group(_release(1))}, pending_import_updates={"h1": update}))
 
@@ -670,7 +670,7 @@ class TestTrackerSkips:
         cause: NeedsActionCause,
     ) -> None:
         recording = install_recording_hub()
-        releases = [_release(n, skipped=skip) for n, skip in enumerate(skipped, start=1)]
+        releases = [_release(n, skipped=skip) for n, skip in enumerate(skipped)]
         torrents = FakeTorrents({})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state, private_releases=private_releases, interactive=interactive)
@@ -806,10 +806,10 @@ class TestPlacementSkips:
     def test_a_release_on_episodes_sonarr_has_no_row_for_is_planned_but_never_added_and_its_title_is_cached(
         self,
     ) -> None:
-        # The planner marks the release to grab by its group and sizes: none of its files placed, and the title's
-        # one episode in Sonarr has no file.
+        # The planner marks the release to grab by its group: none of its files placed, and the title's one episode
+        # in Sonarr has no file.
         recording = install_recording_hub()
-        nyaa = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1", size=[100, 200])
+        nyaa = make_release(tracker=Tracker.NYAA, infohash="h1")
         nyaa.skip_reason = SkipReason.AIRED_ONLY
         in_sonarr = [sonarr_ep(1, 3, episode_file_id=0)]
         plan = make_planner().plan({"RG": rg_group({nyaa.url: nyaa}, episodes=[])}, arr_files(in_sonarr), in_sonarr)
@@ -877,7 +877,7 @@ class TestPlacementInputUnread:
 
     def test_a_title_with_nothing_to_grab_is_neither_up_to_date_nor_cached(self) -> None:
         # The placement may have left a sequence waiting, so the coverage decision was coarse: no "already have it".
-        owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
+        owned = make_release()
         state = _run_state()
         pipeline = _pipeline(torrents=FakeTorrents({}), state=state)
 
@@ -891,7 +891,7 @@ class TestPlacementInputUnread:
 def test_a_title_read_without_its_metadata_stays_uncached_with_nothing_to_do() -> None:
     # AniList or SkyHook was unreachable before the first fetch: the title re-checks next run, and no row asks for a
     # hand.
-    owned = make_release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="h1")
+    owned = make_release()
     state = _run_state()
     pipeline = _pipeline(torrents=FakeTorrents({}), state=state)
 
@@ -972,7 +972,7 @@ class TestGrabFailureContainment:
         torrents = FakeTorrents({"h2": (AddStatus.ADDED, "Show-RG")}, raises={"h1": httpx.ConnectError("nyaa down")})
         state = _run_state()
         pipeline = _pipeline(torrents=torrents, state=state)
-        entries = {1: make_entry_record(anilist_id=1), 2: make_entry_record(anilist_id=2)}
+        entries = {1: make_entry_record(), 2: make_entry_record()}
         services = make_services(_seadex=FakeSeaDexSource(entries), _state=state, _grab_pipeline=pipeline)
 
         for anilist_id, release in ((1, _release(1)), (2, _release(2))):
@@ -1024,7 +1024,7 @@ class TestGrabPushesNotice:
                 # The library item's name must not prefix the AniList one, or the byline would (rightly) dedupe away.
                 arr_title="The Show",
                 title_name="Show Title",
-                entry=make_entry_record(anilist_id=42, url="https://releases.moe/42", notes="the why"),
+                entry=make_entry_record(url="https://releases.moe/42", notes="the why"),
                 seadex_dict={"PMR": _group(_release(1))},
                 update={},
                 replaced_groups=("OldGroup",),
