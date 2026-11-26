@@ -78,7 +78,7 @@ from .builders import (
     sonarr_ep,
 )
 from .fakes import RecordingHub, install_recording_hub
-from .http_mock import nyaa_torrent_link, serve_nyaa_torrents
+from .http_mock import nyaa_torrent_link, serve_named_nyaa_torrents, serve_nyaa_torrents
 from .wait_fakes import FakeQbit, FakeTorrent
 
 # Title 42 as its header sets it in a run, and the stamp its request caches it under.
@@ -251,7 +251,7 @@ class TestAGrab:
     @respx.mock
     def test_a_grab_adds_its_release_lists_and_shows_it_and_caches_the_title(self) -> None:
         recording = install_recording_hub()
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_named_nyaa_torrents({1: "Show-RG"})
         qbit = FakeQbit()
         state = _run_state()
         pipeline = _pipeline(qbit, state=state)
@@ -277,7 +277,7 @@ class TestAGrab:
     @respx.mock
     def test_the_grabbed_row_names_the_placed_episodes_by_the_numbers_they_print_by(self) -> None:
         # Sonarr lists the aired S02E01 as S01E04.
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_nyaa_torrents(1)
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
         release = _release(1)
@@ -290,7 +290,7 @@ class TestAGrab:
     @respx.mock
     def test_a_grab_with_no_fallback_in_it_clears_the_titles_stored_fallback_marker(self) -> None:
         # The cache write merges columns, so a marker an earlier fallback grab left stays unless every write sets it.
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_nyaa_torrents(1)
         pipeline = _pipeline(FakeQbit())
         pipeline.cache_store.update_cached_title(Arr.SONARR, 42, {"fallback_satisfied": True})
 
@@ -327,7 +327,7 @@ class TestAGrab:
         # each torrent's name off Nyaa.
         recording = install_recording_hub()
         webhook = respx.post(_DISCORD_URL).respond()
-        serve_nyaa_torrents({1: "Show-RG 1", 2: "Show-RG 2"})
+        serve_named_nyaa_torrents({1: "Show-RG 1", 2: "Show-RG 2"})
         qbit = FakeQbit() if qbittorrent else None
         state = _run_state(dry_run=dry_run)
         config = make_config(max_torrents_to_add=1, discord_url=_DISCORD_URL)
@@ -356,7 +356,7 @@ class TestGrabReleaseRegistersPending:
 
     @respx.mock
     def test_added_registers_and_counts(self) -> None:
-        serve_nyaa_torrents({1: "Show-NAN0"})
+        serve_nyaa_torrents(1)
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
         facts = OwnedAtGrab(entry_groups=("NAN0",), stale_groups=("OldPick",))
@@ -377,7 +377,7 @@ class TestGrabReleaseRegistersPending:
         # Two titles share one torrent in one run: A's add tracks the pending import fresh, B's dedups to
         # ALREADY_IN_QBIT with an update carrying A's pending import (the store read). B's claim joins it, the
         # run-list copy follows, and a this-run grab is never a reacquire.
-        serve_nyaa_torrents({1: "Show"})
+        serve_nyaa_torrents(1)
         store = FakeCacheStore()
         state = _run_state()
         first = _pipeline(FakeQbit(), state=state, cache_store=store)
@@ -402,7 +402,7 @@ class TestGrabReleaseRegistersPending:
     def test_radarr_registration_writes_no_guard_row(self) -> None:
         # Guard evidence is Sonarr-only enforcement: a Radarr state driven through
         # the same path persists its pending import but never a guard row.
-        serve_nyaa_torrents({1: "Movie"})
+        serve_nyaa_torrents(1)
         pipeline = make_grab_pipeline(
             make_run_deps(qbit=FakeQbit().client(), arr=Arr.RADARR),
             ArrRunState(arr=Arr.RADARR, import_wait_mode=ImportWaitMode.BLOCKING),
@@ -509,7 +509,7 @@ class TestReacquireRegistration:
         # A re-add of a torrent whose pending import survived (qBittorrent lost it): the
         # joined pending import enters the run list restarted at now, the start a new
         # download's rescan proof counts from.
-        serve_nyaa_torrents({1: "Show"})
+        serve_nyaa_torrents(1)
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
         resident = self._resident(pipeline)
@@ -543,7 +543,7 @@ class TestTheRunCap:
     ) -> None:
         # Two releases to grab under a cap of 1. A held release new to qBittorrent is not tracked yet.
         recording = install_recording_hub()
-        serve_nyaa_torrents({1: "Show-RG 1", 2: "Show-RG 2"})
+        serve_nyaa_torrents(1, 2)
         qbit = FakeQbit()
         state = _run_state(torrents_added=already_added)
         pipeline = _pipeline(qbit, state=state, config=make_config(max_torrents_to_add=1))
@@ -558,7 +558,7 @@ class TestTheRunCap:
 
     @respx.mock
     def test_a_cap_above_one_counts_each_add_and_holds_the_release_past_it(self) -> None:
-        serve_nyaa_torrents({1: "one", 2: "two", 3: "three"})
+        serve_nyaa_torrents(1, 2, 3)
         qbit = FakeQbit()
         state = _run_state()
         pipeline = _pipeline(qbit, state=state, config=make_config(max_torrents_to_add=2))
@@ -581,7 +581,7 @@ class TestTheRunCap:
         self, already_added: int, announced: list[int], cached: str | None
     ) -> None:
         recording = install_recording_hub()
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_nyaa_torrents(1)
         state = _run_state(torrents_added=already_added)
         pipeline = _pipeline(FakeQbit(), state=state, config=make_config(max_torrents_to_add=1))
 
@@ -609,7 +609,7 @@ class TestTheRunCap:
     @respx.mock
     def test_a_torrent_already_in_qbittorrent_is_no_grab_and_the_release_after_it_still_adds(self) -> None:
         # Under a cap of 1, a torrent already there that counted toward it would hold the release after it.
-        serve_nyaa_torrents({2: "new"})
+        serve_named_nyaa_torrents({2: "new"})
         qbit = _holding({"h1": "old"})
         state = _run_state()
         pipeline = _pipeline(qbit, state=state, config=make_config(max_torrents_to_add=1))
@@ -624,7 +624,7 @@ class TestTheRunCap:
     @respx.mock
     def test_a_cap_of_zero_adds_every_release_and_announces_no_cap(self) -> None:
         recording = install_recording_hub()
-        serve_nyaa_torrents({1: "one", 2: "two"})
+        serve_nyaa_torrents(1, 2)
         qbit = FakeQbit()
         pipeline = _pipeline(qbit, config=make_config(max_torrents_to_add=0))
 
@@ -750,7 +750,7 @@ class TestTrackerSkips:
     def test_a_grab_beside_a_tracker_skip_caches_its_title_with_no_row(
         self, skipped: SkipReason, private_releases: PrivateReleaseAction, interactive: bool
     ) -> None:
-        serve_nyaa_torrents({2: "Show-RG"})
+        serve_nyaa_torrents(2)
         state = _run_state()
         config = make_config(private_releases=private_releases, interactive=interactive)
         pipeline = _pipeline(FakeQbit(), state=state, config=config)
@@ -819,7 +819,7 @@ class TestPlacementSkips:
 
     @respx.mock
     def test_a_grab_beside_a_placement_skip_leaves_its_title_uncached(self) -> None:
-        serve_nyaa_torrents({2: "Show-RG"})
+        serve_nyaa_torrents(2)
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
 
@@ -873,7 +873,7 @@ class TestPlacementSkips:
     def test_a_release_not_to_grab_with_a_skip_reason_is_not_skipped_and_the_title_caches(self) -> None:
         # The arr has the torrent's files now (the hand import is done), and another release of the title still grabs.
         recording = install_recording_hub()
-        serve_nyaa_torrents({2: "Show-RG"})
+        serve_nyaa_torrents(2)
         done = _release(1, skipped=SkipReason.MISNUMBERED)
         done.to_grab = False
         pipeline = _pipeline(FakeQbit())
@@ -889,7 +889,7 @@ class TestPlacementInputUnread:
 
     @respx.mock
     def test_a_grabbed_title_stays_uncached_with_a_retry_row(self) -> None:
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_named_nyaa_torrents({1: "Show-RG"})
         state = _run_state()
         pipeline = _pipeline(FakeQbit(), state=state)
 
@@ -991,7 +991,7 @@ class TestGrabFailureContainment:
     def test_a_failed_release_never_drops_the_next_and_leaves_the_title_uncached(self) -> None:
         # Containment is per release: the sibling after the failure still grabs, and the title retries next run.
         respx.head(nyaa_torrent_link(1)).respond(404)
-        serve_nyaa_torrents({2: "Show-RG"})
+        serve_named_nyaa_torrents({2: "Show-RG"})
         qbit = FakeQbit()
         state = _run_state()
         pipeline = _pipeline(qbit, state=state)
@@ -1021,7 +1021,7 @@ class TestGrabFailureContainment:
     @respx.mock
     def test_an_error_that_is_no_tracker_or_qbittorrent_failure_gets_out(self) -> None:
         # Contained, a bug in the add would read as a failed grab, retried every run with no traceback.
-        serve_nyaa_torrents({1: "Show-RG"})
+        serve_nyaa_torrents(1)
         pipeline = _pipeline(FakeQbit(add_answers={nyaa_torrent_link(1): RuntimeError("a bug in the add")}))
 
         with pytest.raises(RuntimeError, match="a bug in the add"):
@@ -1032,7 +1032,7 @@ class TestGrabFailureContainment:
         # Two titles in one run, each through the real per-title head: the first title's add fails, the second's
         # goes through.
         respx.head(nyaa_torrent_link(1)).respond(404)
-        serve_nyaa_torrents({2: "Show-RG"})
+        serve_nyaa_torrents(2)
         state = _run_state()
         entries = {1: make_entry_record(), 2: make_entry_record()}
         qbit = FakeQbit()
@@ -1082,7 +1082,7 @@ class TestGrabPushesNotice:
     @respx.mock
     def test_added_pushes_the_title_its_art_its_coverage_and_what_it_replaces(self) -> None:
         webhook = respx.post(_DISCORD_URL).respond()
-        serve_nyaa_torrents({1: "Show-PMR"})
+        serve_nyaa_torrents(1)
         pipeline = _notifying_pipeline(FakeQbit())
 
         pipeline.grab_and_cache(
@@ -1117,7 +1117,7 @@ class TestGrabPushesNotice:
         # Nyaa had no file for group Bad's release. Its block must not read as skipped, which would say it was never
         # tried.
         webhook = respx.post(_DISCORD_URL).respond()
-        serve_nyaa_torrents({1: "Show-PMR"})
+        serve_nyaa_torrents(1)
         respx.head(nyaa_torrent_link(2)).respond(404)
         pipeline = _notifying_pipeline(FakeQbit())
 

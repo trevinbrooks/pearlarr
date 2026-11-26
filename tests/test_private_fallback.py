@@ -204,14 +204,14 @@ def _outcome(
         config=make_config(private_releases=private_releases), cache_store=cache, qbit=qbit.client(), arr=library.arr
     )
     services = ArrRunServices(deps, library.arr)
-    # Each public torrent is Nyaa release number `n` (`_entry`), and Nyaa names its file after the group.
+    # Each public torrent is Nyaa release number `n` (`_entry`).
     nyaa_groups = {
         int(t.url.removeprefix("https://nyaa.si/view/")): t.release_group for t in entry.torrents if t.infohash
     }
     group_by_link = {nyaa_torrent_link(n): group for n, group in nyaa_groups.items()}
 
     with respx.mock:
-        serve_nyaa_torrents(nyaa_groups)
+        serve_nyaa_torrents(*nyaa_groups)
         seadex_dict = services.get_seadex_dict(entry)
         if library.episodes is not None:
             _place_by_name(seadex_dict)
