@@ -26,7 +26,6 @@ from pearlarr.arr_run_state import ArrRunState
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
-from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import BootStepFinished, Diagnostic, Severity
 from pearlarr.progress import ProgressCallback
@@ -44,7 +43,6 @@ from .builders import (
     make_bare_instance,
     make_config,
     make_run_deps,
-    make_services,
 )
 from .fakes import (
     FakeArrItem,
@@ -55,7 +53,7 @@ from .fakes import (
     diagnostic_messages,
     install_recording_hub,
 )
-from .run_loop_fakes import FakeBound, FakeGateway, FinalizeRecorder, make_engine
+from .run_loop_fakes import FakeGateway, FinalizeRecorder, make_engine
 from .wait_fakes import FakeQbit
 
 
@@ -179,31 +177,70 @@ class TestPerItemCommit:
         assert _saved_titles(cache) == []
 
 
-class _GrabRecorder(FakeBound):
-    """A fake grab pipeline that counts its `grab_and_cache` calls."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def grab_and_cache(self, req: GrabRequest) -> None:
-        del req
-        self.calls += 1
+type _Ending = Callable[[ArrRunServices, int], None]
+"""How a title's check ends, given the run's services and the title's AniList id."""
 
 
-class TestGrabPacing:
-    """A grab's queries owe the pacing pause, slept before the next title."""
+def _grab(services: ArrRunServices, anilist_id: int) -> None:
+    """The check ends at the grab tail."""
 
-    def test_a_grab_owes_the_pause_the_next_title_sleeps(self) -> None:
+    services.grab_and_cache(grab_request(anilist_id=anilist_id))
+
+
+def _no_releases(services: ArrRunServices, anilist_id: int) -> None:
+    """The check ends with no release to grab."""
+
+    services.report_no_releases(anilist_id, {})
+
+
+def _invalid_pick(services: ArrRunServices, anilist_id: int) -> None:
+    """The check ends with an interactive pick that chose nothing valid."""
+
+    del anilist_id
+    services.report_invalid_selection()
+
+
+def _no_query(services: ArrRunServices, anilist_id: int) -> None:
+    """The check ends having queried nothing, as one that skips an unchanged cached title does."""
+
+    del services, anilist_id
+
+
+class _Endings(FakeStrategy):
+    """A library of one item whose titles 1, 2 and 3 are checked in turn, each ending as `endings` says."""
+
+    def __init__(self, services: ArrRunServices, endings: tuple[_Ending, _Ending, _Ending]) -> None:
+        super().__init__(items=[FakeArrItem()], anilist_ids={i: TitleMapping(anilist_id=i) for i in (1, 2, 3)})
+        self._services = services
+        self._endings = endings
+
+    @override
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        self._endings[anilist_id - 1](self._services, anilist_id)
+
+
+class TestPacingPause:
+    """A check that queried owes the `sleep_time` pause, slept once before the next title."""
+
+    @pytest.mark.parametrize(
+        ("first", "sleeps"),
+        [
+            pytest.param(_grab, [3], id="grab"),
+            pytest.param(_no_releases, [3], id="no-releases"),
+            pytest.param(_invalid_pick, [3], id="invalid-pick"),
+            pytest.param(_no_query, [], id="no-query"),
+        ],
+    )
+    def test_a_check_that_queried_owes_one_pause_slept_before_the_next_title(
+        self, first: _Ending, sleeps: list[float]
+    ) -> None:
+        # The two titles after the first query nothing, so the first's pause is all the run owes.
         clock = FakeClock()
-        pipeline = _GrabRecorder()
-        services = make_services(_grab_pipeline=pipeline, _clock=clock, sleep_time=3)
+        deps = make_run_deps(config=make_config(url="http://sonarr", api_key="key", sleep_time=3), clock=clock)
 
-        services.grab_and_cache(grab_request())
-        services.pay_pause()
-        services.pay_pause()
+        drive_arr_run(deps, lambda services: _Endings(services, (first, _no_query, _no_query)))
 
-        assert pipeline.calls == 1
-        assert clock.sleeps == [3]
+        assert clock.sleeps == sleeps
 
 
 class _RaisingNotifier:
