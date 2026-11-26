@@ -380,8 +380,10 @@ _SWAPPED_SINCE = {"official": _DVD}
 """TVDB series 50's orders once TVDB has swapped the two aired episodes: the aired order numbers them as `_DVD`."""
 
 
-def _skyhook(orders: Mapping[str, tuple[OrderRow, ...]]) -> FakeSkyHookClient:
-    """A SkyHook that has TVDB series 50 with `orders`, each reply as the wire sends it."""
+def _skyhook(
+    orders: Mapping[str, tuple[OrderRow, ...]], *, failing: frozenset[tuple[int, str]] = frozenset()
+) -> FakeSkyHookClient:
+    """A SkyHook that has TVDB series 50 with `orders`, each reply as the wire sends it, and the `failing` fetches."""
 
     listed = [{"type": name, "episodeCount": len(rows)} for name, rows in orders.items()]
     return FakeSkyHookClient(
@@ -403,7 +405,8 @@ def _skyhook(orders: Mapping[str, tuple[OrderRow, ...]]) -> FakeSkyHookClient:
                 }
             )
             for name, rows in orders.items()
-        }
+        },
+        failing=failing,
     )
 
 
@@ -1472,13 +1475,40 @@ def test_an_unreachable_thexem_shows_on_its_own_boot_step_and_not_on_the_tvdb_or
     assert (steps["Fetching TVDB orders"], steps[_THEXEM_STEP]) == ("cached", "unreachable")
 
 
+def _selection_stored(cache: FakeCacheStore) -> bool:
+    """Whether a run stored its selection settings in `cache`, which then differ from any others."""
+
+    return cache.selection_changed(Arr.SONARR, "some-other-digest")
+
+
 def test_a_run_that_found_thexem_unreachable_stores_the_selection_hash_and_leaves_its_titles_for_the_next_run() -> None:
     # The unread series' titles are not cached, so the next run checks them whatever this one committed.
     cache = FakeCacheStore()
     _run(cache, _library_row("dvd", 2), FakeXemClient(failing=frozenset({50})))
-    hash_stored = cache.selection_changed(Arr.SONARR, "some-other-digest")
+    hash_stored = _selection_stored(cache)
 
     recording = _run(cache, _library_row("dvd", 2))
 
     assert hash_stored is True
     assert _checked(recording) == [500]
+
+
+@pytest.mark.parametrize(
+    ("failing", "note", "stored"),
+    [
+        pytest.param(frozenset({(50, "official")}), "unreachable", False, id="outage"),
+        pytest.param(frozenset[tuple[int, str]](), "1 series", True, id="healthy"),
+    ],
+)
+def test_a_run_stores_the_selection_hash_only_once_skyhook_answered_and_its_boot_step_says_which(
+    failing: frozenset[tuple[int, str]], note: str, stored: bool
+) -> None:
+    # Sonarr lists a third episode the stored orders lack, so they are due a fetch. A run that read the series by the
+    # old ones leaves the hash unstored, so the next run checks again what a settings change named.
+    cache = FakeCacheStore()
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2, "dvd": 2}))
+
+    recording = _run_over(_dvd_sonarr(3), _run_deps(cache, skyhook=_skyhook(_WITH_A_THIRD, failing=failing)))
+
+    assert _boot_steps(recording)["Fetching TVDB orders"] == note
+    assert _selection_stored(cache) is stored
