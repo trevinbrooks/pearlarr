@@ -159,7 +159,7 @@ class RecordingRenderer(Renderer):
         self.whens: list[float] = []
         self.runs_begun = 0
         self.levels: list[int] = []
-        self.closed = False
+        self.closes = 0
 
     @override
     def handle(self, event: Event, when: float) -> None:
@@ -176,7 +176,7 @@ class RecordingRenderer(Renderer):
 
     @override
     def close(self) -> None:
-        self.closed = True
+        self.closes += 1
 
     def of_type[E](self, cls: type[E]) -> list[E]:
         """The recorded events of one type, in emit order."""
