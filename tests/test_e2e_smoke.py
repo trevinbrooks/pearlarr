@@ -256,7 +256,6 @@ class _EmptyQbit:
         return "Ok."
 
 
-@pytest.mark.usefixtures("sonarr_edges")
 @pytest.mark.parametrize(
     ("dry_run", "added", "cache_written", "notices"),
     [
@@ -267,6 +266,7 @@ class _EmptyQbit:
 def test_only_a_real_run_grabs_writes_the_cache_and_notifies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    sonarr_edges: _SonarrEdges,
     dry_run: bool,
     added: list[str],
     cache_written: bool,
@@ -287,6 +287,8 @@ def test_only_a_real_run_grabs_writes_the_cache_and_notifies(
 
     run_single(dry_run=dry_run, import_wait_mode=ImportWaitMode.OFF)
 
+    # Both runs get as far as the release's torrent link, so the dry run holds back a grab it had ready.
+    assert sonarr_edges.asked.nyaa_pages == [_NYAA_RELEASE_URL]
     assert qbit.added == added
     # A missing cache.db opens in memory and is written only at the first real save.
     assert (tmp_path / "cache.db").exists() is cache_written
