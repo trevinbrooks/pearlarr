@@ -406,17 +406,15 @@ def _skyhook(orders: Mapping[str, tuple[OrderRow, ...]]) -> FakeSkyHookClient:
     )
 
 
-def _aired_over_dvd_rows(client: FakeSkyHookClient, *, stored: bool = True) -> SeriesReads:
+def _aired_over_dvd_rows(client: FakeSkyHookClient) -> SeriesReads:
     """A run's reads after a library read of series 1 as aired, on a Sonarr whose rows of it are `_DVD_ROWS`.
 
-    An earlier run stored `_ORDERS` for TVDB series 50, unless `stored` is off. SkyHook is `client`.
+    An earlier run stored `_ORDERS` for TVDB series 50. SkyHook is `client`.
     """
 
     cache = FakeCacheStore()
-    if stored:
-        cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    return _reads([_series(1, 50)], cache, client, sonarr=sonarr)
+    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
+    return _reads([_series(1, 50)], cache, client, sonarr=FakeSonarrClient(episodes=list(_DVD_ROWS)))
 
 
 @pytest.mark.parametrize(
@@ -459,7 +457,7 @@ def test_rows_out_of_step_with_an_answer_from_an_earlier_run_are_tested_again_by
 
 
 def test_rows_of_a_series_with_no_stored_answer_are_read_as_they_come() -> None:
-    reads = _aired_over_dvd_rows(_skyhook(_ORDERS), stored=False)
+    reads = _reads([_series(1, 50)], FakeCacheStore(), sonarr=FakeSonarrClient(episodes=list(_DVD_ROWS)))
 
     view = reads.aired_series(1)
 
@@ -581,23 +579,23 @@ def test_a_library_series_with_no_stored_answer_is_unread(series_id: int, unread
 
 
 @pytest.mark.parametrize(
-    ("season_type", "read", "unread"),
-    [
-        pytest.param("dvd", False, True, id="another-order-never-read"),
-        pytest.param("dvd", True, False, id="another-order-read-with-no-mappings"),
-        pytest.param("official", False, False, id="aired-order"),
-    ],
+    ("season_type", "unread"),
+    [pytest.param("dvd", True, id="another-order"), pytest.param("official", False, id="aired-order")],
 )
-def test_a_series_in_another_order_is_unread_until_its_scene_mappings_were_read(
-    season_type: str, read: bool, unread: bool
+def test_a_series_whose_scene_mappings_were_never_read_is_unread_only_in_another_order(
+    season_type: str, unread: bool
 ) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    if read:
-        cache.put_scene_mappings(50, stored_scene_mappings())
     strat = _sync([_series(1, 50, season_type=season_type)], cache)
 
     assert strat._episodes.metadata_unread([], [1]) is unread
+
+
+def test_a_series_in_another_order_is_read_once_thexem_was_read_for_it_even_with_no_mappings() -> None:
+    strat = _sync([_series(1, 50, season_type="dvd")], _stored(_ORDERS))
+
+    assert strat._episodes.metadata_unread([], [1]) is False
 
 
 @pytest.mark.parametrize(
