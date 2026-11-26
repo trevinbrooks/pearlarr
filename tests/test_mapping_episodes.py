@@ -99,21 +99,14 @@ def _resolved(episodes: SonarrEpisodes, mapping: TitleMapping) -> tuple[SonarrEp
     return result.aired
 
 
-def test_anime_ids_lookups_route_through_the_gateway() -> None:
-    """The episode count the offset slice reads is the run's AniList gateway's.
+def test_a_numbered_season_slice_starts_just_past_its_offset() -> None:
+    """Two episodes in and two long on AniList, a title of season 1 holds its third and fourth episodes."""
 
-    The gateway carries the warm arr run cache and the bound wire client (with its
-    per-arr-run retry narration), so an AniList backoff here narrates instead of
-    hanging silently. The wire client knows no title, so only the gateway's answer
-    can make the count.
-    """
+    episodes = _episodes([sonarr_ep(1, n) for n in (1, 2, 3, 4)], _answer("TV", _counted(2)))
 
-    episodes = _episodes([sonarr_ep(1, 1), sonarr_ep(1, 2)], _answer("TV", _counted(1)))
+    result = _resolved(episodes, TitleMapping(anilist_id=123, tvdb_season=1, tvdb_epoffset=2))
 
-    result = _resolved(episodes, TitleMapping(anilist_id=123))
-
-    # The gateway's episode count drove the offset slice (2 eps -> 1).
-    assert [ep.episode_number for ep in result] == [1]
+    assert [ep.episode_number for ep in result] == [3, 4]
 
 
 def test_the_episode_count_is_the_gateways() -> None:
