@@ -13,7 +13,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from pearlarr.arr_models import SonarrEpisode, SonarrSeries
+from pearlarr.arr_models import SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import ListedFile
@@ -71,7 +71,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
         run = FakeRunServices()
         strat = sonarr_checking(run)
 
-        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
         # The run reports the missing entry under the title's id.
         assert run.anilist_id_prologue_calls == [5]
@@ -98,7 +98,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
         recording = install_recording_hub()
         strat = sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=[])))
 
-        strat.check_title(SonarrSeries(id=1, title="Title"), 5, mapping)
+        strat.check_title(SERIES_7, 5, mapping)
         assert run.no_episodes_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert (run.nothing_to_grab_calls, run.pauses_owed) == ([], 1)
@@ -110,10 +110,10 @@ class TestSonarrCheckTitleBeforeTheGrab:
         strat = sonarr_checking(
             run,
             ScriptedEpisodes(FakeSonarrClient(episodes=[unmonitored])),
-            config=make_config(sleep_time=0, ignore_unmonitored=True),
+            config=make_config(ignore_unmonitored=True),
         )
 
-        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.unmonitored_titles == ["Title"]
         assert run.log_al_title_calls == []
         assert run.pauses_owed == 1
@@ -124,19 +124,19 @@ class TestSonarrCheckTitleBeforeTheGrab:
         strat = sonarr_checking(
             run,
             ScriptedEpisodes(FakeSonarrClient(episodes=window)),
-            config=make_config(sleep_time=0, ignore_unmonitored=True),
+            config=make_config(ignore_unmonitored=True),
         )
 
-        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.unmonitored_titles == []
         assert run.log_al_title_calls == ["Title"]
 
     def test_sonarr_reports_the_windows_missing_episodes(self) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
+        run = FakeRunServices(prologue_entry=make_entry_record())
         window = [sonarr_ep(1, 1), sonarr_ep(1, 2, episode_file_id=0)]
         strat = sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=window)))
 
-        strat.check_title(SonarrSeries(id=1, title="Title"), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.missing_episodes == ["S01 E02"]
 
     def test_sonarr_all_invalid_selection_routes_to_shared_stop(self) -> None:
@@ -151,10 +151,10 @@ class TestSonarrCheckTitleBeforeTheGrab:
         strat = sonarr_checking(
             run,
             ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
-            config=make_config(interactive=True, sleep_time=0),
+            config=make_config(interactive=True),
         )
 
-        strat.check_title(SonarrSeries(id=1, title="Title", tvdbId=10), 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.invalid_selection_skips == 1
         assert run.grab_requests == []
         assert run.no_releases_calls == []
@@ -174,8 +174,6 @@ class TestSonarrCheckTitlePendingImportUpdates:
         resident = pending_import(
             infohash="h1",
             anilist_id=22,
-            series_id=7,
-            title="Show Cour 1",
             ordered_episode_ids=(101,),
             file_episode_map={GRAB_FILES[0]: [101]},
             seadex_files=list(GRAB_FILES),
@@ -206,11 +204,9 @@ class TestSonarrCheckTitlePendingImportUpdates:
         # series' mappings ignore, on special 6: three specials, as the torrent is wide, and its `1` is none of them.
         # The torrent counts by another TVDB state, so nothing is placed and every file is left for a hand import.
         files = ("Show.S00E01.mkv", "Show.S00E02.mkv", "Show.S00E03.mkv")
-        torrent = make_torrent_record(url=GRAB_URL, infohash="h1", file_names=files)
-        own_entry = make_entry_record(anilist_id=5, url="https://releases.moe/5", torrents=(torrent,))
-        seadex = FakeSeaDexSource(
-            {5: own_entry, 6: make_entry_record(anilist_id=6, url="https://releases.moe/6", torrents=(torrent,))}
-        )
+        torrent = make_torrent_record(infohash="h1", file_names=files)
+        own_entry = make_entry_record(torrents=(torrent,))
+        seadex = FakeSeaDexSource({5: own_entry, 6: make_entry_record(torrents=(torrent,))})
         own = TitleMapping(anilist_id=5, tvdb_mappings={0: [(2, 2), (4, 4)]})
         seadex_dict: SeadexDict = {
             "NAN0": rg_group({GRAB_URL: make_release(url=GRAB_URL, infohash="h1", files=list(files), size=[1000] * 3)})
@@ -219,11 +215,9 @@ class TestSonarrCheckTitlePendingImportUpdates:
             anilist_ids={5: own},
             ignored={6: TitleMapping(anilist_id=6, tvdb_mappings={0: [(6, 6)]})},
             prologue_entry=own_entry,
-            anilist_title="Show Specials",
             seadex_dict=seadex_dict,
             plan_marks=frozenset({GRAB_URL}),
             import_wait_mode=ImportWaitMode.BLOCKING,
-            cache_store=FakeCacheStore(),
         )
         parses = {name: parsed_info(season=0, episodes=(n,), matched=((0, n),)) for n, name in enumerate(files, 1)}
         sonarr = FakeSonarrClient(
@@ -259,9 +253,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
             sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
         ]
         names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=specials), windows={5: specials}, counts={5: episode_count}
-        )
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=specials), counts={5: episode_count})
 
         run = sonarr_grab_run(
             store=FakeCacheStore(),
@@ -286,13 +278,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         # A run that waits on no import reads no stored pending import. This one was stored without TVDB ids, so a
         # check that read it could not follow it and would leave its torrent unread.
         store = FakeCacheStore()
-        resident = pending_import(
-            infohash="h1",
-            series_id=7,
-            file_episode_map={GRAB_FILES[0]: [101]},
-            seadex_files=list(GRAB_FILES),
-            tvdb_ids=None,
-        )
+        resident = pending_import(infohash="h1", seadex_files=list(GRAB_FILES), tvdb_ids=None)
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP2]})
 
@@ -318,8 +304,6 @@ def _stored_on_the_first_row(*, tvdb_ids: Mapping[int, int] | None) -> PendingIm
     return pending_import(
         infohash="h1",
         anilist_id=22,
-        series_id=7,
-        title="Show Cour 1",
         ordered_episode_ids=(101,),
         file_episode_map={GRAB_FILES[0]: [101]},
         seadex_files=list(GRAB_FILES),
@@ -447,7 +431,7 @@ class TestSonarrCheckTitleMetadataUnread:
         # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
         # import too.
         store = FakeCacheStore()
-        resident = pending_import(infohash="h1", anilist_id=22, series_id=8, seadex_files=list(GRAB_FILES))
+        resident = pending_import(infohash="h1", series_id=8, seadex_files=list(GRAB_FILES))
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         episodes = ScriptedEpisodes(
             FakeSonarrClient(episodes=[EP1, EP2]),
@@ -475,14 +459,10 @@ class TestSonarrCheckTitleMetadataUnread:
     ) -> None:
         run = FakeRunServices(
             anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(url="https://releases.moe/5"),
-            anilist_title="Show Cour 2",
+            prologue_entry=make_entry_record(),
             seadex_dict={},
-            cache_store=FakeCacheStore(),
         )
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=window), windows={5: window}, order=order, unread_anilist_ids=frozenset({4})
-        )
+        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order=order, unread_anilist_ids=frozenset({4}))
         strat = sonarr_checking(run, episodes)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
