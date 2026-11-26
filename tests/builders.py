@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, override
+from xml.etree import ElementTree
 
 import httpx
 import qbittorrentapi
@@ -754,18 +755,27 @@ def sonarr_client_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-don
     ]
 
 
-def make_resolver(config: AppConfig, web: httpx.Client, *, anime_ids: AnimeIdsByName | None = None) -> MappingResolver:
-    """A real resolver over the Anime-IDs rows in `anime_ids`, given inline, and none by default.
+def make_resolver(
+    config: AppConfig,
+    web: httpx.Client,
+    *,
+    anime_ids: AnimeIdsByName | None = None,
+    anime_lists: ElementTree.Element | None = None,
+) -> MappingResolver:
+    """A real resolver over the Anime-IDs rows in `anime_ids` and the AniDB episode maps in `anime_lists`.
 
-    The other two sources are off, so it fetches nothing, and its `anibridge` is a real empty one. The ignore list
-    and refresh age are the config's, as bootstrap reads them.
+    Both are given inline. With no `anime_ids` the resolver has no rows, and with no `anime_lists` the AniDB
+    source is off. AniBridge is off, so it fetches nothing, and its `anibridge` is a real empty one. The ignore
+    list and refresh age are the config's, as bootstrap reads them.
     """
 
     return MappingResolver(
         refresh_days=config.mappings.refresh_days,
         ignore_anilist_ids=config.seadex.ignore_anilist_ids,
         web=web,
-        sources=MappingSources(anime=anime_ids or {}, anidb=False, anibridge=False),
+        sources=MappingSources(
+            anime=anime_ids or {}, anidb=False if anime_lists is None else anime_lists, anibridge=False
+        ),
     )
 
 
@@ -1604,19 +1614,17 @@ def scripted_roles(episodes: ScriptedEpisodes, pending_imports: PendingImportSto
 
 
 def make_sonarr_episodes(
-    *, series_episodes: Mapping[int, list[SonarrEpisode]] | None = None, **attrs: Any
+    deps: ArrRunDeps | None = None, *, sonarr: AbstractSonarrClient | None = None
 ) -> SonarrEpisodes:
-    """A bare `SonarrEpisodes` with `__init__` bypassed, over real reads of its `sonarr` before any library read.
+    """A real `SonarrEpisodes` over `deps` and `sonarr`, built as `SonarrStrategy` builds it, before any library read.
 
-    `series_episodes` are the rows the run already read, by series id.
+    The deps are `make_run_deps()` when none are given, and Sonarr a `FakeSonarrClient` that lists no episodes.
     """
 
-    defaults: dict[str, Any] = {"sonarr": FakeSonarrClient(), "_picks_logged": set[int]()}
-    defaults.update(attrs)
-    defaults.setdefault("_reads", make_series_reads(defaults["sonarr"]))
-    episodes = make_bare_instance(SonarrEpisodes, **defaults)
-    seed_series_episodes(episodes._reads, series_episodes or {})
-    return episodes
+    deps = deps or make_run_deps()
+    sonarr = sonarr or FakeSonarrClient()
+    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
+    return SonarrEpisodes(deps, sonarr, ArrRunServices(deps, Arr.SONARR), reads)
 
 
 def seed_series_episodes(reads: SeriesReads, series_episodes: Mapping[int, list[SonarrEpisode]]) -> None:
