@@ -1,11 +1,9 @@
 # pyright: strict
-"""The cached-title short-circuit (`ArrRunServices.is_unchanged`) and the title interfaces around it.
+"""The unchanged-title gate, the start and the no-releases end of a title's check, and the name a title goes by.
 
-Pins the decision, made from a single `CacheStore.get_cached_title` read: a cached
-title whose SeaDex `updated_at` still matches is unchanged (and its url/coverage
-backfilled once if the row predates those fields, its name once AniList can
-resolve it). An absent cached title, or one whose entry changed, is checked again,
-and a row sent on to a check loses its stamp until a check caches the title.
+A title whose row was cached under its SeaDex entry's current update is left alone: it isn't checked, it is shown as
+unchanged from its row, and the row picks up once what an older run didn't store. Anything that could change what
+its check would find sends it on to a check, and its row then counts as uncached until a check caches it again.
 """
 
 import copy
