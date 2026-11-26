@@ -216,7 +216,7 @@ def _listing(files: Mapping[str, int], urls: Sequence[str] = ("u",)) -> SeadexDi
 class TestParsedFilesCache:
     """`parsed_files` asks Sonarr once for each name, then reads its stored answer while it is fresh.
 
-    It never stores a failed answer, and it parses only the video files.
+    It never stores a failed answer, it drops a stored one past the TTL, and it parses only the video files.
     """
 
     @pytest.mark.parametrize(
@@ -262,6 +262,16 @@ class TestParsedFilesCache:
         _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
 
         assert sonarr.parse_calls == [_OTHER_NAME]
+
+    def test_a_stored_parse_past_the_ttl_is_dropped_though_no_release_lists_it(self) -> None:
+        # Nothing asks for a name no release lists any more, so without the drop its row would stay for good.
+        cache = FakeCacheStore(
+            sonarr_parse={_OTHER_NAME: _record(_of_series(1), days_ago=SONARR_PARSE_CACHE_TTL_DAYS + 1)}
+        )
+
+        _parse_cache(FakeSonarrClient(), cache).parsed_files(_listing({_NAME: 100}))
+
+        assert cache.get_sonarr_parse(_OTHER_NAME) is None
 
     def test_each_video_file_is_paired_with_its_size_and_a_parse_asked_for_once(self) -> None:
         # Video files only, each with its own listed size and its parse. Both urls list the same files, as a release's
