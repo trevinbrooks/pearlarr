@@ -15,7 +15,7 @@ import qbittorrentapi
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity
-from pearlarr.wait_types import NO_PROGRESS, AttemptKind, EffectStatus, ImportProgress, Outcome, PauseReason
+from pearlarr.wait_types import AttemptKind, EffectStatus, ImportProgress, Outcome, PauseReason
 
 from .builders import SEP, FakeCacheStore, attempt_result, pending_import
 from .fakes import FakeClock, diagnostic_messages, install_recording_hub
@@ -50,7 +50,6 @@ class TestBlockingWaitImport:
             strategy=strategy,
             store=store,
             grabbed=pending_imports,
-            import_poll_interval=30,
             clock=FakeClock(step=30),
         )
         view = RecordingWaitView()
@@ -94,7 +93,7 @@ class TestBlockingWaitImport:
         strategy = RecordingStrategy(
             attempts=[
                 attempt_result(all_done=False, command_issued=True),
-                attempt_result(all_done=True, command_issued=True),
+                attempt_result(all_done=True),
             ],
             progress=[ImportProgress(1, 1, determinate=True)],
         )
@@ -111,14 +110,13 @@ class TestBlockingWaitImport:
         strategy = RecordingStrategy(
             attempts=[
                 attempt_result(all_done=False, command_issued=True),
-                attempt_result(all_done=True, command_issued=True),
+                attempt_result(all_done=True),
             ],
-            progress=[RuntimeError("progress boom"), NO_PROGRESS],
+            progress=[RuntimeError("progress boom")],
         )
         _, view = run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            step=5,
             progress_poll_interval=5,
         )
 
@@ -194,7 +192,7 @@ class TestBlockingWaitImportDeadline:
                 attempt_result(all_done=False),
                 attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.ISSUED),
                 attempt_result(all_done=False, command_issued=True, pause_reason=PauseReason.IMPORT),
-                attempt_result(all_done=True, command_issued=True),
+                attempt_result(all_done=True),
             ],
         )
         store, view = run_blocking_wait(
@@ -289,7 +287,6 @@ class TestBlockingWaitEndsWithoutAnImport:
         store, view = run_blocking_wait(
             strategy,
             FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
-            import_timeout=60,
         )
 
         assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
@@ -353,16 +350,12 @@ class TestBlockingWaitInterrupt:
             strategy=RecordingStrategy(),
             store=store,
             grabbed=[pending_import(infohash="h")],
-            download_timeout=3600,
-            import_timeout=600,
-            import_poll_interval=30,
             clock=clock_type(),
         )
-        view = RecordingWaitView()
         recording = install_recording_hub()
 
         with ending:
-            mgr.run_blocking(view=view)
+            mgr.run_blocking()
 
         assert stored_awaiting_cleanup(store) == {"h": False}
         assert diagnostic_messages(recording) == ["Wait interrupted - 1 left for the next run"]
@@ -376,9 +369,6 @@ class TestBlockingWaitInterrupt:
             qbit=FakeQbit({"h2": [KeyboardInterrupt()]}),
             strategy=RecordingStrategy(),
             grabbed=[pending_import(infohash="h1"), pending_import(infohash="h2")],
-            download_timeout=3600,
-            import_timeout=600,
-            import_poll_interval=30,
         )
         view = RecordingWaitView()
         recording = install_recording_hub()
@@ -446,7 +436,7 @@ class TestBlockingWaitRowDiscriminator:
             clock=FakeClock(step=30),
         )
 
-        result = mgr.run_blocking(view=RecordingWaitView())
+        result = mgr.run_blocking()
 
         assert result is not None
         assert {row.label: row.carried_over for row in result.rows} == {
@@ -548,7 +538,7 @@ class TestBlockingWaitDownloadBars:
                     "b": [FakeTorrent(progress=0.8, dlspeed=500)],
                 },
             ),
-            strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            strategy=RecordingStrategy(),
             grabbed=[pending_import(infohash="a"), pending_import(infohash="b")],
             import_poll_interval=30,
             progress_poll_interval=5,
@@ -567,8 +557,8 @@ class TestBlockingWaitDownloadBars:
         importing = attempt_result(all_done=False, command_issued=True, imported_count=1, file_map_episode_count=3)
         mgr = make_orchestration_manager(
             qbit=FakeQbit(
-                {"dl": [FakeTorrent(progress=0.3, dlspeed=100), _DONE], "imp": [_DONE]},
-                download_progress={"dl": [FakeTorrent(progress=0.6, dlspeed=999)]},
+                {"dl": [FakeTorrent(progress=0.3), _DONE], "imp": [_DONE]},
+                download_progress={"dl": [FakeTorrent(progress=0.6)]},
             ),
             strategy=RecordingStrategy(attempts=[importing, attempt_result(all_done=True)]),
             grabbed=[pending_import(infohash="dl"), pending_import(infohash="imp")],
@@ -633,7 +623,7 @@ class TestBlockingWaitDownloadBars:
         self, readings: list[QbitStep], history: tuple[int, ...]
     ) -> None:
         _, view = run_blocking_wait(
-            RecordingStrategy(attempts=[attempt_result(all_done=True)]),
+            RecordingStrategy(),
             FakeQbit({"h": [*readings, _DONE]}),
             progress_poll_interval=0,
         )
