@@ -122,11 +122,11 @@ def _pipeline(
     return make_grab_pipeline(deps, state or _run_state())
 
 
-def _holding(names: Mapping[str, str], *, added_on: datetime | None = None) -> FakeQbit:
-    """A qBittorrent holding each torrent, by hash, under its name, added at `added_on` (unknown when None)."""
+def _holding(*hashes: str, added_on: datetime | None = None) -> FakeQbit:
+    """A qBittorrent holding a torrent under each hash, added at `added_on` (unknown when None)."""
 
     stamp = None if added_on is None else int(added_on.timestamp())
-    return FakeQbit({infohash: [FakeTorrent(name=name, added_on=stamp)] for infohash, name in names.items()})
+    return FakeQbit({infohash: [FakeTorrent(added_on=stamp)] for infohash in hashes})
 
 
 def _notifying_pipeline(qbit: FakeQbit) -> GrabPipeline:
@@ -397,7 +397,7 @@ class TestGrabReleaseRegistersPending:
             )
         )
         # qBittorrent lists the torrent by the time the second title gets to it.
-        second = _pipeline(_holding({"h1": "Show"}), state=state, cache_store=store)
+        second = _pipeline(_holding("h1"), state=state, cache_store=store)
         update = pending_import_update("h1", anilist_id=22, stored=_stored(first, "h1"))
 
         second.grab_releases(_grab_request({"NAN0": _group(_release(1))}, pending_import_updates={"h1": update}))
@@ -438,7 +438,7 @@ class TestReacquireRegistration:
     def _reacquire(self, added_on: datetime | None) -> FakeQbit:
         """A qBittorrent holding torrent h1, added at `added_on` (unknown when None)."""
 
-        return _holding({"h1": "Show"}, added_on=added_on)
+        return _holding("h1", added_on=added_on)
 
     def _resident(self, pipeline: GrabPipeline) -> PendingImport:
         """A carried-over pending import put in the store, stamped well before this run."""
@@ -503,7 +503,7 @@ class TestReacquireRegistration:
 
     def test_a_marked_release_is_tracked_under_its_cross_seed(self) -> None:
         # The torrent that already has the release's files is in qBittorrent under another hash than SeaDex's.
-        pipeline = _pipeline(_holding({"c1": "Show"}))
+        pipeline = _pipeline(_holding("c1"))
         release = _release(1)
         release.cross_seed_hash = "c1"
 
@@ -602,7 +602,7 @@ class TestTheRunCap:
         # A torrent already in qBittorrent under a stored pending import stays tracked past the cap: the title's claim
         # joins the pending import, and nothing joins the reacquired keys.
         state = _run_state(torrents_added=1)
-        pipeline = _pipeline(_holding({"h1": "Show"}), state=state, config=make_config(max_torrents_to_add=1))
+        pipeline = _pipeline(_holding("h1"), state=state, config=make_config(max_torrents_to_add=1))
         resident = pending_import(infohash="h1", anilist_id=11)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         updates = {"h1": pending_import_update("h1", anilist_id=22, stored=resident)}
@@ -617,7 +617,7 @@ class TestTheRunCap:
     def test_a_torrent_already_in_qbittorrent_is_no_grab_and_the_release_after_it_still_adds(self) -> None:
         # Under a cap of 1, a torrent already there that counted toward it would hold the release after it.
         serve_named_nyaa_torrents({2: "new"})
-        qbit = _holding({"h1": "old"})
+        qbit = _holding("h1")
         state = _run_state()
         pipeline = _pipeline(qbit, state=state, config=make_config(max_torrents_to_add=1))
 
@@ -863,7 +863,7 @@ class TestPlacementSkips:
     def test_a_skipped_release_of_a_resident_torrent_never_joins_its_pending_import(self) -> None:
         # Another title's pending import has the torrent.
         resident = pending_import(infohash="h1")
-        pipeline = _pipeline(_holding({"h1": "Show"}))
+        pipeline = _pipeline(_holding("h1"))
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         updates = {"h1": pending_import_update("h1", anilist_id=22, stored=resident)}
 
@@ -1145,7 +1145,7 @@ class TestGrabPushesNotice:
     @respx.mock
     def test_nothing_added_pushes_nothing(self) -> None:
         webhook = respx.post(_DISCORD_URL).respond()
-        pipeline = _notifying_pipeline(_holding({"h1": "Show-PMR"}))
+        pipeline = _notifying_pipeline(_holding("h1"))
 
         pipeline.grab_and_cache(_grab_request({"PMR": _group(_release(1))}))
 
