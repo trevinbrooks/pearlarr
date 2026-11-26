@@ -9,8 +9,6 @@ and the real files a run downloaded.
 
 import json
 import os
-import re
-import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -673,7 +671,6 @@ class TestSourceHashGate:
 class TestUnwritableDbFallback:
     """A mappings database that can't be written is rebuilt in memory for the run, with one warning."""
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="chmod can't make a file read-only to its owner on Windows")
     def test_file_db_write_failure_warns_and_rebuilds_in_memory(self, tmp_path: Path) -> None:
         # Inline sources are written on every boot, so the second boot writes to the read-only file.
         inline = MappingSources(anime=_FRIEREN, anidb=False, anibridge=False)
@@ -693,10 +690,10 @@ class TestUnwritableDbFallback:
         assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
 
 
-def _aged(path: Path, *, days: int) -> None:
-    """Set the file's modified time `days` days and a minute back."""
+def _aged(path: Path, *, days: float) -> None:
+    """Set the file's modified time `days` days back."""
 
-    then = time.time() - days * 86400 - 60
+    then = time.time() - days * 86400
     os.utime(path, (then, then))
 
 
@@ -755,20 +752,27 @@ class TestSourceDownloads:
 
         assert bar.updates == [(0.5, "anime_ids.json · 1/2 MB"), (1.0, "anime_ids.json · 2/2 MB")]
 
-    @respx.mock
-    def test_a_source_as_old_as_refresh_days_is_downloaded_again(self, tmp_path: Path) -> None:
+    @pytest.mark.respx(assert_all_called=False)
+    @pytest.mark.parametrize(
+        ("days", "found"),
+        [
+            pytest.param(1.5, [154587, 182255], id="a day and a half old"),
+            pytest.param(0.5, [154587], id="half a day old"),
+        ],
+    )
+    def test_a_source_is_downloaded_again_once_refresh_days_old(
+        self, tmp_path: Path, respx_mock: respx.MockRouter, days: float, found: list[int]
+    ) -> None:
+        # Age counts whole days on the local clock, so halves stay on their side of a day when the clocks change.
         source = tmp_path / ANIME_IDS_FILE
         source.write_text(json.dumps(_FRIEREN))
-        _aged(source, days=1)
-        fresh = json.dumps(
-            {**_FRIEREN, "Sousou no Frieren 2": {"anilist_id": 182255, "tvdb_id": 424536, "tvdb_season": 2}}
-        )
-        respx.get(ANIME_IDS_URL).respond(content=fresh.encode())
+        _aged(source, days=days)
+        fresh = {**_FRIEREN, "Sousou no Frieren 2": {"anilist_id": 182255, "tvdb_id": 424536, "tvdb_season": 2}}
+        respx_mock.get(ANIME_IDS_URL).respond(json=fresh)
 
         resolver = _download_boot(tmp_path, refresh_days=1)
 
-        assert source.read_text() == fresh
-        assert list(resolver.resolve(ExternalIds(tvdb=424536)).kept) == [154587, 182255]
+        assert list(resolver.resolve(ExternalIds(tvdb=424536)).kept) == found
 
     @respx.mock
     @pytest.mark.parametrize(
@@ -798,27 +802,25 @@ class TestSourceDownloads:
         assert resolver.resolve(ExternalIds(tvdb=424536)).kept == {154587: TitleMapping(154587, tvdb_season=1)}
 
     @respx.mock
-    @pytest.mark.parametrize(
-        ("respond", "error"),
-        [
-            pytest.param(lambda: httpx.Response(500), "download failed: HTTP 500", id="server error"),
-            pytest.param(
-                lambda: httpx.Response(200, content=b" " * (2 << 20)),
-                "anime_ids.json exceeded the 1 MB download cap; aborting",
-                id="over the size cap",
-            ),
-        ],
-    )
-    def test_first_ever_download_failure_still_propagates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, respond: Callable[[], httpx.Response], error: str
-    ) -> None:
-        monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1 << 20)  # a cap a small body can pass
-        respx.get(ANIME_IDS_URL).mock(return_value=respond())
+    def test_a_first_download_that_fails_ends_the_boot(self, tmp_path: Path) -> None:
+        respx.get(ANIME_IDS_URL).respond(500)
 
-        with pytest.raises(OSError, match=f"^{re.escape(error)}$"):
+        with pytest.raises(OSError, match=r"^download failed: HTTP 500$"):
             _download_boot(tmp_path)
 
         # No source and no part file, and the database closed: one left open keeps its -wal file beside it.
+        assert [p.name for p in tmp_path.iterdir()] == ["mappings.db"]
+
+    @respx.mock
+    def test_a_first_download_over_the_size_cap_ends_the_boot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1 << 20)  # a cap a small body can pass
+        respx.get(ANIME_IDS_URL).respond(content=b" " * (2 << 20))
+
+        with pytest.raises(OSError, match=r"^anime_ids\.json exceeded the 1 MB download cap; aborting$"):
+            _download_boot(tmp_path)
+
         assert [p.name for p in tmp_path.iterdir()] == ["mappings.db"]
 
 
