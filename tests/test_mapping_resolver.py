@@ -180,11 +180,11 @@ class TestAniBridgeRanges:
         assert found == covered
 
 
-def _aliasing_on(graph: AniBridgeGraph, tvdb_id: int) -> dict[int, SpecialAliasing]:
-    """The specials aliasing of each title a lookup of TVDB show `tvdb_id` finds, for the titles that have any."""
+def _aliasing_on(graph: AniBridgeGraph, tvdb_id: int) -> dict[int, SpecialAliasing | None]:
+    """The specials aliasing of each title a lookup of TVDB show `tvdb_id` finds, None for a title without any."""
 
     kept = _resolver(anibridge=graph).resolve(ExternalIds(tvdb=tvdb_id)).kept
-    return {anilist_id: aliasing for anilist_id, mapping in kept.items() if (aliasing := mapping.special_aliasing)}
+    return {anilist_id: mapping.special_aliasing for anilist_id, mapping in kept.items()}
 
 
 class TestSpecialAliases:
@@ -214,7 +214,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1": "5"}, "tmdb_show:x:s0": {"1": "9"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
 
     def test_a_ratio_piece_pairs_nothing(self) -> None:
         graph: AniBridgeGraph = {
@@ -231,14 +231,14 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-": "3-"}, "tmdb_show:900:s0": {"1-": "5-"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
 
     def test_targets_of_different_lengths_pair_nothing(self) -> None:
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "5-6"}, "tmdb_show:900:s0": {"1-2": "5-7"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
 
     def test_a_source_of_another_length_pairs_nothing(self) -> None:
         # The targets agree with each other but not with the source range they map.
@@ -246,7 +246,21 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-6": "11-17"}, "tmdb_show:900:s0": {"1-6": "12-18"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
+
+    def test_a_source_range_only_tvdb_maps_pairs_nothing(self) -> None:
+        graph: AniBridgeGraph = {
+            "anilist:1": {"tvdb_show:500:s0": {"2": "9"}, "tmdb_show:900:s0": {"1": "6"}},
+        }
+
+        assert _aliasing_on(graph, 500) == {1: None}
+
+    def test_regular_season_targets_pair_nothing(self) -> None:
+        graph: AniBridgeGraph = {
+            "anilist:1": {"tvdb_show:500:s1": {"1-2": "1-2"}, "tmdb_show:900:s1": {"1-2": "1-2"}},
+        }
+
+        assert _aliasing_on(graph, 500) == {1: None}
 
     def test_two_tvdb_specials_targets_pair_nothing(self) -> None:
         graph: AniBridgeGraph = {
@@ -257,7 +271,7 @@ class TestSpecialAliases:
             },
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {2: None}
 
     def test_a_tmdb_number_paired_two_ways_is_dropped(self) -> None:
         graph: AniBridgeGraph = {
@@ -276,7 +290,7 @@ class TestSpecialAliases:
             "anilist:2": {"tvdb_show:500:s0": {"1": "5"}},
         }
 
-        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {4: 4})}
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {4: 4}), 2: None}
 
     def test_another_title_mapping_the_whole_specials_season_drops_every_alias(self) -> None:
         # An empty dict covers the whole season, so title 2 maps every special and title 1 keeps no alias.
@@ -285,7 +299,7 @@ class TestSpecialAliases:
             "anilist:2": {"tvdb_show:500:s0": {}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None, 2: None}
 
     def test_aliases_attach_on_a_tvdb_lookup_only(self) -> None:
         graph: AniBridgeGraph = {
@@ -308,7 +322,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "5-4,7,8"}, "tmdb_show:900:s0": {"1-2": "9-10"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
 
     @pytest.mark.parametrize("target", ["x,7,8", "7,,8"])
     def test_a_junk_piece_pairs_nothing(self, target: str) -> None:
@@ -317,7 +331,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-2": target}, "tmdb_show:900:s0": {"1-2": "9-10"}},
         }
 
-        assert _aliasing_on(graph, 500) == {}
+        assert _aliasing_on(graph, 500) == {1: None}
 
 
 # --------------------------------------------------------------------------- #
