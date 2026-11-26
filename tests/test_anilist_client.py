@@ -29,9 +29,7 @@ from pearlarr.anilist_client import (
     API_URL,
     MAX_RETRIES,
     AniListClient,
-    AniListError,
     AniListMediaNode,
-    _parse_errors,
     extract_path,
     lacks_air_dates,
     media_from_body,
@@ -59,48 +57,6 @@ def _client() -> AniListClient:
     """A wire client for tests with no narration asserts."""
 
     return AniListClient(client=httpx.Client())
-
-
-# --- _parse_errors ----------------------------------------------------------
-
-
-def test_parse_errors_none_and_missing_key() -> None:
-    """No body or no `errors` key yields an empty list (never raises)."""
-
-    assert _parse_errors(None) == []
-    assert _parse_errors({}) == []
-
-
-def test_parse_errors_non_list_errors() -> None:
-    """A non-list `errors` value (malformed body) yields an empty list."""
-
-    body: dict[str, object] = {"errors": "boom"}
-    assert _parse_errors(body) == []
-
-
-def test_parse_errors_wellformed() -> None:
-    """A well-formed error object maps to a typed `AniListError` with its status and message."""
-
-    body: dict[str, object] = {"errors": [{"message": "Too Many Requests", "status": 429}]}
-    parsed = _parse_errors(body)
-    assert parsed == [AniListError(message="Too Many Requests", status=429)]
-
-
-def test_parse_errors_skips_malformed_entries() -> None:
-    """Non-object junk in the array is skipped. Only the dict elements are parsed.
-
-    A dict without a `message` defaults to `""`. A non-int `status` becomes
-    `None` (here the second dict carries only a status).
-    """
-
-    body: dict[str, object] = {
-        "errors": [{"message": "ok", "status": 429}, "junk", 5, None, {"status": 503}],
-    }
-    parsed = _parse_errors(body)
-    assert parsed == [
-        AniListError(message="ok", status=429),
-        AniListError(message="", status=503),
-    ]
 
 
 # --- extract_path ---------------------------------------------------------------
@@ -300,23 +256,15 @@ def test_query_batch_reshapes_page_media_by_id() -> None:
     assert out == {1: {"data": {"Media": {"id": 1, "episodes": 12}}}}
 
 
-@respx.mock
-def test_query_json_array_body_is_no_data() -> None:
-    """A 200 whose body is a JSON *array* falls to the {} no-data branch instead of being laundered as a dict (which used to crash the callers' .get walks)."""
-
-    route = respx.post(API_URL).respond(json=[1, 2, 3])
-
-    body = _client().query(1)
-
-    assert route.call_count == 1
-    assert body == {}
-
-
 # --- retry narration and marking AniList unreachable --------------------------
 
 
 _DISABLED_MESSAGE = "The AniList API has been temporarily disabled due to severe stability issues."
 _DISABLED_BODY: dict[str, object] = {"errors": [{"message": _DISABLED_MESSAGE, "status": 403}], "data": None}
+_JUNK_THEN_DISABLED: dict[str, object] = {
+    "errors": ["junk", {"message": _DISABLED_MESSAGE, "status": 403}],
+    "data": None,
+}
 _SKIPPING = "skipping further lookups this run"
 
 
@@ -438,6 +386,14 @@ def test_give_up_marks_anilist_unreachable(effect: httpx.Response | Exception, r
             {"data": None},
             "gave no usable answer (HTTP 200)",
             id="dataless 200",
+        ),
+        # AniList sends neither of these: a body that isn't an object, and junk ahead of the real error.
+        pytest.param(httpx.Response(200, json=[1, 2, 3]), {}, "gave no usable answer (HTTP 200)", id="json array"),
+        pytest.param(
+            httpx.Response(403, json=_JUNK_THEN_DISABLED),
+            _JUNK_THEN_DISABLED,
+            f"rejected the request (HTTP 403: {_DISABLED_MESSAGE})",
+            id="junk before the error",
         ),
     ],
 )
