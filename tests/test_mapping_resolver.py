@@ -29,10 +29,8 @@ import respx
 
 import pearlarr.mappings as m
 from pearlarr.anibridge import (
-    NO_ALIASES,
     AniBridge,
     AniBridgeGraph,
-    SpecialAliases,
     SpecialAliasing,
 )
 from pearlarr.arr_run_services import ArrRunServices
@@ -194,33 +192,11 @@ class TestAniBridgeRanges:
         assert found == covered
 
 
-def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]:
-    """(graph-backed oracle, SQL-backed view, store) over the same graph."""
+def _aliasing_on(graph: AniBridgeGraph, tvdb_id: int) -> dict[int, SpecialAliasing]:
+    """The specials aliasing of each title a lookup of TVDB show `tvdb_id` finds, for the titles that have any."""
 
-    graph_ab = AniBridge(graph)
-    store = MappingStore.open(":memory:")
-    store.replace_anibridge("d", graph_ab.to_rows())
-    return graph_ab, AniBridge.from_store(store), store
-
-
-def _aliasing_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> SpecialAliasing | None:
-    """The title's `special_aliasing` on a TVDB lookup (None when absent), asserted equal under both backings."""
-
-    graph_ab, sql_ab, store = _ab_pair(graph)
-    try:
-        from_graph: SpecialAliasing | None = graph_ab.lookup_by_tvdb(tvdb_id)[anilist_id].get("special_aliasing")
-        from_sql: SpecialAliasing | None = sql_ab.lookup_by_tvdb(tvdb_id)[anilist_id].get("special_aliasing")
-        assert from_sql == from_graph
-        return from_graph
-    finally:
-        store.close()
-
-
-def _aliases_of(graph: AniBridgeGraph, tvdb_id: int, anilist_id: int) -> SpecialAliases:
-    """The title's special aliases on a TVDB lookup (empty when it has none), asserted equal under both backings."""
-
-    aliasing = _aliasing_of(graph, tvdb_id, anilist_id)
-    return NO_ALIASES if aliasing is None else aliasing.aliases
+    kept = _resolver(anibridge=graph).resolve(ExternalIds(tvdb=tvdb_id)).kept
+    return {anilist_id: aliasing for anilist_id, mapping in kept.items() if (aliasing := mapping.special_aliasing)}
 
 
 class TestSpecialAliases:
@@ -234,21 +210,23 @@ class TestSpecialAliases:
             },
         }
 
-        assert _aliases_of(graph, 500, 1) == {7: 7, 13: 12, 14: 13, 15: 15, 16: 17}
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {7: 7, 13: 12, 14: 13, 15: 15, 16: 17})}
 
-    def test_the_pairs_carry_the_tmdb_show_they_count_in(self) -> None:
+    def test_each_title_on_a_show_carries_its_own_pairs(self) -> None:
+        # Two seasons' titles, each with its own special on the show.
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1": "5"}, "tmdb_show:900:s0": {"1": "9"}},
+            "anilist:2": {"tvdb_show:500:s0": {"1": "6"}, "tmdb_show:900:s0": {"1": "10"}},
         }
 
-        assert _aliasing_of(graph, 500, 1) == SpecialAliasing(900, {9: 5})
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {9: 5}), 2: SpecialAliasing(900, {10: 6})}
 
     def test_a_tmdb_target_without_a_show_id_pairs_nothing(self) -> None:
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1": "5"}, "tmdb_show:x:s0": {"1": "9"}},
         }
 
-        assert _aliasing_of(graph, 500, 1) is None
+        assert _aliasing_on(graph, 500) == {}
 
     def test_a_ratio_piece_pairs_nothing(self) -> None:
         graph: AniBridgeGraph = {
@@ -258,21 +236,21 @@ class TestSpecialAliases:
             },
         }
 
-        assert _aliases_of(graph, 500, 1) == {8: 9}
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {8: 9})}
 
     def test_an_open_end_pairs_nothing(self) -> None:
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-": "3-"}, "tmdb_show:900:s0": {"1-": "5-"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     def test_targets_of_different_lengths_pair_nothing(self) -> None:
         graph: AniBridgeGraph = {
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "5-6"}, "tmdb_show:900:s0": {"1-2": "5-7"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     def test_a_source_of_another_length_pairs_nothing(self) -> None:
         # The targets agree with each other but not with the source range they map.
@@ -280,7 +258,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-6": "11-17"}, "tmdb_show:900:s0": {"1-6": "12-18"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     def test_two_tvdb_specials_targets_pair_nothing(self) -> None:
         graph: AniBridgeGraph = {
@@ -291,7 +269,7 @@ class TestSpecialAliases:
             },
         }
 
-        assert _aliases_of(graph, 500, 2) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     def test_a_tmdb_number_paired_two_ways_is_dropped(self) -> None:
         graph: AniBridgeGraph = {
@@ -301,7 +279,7 @@ class TestSpecialAliases:
             },
         }
 
-        assert _aliases_of(graph, 500, 1) == {8: 7}
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {8: 7})}
 
     def test_an_alias_onto_a_special_another_title_maps_is_dropped(self) -> None:
         # Title 2 maps TVDB special 5 in its own season 0, so title 1's alias onto 5 is dropped. Its alias onto 4 stays.
@@ -310,7 +288,7 @@ class TestSpecialAliases:
             "anilist:2": {"tvdb_show:500:s0": {"1": "5"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {4: 4}
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {4: 4})}
 
     def test_another_title_mapping_the_whole_specials_season_drops_every_alias(self) -> None:
         # An empty dict covers the whole season, so title 2 maps every special and title 1 keeps no alias.
@@ -319,7 +297,7 @@ class TestSpecialAliases:
             "anilist:2": {"tvdb_show:500:s0": {}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     def test_aliases_attach_on_a_tvdb_lookup_only(self) -> None:
         graph: AniBridgeGraph = {
@@ -329,14 +307,12 @@ class TestSpecialAliases:
                 "imdb_show:tt1": {},
             },
         }
-        graph_ab, sql_ab, store = _ab_pair(graph)
-        try:
-            by_imdb = (graph_ab.lookup_by_imdb("tt1")[1], sql_ab.lookup_by_imdb("tt1")[1])
-        finally:
-            store.close()
 
-        assert _aliases_of(graph, 500, 1) == {9: 5}
-        assert ["special_aliasing" in mapping for mapping in by_imdb] == [False, False]
+        # A series of another show that shares the title's IMDb id.
+        by_imdb = _resolver(anibridge=graph).resolve(ExternalIds(tvdb=777, imdb="tt1")).kept
+
+        assert _aliasing_on(graph, 500) == {1: SpecialAliasing(900, {9: 5})}
+        assert by_imdb[1].special_aliasing is None
 
     def test_a_reversed_piece_pairs_nothing(self) -> None:
         # If `5-4` were read as empty, `7,8` would line up with the two-number source and pair wrongly.
@@ -344,7 +320,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-2": "5-4,7,8"}, "tmdb_show:900:s0": {"1-2": "9-10"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
     @pytest.mark.parametrize("target", ["x,7,8", "7,,8"])
     def test_a_junk_piece_pairs_nothing(self, target: str) -> None:
@@ -353,7 +329,7 @@ class TestSpecialAliases:
             "anilist:1": {"tvdb_show:500:s0": {"1-2": target}, "tmdb_show:900:s0": {"1-2": "9-10"}},
         }
 
-        assert _aliases_of(graph, 500, 1) == {}
+        assert _aliasing_on(graph, 500) == {}
 
 
 # --------------------------------------------------------------------------- #
