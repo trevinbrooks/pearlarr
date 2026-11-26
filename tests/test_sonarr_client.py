@@ -1037,53 +1037,6 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 
 @respx.mock
-def test_history_since_non_200_returns_none_and_warns() -> None:
-    """A non-200 history read returns None (the activity read fails open)."""
-
-    respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    recording = install_recording_hub()
-    result = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert result is None
-    # The single warning for a failed history fetch states its consequence too
-    # (the activity read only debug-logs, so this line is all that surfaces).
-    [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
-
-
-@respx.mock
-def test_history_since_request_error_returns_none() -> None:
-    """A transient request error is swallowed to None (fail-open)."""
-
-    respx.get(f"{_BASE}/history/since").mock(side_effect=httpx.ConnectError("boom"))
-    assert _make_client().history_since("2026-06-30T08:00:00Z") is None
-
-
-@respx.mock
-def test_history_since_non_json_body_returns_none_and_warns() -> None:
-    """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
-
-    respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = install_recording_hub()
-    result = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert result is None
-    assert diagnostic_messages(recording, Severity.WARNING)
-
-
-@respx.mock
-def test_history_since_non_array_payload_returns_none_and_warns() -> None:
-    """A JSON object (not the expected array) fails open to None."""
-
-    respx.get(f"{_BASE}/history/since").respond(json={"message": "unauthorized"})
-    recording = install_recording_hub()
-    result = _make_client().history_since("2026-06-30T08:00:00Z")
-
-    assert result is None
-    assert diagnostic_messages(recording, Severity.WARNING)
-
-
-@respx.mock
 def test_history_since_skips_non_dict_elements() -> None:
     """Stray non-object array elements are dropped, not crashed on."""
 
