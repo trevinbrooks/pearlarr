@@ -14,7 +14,6 @@ import httpx
 import pytest
 import respx
 from pydantic import AliasPath
-from respx.models import Call
 
 from pearlarr.anilist_client import (
     API_URL,
@@ -30,6 +29,7 @@ from pearlarr.output import Diagnostic, Severity
 from pearlarr.paths import PROJECT_URL
 
 from .fakes import diagnostic_messages, install_recording_hub
+from .http_mock import requests_sent
 
 _FOUND: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
 # AniList's answer past its rate limit, with HTTP 429 or, when it soft-throttles, HTTP 200.
@@ -66,8 +66,7 @@ def test_every_post_carries_the_project_referer() -> None:
     client.query(1)
     client.query_batch([1, 2])
 
-    calls = cast("list[Call]", route.calls)
-    assert [call.request.headers["Referer"] for call in calls] == [PROJECT_URL, PROJECT_URL]
+    assert [request.headers["Referer"] for request in requests_sent(route.calls)] == [PROJECT_URL, PROJECT_URL]
 
 
 @respx.mock
@@ -80,10 +79,10 @@ def test_each_query_asks_anilist_for_the_ids_it_is_given() -> None:
     client.query(21)
     client.query_batch([21, 22])
 
-    single, batch = cast("list[Call]", route.calls)
-    assert str(single.request.url) == str(batch.request.url) == "https://graphql.anilist.co/"
-    assert json.loads(single.request.content) == {"query": QUERY, "variables": {"id": 21}}
-    assert json.loads(batch.request.content) == {"query": BATCH_QUERY, "variables": {"ids": [21, 22]}}
+    single, batch = requests_sent(route.calls)
+    assert str(single.url) == str(batch.url) == "https://graphql.anilist.co/"
+    assert json.loads(single.content) == {"query": QUERY, "variables": {"id": 21}}
+    assert json.loads(batch.content) == {"query": BATCH_QUERY, "variables": {"ids": [21, 22]}}
 
 
 # Compared as a plain object: the type checker reads `field.annotation is FuzzyDate` as always false.

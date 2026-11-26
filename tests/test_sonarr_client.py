@@ -17,7 +17,6 @@ from typing import cast
 import httpx
 import pytest
 import respx
-from respx.models import Call
 
 from pearlarr.arr_http import GET_RETRIES, ArrHttp, ArrUnreachableError, DeleteOutcome
 from pearlarr.arr_models import (
@@ -36,7 +35,7 @@ from pearlarr.sonarr_client import SonarrClient
 
 from .builders import pending_import
 from .fakes import diagnostic_messages, install_recording_hub
-from .http_mock import sonarr_fixture
+from .http_mock import requests_sent, sonarr_fixture
 
 _URL = "http://sonarr.test"
 _BASE = f"{_URL}/api/v3"
@@ -156,7 +155,7 @@ def test_queue_paginates_until_total_records_covered() -> None:
 
     assert records is not None
     assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
-    assert [call.request.url.params["page"] for call in cast("list[Call]", route.calls)] == ["1", "2"]
+    assert [request.url.params["page"] for request in requests_sent(route.calls)] == ["1", "2"]
 
 
 @respx.mock

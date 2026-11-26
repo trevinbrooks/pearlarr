@@ -26,14 +26,14 @@ still return True - the recorded calls are what make this non-hollow).
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Never, Self, cast
+from typing import Never, Self
 
 import httpx
 import pytest
 import qbittorrentapi
 import respx
 import yaml
-from respx.models import Call, Route
+from respx.models import Route
 from seadex import EntryRecord
 
 import pearlarr.arr_run_services as run_services
@@ -47,7 +47,7 @@ from pearlarr.tracker_links import TrackerLink
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import make_config, make_entry_record, make_torrent_record
-from .http_mock import register_sonarr_reads, skyhook_fixture, sonarr_fixture
+from .http_mock import register_sonarr_reads, requests_sent, skyhook_fixture, sonarr_fixture
 
 # Three-way id agreement: series fixture id 228 carries tvdbId 299502. The inline
 # mapping ties it to AniList 20920. The faked SeaDex entry answers for 20920.
@@ -196,10 +196,7 @@ def test_sonarr_run_drives_real_composition_root(
 
     result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
 
-    # respx's CallList extends bare list, so name the element type here.
-    respx_fired = {
-        f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
-    }
+    respx_fired = {f"{request.method} {str(request.url).split('?')[0]}" for request in requests_sent(respx.calls)}
     # The real composition root ran one full Sonarr run with zero real network.
     assert result is True
     # The inline tvdb->anilist mapping resolved id 20920 and the gateway was consulted

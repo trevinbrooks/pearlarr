@@ -12,8 +12,11 @@ own call site.
 
 import json
 from pathlib import Path
+from typing import cast
 
+import httpx
 import respx
+from respx.models import Call, CallList
 
 _SONARR_FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 _SKYHOOK_FIXTURES = Path(__file__).parent / "fixtures" / "skyhook"
@@ -36,6 +39,13 @@ def xem_fixture(name: str) -> object:
     """Decode a captured TheXEM mappings reply by file name, cut down to a few rows."""
 
     return json.loads((_XEM_FIXTURES / name).read_text())
+
+
+def requests_sent(calls: CallList) -> list[httpx.Request]:
+    """The requests behind a respx route's or router's calls, oldest first."""
+
+    # respx declares its call list as a bare `list`, so its items have no type until one is named here.
+    return [call.request for call in cast("list[Call]", calls)]
 
 
 def register_sonarr_reads(

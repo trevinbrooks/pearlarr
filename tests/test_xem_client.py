@@ -1,19 +1,16 @@
 # pyright: strict
 """The TheXEM wire client over `respx`: what a reply reads as, and the unreachable flag."""
 
-from typing import cast
-
 import httpx
 import pytest
 import respx
-from respx.models import Call
 
 from pearlarr.output import Severity
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.xem_client import XEM_URL, XemClient, XemNoReply
 
 from .fakes import FakeXemClient, diagnostic_messages, install_recording_hub
-from .http_mock import xem_fixture
+from .http_mock import requests_sent, xem_fixture
 
 _SERIES = 79214
 _MAPPINGS = (
@@ -73,9 +70,9 @@ def test_a_request_carries_the_tvdb_id_and_the_origin_and_nothing_else() -> None
         route = respx.get(XEM_URL).respond(json=_NO_CONNECTION)
         _client().mappings(_SERIES)
 
-        (call,) = cast("list[Call]", route.calls)
+        (request,) = requests_sent(route.calls)
 
-    assert str(call.request.url) == f"https://thexem.info/map/all?id={_SERIES}&origin=tvdb"
+    assert str(request.url) == f"https://thexem.info/map/all?id={_SERIES}&origin=tvdb"
 
 
 def test_a_row_with_no_scene_side_is_dropped() -> None:
