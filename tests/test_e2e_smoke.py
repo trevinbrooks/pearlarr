@@ -276,7 +276,7 @@ def test_only_a_real_run_grabs_writes_the_cache_and_notifies(
 
     qbit = _EmptyQbit()
     monkeypatch.setattr(qbittorrentapi, "Client", qbit.build)
-    # An explicit category, so the run reads no download client from Sonarr.
+    # An explicit category, and the import wait off below, so the run reads no download client from Sonarr.
     config = _sonarr_config(
         host="http://qbittorrent.test", username="admin", password="adminadmin", sonarr_torrent_category="anime"
     )
