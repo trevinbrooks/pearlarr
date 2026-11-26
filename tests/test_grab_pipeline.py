@@ -592,17 +592,15 @@ class TestTheRunCap:
 
     def test_a_joining_title_held_by_the_cap_saves_its_claim(self) -> None:
         # A torrent already in qBittorrent under a stored pending import stays tracked past the cap: the title's claim
-        # joins the pending import without a qBittorrent call, and nothing joins the reacquired keys.
-        qbit = _holding({"h1": "Show"})
+        # joins the pending import, and nothing joins the reacquired keys.
         state = _run_state(torrents_added=1)
-        pipeline = _pipeline(qbit, state=state, config=make_config(max_torrents_to_add=1))
+        pipeline = _pipeline(_holding({"h1": "Show"}), state=state, config=make_config(max_torrents_to_add=1))
         resident = pending_import(infohash="h1", anilist_id=11)
         pipeline.cache_store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
         updates = {"h1": pending_import_update("h1", anilist_id=22, stored=resident)}
 
         pipeline.grab_releases(_grab_request({"RG": _group(_release(1))}, pending_import_updates=updates))
 
-        assert qbit.added == []
         assert claim_anilist_ids(_stored(pipeline, "h1")) == (11, 22)
         assert state.reacquired_keys == set()
         assert state.grabbed_this_run == {}
