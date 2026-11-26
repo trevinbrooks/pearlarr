@@ -1,5 +1,5 @@
 # pyright: strict
-"""End-to-end smoke tests: one full arr run per arr through the REAL composition root.
+"""End-to-end tests: whole arr runs through the REAL composition root.
 
 These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
 `ArrRunDeps.build` -> `ArrRunServices` -> `ArrRunLoop.run_arr` -> `SonarrStrategy`
@@ -7,9 +7,12 @@ These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
 external network leaves faked:
 
 * the SeaDex library, faked at the composition root's `SeaDexEntry` leaf.
-* qBittorrent, left unconfigured so the whole run is a perpetual dry run.
+* qBittorrent, either left unconfigured, which makes every run a dry run, or
+  faked at the `qbittorrentapi.Client` the run builds: an empty qBittorrent that
+  records what it is asked to add.
 * the Arr HTTP (every raw endpoint uses the httpx-based `ArrHttp`), and the
-  AniList POST and SkyHook GET (on the shared web client), all mocked via `respx`.
+  AniList POST, SkyHook GET and Discord webhook POST (on the shared web client),
+  all mocked via `respx`.
 * the Nyaa lookup, faked at `torrents.fetch_nyaa_link`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
@@ -23,10 +26,11 @@ still return True - the recorded calls are what make this non-hollow).
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Never, Self, cast
 
 import httpx
 import pytest
+import qbittorrentapi
 import respx
 import yaml
 from respx.models import Call, Route
@@ -217,6 +221,76 @@ def test_sonarr_run_drives_real_composition_root(
     # stdout renderer printed the summary's structured line. Reading capsys also
     # keeps the live region off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out
+
+
+_DISCORD_URL = "https://discord.test/api/webhooks/1/token"
+
+
+class _EmptyQbit:
+    """Stands in for the `qbittorrentapi.Client` a run builds: a qBittorrent holding no torrents.
+
+    It records the link of every torrent it is asked to add.
+    """
+
+    def __init__(self) -> None:
+        self.added: list[str] = []
+
+    def build(self, **settings: object) -> Self:
+        """Answer the run's `qbittorrentapi.Client(...)` call (host, credentials, request options) with this fake."""
+
+        del settings
+        return self
+
+    def auth_log_in(self) -> None:
+        """Accept the run's login."""
+
+    def torrents_info(self, *, torrent_hashes: str | None = None, category: str | None = None) -> list[Never]:
+        """No torrent for any filter: the release isn't in qBittorrent yet, and a fresh add isn't listed at once."""
+
+        del torrent_hashes, category
+        return []
+
+    def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
+        del category, tags
+        self.added.append(urls)
+        return "Ok."
+
+
+@pytest.mark.usefixtures("sonarr_edges")
+@pytest.mark.parametrize(
+    ("dry_run", "added", "cache_written", "notices"),
+    [
+        pytest.param(False, [_NYAA_TORRENT], True, 1, id="real-run"),
+        pytest.param(True, [], False, 0, id="dry-run"),
+    ],
+)
+def test_only_a_real_run_grabs_writes_the_cache_and_notifies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+    added: list[str],
+    cache_written: bool,
+    notices: int,
+) -> None:
+    """`--dry-run` promises no grabs, no cache writes and no notifications. The same run without it makes all three."""
+
+    qbit = _EmptyQbit()
+    monkeypatch.setattr(qbittorrentapi, "Client", qbit.build)
+    # An explicit category, so the run reads no download client from Sonarr.
+    config = _sonarr_config(
+        host="http://qbittorrent.test", username="admin", password="adminadmin", sonarr_torrent_category="anime"
+    )
+    _write_config(monkeypatch, tmp_path, config)
+    # Through the environment, since the file would hold the webhook URL masked.
+    monkeypatch.setenv("PEARLARR_NOTIFICATIONS__DISCORD_URL", _DISCORD_URL)
+    discord = respx.post(_DISCORD_URL).respond(204)
+
+    run_single(dry_run=dry_run, import_wait_mode=ImportWaitMode.OFF)
+
+    assert qbit.added == added
+    # A missing cache.db opens in memory and is written only at the first real save.
+    assert (tmp_path / "cache.db").exists() is cache_written
+    assert discord.call_count == notices
 
 
 # Three-way id agreement for the Radarr run: the inline movie body's tmdbId
