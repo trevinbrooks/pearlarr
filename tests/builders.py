@@ -756,8 +756,7 @@ def sonarr_client_fields(grab: str = "tv-sonarr", post_import: str = "sonarr-don
 
 
 def make_resolver(
-    config: AppConfig,
-    web: httpx.Client,
+    config: AppConfig | None = None,
     *,
     anime_ids: AnimeIdsByName | None = None,
     anime_lists: ElementTree.Element | None = None,
@@ -765,14 +764,15 @@ def make_resolver(
     """A real resolver over the Anime-IDs rows in `anime_ids` and the AniDB episode maps in `anime_lists`.
 
     Both are given inline. With no `anime_ids` the resolver has no rows, and with no `anime_lists` the AniDB
-    source is off. AniBridge is off, so it fetches nothing, and its `anibridge` is a real empty one. The ignore
-    list and refresh age are the config's, as bootstrap reads them.
+    source is off. AniBridge is off, so its web client fetches nothing, and its `anibridge` is a real empty one.
+    The ignore list and refresh age are the config's (`make_config`'s when None), as bootstrap reads them.
     """
 
+    config = config or make_config()
     return MappingResolver(
         refresh_days=config.mappings.refresh_days,
         ignore_anilist_ids=config.seadex.ignore_anilist_ids,
-        web=web,
+        web=httpx.Client(),
         sources=MappingSources(
             anime=anime_ids or {}, anidb=False if anime_lists is None else anime_lists, anibridge=False
         ),
@@ -834,7 +834,7 @@ def make_run_deps(
         parse_cache_rows=ParseCacheRows(cache_store),
         http=http,
         qbit=qbit,
-        resolver=make_resolver(config, http, anime_ids=anime_ids),
+        resolver=make_resolver(config, anime_ids=anime_ids),
         logger=logger,
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,

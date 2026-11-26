@@ -310,16 +310,14 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
     # boot step lines must say so via a DEFERRED step instead of silently skipping
     # the qBittorrent step.
     flow, recording, _ = _flow()
-    config = make_config()  # no qbittorrent credentials
-    web = httpx.Client()
 
     deps = ArrRunDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
         logger=logging.getLogger("boot-flow-qbit"),
-        resolver=make_resolver(config, web),
-        app_config=config,
-        web=web,
+        resolver=make_resolver(),
+        app_config=make_config(),  # no qbittorrent credentials
+        web=httpx.Client(),
         boot=flow,
     )
     flow.close()
