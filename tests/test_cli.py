@@ -667,15 +667,16 @@ class TestRunFailuresAreCleanAndNonzero:
         assert "Traceback" not in out
 
     def test_malformed_yaml_fails_the_run_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
-        # The syntax error sits ON the credential line: the report must carry the
-        # problem + position (from the error's parts), never str(e)'s source
-        # snippet, which would quote the api key back to the console/log.
-        _write_data_dir_config('sonarr:\n  api_key: "hunter2\n')
+        # The syntax error sits on the credential line. The report gives the problem and where it is from the
+        # error's parts, never the error's own text, which quotes the line and so the api key.
+        config = _write_data_dir_config('sonarr:\n  api_key: "hunter2\n')
 
         assert run_single() is False
         out = capsys.readouterr().out
-        assert "Unreadable YAML" in out
-        assert "line 3" in out  # the position survives, so it is easy to find
+        assert (
+            f"ERROR [Pearlarr] Unreadable YAML in {config} (while scanning a quoted scalar, found unexpected end of "
+            "stream at line 3, column 1) - fix the file and re-run - skipping this run during=boot"
+        ) in _lines(out)
         assert "hunter2" not in out
         assert "Traceback" not in out
 
