@@ -205,7 +205,7 @@ class TestBlockingWaitImportDeadline:
         assert stored_awaiting_cleanup(store) == {}
         assert [c.attempt_kind.at_deadline for c in strategy.import_calls] == [False, False, True, True, True]
 
-    def test_fresh_post_pauses_once_per_row(self) -> None:
+    def test_an_import_reissued_on_every_poll_still_ends_at_the_ordinary_deadline(self) -> None:
         # A POST whose files all fail inside Sonarr is re-POSTed every poll:
         # only the first pauses the clock, so the retry loop finishes at the
         # ordinary deadline (t=60), never going on to the cap.
