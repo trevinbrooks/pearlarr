@@ -903,6 +903,20 @@ class TestConfigMigrate:
         assert config.read_text(encoding="utf-8") == text
         assert not os.path.exists(f"{config}.bak")
 
+    def test_refuses_while_a_run_holds_the_lock(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # A run rewrites an old config itself, under the same lock: the two
+        # writers must never meet on the backup and temp files.
+        text = "seadex:\n  public_only: true\n"
+        config = _write_data_dir_config(text)
+        data_dir = resolve_paths().data_dir
+
+        with single_instance_lock(data_dir):
+            assert config_migrate() is False
+
+        assert capsys.readouterr().err == f"Another Pearlarr run is active in {data_dir} - not modifying the config\n"
+        assert config.read_text(encoding="utf-8") == text
+        assert not os.path.exists(f"{config}.bak")
+
 
 class TestVersionAndHelp:
     """`--version`, `-h`, and a bare subcommand group all succeed instead of erroring.
