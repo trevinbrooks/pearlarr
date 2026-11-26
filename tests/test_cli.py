@@ -62,7 +62,7 @@ from pearlarr.runlock import single_instance_lock
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import write_cache_db
-from .fakes import RecordingHub, install_recording_hub
+from .fakes import RecordingHub, TtyStringIO, install_recording_hub, strip_ansi
 
 
 def _starter_text() -> str:
@@ -984,7 +984,7 @@ class _SignalRecorder:
 
 
 class TestLogFormatWiring:
-    """`advanced.log_format` is what both run commands print in, terminal or not.
+    """`advanced.log_format` is what both run commands print in, terminal or not, and auto is rich on a terminal.
 
     json is one JSON object per line. rich is the indented console layout.
     """
@@ -1034,6 +1034,18 @@ class TestLogFormatWiring:
         lines = result.stdout.splitlines()
         assert "  Sonarr not configured - not run" in lines
         assert lines[-1].startswith("Next scheduled run at ")
+
+    def test_auto_on_a_terminal_prints_the_rich_layout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The runner's stdout is never a terminal, so this calls the command itself.
+        _write_current_config()
+        stream = TtyStringIO()
+        monkeypatch.setattr(sys, "stdout", stream)
+        # Windows CI has no VT console. The fake terminal plays a modern one.
+        monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
+
+        assert run_single() is False
+
+        assert "  Sonarr not configured - not run" in strip_ansi(stream.getvalue()).splitlines()
 
 
 class TestMissingConfigExitsNonzero:
