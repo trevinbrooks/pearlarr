@@ -7,6 +7,7 @@ isolated logger that replaces the single process-global `builders.make_logger`.
 """
 
 import logging
+import os
 import signal
 import time
 from collections.abc import Callable, Iterator
@@ -17,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from pearlarr.env_registry import ENV_CONFIG_DELIMITER, ENV_CONFIG_PREFIX
 from pearlarr.log import LOG_NAME
 from pearlarr.mapping_store import MappingStore
 from pearlarr.output import uninstall_bridge, uninstall_hub
@@ -150,6 +152,19 @@ def isolate_data_dir(
     if "real_data_dir" in request.keywords:
         return
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "pearlarr_data"))
+
+
+@pytest.fixture(autouse=True)
+def drop_exported_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the `PEARLARR_*__*` settings the shell exports, so no test's config is merged with the developer's own.
+
+    The end-to-end tests leave qBittorrent out of their config so their runs are dry runs. An exported qBittorrent
+    host would be merged over it and make those runs real. A test that wants an override sets it itself.
+    """
+
+    for name in list(os.environ):
+        if name.startswith(ENV_CONFIG_PREFIX) and ENV_CONFIG_DELIMITER in name.removeprefix(ENV_CONFIG_PREFIX):
+            monkeypatch.delenv(name)
 
 
 @pytest.fixture
