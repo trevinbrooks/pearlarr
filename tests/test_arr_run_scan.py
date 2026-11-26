@@ -349,8 +349,11 @@ class _Series3(FakeStrategy):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _Situation:
-    """What a run met: its narrowing to one series, the sources unreachable or holding a title, and a failed check."""
+class _Coverage:
+    """How far a run's scan covered the library.
+
+    That is its narrowing to one series, the sources unreachable or holding a title, and a failed check.
+    """
 
     item_id: int | None = None
     seadex_unreachable: bool = False
@@ -391,22 +394,22 @@ class TestSelectionRecheck:
         assert (self._NOTE in diagnostic_messages(recording)) is announced
 
     @pytest.mark.parametrize(
-        ("situation", "stored"),
+        ("coverage", "stored"),
         [
-            pytest.param(_Situation(), True, id="full"),
-            pytest.param(_Situation(item_id=3), False, id="single-item"),
-            pytest.param(_Situation(seadex_unreachable=True), False, id="no-seadex"),
+            pytest.param(_Coverage(), True, id="full"),
+            pytest.param(_Coverage(item_id=3), False, id="single-item"),
+            pytest.param(_Coverage(seadex_unreachable=True), False, id="no-seadex"),
             # A title AniList left unread isn't cached, so the next run checks it whatever this one stored.
-            pytest.param(_Situation(anilist_unreachable=True), True, id="no-anilist"),
+            pytest.param(_Coverage(anilist_unreachable=True), True, id="no-anilist"),
             # So is a title held past the cap.
-            pytest.param(_Situation(held_past_the_cap=True), True, id="held-past-the-cap"),
+            pytest.param(_Coverage(held_past_the_cap=True), True, id="held-past-the-cap"),
             # And one whose check failed: blocking the stores, one flaky title would have the library checked again
             # every run.
-            pytest.param(_Situation(title_fails=True), True, id="a-title-failed"),
+            pytest.param(_Coverage(title_fails=True), True, id="a-title-failed"),
         ],
     )
     def test_a_full_scan_seadex_answered_stores_the_selection_and_the_checkpoint(
-        self, situation: _Situation, stored: bool
+        self, coverage: _Coverage, stored: bool
     ) -> None:
         # Left unstored, the next run checks the cached titles again and replays the same activity. The run is a real
         # one, as only a real run's stores are saved.
@@ -415,14 +418,14 @@ class TestSelectionRecheck:
         deps = make_run_deps(
             cache_store=cache,
             qbit=FakeQbit().client(),
-            seadex=FakeSeaDexSource(unreachable=situation.seadex_unreachable),
-            anilist_client=ScriptedAniListClient(failing=frozenset({11} if situation.anilist_unreachable else ())),
+            seadex=FakeSeaDexSource(unreachable=coverage.seadex_unreachable),
+            anilist_client=ScriptedAniListClient(failing=frozenset({11} if coverage.anilist_unreachable else ())),
         )
 
         drive_arr_run(
             deps,
-            lambda services: _Series3(services if situation.held_past_the_cap else None, fails=situation.title_fails),
-            item_id=situation.item_id,
+            lambda services: _Series3(services if coverage.held_past_the_cap else None, fails=coverage.title_fails),
+            item_id=coverage.item_id,
         )
 
         selection_stored = not cache.selection_changed(Arr.SONARR, deps.config.selection_hash())
