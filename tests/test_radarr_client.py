@@ -61,13 +61,13 @@ def test_movie_files_decodes_resources_and_builds_request() -> None:
 def test_movie_files_non_200_returns_empty_and_warns() -> None:
     """A failed read gives [] with a warning, so the caller goes on as if the movie had no files."""
 
-    respx.get(f"{_BASE}/moviefile").respond(status_code=404)
+    respx.get(f"{_BASE}/moviefile").respond(status_code=500)
     recording = install_recording_hub()
     files = _make_client().movie_files(7)
 
     assert files == []
     [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == "Could not fetch files for movie 7 from Radarr (status code 404) - assuming none"
+    assert warning == "Could not fetch files for movie 7 from Radarr (status code 500) - assuming none"
 
 
 @respx.mock

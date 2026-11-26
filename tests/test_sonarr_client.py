@@ -790,12 +790,12 @@ def test_command_status_non_200_returns_default() -> None:
     The caller treats the import as unverified and leaves the pending import as it is.
     """
 
-    respx.get(f"{_BASE}/command/9").respond(status_code=503)
+    respx.get(f"{_BASE}/command/9").respond(status_code=500)
     recording = install_recording_hub()
 
     assert _make_client().command_status(9) == CommandResource()
     assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Could not fetch status for command 9 (status code 503) - leaving the import unverified",
+        "Could not fetch status for command 9 (status code 500) - leaving the import unverified",
     ]
 
 
@@ -825,12 +825,12 @@ def test_list_commands_decodes_with_nested_files() -> None:
 def test_list_commands_non_200_returns_none() -> None:
     """A non-200 command list reads as unreadable (None)."""
 
-    respx.get(f"{_BASE}/command").respond(status_code=503)
+    respx.get(f"{_BASE}/command").respond(status_code=500)
     recording = install_recording_hub()
 
     assert _make_client().list_commands() is None
     assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Could not fetch the Sonarr command list (status code 503) - will retry",
+        "Could not fetch the Sonarr command list (status code 500) - will retry",
     ]
 
 
