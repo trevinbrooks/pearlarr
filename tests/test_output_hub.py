@@ -33,7 +33,6 @@ from pearlarr.output import (
     Severity,
     SeverityCounter,
     SeverityTally,
-    current_hub,
     emit_to_hub,
     hub_note,
     install_hub,
@@ -86,12 +85,6 @@ class _FailingRenderer(_QuietRenderer):
     @override
     def close(self) -> None:
         self.log.append("close")
-
-
-class _InterruptingRenderer(_FailingRenderer):
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        raise KeyboardInterrupt
 
 
 class _FailOnMarkerRenderer(_FailingRenderer):
@@ -170,19 +163,6 @@ class _GatedRenderer(_QuietRenderer):
         self.log.append("close")
 
 
-class _InterruptOnceRenderer(_QuietRenderer):
-    """Raises KeyboardInterrupt on the first handle only (the drain-lock recovery check)."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        self.calls += 1
-        if self.calls == 1:
-            raise KeyboardInterrupt
-
-
 # --- dispatch ---------------------------------------------------------------------
 
 
@@ -239,26 +219,6 @@ class _LifecycleEmitter(_QuietRenderer):
     def begin_run(self) -> None:
         emit_to_hub(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
         self.log.append("begin_run")
-
-
-class _EmitThenInterrupt(_QuietRenderer):
-    """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
-
-    This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
-    exit line. The repeat raise models a hostile renderer on the flush's
-    best-effort re-dispatch).
-    """
-
-    def __init__(self) -> None:
-        self._marked = False
-
-    @override
-    def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, PearlarrStarted):
-            if not self._marked:
-                self._marked = True
-                emit_to_hub(Diagnostic(severity=Severity.INFO, message="exit marker"))
-            raise KeyboardInterrupt
 
 
 # --- containment --------------------------------------------------------------------
@@ -355,12 +315,6 @@ def test_the_final_strike_says_the_renderer_is_disabled() -> None:
     ]
 
 
-def test_keyboard_interrupt_still_propagates() -> None:
-    hub = OutputHub([_InterruptingRenderer()])
-    with pytest.raises(KeyboardInterrupt):
-        hub.emit(_EVENT)
-
-
 def test_containment_notes_are_uncounted_while_a_file_renderer_survives() -> None:
     flaky, survivor = _FailingRenderer(), _FileLog()
     hub = OutputHub([flaky, survivor])
@@ -442,44 +396,84 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     assert gated.threads == [drainer, drainer]
 
 
-def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
+# --- interrupts ---------------------------------------------------------------------
+
+_EXIT_LINE = Diagnostic(severity=Severity.INFO, message="Received SIGTERM - exiting")
+
+
+class _SigtermMidDispatch(_QuietRenderer):
+    """The SIGTERM handler landing inside this renderer's first handle: it emits its exit line, then raises SystemExit."""
+
+    def __init__(self) -> None:
+        self.signalled = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if not self.signalled:
+            self.signalled = True
+            emit_to_hub(_EXIT_LINE)
+            raise SystemExit(0)
+
+
+def test_a_sigterm_mid_dispatch_still_flushes_its_exit_line() -> None:
     survivor = RecordingRenderer()
-    hub = OutputHub([_EmitThenInterrupt(), survivor])
+    hub = OutputHub([_SigtermMidDispatch(), survivor])
+    install_hub(hub)
+
+    with pytest.raises(SystemExit):
+        hub.emit(_EVENT)
+
+    # The event the exit cut short and the exit line queued behind it both reach the survivor.
+    assert survivor.events == [_EVENT, _EXIT_LINE]
+
+
+_QUEUED = Diagnostic(severity=Severity.INFO, message="queued")
+_AFTER = Diagnostic(severity=Severity.INFO, message="after")
+
+
+class _CtrlCMidDispatch(_QuietRenderer):
+    """Ctrl-C inside the first handle after queueing a follow-up, and Ctrl-C again whenever it's handed `again_on`."""
+
+    def __init__(self, again_on: Event) -> None:
+        self.again_on = again_on
+        self.queued = False
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if not self.queued:
+            self.queued = True
+            emit_to_hub(_QUEUED)
+            raise KeyboardInterrupt
+        if event == self.again_on:
+            raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize(
+    ("again_on", "survivor_gets"),
+    [
+        pytest.param(_EVENT, [_EVENT, _QUEUED, _AFTER], id="as-the-unwind-retries-the-event"),
+        pytest.param(_QUEUED, [_EVENT, _AFTER], id="as-the-unwind-flushes-the-queue"),
+    ],
+)
+def test_a_second_ctrl_c_during_the_unwind(again_on: Event, survivor_gets: list[Event]) -> None:
+    """One on the retry of the cut-short event is contained, so the queue still flushes.
+
+    One on the queue cuts the flush short, but the hub still dispatches the next emit.
+    """
+
+    survivor = RecordingRenderer()
+    hub = OutputHub([_CtrlCMidDispatch(again_on), survivor])
     install_hub(hub)
 
     with pytest.raises(KeyboardInterrupt):
         hub.emit(_EVENT)
+    hub.emit(_AFTER)
 
-    # Crash fidelity, both halves: the IN-FLIGHT event's fan-out completes on the
-    # unwind path (the survivor gets the PearlarrStarted the interrupt cut short -
-    # even though the hostile renderer re-raises on the best-effort re-dispatch), and
-    # the QUEUED marker (a SIGTERM handler's exit line) flushes before the drain lock
-    # is released.
-    assert len(survivor.of_type(PearlarrStarted)) == 1
-    assert [d.message for d in survivor.of_type(Diagnostic)] == ["exit marker"]
-    assert hub._drainer is None
-
-
-def test_a_propagating_interrupt_never_strands_the_drain_lock() -> None:
-    flaky, survivor = _InterruptOnceRenderer(), RecordingRenderer()
-    hub = OutputHub([flaky, survivor])
-
-    with pytest.raises(KeyboardInterrupt):
-        hub.emit(_EVENT)
-    assert hub._drainer is None  # the finally released the drain lock
-
-    follow = Diagnostic(severity=Severity.INFO, message="after")
-    hub.emit(follow)  # a fresh emit claims the drain lock and dispatches
-    assert follow in survivor.events
+    assert survivor.events == survivor_gets
 
 
 def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An interrupt landing before _drain runs must leave no leftover drain lock behind.
-
-    Emit only checks-and-calls. The drain lock is taken inside _drain's try. With the
-    old take-in-emit shape this KI left _drainer set forever and the follow-up
-    emit dispatched nothing (the silent-dark-hub wedge).
-    """
+    """An interrupt that lands after emit queues the event but before the drain starts leaves no drain lock behind."""
 
     survivor = RecordingRenderer()
     hub = OutputHub([survivor])
@@ -487,15 +481,14 @@ def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_drain_lock(monkeypa
     def interrupted_drain() -> None:
         raise KeyboardInterrupt
 
+    # That window is a few bytecodes wide, so the only way to land in it is to stand in for the drain.
     monkeypatch.setattr(hub, "_drain", interrupted_drain)
     with pytest.raises(KeyboardInterrupt):
         hub.emit(_EVENT)
     monkeypatch.undo()
 
-    assert hub._drainer is None  # nothing to strand: the drain lock was never taken
-    follow = Diagnostic(severity=Severity.INFO, message="after")
-    hub.emit(follow)  # drains the stranded event AND the new one, in order
-    assert [type(event).__name__ for event in survivor.events] == ["PearlarrStarted", "Diagnostic"]
+    hub.emit(_AFTER)  # drains the stranded event and the new one, in order
+    assert survivor.events == [_EVENT, _AFTER]
 
 
 def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
@@ -963,35 +956,39 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
 
 class _LifecycleCaller(_QuietRenderer):
-    """On each PearlarrStarted it's handed, emits a follow-up and then sets the process hub's level from inside `handle`."""
+    """On each PearlarrStarted it's handed, emits a follow-up and then sets the level from inside `handle`.
+
+    It's handed its hub rather than finding the process hub. A set_level that waited on its own drain would leave a
+    thread holding the drain lock for good, and closing an installed hub at teardown would then wait on it forever.
+    """
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
 
     @override
     def handle(self, event: Event, when: float) -> None:
-        if isinstance(event, PearlarrStarted):
-            emit_to_hub(Diagnostic(severity=Severity.INFO, message="queued behind"))
-            current_hub().set_level(logging.WARNING)
+        if isinstance(event, PearlarrStarted) and self.hub is not None:
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
+            self.hub.set_level(logging.WARNING)
 
 
 def test_a_mid_dispatch_lifecycle_call_keeps_the_drain_lock_and_the_emit_order() -> None:
-    """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's drain lock.
-
-    The re-entrant event still dispatches AFTER the in-flight one.
-    """
+    """`set_level` from inside a renderer's handle neither waits on its own drain, flushes inside it, nor keeps its drain lock."""
 
     recorder = RecordingRenderer()
-    hub = OutputHub([_LifecycleCaller(), recorder])
-    install_hub(hub)
+    caller = _LifecycleCaller()
+    hub = OutputHub([caller, recorder])
+    caller.hub = hub
 
-    # On a thread of its own: without the escape, set_level waits on its own drain for good.
+    # On a thread of its own: a set_level that waited on its own drain would never return.
     emitter = threading.Thread(target=lambda: hub.emit(_EVENT), daemon=True)
     emitter.start()
     emitter.join(timeout=30.0)
     assert not emitter.is_alive(), "set_level inside handle waited on its own drain"
+    hub.emit(_AFTER)  # dispatches only if the drain lock came back
 
-    # Order preserved: the in-flight PearlarrStarted completes its fan-out before the
-    # re-entrant diagnostic dispatches. Nothing double-dispatches. Drain lock released.
-    assert [type(e).__name__ for e in recorder.events] == ["PearlarrStarted", "Diagnostic"]
-    assert hub._drainer is None
+    # The in-flight event finishes its fan-out before the follow-up it queued, and nothing goes out twice.
+    assert recorder.events == [_EVENT, Diagnostic(severity=Severity.INFO, message="queued behind"), _AFTER]
 
 
 class _BrokenStderr(io.StringIO):
