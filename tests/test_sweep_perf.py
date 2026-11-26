@@ -1,7 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These set the episode collaborator's private config (eps._config) and call
-# SonarrParseCache._parse_for and _warm_parse_cache.
+# These set the episode collaborator's private config (eps._config).
 # Strict re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups.
 
@@ -21,7 +20,14 @@ from seadex import EntryRecord
 
 from pearlarr.aired_view import AiredSeries, NoView
 from pearlarr.arr_http import SONARR_FETCH_WORKERS, fetch_workers
-from pearlarr.arr_models import AlternateTitle, MatchedEpisode, ParsedFileInfo, SeasonTypeCount, SonarrEpisode
+from pearlarr.arr_models import (
+    AlternateTitle,
+    MatchedEpisode,
+    ParsedFileInfo,
+    SeasonTypeCount,
+    SonarrEpisode,
+    SonarrSeries,
+)
 from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.config import Arr
 from pearlarr.grab_placement import ListedFile
@@ -38,7 +44,7 @@ from pearlarr.seadex_gateway import SeaDexNoEntry
 from pearlarr.series_reads import SeriesReads
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
-from pearlarr.stamps import STAMP_FORMAT, stamp_of
+from pearlarr.stamps import stamp_of
 from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.video_files import is_video_candidate
 
@@ -47,18 +53,18 @@ from .builders import (
     held_series_episodes,
     make_config,
     make_entry_record,
-    make_logger,
     make_release,
+    make_run_deps,
     make_series_reads,
     make_services,
     make_sonarr_episodes,
-    make_sonarr_parse,
     rg_group,
     sonarr_ep,
 )
-from .fakes import FakeSonarrClient, RecordingProgress, ScriptedEpisodes, debug_logger
+from .fakes import FakeSonarrClient, RecordingProgress
 
 _NAME = "[X] Show - 01.mkv"
+_OTHER_NAME = "[X] Show - 02.mkv"
 
 # The parse Sonarr returns when it matched no series at all. It has no matched
 # episodes, so its row is pinned to the series hash on write.
@@ -632,149 +638,87 @@ class TestPrefetchLeavesOutUnchanged:
         assert held_series_episodes(eps) == {5: _eps_for(5)}
 
 
-class _ParseSonarr:
-    """A scripted Sonarr `/parse` client recording each parsed filename.
+_LIBRARY = (SonarrSeries(id=1),)
+_HASH = sonarr_series_hash([1])
+"""The series hash of a run over `_LIBRARY`."""
 
-    `parsed_files` only touches `sonarr.parse`. This scripts the one result and
-    records the calls so the not-parsed assertions read recorded state.
-    """
 
-    def __init__(self, result: ParsedFileInfo | None) -> None:
-        self._result = result
-        self.calls: list[str] = []
+def _parse_cache(sonarr: FakeSonarrClient, cache: FakeCacheStore) -> SonarrParseCache:
+    """A run's parse cache over the stored parses in `cache`, its library `_LIBRARY`, built as a run builds it."""
 
-    def parse(self, filename: str) -> ParsedFileInfo | None:
-        self.calls.append(filename)
-        return self._result
+    return SonarrParseCache(make_run_deps(cache_store=cache), sonarr, make_series_reads(sonarr, library=_LIBRARY))
+
+
+def _listing(files: Mapping[str, int]) -> SeadexDict:
+    """One group's release `u`, listing each of `files` with its size."""
+
+    return {"GroupA": rg_group({"u": make_release(files=list(files), size=list(files.values()))})}
 
 
 class TestParsedFilesCache:
-    """`parsed_files` caches a parse with no matched episodes with the series hash.
+    """`parsed_files` asks Sonarr once for each name, then reads its stored answer while it is fresh.
 
-    It skips a fresh hit's network call, never caches a transient `None`, and
-    never parses audio files.
+    It never stores a failed answer, and it parses only the video files.
     """
 
-    def _parse(
-        self,
-        *,
-        parse_result: ParsedFileInfo | None,
-        sleep_time: int = 0,
-        sonarr_parse: dict[str, dict[str, object]] | None = None,
-    ) -> tuple[SonarrParseCache, _ParseSonarr]:
-        sonarr = _ParseSonarr(parse_result)
-        store = FakeCacheStore(sonarr_parse=sonarr_parse or {})
-        parse = make_sonarr_parse(
-            sonarr=sonarr,
-            _reads=ScriptedEpisodes(),
-            _config=make_config(sleep_time=sleep_time),
-            cache_store=store,
-            rows=ParseCacheRows(store),
-            logger=make_logger(),
-        )
-        return parse, sonarr
-
-    @staticmethod
-    def _dict(*files: str) -> SeadexDict:
-        return {"GroupA": rg_group({"u": make_release(files=list(files), size=[100] * len(files))})}
-
-    @staticmethod
-    def _assert_pinned(parse: SonarrParseCache, name: str) -> None:
-        rec = parse.cache_store.get_sonarr_parse(name)
-        assert rec is not None
-        assert rec["parse"] == parse_to_json(_NO_SERIES)
-        assert rec["series_fp"] == "fp"
-
-    def test_a_parse_with_no_matched_episodes_is_cached_with_series_hash(self) -> None:
-        parse, _ = self._parse(parse_result=_NO_SERIES)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
-        self._assert_pinned(parse, "[X] Show - 01.mkv")
-
     @pytest.mark.parametrize(
-        ("by_sonarr", "matched"),
+        ("answer", "asked"),
         [
-            pytest.param(_NO_SERIES, "no series", id="no-series"),
-            pytest.param(
-                _of_series(7).with_matched(()), "a series but to none of its episodes", id="a-series-and-no-episode"
-            ),
+            pytest.param(_matched(1, 1), [_NAME], id="matched"),
+            pytest.param(_NO_SERIES, [_NAME], id="no-matched-episode"),
+            pytest.param(None, [_NAME, _NAME], id="no-answer"),
         ],
     )
-    def test_the_debug_log_says_what_sonarr_matched_a_name_with_no_matched_episodes_to(
-        self, by_sonarr: ParsedFileInfo, matched: str, caplog: pytest.LogCaptureFixture
+    def test_a_later_run_asks_sonarr_again_only_after_no_answer(
+        self, answer: ParsedFileInfo | None, asked: list[str]
     ) -> None:
-        parse, _ = self._parse(parse_result=by_sonarr)
-        parse.logger = debug_logger("pearlarr-parse-cache")
+        cache = FakeCacheStore()
+        sonarr = FakeSonarrClient(parse_fn=lambda _name: answer)
 
-        with caplog.at_level("DEBUG"):
-            parse.parsed_files(self._dict("[X] Show - 01.mkv"))
+        _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100}))
+        _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100}))
 
-        assert [record.message for record in caplog.records] == [f"Sonarr matched [X] Show - 01.mkv to {matched}"]
+        assert sonarr.parse_calls == asked
 
-    def test_transient_none_is_not_cached(self) -> None:
-        parse, _ = self._parse(parse_result=None)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
-        assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
+    def test_a_stored_parse_with_no_matched_episodes_is_asked_again_sooner(self) -> None:
+        # The same age for both: past the backstop of a parse with no matched episodes, inside the TTL of one with.
+        days_ago = SONARR_PARSE_NO_EPISODES_TTL_DAYS + 1
+        cache = FakeCacheStore(
+            sonarr_parse={
+                _NAME: _record(_matched(1, 1), days_ago=days_ago),
+                _OTHER_NAME: _record(_NO_SERIES, days_ago=days_ago, series_hash=_HASH),
+            }
+        )
+        sonarr = FakeSonarrClient()
 
-    def test_fresh_hit_with_no_matched_episodes_skips_network(self) -> None:
-        file_map: dict[str, dict[str, object]] = {
-            "[X] Show - 01.mkv": {
-                "fetched_at": datetime.now().strftime(STAMP_FORMAT),
-                "parse": parse_to_json(_NO_SERIES),
-                "series_fp": "fp",
-            },
-        }
-        parse, sonarr = self._parse(parse_result=_NO_SERIES, sonarr_parse=file_map)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv"))
-        assert sonarr.calls == []
+        _parse_cache(sonarr, cache).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
 
-    def test_unreadable_row_is_re_fetched_and_rewritten(self) -> None:
-        # A row whose parse this build cannot validate is a miss, so `_parse_for`
-        # re-asks Sonarr and overwrites it with a readable row. Every field is
-        # present, so the key check passes it and validation is what misses.
-        file_map: dict[str, dict[str, object]] = {
-            "[X] Show - 01.mkv": {
-                "fetched_at": datetime.now().strftime(STAMP_FORMAT),
-                "parse": {**parse_to_json(_matched(1, 1)), "episode_numbers": "one"},
-            },
-        }
-        parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse=file_map)
-
-        info = parse._parse_for("[X] Show - 01.mkv", window=_window())
-
-        assert info == _matched(1, 1)
-        assert sonarr.calls == ["[X] Show - 01.mkv"]
-        rec = parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv")
-        assert rec is not None
-        assert rec["parse"] == parse_to_json(_matched(1, 1))
-
-    def test_a_row_without_a_series_title_is_re_parsed_by_the_cache_warm(self) -> None:
-        # The cache warm sees it stale too, so it re-parses in the pool with the cold names, not alone afterwards.
-        names = ["[X] Show - 01.mkv", "[X] Show - 02.mkv"]
-        parse, sonarr = self._parse(parse_result=_matched(1, 1), sonarr_parse={names[0]: _untitled(_matched(1, 1))})
-
-        parse._warm_parse_cache(names, window=_window())
-
-        assert sorted(sonarr.calls) == names
-        rec = parse.cache_store.get_sonarr_parse(names[0])
-        assert rec is not None
-        assert rec["parse"] == parse_to_json(_matched(1, 1))
-
-    def test_audio_file_never_parsed(self) -> None:
-        parse, sonarr = self._parse(parse_result=_NO_SERIES)
-        parse.parsed_files(self._dict("[X] OST - 01.flac"))
-        assert sonarr.calls == []
+        assert sonarr.parse_calls == [_OTHER_NAME]
 
     def test_parsed_files_pairs_each_video_file_with_its_size_and_parse(self) -> None:
-        # Every release gets a key, video files only, each with its listed size and its parse.
-        parse, _ = self._parse(parse_result=_matched(1, 1))
-        gathered = parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 01.ass"))
-        assert gathered == {"u": (ListedFile("[X] Show - 01.mkv", 100, _matched(1, 1)),)}
+        # Video files only, each with its own listed size and its parse.
+        answers = {_NAME: _matched(1, 1), _OTHER_NAME: _matched(1, 2)}
+        sonarr = FakeSonarrClient(parse_fn=answers.get)
+        listing = _listing({_NAME: 100, "[X] Show - 01.ass": 1, "[X] OST - 01.flac": 2, _OTHER_NAME: 200})
 
-    def test_concurrent_warm_caches_each_file(self) -> None:
-        parse, _ = self._parse(parse_result=_NO_SERIES, sleep_time=0)
-        parse.parsed_files(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"))
-        for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
-            self._assert_pinned(parse, name)
+        gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(listing)
+
+        assert gathered == {"u": (ListedFile(_NAME, 100, _matched(1, 1)), ListedFile(_OTHER_NAME, 200, _matched(1, 2)))}
+
+    def test_names_not_yet_stored_go_to_sonarr_at_once(self) -> None:
+        # Each answer waits, 30 seconds at most, for the other name to be asked, so asking one at a time fails.
+        both_asked = threading.Barrier(2, timeout=30.0)
+
+        def answer(name: str) -> ParsedFileInfo:
+            del name
+            both_asked.wait()
+            return _matched(1, 1)
+
+        sonarr = FakeSonarrClient(parse_fn=answer)
+
+        gathered = _parse_cache(sonarr, FakeCacheStore()).parsed_files(_listing({_NAME: 100, _OTHER_NAME: 100}))
+
+        assert gathered == {"u": (ListedFile(_NAME, 100, _matched(1, 1)), ListedFile(_OTHER_NAME, 100, _matched(1, 1)))}
 
 
 class TestIsVideoCandidate:

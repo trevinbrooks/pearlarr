@@ -114,7 +114,6 @@ from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
-from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import AddResult, AddStatus, TorrentService
@@ -1853,12 +1852,6 @@ def make_radarr_sync(
     deps = make_run_deps(config=config, cache_store=cache_store)
     services = ArrRunServices(deps, Arr.RADARR)
     return RadarrStrategy(deps, services, radarr if radarr is not None else FakeRadarrClient())
-
-
-def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
-    """A bare `SonarrParseCache` with `__init__` bypassed and only `attrs` set."""
-
-    return make_bare_instance(SonarrParseCache, **attrs)
 
 
 def claim_anilist_ids(pending: PendingImport) -> tuple[int, ...]:
