@@ -582,6 +582,10 @@ class TestIsVideoCandidate:
     def test_bundled_reading_matter_rejected(self, name: str) -> None:
         assert not is_video_candidate(name)
 
+    def test_an_upper_case_extension_is_rejected_too(self) -> None:
+        # A file keeps the case its maker gave its name.
+        assert not is_video_candidate("ARIALUNI.TTF")
+
     @pytest.mark.parametrize(
         "name", [pytest.param("[X] Show - S01E01.mkv", id="mkv"), pytest.param("[X] Show - S01E01.mp4", id="mp4")]
     )
