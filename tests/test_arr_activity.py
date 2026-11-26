@@ -5,7 +5,7 @@ The reader half: the checkpoint window math (lookback bootstrap / overlap / clam
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + item-id filters (no exemption for pearlarr's grabs), and the fail-open contract. The run half runs whole Sonarr
 runs over a library an earlier run cached unchanged, reading the titles the run showed unchanged and the note its
-activity read ended its boot step on. What a run stores of the read for the next run is in `test_run_finalize`.
+activity read ended its boot step on. What a run stores of the read for the next run is in `test_arr_run_scan`.
 """
 
 import logging
