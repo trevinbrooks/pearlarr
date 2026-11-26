@@ -496,16 +496,31 @@ def test_delete_failure_returns_failed_with_one_warning(failure: httpx.Response 
 
 
 @respx.mock
-def test_strict_get_401_raises_auth_error_without_retrying() -> None:
-    route = respx.get(f"{_URL}/api/v3/series").respond(status_code=401)
+@pytest.mark.parametrize("status", [pytest.param(401, id="unauthorized"), pytest.param(403, id="forbidden")])
+def test_strict_get_rejected_key_raises_auth_error_without_retrying(status: int) -> None:
+    route = respx.get(f"{_URL}/api/v3/series").respond(status_code=status)
     http, recording = _bind()
 
     with pytest.raises(ArrAuthError) as excinfo:
         http.get_json_list_strict("/api/v3/series")
 
-    assert str(excinfo.value) == f"Sonarr at {_URL} rejected the API key (status code 401)"
-    assert route.call_count == 1  # 401 is terminal: no retries
+    assert str(excinfo.value) == f"Sonarr at {_URL} rejected the API key (status code {status})"
+    assert route.call_count == 1  # a rejected key is terminal: no retries
     assert recording.of_type(Diagnostic) == []  # the raise IS the report, no fail-open warning
+
+
+@respx.mock
+def test_strict_get_terminal_status_raises_naming_it() -> None:
+    """A status a retry won't clear, such as a 404 from a URL pointing at the wrong path, stops the library read at once."""
+
+    route = respx.get(f"{_URL}/api/v3/series").respond(status_code=404)
+    http, _ = _bind()
+
+    with pytest.raises(ArrUnreachableError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (status code 404)"
+    assert route.call_count == 1
 
 
 @respx.mock
