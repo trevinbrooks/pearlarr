@@ -1,14 +1,10 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# Drives module-private resolver internals under test (_mapping_from_raw, m._parse_*).
-"""Parity + edge tests for the SQL-backed `MappingResolver` / `AniBridge`.
+"""Tests for `MappingResolver`: which AniList titles an arr's external ids resolve to, and with what.
 
-The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
-graph-backed view is used directly as the oracle (the unchanged parser). anime_ids
-is checked against an inline reconstruction of the former reverse-index merge, and
-the anidb + hash-gate behaviors are pinned. These are the safety net for the
-"parse once, serve from SQL" migration - the resolver lookups had no direct
-coverage before.
+Each source is read as a run reads it, from the mappings database: AniBridge's TVDB ranges and specials aliases,
+the Kometa Anime-IDs seasons and offsets, the AniDB episode maps, and how the sources merge. Then the source files
+themselves: the downloads at boot, the hash check that skips an unchanged file, a database that can't be written,
+and the real files a run downloaded.
 """
 
 import json
@@ -17,6 +13,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
 from collections.abc import Set as AbstractSet
 from pathlib import Path
@@ -28,12 +25,7 @@ import pytest
 import respx
 
 import pearlarr.mappings as m
-from pearlarr.anibridge import (
-    AniBridge,
-    AniBridgeGraph,
-    SpecialAliasing,
-)
-from pearlarr.mapping_store import MappingStore
+from pearlarr.anibridge import AniBridge, AniBridgeGraph, SpecialAliasing
 from pearlarr.mappings import (
     ANIBRIDGE_MAPPINGS_FILE,
     ANIDB_MAPPINGS_FILE,
@@ -47,7 +39,6 @@ from pearlarr.mappings import (
     MappingSource,
     MappingSources,
     TitleMapping,
-    _mapping_from_raw,
 )
 from pearlarr.output import Severity
 from pearlarr.paths import resolve_paths
@@ -55,9 +46,6 @@ from pearlarr.sonarr_episodes import TitleEpisodes, check_ep_by_anibridge
 
 from .builders import make_sonarr_episodes, sonarr_ep
 from .fakes import RecordingProgress, debug_logger, diagnostic_messages, install_recording_hub
-
-# One inert shared client for the resolver ctors (inline sources: nothing downloads).
-_WEB = httpx.Client()
 
 _ANIBRIDGE = MappingSource.ANIBRIDGE
 
@@ -346,35 +334,6 @@ AMAP: AnimeIdsByName = {
     "E": {"tvdb_id": 999},  # no anilist -> filter-set only
     "F": {"anilist_id": 103, "tmdb_movie_id": 7000},
 }
-
-
-def _anime_oracle(amap: AnimeIdsByName) -> Callable[[ExternalIds], dict[int, TitleMapping]]:
-    """Inline twin of the former reverse-index + no-clobber merge (the oracle): one index, then a lookup per call."""
-
-    index: dict[str, dict[object, list[AnimeIdsRawMapping]]] = {
-        "tvdb_id": {},
-        "tmdb_movie_id": {},
-        "imdb_id": {},
-    }
-    for rec in amap.values():
-        if rec.get("anilist_id") is None:
-            continue
-        for field, bucket in index.items():
-            value = rec.get(field)
-            if value is not None:
-                bucket.setdefault(value, []).append(rec)
-
-    def lookup(ids: ExternalIds) -> dict[int, TitleMapping]:
-        result: dict[int, TitleMapping] = {}
-        for field, value in (("tvdb_id", ids.tvdb), ("tmdb_movie_id", ids.tmdb_movie), ("imdb_id", ids.imdb)):
-            for rec in index[field].get(value, []):  # None is never a key
-                aid = rec["anilist_id"]
-                if aid not in result:
-                    result[aid] = _mapping_from_raw(aid, rec)
-        return result
-
-    return lookup
-
 
 _RECORD_A = TitleMapping(100, tvdb_season=2, tvdb_epoffset=3, imdb_id="tt100", anidb_id=50)
 
@@ -875,10 +834,8 @@ class TestSourceDownloads:
 
 
 # --------------------------------------------------------------------------- #
-# Real-data parity: SQL backings must equal the in-memory oracle over the
-# actual source files (gitignored, so skipped in CI / when absent). This is the
-# migration's core promise - it diffs the SQL path against the unchanged code.
-# The sources are cached in the data directory (next to mappings.db).
+# The real source files a run downloaded. They're in the data directory once a run has fetched them, so CI and a
+# fresh checkout skip these.
 # --------------------------------------------------------------------------- #
 
 
@@ -893,7 +850,7 @@ class _RealSources(NamedTuple):
 def _real_source_paths() -> _RealSources:
     """Resolve the real source paths lazily (at test time, not import).
 
-    `TestRealDataParity` carries `@pytest.mark.real_data_dir` so the autouse tmp
+    `TestRealSourceFiles` carries `@pytest.mark.real_data_dir` so the autouse tmp
     data-dir override is off for it and `resolve_paths()` sees the developer's
     real `PEARLARR_DATA_DIR`. Evaluating this at import would instead capture
     whatever dir was active before the fixtures ran.
@@ -917,106 +874,85 @@ def real_sources() -> _RealSources:
     return paths
 
 
-def _anidb_oracle(items: list[ElementTree.Element], anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
-    """Guarded reimplementation of the former anidb_anime_by_id + parse + raise, over one id's `anime` elements."""
+def _real_boot(sources: MappingSources) -> MappingResolver:
+    """A resolver over the real source files, indexed in memory so nothing in the data dir is written.
 
-    if len(items) > 1:
-        raise ValueError(f"AniDB id {anidb_id} appears in more than one anime-lists mapping")
-    if len(items) != 1:
-        return {}
-    result: dict[int, dict[int, int]] = {}
-    for ms in items[0].findall("mapping-list"):
-        for i in ms.findall("mapping"):
-            if not i.text:
-                continue
-            try:
-                season = int(i.attrib["tvdbseason"])
-                if season != tvdb_season:
-                    continue
-                split = [x.split("-") for x in i.text.strip(";").split(";")]
-                result[season] = {int(x[1]): int(x[0]) for x in split}
-            except (KeyError, ValueError, IndexError):
-                continue
-    return result
+    The refresh age is far off, so nothing downloads.
+    """
+
+    return MappingResolver(refresh_days=99999, ignore_anilist_ids=set(), sources=sources, web=httpx.Client())
+
+
+def _each_id(record: AnimeIdsRawMapping) -> list[ExternalIds]:
+    """One lookup for each id a Kometa record carries."""
+
+    lookups = [
+        ExternalIds(tvdb=record.get("tvdb_id")),
+        ExternalIds(tmdb_movie=record.get("tmdb_movie_id")),
+        ExternalIds(imdb=record.get("imdb_id")),
+    ]
+    return [ids for ids in lookups if ids != ExternalIds()]
+
+
+def _is_ambiguous(resolver: MappingResolver, anidb_id: int) -> bool:
+    """True when asking for the AniDB id's episodes raises for its being listed more than once."""
+
+    try:
+        resolver.anidb_episode_by_tvdb(anidb_id, 1)
+    except ValueError:
+        return True
+    return False
 
 
 @pytest.mark.realdata
 @pytest.mark.real_data_dir
-class TestRealDataParity:
-    """SQL backings for anibridge, anime_ids, and anidb match their in-memory oracles over the real source files."""
+class TestRealSourceFiles:
+    """The real files read as the cases above say, over shapes nobody wrote down."""
 
     def test_anibridge_sql_matches_graph_over_all_ids(self, real_sources: _RealSources) -> None:
-        with open(real_sources.anibridge, encoding="utf-8") as f:
-            graph: AniBridgeGraph = json.load(f)
-        graph_ab = AniBridge(graph)
-        store = MappingStore.open(":memory:")
-        store.replace_anibridge("d", graph_ab.to_rows())
-        sql_ab = AniBridge.from_store(store)
-        try:
-            assert sql_ab.all_tvdb_ids == graph_ab.all_tvdb_ids
-            assert sql_ab.all_tmdb_movie_ids == graph_ab.all_tmdb_movie_ids
-            assert sql_ab.all_imdb_ids == graph_ab.all_imdb_ids
-            assert len(sql_ab) == len(graph_ab)
-            for tvdb in graph_ab.all_tvdb_ids:
-                assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb_movie(tmdb) == graph_ab.lookup_by_tmdb_movie(tmdb)
-            for imdb in graph_ab.all_imdb_ids:
-                assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
-        finally:
-            store.close()
+        # The graph's own lookups read each title straight from the parsed file. A run asks the database instead.
+        graph = AniBridge(json.loads(Path(real_sources.anibridge).read_text(encoding="utf-8")))
+        served = _real_boot(MappingSources(anime=False, anidb=False, anibridge=None)).anibridge
+        assert served is not None
 
-    def test_anime_ids_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
-        amap = m._parse_anime_mappings(real_sources.anime_ids)
-        resolver = MappingResolver(
-            refresh_days=99999,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=amap,
-                anidb=False,
-                anibridge=False,
-            ),
+        assert (served.all_tvdb_ids, served.all_tmdb_movie_ids, served.all_imdb_ids, len(served)) == (
+            graph.all_tvdb_ids,
+            graph.all_tmdb_movie_ids,
+            graph.all_imdb_ids,
+            len(graph),
         )
-        oracle = _anime_oracle(amap)
-        try:
-            tvdbs = [
-                r["tvdb_id"] for r in amap.values() if r.get("tvdb_id") is not None and r.get("anilist_id") is not None
-            ][:200]
-            for tvdb in tvdbs:
-                assert resolver.mappings_from_anime_ids(ExternalIds(tvdb=tvdb)) == oracle(ExternalIds(tvdb=tvdb))
-            imdbs = [
-                r["imdb_id"] for r in amap.values() if r.get("imdb_id") is not None and r.get("anilist_id") is not None
-            ][:200]
-            for imdb in imdbs:
-                assert resolver.mappings_from_anime_ids(ExternalIds(imdb=imdb)) == oracle(ExternalIds(imdb=imdb))
-        finally:
-            resolver.close()
+        assert [i for i in graph.all_tvdb_ids if served.lookup_by_tvdb(i) != graph.lookup_by_tvdb(i)] == []
+        assert [
+            i for i in graph.all_tmdb_movie_ids if served.lookup_by_tmdb_movie(i) != graph.lookup_by_tmdb_movie(i)
+        ] == []
+        assert [i for i in graph.all_imdb_ids if served.lookup_by_imdb(i) != graph.lookup_by_imdb(i)] == []
 
-    def test_anidb_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
-        root = m._parse_anidb_mappings(real_sources.anidb)
-        resolver = MappingResolver(
-            refresh_days=99999,
-            ignore_anilist_ids=set(),
-            web=_WEB,
-            sources=MappingSources(
-                anime=False,
-                anidb=root,
-                anibridge=False,
-            ),
+    def test_every_real_anime_ids_record_is_found_by_its_ids(self, real_sources: _RealSources) -> None:
+        records: AnimeIdsByName = json.loads(Path(real_sources.anime_ids).read_text(encoding="utf-8"))
+        resolver = _real_boot(MappingSources(anime=None, anidb=False, anibridge=False))
+
+        missed = [
+            (name, ids)
+            for name, record in records.items()
+            if (anilist_id := record.get("anilist_id")) is not None
+            for ids in _each_id(record)
+            if anilist_id not in resolver.resolve(ids).kept
+        ]
+
+        assert missed == []
+
+    def test_an_anidb_id_is_ambiguous_exactly_when_the_real_file_lists_it_more_than_once(
+        self, real_sources: _RealSources
+    ) -> None:
+        listed = Counter(
+            anime.get("anidbid") for anime in ElementTree.parse(real_sources.anidb).getroot().iter("anime")
         )
-        try:
-            by_id: dict[str, list[ElementTree.Element]] = {}
-            for a in root.findall("anime"):
-                by_id.setdefault(a.get("anidbid") or "", []).append(a)
-            for anidb_id in [int(aid) for aid in by_id if aid.isdigit()][:300]:
-                for season in (0, 1, 2):
-                    try:
-                        expected = _anidb_oracle(by_id.get(str(anidb_id), []), anidb_id, season)
-                    except ValueError:
-                        with pytest.raises(ValueError, match="appears in more than one anime-lists mapping"):
-                            resolver.anidb_episode_by_tvdb(anidb_id, season)
-                        continue
-                    assert resolver.anidb_episode_by_tvdb(anidb_id, season) == expected
-        finally:
-            resolver.close()
+        resolver = _real_boot(MappingSources(anime=False, anidb=None, anibridge=False))
+
+        wrong = [
+            anidb_id
+            for anidb_id, times in listed.items()
+            if anidb_id is not None and anidb_id.isdigit() and _is_ambiguous(resolver, int(anidb_id)) != (times > 1)
+        ]
+
+        assert wrong == []
