@@ -250,9 +250,10 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
 
 @respx.mock
 def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
-    """An episode missing seasonNumber/episodeNumber sorts first (as -1).
+    """An episode that arrives without its season and episode numbers sorts first, and the read still returns.
 
-    This avoids raising a `None < int` TypeError and killing the whole fetch.
+    Sonarr's schema has both numbers non-nullable, so this is what happens if such an episode arrives anyway:
+    sorting a missing number as -1 keeps one bad row from failing the whole read.
     """
 
     body = [
