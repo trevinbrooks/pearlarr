@@ -46,7 +46,6 @@ from .wait_fakes import (
     FakeTorrent,
     QbitStep,
     RecordingStrategy,
-    RecordingWaitView,
     make_orchestration_manager,
     stored_awaiting_cleanup,
 )
@@ -161,7 +160,7 @@ class TestPostImportCategory:
             clock=FakeClock(step=30),
         )
 
-        mgr.run_blocking(view=RecordingWaitView())
+        mgr.run_blocking()
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert strategy.removal_calls == ["h"]
@@ -530,19 +529,19 @@ class TestCleanupRetry:
         mgr.report_imports_for_series(7)
 
         assert recording.of_type(TitleHeader) == []
-        assert mgr.run_deferred(view=RecordingWaitView()) is None
-        assert mgr.run_blocking(view=RecordingWaitView()) is None
+        assert mgr.run_deferred() is None
+        assert mgr.run_blocking() is None
         assert strategy.import_calls == []
         assert stored_awaiting_cleanup(store) == {"h": True}
 
     def test_the_cleanup_finish_leaves_a_pending_import_that_owes_no_cleanup_to_the_wait(self) -> None:
-        strategy = RecordingStrategy(attempts=[attempt_result(all_done=True)])
+        strategy = RecordingStrategy()
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=FakeQbit(TORRENT_H_COMPLETE),
             strategy=strategy,
             store=store,
-            stored_pending_imports=[pending_import(infohash="h", series_id=7)],
+            stored_pending_imports=[pending_import(infohash="h")],
         )
 
         mgr.finish_cleanups()
@@ -551,8 +550,8 @@ class TestCleanupRetry:
         assert stored_awaiting_cleanup(store) == {"h": False}
 
 
-_OWED_CLEANUP = pending_import(infohash="h", series_id=7, awaiting_cleanup=True)
-"""Pending import "h" of series 7, imported on an earlier run with its cleanup still owed."""
+_OWED_CLEANUP = pending_import(infohash="h", awaiting_cleanup=True)
+"""Pending import "h", imported on an earlier run with its cleanup still owed."""
 
 
 class TestCleanupRetryVerification:
@@ -656,7 +655,7 @@ class TestCleanupRetryVerification:
         [warn] = diagnostic_messages(recording, Severity.WARNING)
         assert "no longer has every file imported" in warn
 
-        result = mgr.run_deferred(view=RecordingWaitView())
+        result = mgr.run_deferred()
 
         assert result is not None
         assert [(row.outcome, row.carried_over) for row in result.rows] == [(Outcome.IMPORT_IN_PROGRESS, True)]
