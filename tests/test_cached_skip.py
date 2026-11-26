@@ -176,7 +176,7 @@ class TestLeavingATitleAlone:
         def episodes() -> str:
             pytest.fail("looked up the episodes of a title whose row has its url")
 
-        deps = make_run_deps(config=_SETTINGS, cache_store=_holding(_cached_row()), qbit=FakeQbit().client())
+        deps = make_run_deps(cache_store=_holding(_cached_row()))
 
         assert ArrRunServices(deps, Arr.SONARR).is_unchanged(7, _ENTRY, episodes) is True
         assert deps.anilist.answers == {}, "asked AniList about a title whose row has its name"
