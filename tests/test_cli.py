@@ -1304,13 +1304,32 @@ class TestConfigAutoMigrate:
         assert recording.of_type(Diagnostic) == []
 
 
+class TestLooseConfigPermissions:
+    """A config other users can read warns with the command that fixes it."""
+
+    @_needs_posix_permissions
+    def test_a_world_readable_config_warns_with_the_fix(self) -> None:
+        config = _write_current_config()
+        config.chmod(0o644)
+
+        result = _invoke_offline("run", "single")
+
+        assert [line for line in _lines(result.stdout) if line.startswith("WARNING")] == [
+            (
+                f"WARNING [Pearlarr] Config file {config} is readable by other users and holds API keys - "
+                f"tighten it with: chmod 600 {config} during=boot"
+            )
+        ]
+
+
 class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
     `ensure_data_dir`/`setup_logger` run before any logger exists, so the
-    report must go straight to stderr. `config init`'s template copy gets the
-    same treatment. An unreadable CONFIG in a healthy dir instead keeps the
-    skip+retry contract - exiting would kill the scheduled daemon.
+    report must go straight to stderr. `config init`'s template copy and
+    `cache restore`'s copy get the same treatment. An unreadable CONFIG in a
+    healthy dir instead keeps the skip+retry contract - exiting would kill the
+    scheduled daemon.
     """
 
     @_needs_posix_permissions
@@ -1376,6 +1395,30 @@ class TestUnwritableDataDir:
         assert result.exit_code == 1
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
         assert "Traceback" not in result.output
+
+    @_needs_posix_permissions
+    def test_cache_restore_into_a_readonly_dir_leaves_the_db_alone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The temp copy beside cache.db is what fails: one line, and the live db as it was.
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(data_dir))
+        write_cache_db(data_dir)
+        assert CliRunner().invoke(pearlarr_cli, ["cache", "backup"]).exit_code == 0
+        live = (data_dir / "cache.db").read_bytes()
+        data_dir.chmod(0o500)
+        try:
+            result = CliRunner().invoke(pearlarr_cli, ["cache", "restore"])
+        finally:
+            data_dir.chmod(0o755)
+
+        assert result.exit_code == 1
+        assert result.stderr.startswith("Cache restore failed (")
+        assert result.stderr.endswith(") - cache.db is left unchanged\n")
+        assert (data_dir / "cache.db").read_bytes() == live
 
     @_needs_posix_permissions
     def test_an_unreadable_config_skips_the_run_instead_of_exiting(
