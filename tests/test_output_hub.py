@@ -902,6 +902,21 @@ def test_close_hands_teardown_chatter_to_the_file_log_renderer_before_closing_it
     assert file_log.closed
 
 
+def test_close_hands_no_teardown_chatter_to_a_struck_out_file_log() -> None:
+    """A struck-out file log sits out the rest of the run, teardown included. The real one reopens its file on a write."""
+
+    struck = _FailingFileLog()
+    hub = OutputHub([struck, _NoisyCloser()])
+    install_hub(hub)  # so the closer's note comes to this hub
+    for _ in range(3):
+        hub.emit(_EVENT)
+
+    hub.close()
+
+    # Closed at its strike-out and again with every other renderer, and handed nothing in between.
+    assert struck.log == ["PearlarrStarted"] * 3 + ["close", "close"]
+
+
 def test_a_closed_hub_drops_every_later_call() -> None:
     renderer = RecordingRenderer()
     hub = OutputHub([renderer])
