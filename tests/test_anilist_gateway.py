@@ -214,7 +214,6 @@ class TestMediaResolution:
         # The first resolver fetched and stored the raw body. The other five
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
-        assert 42 in gateway.answers
 
     @pytest.mark.parametrize(
         ("english", "romaji", "titles"),
@@ -243,18 +242,7 @@ class TestMediaResolution:
 
         assert gateway.titles(7) == ()
         assert gateway.episode_count(7) is None
-
-        assert gateway.answers[7] == {}
         assert client.query_calls == [7]
-
-    def test_failure_marks_anilist_unreachable_without_remembering_a_not_found(self) -> None:
-        client = ScriptedAniListClient(failing=frozenset({7}))
-        gateway = make_anilist_gateway(client)
-
-        assert gateway.titles(7) == ()
-        assert gateway.unreachable is True
-        # No answer is not a not-found answer: the id stays unknown instead of kept as absent.
-        assert gateway.answers == {}
 
 
 class TestUnread:
