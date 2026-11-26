@@ -534,28 +534,28 @@ class TestConfiguredArrs:
         assert warning.severity is Severity.WARNING
         assert warning.message == "radarr.url is set but radarr.api_key is not - Radarr is not run"
 
-    def test_explicit_selection_of_a_half_configured_arr_names_only_the_missing_key(
-        self,
-        recording: RecordingHub,
+    @pytest.mark.parametrize(
+        ("radarr", "flags", "missing"),
+        [
+            pytest.param("", ["--radarr"], "radarr.url and radarr.api_key", id="flag"),
+            pytest.param("", ["--tmdb-id", "42"], "radarr.url and radarr.api_key", id="id"),
+            pytest.param(
+                "radarr:\n  url: http://radarr.invalid\n", ["--radarr"], "radarr.api_key", id="half-configured"
+            ),
+        ],
+    )
+    def test_explicit_selection_of_an_unconfigured_arr_refuses(
+        self, radarr: str, flags: list[str], missing: str
     ) -> None:
-        config = AppConfig.model_validate({"radarr": {"url": "http://radarr:7878"}})
-        kept = configured_arrs([ArrTarget(Arr.RADARR)], config, explicit=True, config_path="config.yml")
-        assert kept is None
-        (error,) = recording.of_type(Diagnostic)
-        assert error.severity is Severity.ERROR
-        assert "set radarr.api_key in config.yml" in error.message
+        # A Sonarr setup asked for Radarr: a config mistake, so nothing runs,
+        # not even the configured Sonarr (`_invoke_offline` fails on its request).
+        config = _write_current_config("sonarr:\n  url: http://sonarr.invalid\n  api_key: k\n" + radarr)
 
-    def test_explicit_selection_of_an_unconfigured_arr_refuses(self) -> None:
-        # A Sonarr-only setup asked for Radarr by flag: a config mistake, so
-        # nothing runs, not even the configured Sonarr.
-        config = _write_current_config("sonarr:\n  url: http://127.0.0.1:9\n  api_key: k\n")
-
-        result = _invoke_offline("run", "single", "--radarr")
+        result = _invoke_offline("run", "single", *flags)
 
         assert result.exit_code == 1
         assert _lines(result.stdout)[-1] == (
-            f"ERROR [Pearlarr] Radarr was selected but is not configured - set radarr.url and radarr.api_key "
-            f"in {config} during=boot"
+            f"ERROR [Pearlarr] Radarr was selected but is not configured - set {missing} in {config} during=boot"
         )
 
     def test_nothing_configured_reports_and_refuses(self) -> None:
