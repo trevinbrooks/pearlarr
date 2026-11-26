@@ -39,7 +39,7 @@ from pearlarr.output import (
     uninstall_hub,
 )
 
-from .fakes import RecordingHub, RecordingRenderer, install_recording_hub
+from .fakes import RecordingRenderer, install_recording_hub
 
 _EVENT = PearlarrStarted(version="v1.0.0", data_dir="/data")
 
@@ -580,26 +580,29 @@ def test_a_once_keyed_diagnostic_shed_at_the_cap_lands_when_emitted_again() -> N
 
 
 def test_once_keys_dedup_and_clear_per_scheduled_run() -> None:
-    recording = RecordingHub()
+    renderer = RecordingRenderer()
+    hub = OutputHub([renderer])
     warning = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
 
-    recording.emit(warning)
-    recording.emit(warning)
-    assert len(recording.of_type(Diagnostic)) == 1
-    assert recording.hub.counts.mark().warning == 1  # the dropped copy is not counted
+    hub.emit(warning)
+    hub.emit(warning)
+    hub.begin_run(console_format="plain", level=logging.INFO)
+    hub.emit(warning)
 
-    recording.hub.begin_run(console_format="plain", level=logging.INFO)
-    recording.emit(warning)
-    assert len(recording.of_type(Diagnostic)) == 2
+    assert renderer.events == [warning, warning]  # one per run
+    assert hub.counts.mark() == SeverityTally(warning=2)  # the dropped copy is not counted
 
 
 def test_the_same_once_key_from_different_origins_both_pass() -> None:
-    recording = RecordingHub()
+    renderer = RecordingRenderer()
+    hub = OutputHub([renderer])
+    anilist = Diagnostic(severity=Severity.WARNING, message="a", origin="anilist", once_key="backoff")
+    seadex = Diagnostic(severity=Severity.WARNING, message="b", origin="seadex", once_key="backoff")
 
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="a", origin="anilist", once_key="backoff"))
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="b", origin="seadex", once_key="backoff"))
+    hub.emit(anilist)
+    hub.emit(seadex)
 
-    assert [d.origin for d in recording.of_type(Diagnostic)] == ["anilist", "seadex"]
+    assert renderer.events == [anilist, seadex]
 
 
 # --- severity counts -------------------------------------------------------------------
@@ -616,15 +619,15 @@ def test_severity_counts_mark_and_delta() -> None:
 
     since = counts.counts_since(mark)
     assert since == SeverityTally(warning=1, error=1, critical=1)
-    assert since.warning == 1
-    assert since.errors == 2  # ERROR + CRITICAL
-    assert counts.mark().warning == 2  # totals stay monotonic
+    assert since.errors == 2  # ERROR and CRITICAL
+    assert counts.mark() == SeverityTally(warning=2, error=1, critical=1)  # the totals only grow
 
 
 def test_bound_mark_diffs_only_its_own_counter() -> None:
-    """A CountsMark carries its counter: records on ANOTHER counter never skew since()."""
+    """A bound mark diffs from where its own counter stood, and records on another counter never move it."""
 
     counts = SeverityCounter()
+    counts.record(Severity.WARNING)
     mark = counts.bound_mark()
 
     other = SeverityCounter()
@@ -636,26 +639,23 @@ def test_bound_mark_diffs_only_its_own_counter() -> None:
 
 
 def test_hub_tallies_every_emitted_event() -> None:
-    recording = RecordingHub()
-    mark = recording.hub.counts.mark()
+    hub = OutputHub([])
 
-    recording.emit(_EVENT)
-    recording.emit(Diagnostic(severity=Severity.ERROR, message="boom"))
+    hub.emit(_EVENT)
+    hub.emit(Diagnostic(severity=Severity.ERROR, message="boom"))
 
-    since = recording.hub.counts.counts_since(mark)
-    assert (since.info, since.errors) == (1, 1)
+    assert hub.counts.mark() == SeverityTally(info=1, error=1)
 
 
 def test_file_only_diagnostics_are_never_counted() -> None:
-    # Counts = what a visible renderer could show. file_only forensics stay out.
-    recording = RecordingHub()
-    mark = recording.hub.counts.mark()
+    """The tally is what a visible renderer could show, so file-only forensics stay out of it."""
 
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", file_only=True))
-    assert recording.hub.counts.counts_since(mark).warning == 0
+    hub = OutputHub([])
 
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="visible note"))
-    assert recording.hub.counts.counts_since(mark).warning == 1
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", file_only=True))
+    hub.emit(Diagnostic(severity=Severity.ERROR, message="visible note"))
+
+    assert hub.counts.mark() == SeverityTally(error=1)
 
 
 # --- levels + lifecycle -------------------------------------------------------------
