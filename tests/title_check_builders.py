@@ -10,6 +10,7 @@ from typing import override
 
 from seadex import EntryRecord
 
+from pearlarr.anilist_client import AniListBody
 from pearlarr.arr_models import ArrFiles, SonarrEpisode, SonarrSeries
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
@@ -39,6 +40,7 @@ from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
     ScriptedAniListClient,
+    anilist_body,
     grab_plan,
     make_bare_instance,
     make_config,
@@ -324,6 +326,14 @@ class Unread:
     """The titles whose AniList lookup comes while AniList is unreachable."""
     series_ids: frozenset[int] = frozenset()
     """The series SkyHook has never answered for."""
+
+
+def anilist_counting(anilist_id: int, episodes: int) -> AniListBody:
+    """AniList's answer for a title of `episodes` episodes."""
+
+    body = anilist_body(anilist_id)
+    body["data"]["Media"]["episodes"] = episodes
+    return body
 
 
 def sonarr_checking(run: FakeRunServices, sonarr: FakeSonarrClient, deps: ArrRunDeps | None = None) -> SonarrStrategy:
