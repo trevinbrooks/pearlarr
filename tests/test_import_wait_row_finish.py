@@ -20,6 +20,7 @@ from .builders import (
 )
 from .fakes import FakeClock
 from .wait_fakes import (
+    TORRENT_H_COMPLETE,
     CategoryQbit,
     FakeQbit,
     FakeTorrent,
@@ -45,7 +46,7 @@ class TestUnplacedRowFinish:
         store = FakeCacheStore()
         run = ArrRunState(arr=Arr.SONARR)
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=FakeQbit(TORRENT_H_COMPLETE),
             strategy=strategy,
             store=store,
             state=run,
@@ -67,7 +68,7 @@ class TestUnplacedRowFinish:
     def test_run_blocking_finishes_unplaced_on_the_first_poll(self) -> None:
         # The result ends the wait on the poll that establishes it: no final attempt, no import clock.
         strategy = self._strategy()
-        store, view = run_blocking_wait(strategy, FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}))
+        store, view = run_blocking_wait(strategy, FakeQbit(TORRENT_H_COMPLETE))
 
         final = view.final("h")
         assert final.outcome is Outcome.NOTHING_PLACED
@@ -126,7 +127,7 @@ class TestLeftForHandImportRowFinish:
     def test_each_run_names_the_hand_import_files_and_leaves_the_torrent_in_its_category(self) -> None:
         store = FakeCacheStore()
         store.put_pending_import_row(Arr.SONARR, "h", pending_import(infohash="h").to_json())
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        qbit = CategoryQbit(TORRENT_H_COMPLETE)
         second_run = ArrRunState(arr=Arr.SONARR)
 
         first = self._run(store, qbit, ArrRunState(arr=Arr.SONARR))

@@ -21,6 +21,7 @@ from .builders import SEP, FakeCacheStore, attempt_result, make_config, pending_
 from .fakes import FakeClock, diagnostic_messages, install_recording_hub
 from .wait_fakes import (
     ALL_IN,
+    TORRENT_H_COMPLETE,
     CategoryQbit,
     FakeQbit,
     FakeTorrent,
@@ -78,7 +79,7 @@ class TestBlockingWaitImport:
         )
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             step=5,
             progress_poll_interval=5,
         )
@@ -100,7 +101,7 @@ class TestBlockingWaitImport:
         )
         _, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             progress_poll_interval=0,
         )
 
@@ -117,7 +118,7 @@ class TestBlockingWaitImport:
         )
         _, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             progress_poll_interval=5,
         )
 
@@ -145,7 +146,7 @@ class TestBlockingWaitImportDeadline:
         )
         _, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             step=5,
             import_timeout=60,
             progress_poll_interval=5,
@@ -174,7 +175,7 @@ class TestBlockingWaitImportDeadline:
         )
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             import_timeout=60,
         )
 
@@ -198,7 +199,7 @@ class TestBlockingWaitImportDeadline:
         )
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             import_timeout=60,
         )
 
@@ -215,7 +216,7 @@ class TestBlockingWaitImportDeadline:
         )
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             import_timeout=60,
         )
 
@@ -230,7 +231,7 @@ class TestBlockingWaitImportDeadline:
         strategy = RecordingStrategy(attempts=[attempt_result(all_done=False, pause_reason=PauseReason.IMPORT)])
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             import_timeout=60,
         )
 
@@ -245,7 +246,7 @@ class TestBlockingWaitImportDeadline:
         strategy = RecordingStrategy(attempts=[attempt_result(all_done=False, pause_reason=PauseReason.BUSY)])
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
             import_timeout=60,
         )
 
@@ -287,7 +288,7 @@ class TestBlockingWaitEndsWithoutAnImport:
         recording = install_recording_hub()
         store, view = run_blocking_wait(
             strategy,
-            FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            FakeQbit(TORRENT_H_COMPLETE),
         )
 
         assert view.final("h").outcome is Outcome.ATTEMPT_FAILED
@@ -394,7 +395,7 @@ class TestBlockingWaitInterrupt:
         # The run's tally counts the result rows, so an import counts only once its store write went through.
         store = store_type()
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=FakeQbit(TORRENT_H_COMPLETE),
             strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)], removals=removals),
             store=store,
             stored_pending_imports=[pending_import(infohash="h")],

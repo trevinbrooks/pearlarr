@@ -26,6 +26,7 @@ from .builders import FakeCacheStore, attempt_result, make_config, pending_impor
 from .fakes import FakeClock
 from .wait_fakes import (
     ALL_IN,
+    TORRENT_H_COMPLETE,
     FakeQbit,
     FakeTorrent,
     QbitStep,
@@ -177,7 +178,7 @@ class TestRunDeferred:
         # The series report read the torrent still downloading, and it finished before the end pass.
         run = ArrRunState(arr=Arr.SONARR, pending_import_states={"h": PendingImportState.DOWNLOADING})
         mgr = make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}),
+            qbit=FakeQbit(TORRENT_H_COMPLETE),
             strategy=RecordingStrategy(attempts=[attempt_result(all_done=False)]),
             state=run,
             stored_pending_imports=[pending_import(infohash="h")],
