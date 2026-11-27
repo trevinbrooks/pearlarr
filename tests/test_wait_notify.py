@@ -368,21 +368,22 @@ def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(dis
 
 
 def test_push_wait_summary_says_a_releases_torrents_apart_when_their_outcomes_differ(discord: respx.Route) -> None:
-    # Both entries have the release's name, so they keep the order they came in.
-    label = "Frieren · SubsPlease · S01 E01-E28"
+    # Both entries have the release's name, so they keep the order they came in. Episode 99 still comes before 100.
+    label = "Boruto: Naruto Next Generations · HorribleSubs · S01 E01-E293"
     rows = (
-        _nothing_placed(label, "[SubsPlease] Sousou no Frieren - 02 (1080p) [3E7D1A42].mkv"),
+        _nothing_placed(label, "[HorribleSubs] Boruto - Naruto Next Generations - 100 [1080p].mkv"),
         WaitOutcomeRow(label, Outcome.DOWNLOAD_TIMED_OUT),
-        _nothing_placed(label, "[SubsPlease] Sousou no Frieren - 01 (1080p) [C1F05B97].mkv"),
+        _nothing_placed(label, "[HorribleSubs] Boruto - Naruto Next Generations - 99 [1080p].mkv"),
     )
 
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
     [field] = _embed_posted(discord).fields
     assert field.value == (
-        "Frieren · SubsPlease · S01 E01-E28 · 2 torrents - no file was placed on an episode; import by hand in Sonarr\n"
-        "`[SubsPlease] Sousou no Frieren - 01 (1080p) [C1F05B97].mkv`\n"
-        "`[SubsPlease] Sousou no Frieren - 02 (1080p) [3E7D1A42].mkv`\n"
-        "Frieren · SubsPlease · S01 E01-E28 - download timed out; left for the next run"
+        "Boruto: Naruto Next Generations · HorribleSubs · S01 E01-E293 · 2 torrents"
+        " - no file was placed on an episode; import by hand in Sonarr\n"
+        "`[HorribleSubs] Boruto - Naruto Next Generations - 99 [1080p].mkv`\n"
+        "`[HorribleSubs] Boruto - Naruto Next Generations - 100 [1080p].mkv`\n"
+        "Boruto: Naruto Next Generations · HorribleSubs · S01 E01-E293 - download timed out; left for the next run"
     )
 
 
