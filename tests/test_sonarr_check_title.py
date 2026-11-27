@@ -10,6 +10,7 @@ A check runs over `FakeRunServices`, a real `ArrRunServices` subclass that recor
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 import pytest
 
@@ -372,13 +373,12 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         assert _title_stamps(store) == stamps
 
     def test_a_stored_pending_import_that_cannot_be_followed_is_not_joined_and_its_torrent_is_unread(self) -> None:
-        stored = _stored_on_the_first_row(tvdb_ids=None)
+        # Stored with no TVDB ids, on a row Sonarr no longer has. Only one awaiting its cleanup outlasts the run's
+        # start like that.
+        stored = replace(_stored_on_the_first_row(tvdb_ids=None), awaiting_cleanup=True)
         store = _store_holding(stored)
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
 
-        run = scripted_grab_run(store=store, episodes=episodes)
+        run = sonarr_grab_run([_MOVED_SPECIAL, _SECOND_ROW], store=store)
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
