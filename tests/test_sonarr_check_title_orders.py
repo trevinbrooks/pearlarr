@@ -17,7 +17,7 @@ from pearlarr.file_paths import normalize_file_name
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Severity
 from pearlarr.releases import EpisodeKey, PrintedKey, SeadexDict, SkipReason
-from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow
+from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, OrderRow
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
@@ -128,18 +128,17 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         assert run.left_out == left_out
 
     @pytest.mark.parametrize(
-        ("orders_stored", "not_stored"),
+        ("tvdb_orders", "not_stored"),
         [
-            pytest.param(False, "aired episodes", id="aired-episodes"),
-            pytest.param(True, "scene numbers from TheXEM", id="scene-numbers"),
+            pytest.param({}, "aired episodes", id="aired-episodes"),
+            pytest.param({SERIES_7_DVD.tvdbId: aired_orders()}, "scene numbers from TheXEM", id="scene-numbers"),
         ],
     )
     def test_a_series_with_no_aired_view_yet_is_left_unchecked_with_a_warning_of_what_is_not_stored(
-        self, orders_stored: bool, not_stored: str
+        self, tvdb_orders: dict[int, CachedOrders], not_stored: str
     ) -> None:
-        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
-        if orders_stored:
-            run.cache_store.put_tvdb_orders(SERIES_7_DVD.tvdbId, aired_orders())
+        store = FakeCacheStore(tvdb_orders=tvdb_orders)
+        run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show", cache_store=store)
         recording = install_recording_hub()
         strat = sonarr_checking(run, FakeSonarrClient(all_series=[SERIES_7_DVD]))
 
