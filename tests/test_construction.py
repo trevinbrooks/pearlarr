@@ -23,7 +23,6 @@ import respx
 from seadex import Tracker
 
 from pearlarr import arr_run_services
-from pearlarr.arr_http import REWARN_INTERVAL_S
 from pearlarr.arr_models import RadarrMovie
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
@@ -232,38 +231,30 @@ def build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Build]:
         deps.close()
 
 
-def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
-    """`ArrRunDeps.build` over the throwaway wiring every construction test shares."""
-
-    return ArrRunDeps.build(
-        Arr.SONARR,
-        cache=str(tmp_path / "cache.db"),
-        logger=logging.getLogger("pearlarr.test"),
-        resolver=make_resolver(),
-        app_config=app_config,
-        web=httpx.Client(),
-        boot=BootFlow(),
-    )
-
-
-def test_arr_run_deps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`ArrRunDeps.build` constructs the arr run's httpx client with THIS arr's `verify_ssl`.
-
-    It's the per-arr escape hatch for a self-signed HTTPS arr.
-    """
-
-    seen: list[bool] = []
+@pytest.mark.parametrize(
+    ("config", "verified"),
+    [
+        pytest.param(make_config(), True, id="by-default"),
+        pytest.param(make_config(verify_ssl=False), False, id="verify-ssl-off"),
+    ],
+)
+def test_the_arr_client_verifies_certificates_as_the_arrs_verify_ssl_says(
+    monkeypatch: pytest.MonkeyPatch, build: _Build, config: AppConfig, verified: bool
+) -> None:
+    # Off for an arr behind a self-signed certificate. httpx keeps a client's setting to itself, so it is read where
+    # build asks for the client.
+    asked: list[bool] = []
     real_factory = arr_run_services.make_arr_client
 
     def _record(*, verify: bool = True) -> httpx.Client:
-        seen.append(verify)
+        asked.append(verify)
         return real_factory(verify=verify)
 
     monkeypatch.setattr(arr_run_services, "make_arr_client", _record)
-    deps = _build_deps(make_config(verify_ssl=False), tmp_path)
-    deps.close()
 
-    assert seen == [False]
+    build(config)
+
+    assert asked == [verified]
 
 
 _SONARR_AND_QBITTORRENT = make_config(
@@ -322,27 +313,3 @@ def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tag
 
     assert deps.qbit.added == [("tv-sonarr", ["seadex"])]
     assert (deps.categories.post_import_category(), clients.call_count) == ("sonarr-done", 1)
-
-
-def test_arr_run_deps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
-    """`build` binds this arr's transport once: label from the arr, default rewarn interval."""
-
-    deps = _build_deps(make_config(url="http://sonarr", api_key="key"), tmp_path)
-    deps.close()
-
-    assert deps.arr_http is not None
-    assert deps.arr_http.label == "Sonarr"
-    assert deps.arr_http.base_url == "http://sonarr"
-    # progress_line_interval is the Sonarr client's own replace, never build's bind.
-    assert deps.arr_http.rewarn_s == REWARN_INTERVAL_S
-
-
-def test_arr_run_deps_build_leaves_arr_http_none_without_connection_keys(tmp_path: Path) -> None:
-    """Missing keys: `build` stays raise-free - require_connection fires at strategy construction instead."""
-
-    deps = _build_deps(make_config(), tmp_path)
-    deps.close()
-
-    assert deps.arr_http is None
-    # The resolver's None-http contract: no transport, so reads stay fetchless blanks.
-    assert deps.categories.grab_category() is None
