@@ -1,7 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# ^ the clamp pin reads the Discord field-value limit, and the containment pin calls the run loop's wait-notify
-# step, which has no public way in.
+# ^ the containment pin calls the run loop's wait-notify step, which has no public way in.
 """Tests for the Notifier pushes: the grab embed and the wait-complete summary.
 
 `Notifier.push_wait_summary` posts the wait-pass outcome (colored by its
@@ -25,15 +24,7 @@ from pearlarr import notify
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
-from pearlarr.discord import (
-    _MAX_VALUE_LEN,
-    COLOR_DEFERRED,
-    COLOR_FAILED,
-    COLOR_GRAB,
-    COLOR_SUCCESS,
-    DiscordEmbed,
-    EmbedField,
-)
+from pearlarr.discord import COLOR_DEFERRED, COLOR_FAILED, COLOR_GRAB, COLOR_SUCCESS, DiscordEmbed, EmbedField
 from pearlarr.notify import GrabNotice, Notifier
 from pearlarr.output import Diagnostic, Severity
 from pearlarr.releases import SeadexDict
@@ -280,21 +271,23 @@ def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pu
     )
 
 
-def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: list[DiscordEmbed]) -> None:
-    # A full set of three-name rows overflows a field value. The payload clamp is the backstop.
+@pytest.mark.parametrize(
+    ("titles", "last_lines"),
+    [
+        pytest.param(25, ["Title 23", "Title 24"], id="25-all-listed"),
+        pytest.param(26, ["Title 24", "… +1 more"], id="26th-counted"),
+    ],
+)
+def test_push_wait_summary_lists_up_to_25_titles_a_field_and_counts_the_rest(
+    pushes: list[DiscordEmbed], titles: int, last_lines: list[str]
+) -> None:
+    # A big carried-over backlog stays readable. Discord's own clamp on a field's length is the backstop.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    names = tuple(f"Demo Batch Part {n} (BD 1080p) [Group].mkv" for n in range(3))
-    rows = tuple(
-        WaitOutcomeRow(f"Title {i}", Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import(*names))
-        for i in range(25)
-    )
+    rows = tuple(WaitOutcomeRow(f"Title {n}", Outcome.IMPORTED) for n in range(titles))
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
-    [field] = cast("list[dict[str, str]]", pushes[0].to_payload()["fields"])
-    assert len(field["value"]) <= _MAX_VALUE_LEN
-    assert field["value"].startswith(
-        "Title 0 - no file was placed on an episode; import by hand in Sonarr\n`Demo Batch Part 0"
-    )
+    [field] = pushes[0].fields
+    assert field.value.splitlines()[-2:] == last_lines
 
 
 def test_pushes_are_paced_only_within_a_burst(
