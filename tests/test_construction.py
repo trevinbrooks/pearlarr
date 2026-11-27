@@ -14,6 +14,7 @@ tags. A category left to the arr's download client is read when it is first used
 """
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import override
 
@@ -29,7 +30,7 @@ from pearlarr.arr_models import RadarrMovie
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
-from pearlarr.mappings import TitleMapping
+from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
 from pearlarr.output import ArrRunSummaryReady, NeedsActionCause, RowFinished
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.wait_types import ImportWaitMode, Outcome
@@ -94,6 +95,20 @@ def test_a_radarr_run_lists_the_private_release_it_cannot_grab_as_needing_action
     ]
 
 
+def test_a_radarr_run_checks_a_movie_only_anibridge_maps() -> None:
+    # The run asks SeaDex for each movie it lists, under the movie's AniList title.
+    seadex = FakeSeaDexSource()
+    anibridge = MappingSources(anime=False, anidb=False, anibridge={"anilist:21519": {"tmdb_movie:372058": {}}})
+    deps = replace(
+        make_run_deps(arr=Arr.RADARR, seadex=seadex),
+        resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), sources=anibridge, web=httpx.Client()),
+    )
+
+    _radarr_run(deps, FakeRadarrClient(movies=[_YOUR_NAME]))
+
+    assert seadex.entry_calls == [21519]
+
+
 _HASH = "ab" * 20
 """The info hash of the Nyaa release the grabs here add."""
 
@@ -156,20 +171,6 @@ def test_a_blocking_run_counts_its_grab_once_and_imports_it() -> None:
     # Counted as this run's grab, never also as a download an earlier run left.
     assert ([row.group for row in tally.grabbed], tally.downloading) == (["NAN0"], 0)
     assert [(row.label, row.outcome) for row in recording.of_type(RowFinished)] == [("Show · NAN0", Outcome.IMPORTED)]
-
-
-def test_radarr_strategy_init_builds_without_network_via_the_client_argument() -> None:
-    # The radarr_client argument lets RadarrStrategy's REAL __init__ run under test: the
-    # injected fake skips require_connection, so no config keys are needed.
-    deps = make_run_deps()
-    services = ArrRunServices(deps, Arr.RADARR)
-    fake = FakeRadarrClient()
-
-    strat = RadarrStrategy(deps, services, radarr_client=fake)
-
-    assert strat.radarr is fake
-    assert strat._resolver is deps.resolver
-    assert strat.anibridge is deps.resolver.anibridge
 
 
 # --- what ArrRunDeps.build sets up ------------------------------------------------------------------------------
