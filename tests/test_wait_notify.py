@@ -387,6 +387,32 @@ def test_push_wait_summary_says_a_releases_torrents_apart_when_their_outcomes_di
     )
 
 
+@pytest.mark.parametrize(
+    ("labels", "names"),
+    [
+        # 25 lines of 40 characters and the 24 line breaks between them are 1024 characters.
+        pytest.param(
+            [f"Sousou no Frieren · SubsPlease · S01 E{n:02d}" for n in range(1, 26)],
+            ["Imported (25)"],
+            id="1024-one-field",
+        ),
+        # 27 lines of 37 characters and 26 line breaks are 1025.
+        pytest.param(
+            [f"Black Clover · HorribleSubs · S01 E{n:02d}" for n in range(1, 28)],
+            ["Imported (27)", ""],
+            id="1025-two-fields",
+        ),
+    ],
+)
+def test_push_wait_summary_runs_a_section_on_into_a_second_field_past_1024_characters(
+    discord: respx.Route, labels: list[str], names: list[str]
+) -> None:
+    rows = tuple(WaitOutcomeRow(label, Outcome.IMPORTED) for label in labels)
+
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
+    assert [field.name for field in _embed_posted(discord).fields] == names
+
+
 def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
     """A row with `outcome` for each numbered title, as a big wait's backlog has."""
 
