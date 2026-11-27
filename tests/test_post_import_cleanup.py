@@ -617,6 +617,7 @@ class TestCleanupRetryVerification:
 
         mgr.finish_cleanups()
 
+        assert [c.attempt_kind for c in strategy.import_calls] == [AttemptKind.FINAL]
         assert strategy.removal_calls == []
         assert stored_awaiting_cleanup(store) == {"h": True}
         assert state.pending_import_states == {}
