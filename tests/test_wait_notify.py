@@ -13,14 +13,13 @@ and returns False, it must never abort a grab or the end-of-run cache save.
 import json
 import time
 from collections.abc import Sequence
-from typing import cast
+from typing import NotRequired, TypedDict, cast
 
 import httpx
 import pytest
 import respx
 from seadex import EntryRecord, Tag, Tracker
 
-from pearlarr import notify
 from pearlarr.arr_run_loop import ArrRunLoop
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
@@ -41,10 +40,21 @@ from .builders import (
     order_only_hand_import_files,
     rg_group,
 )
-from .fakes import diagnostic_messages, install_recording_hub
+from .fakes import FakeClock, diagnostic_messages, install_recording_hub
+from .http_mock import requests_sent
+
+_DISCORD = "https://discord.example/api/webhooks/1/secret-token"
+"""The Discord webhook the notifier posts to. Its path is the credential, so no warning may show it."""
 
 _HOOK = "https://hook.example"
 """The wait webhook."""
+
+
+@pytest.fixture
+def discord(respx_mock: respx.MockRouter) -> respx.Route:
+    """Discord's webhook, answering each POST with the 204 it sends for a delivered message."""
+
+    return respx_mock.post(_DISCORD).respond(204)
 
 
 @pytest.fixture
@@ -55,55 +65,64 @@ def hook(respx_mock: respx.MockRouter) -> respx.Route:
 
 
 @pytest.fixture
-def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
-    """Route `notify.discord_push` into a recording list (no network)."""
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """A fake clock in place of `time.monotonic` and `time.sleep`.
 
-    recorded: list[DiscordEmbed] = []
-
-    def fake_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del url, client
-        recorded.append(embed)
-
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
-    return recorded
-
-
-def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPStatusError:
-    """An `HTTPStatusError` carrying a response, as `raise_for_status` raises it.
-
-    The url (in the message and on the request, as httpx builds both) stands in
-    for the webhook credential: the containment tests assert it never reaches a
-    warning message. `retry_after` sets the Retry-After header the 429
-    handling parses.
+    The notifier paces its pushes and waits out a 429 on `time` itself, with no clock handed in.
     """
 
-    url = "https://discord.example/api/webhooks/1/secret-token"
-    request = httpx.Request("POST", url)
-    headers = {"Retry-After": retry_after} if retry_after is not None else {}
-    response = httpx.Response(status, headers=headers, request=request)
-    return httpx.HTTPStatusError(f"error '{status}' for url '{url}'", request=request, response=response)
+    fake = FakeClock()
+    monkeypatch.setattr(time, "monotonic", fake.monotonic)
+    monkeypatch.setattr(time, "sleep", fake.sleep)
+    return fake
 
 
-class _SequencedPush:
-    """Fake `discord_push`: raises the queued errors in order, then succeeds."""
+class _SentField(TypedDict):
+    """One field row as Discord gets it."""
 
-    def __init__(self, *errors: httpx.HTTPStatusError) -> None:
-        self.errors = list(errors)
-        self.posts: list[str] = []
-
-    def __call__(self, *, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del embed, client
-        self.posts.append(url)
-        if self.errors:
-            raise self.errors.pop(0)
+    name: str
+    value: str
+    inline: bool
 
 
-def _record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Route `time.sleep` (pacing + the 429 Retry-After) into a recording list."""
+class _SentEmbed(TypedDict):
+    """One embed as Discord gets it, as far as these tests read it."""
 
-    sleeps: list[float] = []
-    monkeypatch.setattr(time, "sleep", sleeps.append)
-    return sleeps
+    author: dict[str, str]
+    title: str
+    color: int
+    fields: list[_SentField]
+    description: NotRequired[str]
+    url: NotRequired[str]
+    thumbnail: NotRequired[dict[str, str]]
+    image: NotRequired[dict[str, str]]
+
+
+def _embed_posted(discord: respx.Route) -> DiscordEmbed:
+    """The embed of the one POST Discord got, read back into the form the notifier builds it in.
+
+    A key the payload leaves out reads back as unset.
+    """
+
+    [request] = requests_sent(discord.calls)
+    [sent] = cast("list[_SentEmbed]", json.loads(request.content)["embeds"])
+    return DiscordEmbed(
+        author_name=sent["author"]["name"],
+        author_icon_url=sent["author"].get("icon_url"),
+        title=sent["title"],
+        color=sent["color"],
+        url=sent.get("url"),
+        description=sent.get("description", ""),
+        fields=tuple(EmbedField(field["name"], field["value"], field["inline"]) for field in sent["fields"]),
+        thumb_url=sent.get("thumbnail", {}).get("url"),
+        image_url=sent.get("image", {}).get("url"),
+    )
+
+
+def _notifier() -> Notifier:
+    """A notifier posting to Discord alone."""
+
+    return Notifier(discord_url=_DISCORD, web=httpx.Client())
 
 
 def _result() -> WaitResult:
@@ -191,11 +210,10 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false(hook: respx.R
     ]
 
 
-def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+def test_push_wait_summary_builds_discord_embed(discord: respx.Route) -> None:
+    assert _notifier().push_wait_summary(arr=Arr.RADARR, result=_result()) is True
 
-    assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
-    embed = pushes[0]
+    embed = _embed_posted(discord)
     assert embed.title == "Radarr wait complete"
     assert embed.description == "2 imported · 1 left · 1 failed · 1h 11m 04s"
     # Imported rows list the name alone. Left and failed rows carry the outcome's detail.
@@ -215,21 +233,19 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     ],
 )
 def test_push_wait_summary_is_colored_by_its_worst_outcome(
-    pushes: list[DiscordEmbed], outcomes: tuple[Outcome, ...], color: int
+    discord: respx.Route, outcomes: tuple[Outcome, ...], color: int
 ) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     result = WaitResult(tuple(WaitOutcomeRow("Frieren", outcome) for outcome in outcomes), elapsed_s=60)
 
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert pushes[0].color == color
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=result) is True
+    assert _embed_posted(discord).color == color
 
 
-def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(discord: respx.Route) -> None:
     row = WaitOutcomeRow("Demo Batch", Outcome.GONE)
 
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
-    [field] = pushes[0].fields
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = _embed_posted(discord).fields
     assert field.value == "Demo Batch - gone from qBittorrent; title checked again next run"
 
 
@@ -249,26 +265,24 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(push
     ],
 )
 def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(
-    pushes: list[DiscordEmbed], outcome: Outcome, value: str
+    discord: respx.Route, outcome: Outcome, value: str
 ) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     left = files_left_for_hand_import("Part_1.mkv", "Part 2.mkv")
     row = WaitOutcomeRow("Demo Batch", outcome, left_for_hand_import=left)
 
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
-    [field] = pushes[0].fields
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = _embed_posted(discord).fields
     assert field == EmbedField(name="Left for the next run (1)", value=value)
 
 
-def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(discord: respx.Route) -> None:
     row = WaitOutcomeRow(
         "Show Ending · grp · S04 E01-E12", Outcome.PARTIAL, left_for_hand_import=order_only_hand_import_files()
     )
 
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
-    [field] = pushes[0].fields
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
+    [field] = _embed_posted(discord).fields
     assert field.value == (
         "Show Ending · grp · S04 E01-E12 - S04 E01 is still missing in Sonarr.\n"
         "This torrent is numbered by the DVD order, and 2 of its files are DVD episodes "
@@ -286,50 +300,14 @@ def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pu
     ],
 )
 def test_push_wait_summary_lists_up_to_25_titles_a_field_and_counts_the_rest(
-    pushes: list[DiscordEmbed], titles: int, last_lines: list[str]
+    discord: respx.Route, titles: int, last_lines: list[str]
 ) -> None:
     # A big carried-over backlog stays readable. Discord's own clamp on a field's length is the backstop.
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
     rows = tuple(WaitOutcomeRow(f"Title {n}", Outcome.IMPORTED) for n in range(titles))
 
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
-    [field] = pushes[0].fields
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
+    [field] = _embed_posted(discord).fields
     assert field.value.splitlines()[-2:] == last_lines
-
-
-def test_pushes_are_paced_only_within_a_burst(
-    monkeypatch: pytest.MonkeyPatch,
-    pushes: list[DiscordEmbed],
-) -> None:
-    # Pacing lives in the Notifier (discord_push is a pure POST), so a single or
-    # final push never pays a trailing sleep. Only a burst's later pushes wait
-    # out the remainder of the 1s spacing.
-    del pushes  # the pushes fixture supplies the no-network discord_push
-    sleeps: list[float] = []
-    now = {"t": 100.0}
-
-    def fake_monotonic() -> float:
-        return now["t"]
-
-    def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        now["t"] += seconds
-
-    monkeypatch.setattr(time, "monotonic", fake_monotonic)
-    monkeypatch.setattr(time, "sleep", fake_sleep)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
-
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert sleeps == []  # the first (and possibly only) push never sleeps
-
-    now["t"] += 0.25  # a burst: the next push arrives 0.25s later
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert sleeps == [0.75]  # topped up to the 1s spacing
-
-    now["t"] += 5.0  # a slow follow-up needs no pacing
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert sleeps == [0.75]
 
 
 def _notice(
@@ -363,12 +341,16 @@ def _notice(
     )
 
 
-def _grab_notifier() -> Notifier:
-    return Notifier(discord_url="https://discord.example", web=httpx.Client())
+def _post_grab(discord: respx.Route, notice: GrabNotice) -> DiscordEmbed:
+    """Push `notice` as a grab and read back the embed Discord got."""
+
+    assert _notifier().push_grab(notice) is True
+    return _embed_posted(discord)
 
 
-def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
-    posted = _grab_notifier().push_grab(
+def test_push_grab_builds_linked_embed(discord: respx.Route) -> None:
+    embed = _post_grab(
+        discord,
         _notice(
             arr_title="Sousou no Frieren",
             title_name="Frieren: Beyond Journey's End",
@@ -378,8 +360,6 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
         ),
     )
 
-    assert posted is True
-    embed = pushes[0]
     # The author line names the event, with the arr's logo beside it. The
     # title is the AniList name linking to the entry page.
     assert embed.author_name == "Sonarr · SeaDex grab"
@@ -395,10 +375,9 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     assert embed.fields == (EmbedField(name="", value="-# Sousou no Frieren"),)
 
 
-def test_push_grab_radarr_wears_the_radarr_logo(pushes: list[DiscordEmbed]) -> None:
-    assert _grab_notifier().push_grab(_notice(arr=Arr.RADARR)) is True
+def test_push_grab_radarr_wears_the_radarr_logo(discord: respx.Route) -> None:
+    embed = _post_grab(discord, _notice(arr=Arr.RADARR))
 
-    embed = pushes[0]
     assert embed.author_name == "Radarr · SeaDex grab"
     assert embed.author_icon_url == "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
 
@@ -406,66 +385,65 @@ def test_push_grab_radarr_wears_the_radarr_logo(pushes: list[DiscordEmbed]) -> N
 class TestGrabNotes:
     """The Notes field stack: subtitle dedupe, notes blockquote, comparisons, caveat."""
 
-    def _notes(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> str:
-        assert _grab_notifier().push_grab(notice) is True
-        fields = pushes[-1].fields
+    def _notes(self, discord: respx.Route, notice: GrabNotice) -> str:
+        fields = _post_grab(discord, notice).fields
         return fields[-1].value if fields and fields[-1].name == "" else ""
 
-    def test_near_duplicate_titles_render_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+    def test_near_duplicate_titles_render_no_subtitle(self, discord: respx.Route) -> None:
         # Apostrophe style and case are not information: Sonarr's ASCII name
         # vs AniList's typographic one must not produce a duplicate byline.
         notes = self._notes(
-            pushes,
+            discord,
             _notice(arr_title="frieren: beyond journey's end", title_name="Frieren: Beyond Journey’s End"),
         )
 
         assert notes == ""
 
-    def test_season_suffix_title_renders_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+    def test_season_suffix_title_renders_no_subtitle(self, discord: respx.Route) -> None:
         # The usual per-season AniList title merely extends the series name,
         # so a byline would repeat the embed title directly above the notes.
         notes = self._notes(
-            pushes,
+            discord,
             _notice(arr_title="Frieren: Beyond Journey's End", title_name="Frieren: Beyond Journey's End Season 2"),
         )
 
         assert notes == ""
 
-    def test_shared_prefix_short_of_a_word_keeps_the_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+    def test_shared_prefix_short_of_a_word_keeps_the_subtitle(self, discord: respx.Route) -> None:
         # A prefix that splits a word is not a season suffix: the Arr series name
         # names a different series and stays informative.
-        notes = self._notes(pushes, _notice(arr_title="Show", title_name="Showtime Season 1"))
+        notes = self._notes(discord, _notice(arr_title="Show", title_name="Showtime Season 1"))
 
         assert notes == "-# Show"
 
-    def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
-        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*"))
+    def test_subtitle_escapes_markdown(self, discord: respx.Route) -> None:
+        notes = self._notes(discord, _notice(arr_title="K-ON! *Special*"))
 
         assert notes == "-# K-ON! \\*Special\\*"
 
-    def test_notes_render_as_one_blockquote(self, pushes: list[DiscordEmbed]) -> None:
+    def test_notes_render_as_one_blockquote(self, discord: respx.Route) -> None:
         # Blank lines drop so the notes stay one quote block.
         notes = self._notes(
-            pushes,
+            discord,
             _notice(entry=make_entry_record(notes="PMR is the JPN BD Remux\n\nLostYears has the dub")),
         )
 
         assert notes == "> PMR is the JPN BD Remux\n> LostYears has the dub"
 
-    def test_long_notes_truncate_on_a_word_boundary(self, pushes: list[DiscordEmbed]) -> None:
+    def test_long_notes_truncate_on_a_word_boundary(self, discord: respx.Route) -> None:
         notes = self._notes(
-            pushes,
+            discord,
             _notice(entry=make_entry_record(notes="alpha " * 80 + "OMEGA")),
         )
 
         assert notes.endswith("alpha …")
         assert "OMEGA" not in notes
 
-    def test_cut_landing_on_whitespace_keeps_the_whole_word(self, pushes: list[DiscordEmbed]) -> None:
+    def test_cut_landing_on_whitespace_keeps_the_whole_word(self, discord: respx.Route) -> None:
         # 400 chars of complete 5-char words: the cut lands on the separator, so
         # no word is sacrificed.
         notes = self._notes(
-            pushes,
+            discord,
             _notice(entry=make_entry_record(notes="word " * 81)),
         )
 
@@ -486,14 +464,14 @@ class TestGrabNotes:
             ),
         ],
     )
-    def test_comparison_links(self, pushes: list[DiscordEmbed], comparisons: tuple[str, ...], links: str) -> None:
-        notes = self._notes(pushes, _notice(entry=make_entry_record(comparisons=comparisons)))
+    def test_comparison_links(self, discord: respx.Route, comparisons: tuple[str, ...], links: str) -> None:
+        notes = self._notes(discord, _notice(entry=make_entry_record(comparisons=comparisons)))
 
         assert notes == links
 
-    def test_incomplete_entry_renders_caveat(self, pushes: list[DiscordEmbed]) -> None:
+    def test_incomplete_entry_renders_caveat(self, discord: respx.Route) -> None:
         notes = self._notes(
-            pushes,
+            discord,
             _notice(entry=make_entry_record(notes="Best available", is_incomplete=True)),
         )
 
@@ -504,11 +482,7 @@ class TestGrabNotes:
 class TestGrabLayout:
     """The grab layout: single-group grabs go in the description, several stack fields."""
 
-    def _embed(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> DiscordEmbed:
-        assert _grab_notifier().push_grab(notice) is True
-        return pushes[0]
-
-    def test_single_group_goes_in_the_description(self, pushes: list[DiscordEmbed]) -> None:
+    def test_single_group_goes_in_the_description(self, discord: respx.Route) -> None:
         seadex_dict = {
             "PMR": rg_group(
                 {
@@ -527,8 +501,8 @@ class TestGrabLayout:
             ),
         }
 
-        embed = self._embed(
-            pushes,
+        embed = _post_grab(
+            discord,
             _notice(
                 replaced_groups=("Erai_raws",),
                 seadex_dict=seadex_dict,
@@ -550,7 +524,7 @@ class TestGrabLayout:
             EmbedField(name="Replacing", value="Erai_raws", inline=True),
         )
 
-    def test_multiple_groups_keep_the_field_stack(self, pushes: list[DiscordEmbed]) -> None:
+    def test_multiple_groups_keep_the_field_stack(self, discord: respx.Route) -> None:
         # "Grabbed" only when the client actually added something. A release already
         # mid-download says so. A contained add failure (no result) reads
         # "Failed". A group whose releases were never attempted reads "Skipped".
@@ -559,8 +533,8 @@ class TestGrabLayout:
             for i, srg in enumerate(("Fresh", "InFlight", "Errored", "Held"))
         }
 
-        embed = self._embed(
-            pushes,
+        embed = _post_grab(
+            discord,
             _notice(
                 seadex_dict=seadex_dict,
                 results=[
@@ -583,19 +557,43 @@ class TestGrabLayout:
             "Replacing",
         ]
 
-    def test_unflagged_group_contributes_nothing(self, pushes: list[DiscordEmbed]) -> None:
+    def test_unflagged_group_contributes_nothing(self, discord: respx.Route) -> None:
         seadex_dict = {"Quiet": rg_group({"https://nyaa.si/view/9": make_release(url="https://nyaa.si/view/9")})}
 
-        embed = self._embed(pushes, _notice(seadex_dict=seadex_dict))
+        embed = _post_grab(discord, _notice(seadex_dict=seadex_dict))
 
         assert embed.description == ""
         assert embed.fields == ()
 
-    def test_replacing_collapses_beyond_cap(self, pushes: list[DiscordEmbed]) -> None:
-        embed = self._embed(pushes, _notice(replaced_groups=tuple(f"Group{i:02d}" for i in range(12))))
+    def test_replacing_collapses_beyond_cap(self, discord: respx.Route) -> None:
+        embed = _post_grab(discord, _notice(replaced_groups=tuple(f"Group{i:02d}" for i in range(12))))
 
         [replacing] = embed.fields
         assert replacing.value == "Group00, Group01, Group02, … +9 more"
+
+
+@pytest.mark.usefixtures("discord")
+def test_pushes_are_paced_only_within_a_burst(clock: FakeClock) -> None:
+    # A single or final push never pays a trailing sleep. Only a burst's later pushes wait out the rest of the 1s
+    # spacing.
+    notifier = _notifier()
+
+    assert notifier.push_grab(_notice()) is True
+    assert clock.sleeps == []
+
+    clock.tick(0.25)  # a burst: the next push comes 0.25s later
+    assert notifier.push_grab(_notice()) is True
+    assert clock.sleeps == [0.75]  # topped up to the 1s spacing
+
+    clock.tick(5.0)  # a slow follow-up needs no pacing
+    assert notifier.push_grab(_notice()) is True
+    assert clock.sleeps == [0.75]
+
+
+def _limited(retry_after: str) -> httpx.Response:
+    """Discord's 429 for a throttled webhook, asking for a wait of `retry_after`."""
+
+    return httpx.Response(429, headers={"Retry-After": retry_after})
 
 
 def _push_grab(notifier: Notifier) -> bool:
@@ -604,15 +602,11 @@ def _push_grab(notifier: Notifier) -> bool:
     return notifier.push_grab(_notice())
 
 
-def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_push_grab_discord_failure_warns_and_returns_false(discord: respx.Route) -> None:
     # The invariant the grab relies on: a Discord failure is contained in
     # _push (warn, False) - it must never abort the grab that triggered it.
-    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del url, embed, client
-        raise httpx.ConnectError("discord down")
-
-    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.mock(side_effect=httpx.ConnectError)
+    notifier = _notifier()
 
     recording = install_recording_hub()
     posted = _push_grab(notifier)  # must not raise
@@ -625,24 +619,17 @@ def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.M
     assert "discord.example" not in warning
 
 
-def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_push_grab_4xx_disables_discord_for_the_run(discord: respx.Route) -> None:
     # A 4xx (e.g. a deleted webhook's 404) is permanent: one actionable warning,
     # then Discord pushes are disabled - no warn-per-grab retry storm.
-    posts: list[str] = []
-
-    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del embed, client
-        posts.append(url)
-        raise _http_error(404)
-
-    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.respond(404)
+    notifier = _notifier()
 
     recording = install_recording_hub()
     assert _push_grab(notifier) is False
     assert _push_grab(notifier) is False
 
-    assert posts == ["https://discord.example"]  # the bad webhook is POSTed once
+    assert discord.call_count == 1  # the bad webhook is POSTed once
     assert notifier.enabled is False
     warnings = diagnostic_messages(recording, Severity.WARNING)
     assert warnings == [
@@ -654,20 +641,18 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     assert all("secret-token" not in message for message in warnings)
 
 
-def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_push_grab_429_retry_delivers_after_default_delay(discord: respx.Route, clock: FakeClock) -> None:
     # A 429 without a Retry-After header sleeps the 1s default then retries
-    # once: the notification is DELIVERED, so the caller sees True and nothing
+    # once: the notification is delivered, so the caller sees True and nothing
     # warns - a rate-limited push that made it is not a failure.
-    push = _SequencedPush(_http_error(429))
-    monkeypatch.setattr(notify, "discord_push", push)
-    sleeps = _record_sleeps(monkeypatch)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.mock(side_effect=[httpx.Response(429), httpx.Response(204)])
+    notifier = _notifier()
 
     recording = install_recording_hub()
     assert _push_grab(notifier) is True
 
-    assert push.posts == ["https://discord.example"] * 2  # original + retry
-    assert sleeps == [1.0]  # absent header -> the 1s default
+    assert discord.call_count == 2  # original + retry
+    assert clock.sleeps == [1.0]  # absent header -> the 1s default
     assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
@@ -678,34 +663,25 @@ def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.Mo
 def test_push_grab_429_honors_retry_after(
     header: str,
     expected_delay: float,
-    monkeypatch: pytest.MonkeyPatch,
+    discord: respx.Route,
+    clock: FakeClock,
 ) -> None:
     # Discord's Retry-After (an int or float seconds string) is slept out
     # before the retry. An unparseable value falls back to the 1s default.
-    push = _SequencedPush(_http_error(429, retry_after=header))
-    monkeypatch.setattr(notify, "discord_push", push)
-    sleeps = _record_sleeps(monkeypatch)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.mock(side_effect=[_limited(header), httpx.Response(204)])
 
-    assert _push_grab(notifier) is True
-    assert sleeps == [expected_delay]
+    assert _push_grab(_notifier()) is True
+    assert clock.sleeps == [expected_delay]
 
 
-def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A 429 whose retry 429s again drops THIS notification with one truthful
-    # warning - never an optimistic "later notifications" claim. The webhook is
+@pytest.mark.usefixtures("clock")
+def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(discord: respx.Route) -> None:
+    # A 429 whose retry 429s again drops this notification with one truthful
+    # warning, never an optimistic "later notifications" claim. The webhook is
     # healthy (throttled, not bad), so pushes stay enabled, the config is not
     # blamed, and a later push still attempts (and drops the same way).
-    posts: list[str] = []
-
-    def always_429(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del embed, client
-        posts.append(url)
-        raise _http_error(429, retry_after="0.1")
-
-    monkeypatch.setattr(notify, "discord_push", always_429)
-    _record_sleeps(monkeypatch)  # neutralize the retry delay + the 1s pacing
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.mock(return_value=_limited("0.1"))
+    notifier = _notifier()
 
     recording = install_recording_hub()
     assert _push_grab(notifier) is False
@@ -714,46 +690,37 @@ def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pyte
     ]
     assert _push_grab(notifier) is False  # a later push still attempts
 
-    assert notifier.enabled is True  # NOT disabled - later pushes still go out
-    assert posts == ["https://discord.example"] * 4  # (original + retry) per push
+    assert notifier.enabled is True  # not disabled: later pushes still go out
+    assert discord.call_count == 4  # (original + retry) per push
     warnings = diagnostic_messages(recording, Severity.WARNING)
     assert len(warnings) == 2  # one truthful warning per dropped push
     assert all("discord_url" not in message for message in warnings)  # config isn't at fault
     assert all("secret-token" not in message for message in warnings)
 
 
-def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_push_grab_429_long_retry_after_skips_the_retry(discord: respx.Route, clock: FakeClock) -> None:
     # A Retry-After above the 5s cap isn't worth blocking the run for: no
     # sleep, no retry - the push is dropped immediately with the same truthful
     # warning, and pushes stay enabled for the rest of the run.
-    push = _SequencedPush(_http_error(429, retry_after="30"))
-    monkeypatch.setattr(notify, "discord_push", push)
-    sleeps = _record_sleeps(monkeypatch)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.mock(side_effect=[_limited("30")])
+    notifier = _notifier()
 
     recording = install_recording_hub()
     assert _push_grab(notifier) is False
 
-    assert push.posts == ["https://discord.example"]  # no retry POST
-    assert sleeps == []  # the 30s was NOT slept
+    assert discord.call_count == 1  # no retry POST
+    assert clock.sleeps == []  # the 30s was not slept
     assert notifier.enabled is True
     assert diagnostic_messages(recording, Severity.WARNING) == [
         "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
     ]
 
 
-def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("clock")
+def test_push_grab_5xx_stays_per_push(discord: respx.Route) -> None:
     # A 5xx is transient (Discord hiccup): keep trying - and warning - per push.
-    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
-        del url, embed, client
-        raise _http_error(500)
-
-    def no_sleep(seconds: float) -> None:
-        del seconds  # the second push would otherwise pay the real 1s pacing
-
-    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
-    monkeypatch.setattr(time, "sleep", no_sleep)
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    discord.respond(500)
+    notifier = _notifier()
 
     recording = install_recording_hub()
     assert _push_grab(notifier) is False
