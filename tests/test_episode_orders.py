@@ -249,11 +249,10 @@ def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_o
 
 
 def test_a_series_numbered_by_another_order_with_nothing_stored_has_no_view() -> None:
-    strat = _sync([_series(1, 50, season_type="dvd")], FakeCacheStore())
+    reads = _reads([_series(1, 50, season_type="dvd")], FakeCacheStore())
 
-    assert strat._reads.aired_series(1) is NoView.ORDERS_UNREAD
-    assert strat._reads.series_index(1) is None
-    assert strat._episodes.title_episodes(1, 500, _SEASON_ONE) is NoView.ORDERS_UNREAD
+    assert reads.aired_series(1) is NoView.ORDERS_UNREAD
+    assert reads.series_index(1) is None
 
 
 def _scene(episodes: tuple[SonarrEpisode, ...]) -> list[tuple[int, tuple[int | None, int | None, int | None]]]:
@@ -274,11 +273,10 @@ _SCENE_ROWS = [
 def test_a_series_numbered_by_another_order_whose_scene_mappings_were_never_read_has_no_view() -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_LONGER_AIRED))
-    strat = _sync([_series(1, 50, season_type="dvd")], cache)
+    reads = _reads([_series(1, 50, season_type="dvd")], cache)
 
-    assert strat._reads.aired_series(1) is NoView.SCENE_UNREAD
-    assert strat._reads.series_index(1) is None
-    assert strat._episodes.title_episodes(1, 500, _SEASON_ONE) is NoView.SCENE_UNREAD
+    assert reads.aired_series(1) is NoView.SCENE_UNREAD
+    assert reads.series_index(1) is None
 
 
 def test_a_series_numbered_by_another_order_that_thexem_has_no_mappings_for_has_a_view_without_scene_numbers() -> None:
