@@ -1,13 +1,9 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# ^ the containment pin calls the run loop's wait-notify step, which has no public way in.
-"""Tests for the Notifier pushes: the grab embed and the wait-complete summary.
+"""Tests for what the notifier posts: the wait summary, the wait webhook's report, the grab embed, and a failed post.
 
-`Notifier.push_wait_summary` posts the wait-pass outcome (colored by its
-worst outcome class) to Discord and/or a generic webhook. `push_grab` posts
-the per-title grab embed. Both are best-effort, so these pin the happy paths,
-the no-url no-op, and the containment invariant: a notification failure warns
-and returns False, it must never abort a grab or the end-of-run cache save.
+Discord and the wait webhook are served over respx, so each test reads what the POST carried. A failed post warns
+and is reported unsent, never raising into the grab or the run. A notification that raises past the notifier is
+shown in `test_arr_run_finish`, and the payload's own shape and Discord's limits in `test_discord`.
 """
 
 import json
@@ -20,12 +16,10 @@ import pytest
 import respx
 from seadex import EntryRecord, Tag, Tracker
 
-from pearlarr.arr_run_loop import ArrRunLoop
-from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.discord import COLOR_DEFERRED, COLOR_FAILED, COLOR_GRAB, COLOR_SUCCESS, DiscordEmbed, EmbedField
 from pearlarr.notify import GrabNotice, Notifier
-from pearlarr.output import Diagnostic, Severity
+from pearlarr.output import Severity
 from pearlarr.releases import SeadexDict
 from pearlarr.torrent_service import AddStatus, GrabResult
 from pearlarr.wait_types import Outcome
@@ -33,8 +27,6 @@ from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
     files_left_for_hand_import,
-    make_bare_instance,
-    make_config,
     make_entry_record,
     make_release,
     order_only_hand_import_files,
@@ -702,31 +694,3 @@ class TestAFailedDiscordPost:
                 "check notifications.discord_url"
             ),
         ]
-
-
-class _RaisingNotifier:
-    """A fake `Notifier` whose wait-summary push raises a non-HTTP error."""
-
-    def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
-        del arr, result
-        raise RuntimeError("notifier exploded")
-
-
-class TestNotifyWaitCompleteContainment:
-    """A wait-notification failure warns (with traceback) and never propagates."""
-
-    def test_push_failure_is_swallowed_with_a_warning(self) -> None:
-        loop = make_bare_instance(
-            ArrRunLoop,
-            _config=make_config(wait_notify=True),
-            _notifier=_RaisingNotifier(),
-            _state=ArrRunState(arr=Arr.SONARR),
-        )
-        recording = install_recording_hub()
-        result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
-
-        loop._notify_wait_complete(result)  # must not raise
-
-        (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-        assert warning.message == "Wait completion notification failed unexpectedly - the notification was dropped"
-        assert warning.trace is not None
