@@ -33,9 +33,11 @@ COLOR_FAILED = 0xE74C3C
 # values, so trailing fields are dropped once the running sum would exceed it.
 _MAX_FIELDS = 25
 _MAX_NAME_LEN = 256
-_MAX_VALUE_LEN = 1024
+MAX_FIELD_VALUE_LEN = 1024
 _MAX_DESCRIPTION_LEN = 4096
 _MAX_TOTAL_LEN = 6000
+
+_FOOTER = f"Pearlarr v{__version__}"
 
 
 class EmbedField(NamedTuple):
@@ -76,25 +78,33 @@ class DiscordEmbed:
     """The wide AniList banner."""
     author_icon_url: str | None = None
 
+    @property
+    def field_room(self) -> int:
+        """How much of Discord's embed total is left for the fields' names and values."""
+
+        author = _clamp(self.author_name, _MAX_NAME_LEN)
+        title = _clamp(self.title, _MAX_NAME_LEN)
+        description = _clamp(self.description, _MAX_DESCRIPTION_LEN)
+        return _MAX_TOTAL_LEN - len(author) - len(title) - len(description) - len(_FOOTER)
+
     def to_payload(self) -> dict[str, Json]:
         """The `embeds[0]` object Discord expects, clamped to its hard limits."""
 
         author = _clamp(self.author_name, _MAX_NAME_LEN)
         title = _clamp(self.title, _MAX_NAME_LEN)
-        description = _clamp(self.description, _MAX_DESCRIPTION_LEN) if self.description else ""
-        footer = f"Pearlarr v{__version__}"
+        description = _clamp(self.description, _MAX_DESCRIPTION_LEN)
 
         # Keep fields while the embed total stays under the limit. A grab embed
         # has one field per release group, so a fat entry sheds trailing groups
         # instead of 400ing the webhook.
-        total = len(author) + len(title) + len(description) + len(footer)
+        room = self.field_room
         fields: list[Json] = []
         for f in self.fields[:_MAX_FIELDS]:
             name = _clamp(f.name, _MAX_NAME_LEN)
-            value = _clamp(f.value, _MAX_VALUE_LEN)
-            if total + len(name) + len(value) > _MAX_TOTAL_LEN:
+            value = _clamp(f.value, MAX_FIELD_VALUE_LEN)
+            room -= len(name) + len(value)
+            if room < 0:
                 break
-            total += len(name) + len(value)
             fields.append({"name": name, "value": value, "inline": f.inline})
 
         author_obj: dict[str, Json] = {"name": author, "url": PROJECT_URL}
@@ -106,7 +116,7 @@ class DiscordEmbed:
             "color": self.color,
             "fields": fields,
             "timestamp": datetime.now(tz=UTC).isoformat(),
-            "footer": {"text": footer},
+            "footer": {"text": _FOOTER},
         }
         if description:
             embed["description"] = description
