@@ -59,9 +59,24 @@ _YOUR_NAME = RadarrMovie(id=42, title="Your Name.", tmdbId=372058)
 """A movie in Radarr, AniList title 21519."""
 
 
-def test_a_radarr_run_lists_the_private_release_it_cannot_grab_as_needing_action() -> None:
+@pytest.mark.parametrize(
+    "sources",
+    [
+        pytest.param(
+            MappingSources(
+                anime={"Your Name": {"anilist_id": 21519, "tmdb_movie_id": 372058}}, anidb=False, anibridge=False
+            ),
+            id="known-to-anime-ids",
+        ),
+        pytest.param(
+            MappingSources(anime=False, anidb=False, anibridge={"anilist:21519": {"tmdb_movie:372058": {}}}),
+            id="known-only-to-anibridge",
+        ),
+    ],
+)
+def test_a_radarr_run_lists_the_private_release_it_cannot_grab_as_needing_action(sources: MappingSources) -> None:
     # The release is marked private-only where SeaDex's entry is planned and listed where the title's check ends, two
-    # parts of the run that each read the run's state.
+    # parts of the run that each read the run's state. The run checks a movie that Anime-IDs or AniBridge alone knows.
     entry = make_entry_record(
         anilist_id=21519,
         torrents=(
@@ -74,11 +89,8 @@ def test_a_radarr_run_lists_the_private_release_it_cannot_grab_as_needing_action
             ),
         ),
     )
-    deps = make_run_deps(
-        arr=Arr.RADARR,
-        seadex=FakeSeaDexSource({21519: entry}),
-        anime_ids={"Your Name": {"anilist_id": 21519, "tmdb_movie_id": 372058}},
-    )
+    resolver = MappingResolver(refresh_days=1, ignore_anilist_ids=set(), sources=sources, web=httpx.Client())
+    deps = replace(make_run_deps(arr=Arr.RADARR, seadex=FakeSeaDexSource({21519: entry})), resolver=resolver)
     recording = install_recording_hub()
 
     _radarr_run(deps, FakeRadarrClient(movies=[_YOUR_NAME]))
@@ -87,20 +99,6 @@ def test_a_radarr_run_lists_the_private_release_it_cannot_grab_as_needing_action
     assert [(row.group, row.cause) for row in summary.summary.tally.needs_action] == [
         ("Priv", NeedsActionCause.PRIVATE_ONLY)
     ]
-
-
-def test_a_radarr_run_checks_a_movie_only_anibridge_maps() -> None:
-    # The run asks SeaDex for each movie it lists, under the movie's AniList title.
-    seadex = FakeSeaDexSource()
-    anibridge = MappingSources(anime=False, anidb=False, anibridge={"anilist:21519": {"tmdb_movie:372058": {}}})
-    deps = replace(
-        make_run_deps(arr=Arr.RADARR, seadex=seadex),
-        resolver=MappingResolver(refresh_days=1, ignore_anilist_ids=set(), sources=anibridge, web=httpx.Client()),
-    )
-
-    _radarr_run(deps, FakeRadarrClient(movies=[_YOUR_NAME]))
-
-    assert seadex.entry_calls == [21519]
 
 
 # --- what ArrRunDeps.build sets up ------------------------------------------------------------------------------
