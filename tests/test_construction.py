@@ -23,6 +23,7 @@ import respx
 from seadex import Tracker
 
 from pearlarr import arr_run_services
+from pearlarr.arr_http import ARR_REQUEST_TIMEOUT_S
 from pearlarr.arr_models import RadarrMovie
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
@@ -313,3 +314,27 @@ def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tag
 
     assert deps.qbit.added == [("tv-sonarr", ["seadex"])]
     assert (deps.categories.post_import_category(), clients.call_count) == ("sonarr-done", 1)
+
+
+_ARR_TIMEOUT = {"REQUESTS_ARGS": {"timeout": ARR_REQUEST_TIMEOUT_S}}
+"""The qBittorrent setting that times its requests out as the arr's are."""
+
+
+@pytest.mark.parametrize(
+    ("options", "settings"),
+    [
+        pytest.param({}, _ARR_TIMEOUT, id="by-default"),
+        pytest.param(
+            {"VERIFY_WEBUI_CERTIFICATE": False}, {"VERIFY_WEBUI_CERTIFICATE": False, **_ARR_TIMEOUT}, id="with-options"
+        ),
+        pytest.param({"REQUESTS_ARGS": {"timeout": 60}}, {"REQUESTS_ARGS": {"timeout": 60}}, id="own-timeout"),
+    ],
+)
+def test_qbittorrent_is_reached_with_the_configs_options_timing_out_as_the_arr_unless_they_say(
+    build: _Build, options: dict[str, object], settings: dict[str, object]
+) -> None:
+    # A wedged qBittorrent socket can't hang a poll.
+    deps = build(make_config(host="http://qbit:8080", username="u", password="p", options=options))
+
+    assert isinstance(deps.qbit, _QbitStandIn)
+    assert deps.qbit.settings == {"host": "http://qbit:8080", "username": "u", "password": "p", **settings}
