@@ -263,7 +263,7 @@ def _fields_row_finished(event: RowFinished) -> tuple[Field, ...]:
         lead, reason = hand_import_sentences(left)
         fields.append(Field("detail", f"{lead} {reason}."))
     if left.files:
-        fields.append(Field("hand_import_files", "; ".join(hand_import_names(left))))
+        fields.append(Field("hand_import_files", "; ".join(hand_import_names(left.files))))
     fields.append(Field("waited_s", event.waited_s))
     return tuple(fields)
 

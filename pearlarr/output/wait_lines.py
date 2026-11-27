@@ -41,7 +41,10 @@ from ..tvdb_orders import order_display_name
 from ..wait_types import LeftForHandImport, Outcome, OutcomeKind
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..console_features import ConsoleFeatures
+    from ..wait_types import HandImportFile
 
 type WaitEvent = WaitStarted | WaitProgress | RowFinished | WaitFinished
 
@@ -79,11 +82,11 @@ def _order_only_reason(left: LeftForHandImport) -> str:
     )
 
 
-def hand_import_names(left: LeftForHandImport, *, sep: str = ": ", quote: str = "") -> list[str]:
-    """Each hand import file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
+def hand_import_names(files: Iterable[HandImportFile], *, sep: str = ": ", quote: str = "") -> list[str]:
+    """Each file's name, an order-only one behind its order's number, as "DVD S07E01: NAME"."""
 
     names: list[str] = []
-    for file in left.files:
+    for file in files:
         quoted = f"{quote}{file.name}{quote}"
         names.append(quoted if file.order_only is None else f"{file.order_only.label}{sep}{quoted}")
     return names
@@ -183,7 +186,7 @@ def _hand_import_details(left: LeftForHandImport, features: ConsoleFeatures, sty
     if left.explained_by_order:
         reason = textwrap.wrap(_order_only_reason(left), width=_REASON_WIDTH)
         rows += [_detail("" if row else "reason", text, style) for row, text in enumerate(reason)]
-    names = hand_import_names(left, sep="  ")
+    names = hand_import_names(left.files, sep="  ")
     rows += [_detail("" if row else "files", name) for row, name in enumerate(names[:_MAX_FILE_ROWS])]
     if len(names) > _MAX_FILE_ROWS:
         rows.append(_detail("", f"{'…' if features.can_unicode else '...'} +{len(names) - _MAX_FILE_ROWS} more"))

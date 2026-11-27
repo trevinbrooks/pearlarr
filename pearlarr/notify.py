@@ -31,7 +31,7 @@ from .output.console_text import count_noun, human_bytes, long_duration
 from .output.wait_lines import hand_import_names, hand_import_sentences
 from .releases import Release, SeadexDict
 from .torrent_service import AddStatus, GrabResult
-from .wait_types import LeftForHandImport, OutcomeKind
+from .wait_types import OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail
 
@@ -129,7 +129,7 @@ def _file_lines(rows: Sequence[WaitOutcomeRow]) -> tuple[str, ...]:
 
     files = sorted((file for row in rows for file in row.left_for_hand_import.files), key=lambda f: natural_key(f.name))
     # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
-    return tuple(hand_import_names(LeftForHandImport(files=tuple(files)), quote="`"))
+    return tuple(hand_import_names(files, quote="`"))
 
 
 @dataclass(frozen=True, slots=True)
