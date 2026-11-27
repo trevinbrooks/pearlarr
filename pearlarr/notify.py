@@ -144,15 +144,16 @@ class _Line:
 def _left_out(files: int, torrents: int) -> str:
     """A cut section's last line: the files it didn't list of the entry it stopped in, then the torrents after.
 
-    Files and torrents are counted apart because the section's count is torrents, and one torrent can leave many files.
+    Files and torrents are counted apart, since one torrent can leave many files. A count of torrents alone goes
+    without its noun, as the section's name counts torrents too.
     """
 
-    counts: list[str] = []
-    if files:
-        counts.append(f"+{count_noun(files, 'more file')}")
-    if torrents:
-        counts.append(f"+{torrents} more")
-    return "… " + " · ".join(counts)
+    if not files:
+        return f"… +{torrents} more"
+    more_files = f"+{count_noun(files, 'more file')}"
+    if not torrents:
+        return f"… {more_files}"
+    return f"… {more_files} · +{count_noun(torrents, 'more torrent')}"
 
 
 def _section_lines(entries: Sequence[_WaitEntry]) -> list[_Line]:
