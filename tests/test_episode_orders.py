@@ -233,6 +233,19 @@ def test_a_series_numbered_by_another_order_is_served_as_aired_with_its_stored_o
     assert {name: order.id_by_key for name, order in index.orders.items()} == {"dvd": {(1, 1): 11, (1, 2): 12}}
 
 
+def test_a_row_only_the_series_own_order_lists_is_kept_apart_for_that_order_to_read_onto() -> None:
+    # The dvd order has a third episode, a DVD extra the aired order lacks, and Sonarr numbers the series by it.
+    extra = sonarr_ep(1, 3, ep_id=13, tvdb_id=9004)
+    stored = _stored({"official": _ORDERS["official"], "dvd": (*_DVD, OrderRow(1, 3, 9004, None))})
+    sonarr = FakeSonarrClient(episodes=[*_DVD_ROWS, extra])
+    reads = _reads([_series(1, 50, season_type="dvd")], stored, sonarr=sonarr)
+
+    index = reads.series_index(1)
+
+    assert index is not None
+    assert (index.own_only, index.orders["dvd"].own_only_by_key) == ({13: extra}, {(1, 3): 13})
+
+
 def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_ones() -> None:
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
     episodes = _episodes([_series(1, 50, season_type="dvd")], _stored(_LONGER_AIRED), sonarr=sonarr)
