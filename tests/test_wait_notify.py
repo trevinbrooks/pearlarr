@@ -43,6 +43,16 @@ from .builders import (
 )
 from .fakes import diagnostic_messages, install_recording_hub
 
+_HOOK = "https://hook.example"
+"""The wait webhook."""
+
+
+@pytest.fixture
+def hook(respx_mock: respx.MockRouter) -> respx.Route:
+    """The wait webhook, answering each POST with a 200."""
+
+    return respx_mock.post(_HOOK).respond(200)
+
 
 @pytest.fixture
 def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
@@ -124,29 +134,31 @@ def test_push_wait_summary_empty_result_is_noop() -> None:
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((), 0.0)) is False
 
 
-@respx.mock
-def test_push_wait_summary_posts_to_webhook() -> None:
-    route = respx.post("https://hook.example").respond(json={})
-    notifier = Notifier(
-        discord_url=None,
-        webhook_url="https://hook.example",
-        web=httpx.Client(),
-    )
+def test_push_wait_summary_posts_to_webhook(hook: respx.Route) -> None:
+    notifier = Notifier(discord_url=None, webhook_url=_HOOK, web=httpx.Client())
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is True
-    payload = cast("dict[str, object]", json.loads(route.calls.last.request.content))
-    assert payload["imported"] == 2
-    assert payload["failed"] == 1
+    assert json.loads(hook.calls.last.request.content) == {
+        "arr": "sonarr",
+        "imported": 2,
+        "left": 1,
+        "failed": 1,
+        "elapsed_s": 4264,
+        "rows": [
+            {"label": "Frieren", "outcome": "IMPORTED", "word": "imported"},
+            {"label": "Apothecary Diaries", "outcome": "IMPORTED", "word": "imported"},
+            {"label": "Spy x Family", "outcome": "DOWNLOAD_TIMED_OUT", "word": "timed out"},
+            {"label": "Bleach TYBW", "outcome": "DOWNLOAD_ERRORED", "word": "errored"},
+        ],
+    }
 
 
-@respx.mock
-def test_webhook_rows_name_every_outcome() -> None:
-    route = respx.post("https://hook.example").respond(json={})
-    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client())
+def test_webhook_rows_name_every_outcome(hook: respx.Route) -> None:
+    notifier = Notifier(discord_url=None, webhook_url=_HOOK, web=httpx.Client())
     result = WaitResult(tuple(WaitOutcomeRow("Demo", outcome) for outcome in Outcome), elapsed_s=1)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    payload = cast("dict[str, list[dict[str, str]]]", json.loads(route.calls.last.request.content))
+    payload = cast("dict[str, list[dict[str, str]]]", json.loads(hook.calls.last.request.content))
     assert [row["outcome"] for row in payload["rows"]] == [
         "IMPORTED",
         "GONE",
@@ -166,22 +178,17 @@ def test_webhook_rows_name_every_outcome() -> None:
     ]
 
 
-@respx.mock
-def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
-    # The generic-webhook twin of the Discord containment: a request failure is
-    # warned about and swallowed, never propagated to the cache save at the end of the run.
-    respx.post("https://hook.example").mock(side_effect=httpx.ConnectError("webhook down"))
-    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client())
-
+def test_push_wait_summary_webhook_failure_warns_and_returns_false(hook: respx.Route) -> None:
+    # The exception is never put in the warning: its str holds the webhook URL, which is the credential. The config
+    # key points at the fix.
+    hook.mock(side_effect=httpx.ConnectError)
+    notifier = Notifier(discord_url=None, webhook_url=_HOOK, web=httpx.Client())
     recording = install_recording_hub()
-    posted = notifier.push_wait_summary(arr=Arr.SONARR, result=_result())  # must not raise
 
-    assert posted is False
-    [warning] = diagnostic_messages(recording, Severity.WARNING)
-    # The exception is never interpolated: its str embeds the webhook URL,
-    # which IS the credential. The config key name is the pointer to the fix.
-    assert warning == "Wait-report webhook POST failed (ConnectError) - check notifications.wait_webhook_url"
-    assert "hook.example" not in warning
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is False
+    assert diagnostic_messages(recording, Severity.WARNING) == [
+        "Wait-report webhook POST failed (ConnectError) - check notifications.wait_webhook_url"
+    ]
 
 
 def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> None:
