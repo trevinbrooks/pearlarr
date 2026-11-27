@@ -189,7 +189,8 @@ def _fit(lines: Sequence[_Line], sizes: Sequence[int]) -> list[str]:
     """A section's field values: its lines in order, whole, each value within its size.
 
     The lines run on into the next field when one won't fit whole. When the last field fills, the section ends on
-    the line that counts what it left out, after as many lines as leave room for it.
+    the line that counts what it left out, after as many lines as leave room for it. A line longer than a field
+    fits none, so the section ends there on that count.
     """
 
     fields: list[list[str]] = [[] for _ in sizes]

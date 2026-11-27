@@ -56,7 +56,8 @@ MIN_LIVE_ROWS = 4
 _RESERVED_ROWS = 8
 # The sparkline needs unicode blocks and enough width not to crowd the label.
 MIN_SPARK_WIDTH = 80
-# The console names this many of a download's files left for hand import. The log and the notification name them all.
+# The console names this many of a download's files left for hand import. The log names them all, and the
+# notification as many as its section has room for, counting the rest.
 _MAX_FILE_ROWS = 5
 # The console wraps an order-only pending import's reason at this many columns, so its rows fit a 100-column terminal.
 _REASON_WIDTH = 78
