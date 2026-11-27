@@ -20,6 +20,7 @@ from pearlarr.wait_types import AttemptKind, EffectStatus, ImportProgress, Outco
 from .builders import SEP, FakeCacheStore, attempt_result, make_config, pending_import
 from .fakes import FakeClock, diagnostic_messages, install_recording_hub
 from .wait_fakes import (
+    ALL_IN,
     CategoryQbit,
     FakeQbit,
     FakeTorrent,
@@ -95,7 +96,7 @@ class TestBlockingWaitImport:
                 attempt_result(all_done=False, command_issued=True),
                 attempt_result(all_done=True),
             ],
-            progress=[ImportProgress(1, 1, determinate=True)],
+            progress=[ALL_IN],
         )
         _, view = run_blocking_wait(
             strategy,

@@ -23,17 +23,14 @@ from pearlarr.mappings import TitleMapping
 from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, TitleHeader, WaitStarted
 from pearlarr.output.events import TitleState
 from pearlarr.pending_import import PendingImport
-from pearlarr.wait_types import ImportProgress, ImportWaitMode
+from pearlarr.wait_types import ImportWaitMode
 
 from .builders import attempt_result, drive_arr_run, make_config, make_run_deps, pending_import
 from .fakes import FakeArrItem, FakeClock, RecordingHub, install_recording_hub
-from .wait_fakes import TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStrategy
+from .wait_fakes import ALL_IN, TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStrategy
 
 _ALL_IMPORTED = (attempt_result(),)
 """The arr's answer to every import it is asked for: all of the torrent's files are in."""
-
-_ALL_IN = (ImportProgress(1, 1, determinate=True),)
-"""The arr's answer to every import progress read: all of the torrent's files are in."""
 
 _FINISHED = FakeTorrent(is_complete=True, content_path="/downloads/done")
 """A torrent qBittorrent has finished downloading."""
@@ -217,7 +214,7 @@ class TestWhatARunCounts:
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("a"), _pending("b"), _pending("c"))
         qbit = FakeQbit({"a": [_FINISHED], "b": [_DOWNLOADING, _FINISHED], "c": [_DOWNLOADING]})
-        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=_ALL_IN)
+        strategy = _SeriesInLibrary(attempts=_ALL_IMPORTED, progress=[ALL_IN])
         recording = install_recording_hub()
 
         _run(cache, strategy, qbit, mode=ImportWaitMode.DEFERRED)
@@ -303,7 +300,7 @@ class TestWhatARunSaves:
         # Series 7 is in the library and the arr has all of "h" in, so the scan's look at "h" would finish it.
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
-        strategy = _SeriesInLibrary(progress=_ALL_IN)
+        strategy = _SeriesInLibrary(progress=[ALL_IN])
 
         _run(cache, strategy, FakeQbit(TORRENT_H_COMPLETE), mode=ImportWaitMode.OFF)
 
