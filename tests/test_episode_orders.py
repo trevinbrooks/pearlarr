@@ -371,9 +371,13 @@ def test_a_series_with_no_anilist_mapping_is_read_by_the_order_the_library_read_
 
 
 def test_the_series_hash_of_a_run_is_of_the_series_with_an_anilist_mapping() -> None:
-    strat = _sync([_series(1, 50), _series(2, 60)], FakeCacheStore())
+    sonarr = FakeSonarrClient(all_series=[_series(1, 50), _series(2, 60)])
+    deps = make_run_deps(anime_ids=_MAPPED)
+    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
 
-    assert strat._reads.series_hash == sonarr_series_hash([1])
+    make_sonarr_episodes(deps, sonarr=sonarr, reads=reads).refresh_library()
+
+    assert reads.series_hash == sonarr_series_hash([1])
 
 
 def test_the_scene_mappings_of_a_pending_imports_series_are_read_for_the_one_in_another_order() -> None:
