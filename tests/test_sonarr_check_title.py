@@ -428,13 +428,7 @@ class TestSonarrCheckTitleMetadataUnread:
         # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
         # import too.
         store = FakeCacheStore()
-        resident = pending_import(
-            infohash="h1",
-            series_id=8,
-            file_episode_map={GRAB_FILES[1]: [250]},
-            seadex_files=list(GRAB_FILES),
-            tvdb_ids={250: 9101},
-        )
+        resident = pending_import(infohash="h1", series_id=8, seadex_files=list(GRAB_FILES))
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
 
         run = sonarr_grab_run([EP1, EP2], store=store, unread=unread)
