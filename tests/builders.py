@@ -1607,16 +1607,18 @@ def make_pending_follower(cache_store: AbstractCacheStore, rows: SeriesRows) -> 
 
 
 def make_sonarr_episodes(
-    deps: ArrRunDeps | None = None, *, sonarr: AbstractSonarrClient | None = None
+    deps: ArrRunDeps | None = None, *, sonarr: AbstractSonarrClient | None = None, reads: SeriesReads | None = None
 ) -> SonarrEpisodes:
     """A real `SonarrEpisodes` over `deps` and `sonarr`, built as `SonarrStrategy` builds it, before any library read.
 
-    The deps are `make_run_deps()` when none are given, and Sonarr a `FakeSonarrClient` that lists no episodes.
+    The deps are `make_run_deps()` when none are given, and Sonarr a `FakeSonarrClient` that lists no episodes. A
+    test that reads what the reader's library read left passes the run's `reads`, over `sonarr` and the deps' SkyHook
+    and TheXEM as the strategy's are. They are built so when left out.
     """
 
     deps = deps or make_run_deps()
     sonarr = sonarr or FakeSonarrClient()
-    reads = SeriesReads(sonarr, deps.skyhook, deps.xem)
+    reads = reads or SeriesReads(sonarr, deps.skyhook, deps.xem)
     return SonarrEpisodes(deps, sonarr, ArrRunServices(deps, Arr.SONARR), reads)
 
 
