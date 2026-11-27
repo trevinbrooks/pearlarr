@@ -1,5 +1,5 @@
 # pyright: strict
-"""Builders for the strategies' title check tests: a recording run services, a scripted parse and listings.
+"""Builders for the strategies' title check tests: a recording run services, and the strategies built by their constructors.
 
 The Sonarr checks share series 7 and the one torrent its title lists, and `sonarr_grab_run` drives a check of it.
 """
