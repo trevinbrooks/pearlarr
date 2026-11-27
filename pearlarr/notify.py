@@ -110,15 +110,18 @@ class _WaitEntry:
 
 
 def _wait_entries(rows: Sequence[WaitOutcomeRow]) -> list[_WaitEntry]:
-    """A section's rows as entries, one for each name and what it says, where the first of its rows stands.
+    """A section's rows as entries, one for each name and what it says, in order of their names.
 
-    A release Pearlarr grabbed as a torrent per episode gives each torrent the release's name, so they read as one.
+    A release Pearlarr grabbed as a torrent per episode can give each torrent the release's name, so they read as
+    one, or each its own episode, so they sit together in episode order and not in the order they finished. Entries
+    of one name keep the order their first rows came in.
     """
 
     same: dict[tuple[str, str], list[WaitOutcomeRow]] = {}
     for row in rows:
         same.setdefault((row.label, _says(row)), []).append(row)
-    return [_WaitEntry(label, says, len(group), _file_lines(group)) for (label, says), group in same.items()]
+    entries = [_WaitEntry(label, says, len(group), _file_lines(group)) for (label, says), group in same.items()]
+    return sorted(entries, key=lambda entry: natural_key(entry.label.casefold()))
 
 
 def _file_lines(rows: Sequence[WaitOutcomeRow]) -> tuple[str, ...]:

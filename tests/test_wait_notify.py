@@ -217,7 +217,7 @@ def test_push_wait_summary_builds_discord_embed(discord: respx.Route) -> None:
     assert embed.description == "2 imported · 1 left · 1 failed · 1h 11m 04s"
     # Imported rows list the name alone. Left and failed rows carry the outcome's detail.
     assert embed.fields == (
-        EmbedField(name="Imported (2)", value="Frieren\nApothecary Diaries"),
+        EmbedField(name="Imported (2)", value="Apothecary Diaries\nFrieren"),
         EmbedField(name="Left for the next run (1)", value="Spy x Family - download timed out; left for the next run"),
         EmbedField(name="Failed (1)", value="Bleach TYBW - download errored; left for the next run"),
     )
@@ -343,8 +343,32 @@ def test_push_wait_summary_says_a_releases_torrents_once_with_their_files_in_ord
     )
 
 
+def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(discord: respx.Route) -> None:
+    # A torrent per episode names its own episode once its file is placed, so a release's imports sit together in
+    # episode order, not in the order the downloads finished around another title's.
+    rows = (
+        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E05", Outcome.IMPORTED),
+        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E11", Outcome.IMPORTED),
+        WaitOutcomeRow("Shakugan no Shana · Doki · S01 E01-E24", Outcome.IMPORTED),
+        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E01", Outcome.IMPORTED),
+        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E09", Outcome.IMPORTED),
+    )
+
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=872)) is True
+    assert _embed_posted(discord).fields == (
+        EmbedField(
+            "Imported (5)",
+            "Shakugan no Shana · Doki · S01 E01-E24\n"
+            "Though I Am an Inept Villainess · Chihiro · S01 E01\n"
+            "Though I Am an Inept Villainess · Chihiro · S01 E05\n"
+            "Though I Am an Inept Villainess · Chihiro · S01 E09\n"
+            "Though I Am an Inept Villainess · Chihiro · S01 E11",
+        ),
+    )
+
+
 def test_push_wait_summary_says_a_releases_torrents_apart_when_their_outcomes_differ(discord: respx.Route) -> None:
-    # The entry of two stands where the first of them did, ahead of the torrent that timed out.
+    # Both entries have the release's name, so they keep the order they came in.
     label = "Frieren · SubsPlease · S01 E01-E28"
     rows = (
         _nothing_placed(label, "[SubsPlease] Sousou no Frieren - 02 (1080p) [3E7D1A42].mkv"),
@@ -386,8 +410,8 @@ def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
                         *(f"[Okay-Subs] Gintama - {n:02d} (BD 1080p HEVC FLAC 2.0).mkv" for n in range(1, 50))
                     ),
                 ),
-                WaitOutcomeRow("Dandadan · SubsPlease · S01 E01-E12", Outcome.DOWNLOAD_TIMED_OUT),
-                WaitOutcomeRow("Frieren · SubsPlease · S01 E01-E28", Outcome.DOWNLOAD_TIMED_OUT),
+                WaitOutcomeRow("Kaiju No. 8 · SubsPlease · S01 E01-E12", Outcome.DOWNLOAD_TIMED_OUT),
+                WaitOutcomeRow("Sakamoto Days · SubsPlease · S01 E01-E11", Outcome.DOWNLOAD_TIMED_OUT),
             ),
             ["Left for the next run (3)", ""],
             # The second field has room for file 34 but not for the count after it, so the count takes its place.
