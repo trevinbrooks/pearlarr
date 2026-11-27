@@ -345,13 +345,14 @@ def test_push_wait_summary_says_a_releases_torrents_once_with_their_files_in_ord
 
 def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(discord: respx.Route) -> None:
     # A torrent per episode names its own episode once its file is placed, so a release's imports sit together in
-    # episode order, not in the order the downloads finished around another title's.
+    # episode order, not in the order the downloads finished around another title's. A name in capitals sorts as
+    # it reads, so SPY comes after Shakugan.
     rows = (
-        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E05", Outcome.IMPORTED),
-        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E11", Outcome.IMPORTED),
+        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E05", Outcome.IMPORTED),
+        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E11", Outcome.IMPORTED),
         WaitOutcomeRow("Shakugan no Shana · Doki · S01 E01-E24", Outcome.IMPORTED),
-        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E01", Outcome.IMPORTED),
-        WaitOutcomeRow("Though I Am an Inept Villainess · Chihiro · S01 E09", Outcome.IMPORTED),
+        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E01", Outcome.IMPORTED),
+        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E09", Outcome.IMPORTED),
     )
 
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=872)) is True
@@ -359,10 +360,10 @@ def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(dis
         EmbedField(
             "Imported (5)",
             "Shakugan no Shana · Doki · S01 E01-E24\n"
-            "Though I Am an Inept Villainess · Chihiro · S01 E01\n"
-            "Though I Am an Inept Villainess · Chihiro · S01 E05\n"
-            "Though I Am an Inept Villainess · Chihiro · S01 E09\n"
-            "Though I Am an Inept Villainess · Chihiro · S01 E11",
+            "SPY x FAMILY · SubsPlease · S01 E01\n"
+            "SPY x FAMILY · SubsPlease · S01 E05\n"
+            "SPY x FAMILY · SubsPlease · S01 E09\n"
+            "SPY x FAMILY · SubsPlease · S01 E11",
         ),
     )
 
