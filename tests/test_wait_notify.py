@@ -681,7 +681,7 @@ class TestAFailedDiscordPost:
         ],
     )
     @pytest.mark.usefixtures("clock")
-    def test_a_failure_not_of_the_webhook_warns_on_each_push_and_keeps_discord_on(
+    def test_a_failure_that_may_pass_warns_on_each_push_and_keeps_discord_on(
         self, discord: respx.Route, answer: httpx.Response | type[httpx.ConnectError], warning: str
     ) -> None:
         discord.mock(side_effect=[answer, answer])
