@@ -51,7 +51,7 @@ from .title_check_builders import (
     FakeRunServices,
     ScriptedParse,
     mapping_one_series,
-    sonarr_checking,
+    scripted_checking,
     sonarr_grab_run,
 )
 
@@ -79,7 +79,7 @@ def _check_title_in_another_order(
     )
     episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order="dvd")
     parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
-    strat = sonarr_checking(
+    strat = scripted_checking(
         run,
         episodes,
         config=make_config(ignore_unmonitored=ignore_unmonitored),
@@ -150,7 +150,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     ) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
         recording = install_recording_hub()
-        strat = sonarr_checking(run, ScriptedEpisodes(order="dvd", no_views={7: reason}))
+        strat = scripted_checking(run, ScriptedEpisodes(order="dvd", no_views={7: reason}))
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
@@ -167,9 +167,7 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     """A title of a series in aired order says nothing of its numbers, and nothing when its series can't be read."""
 
     def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]))
-
-        run = sonarr_grab_run(episodes=episodes)
+        run = sonarr_grab_run([EP1, EP2])
 
         # The check ran through to its grab, past the title block and the row for files left out.
         assert len(run.grab_requests) == 1
@@ -178,7 +176,7 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record())
         recording = install_recording_hub()
-        strat = sonarr_checking(run, ScriptedEpisodes())
+        strat = scripted_checking(run, ScriptedEpisodes())
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 

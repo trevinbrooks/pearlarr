@@ -37,6 +37,8 @@ from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     FakeCacheStore,
+    FakeSeaDexSource,
+    ScriptedAniListClient,
     grab_plan,
     make_bare_instance,
     make_config,
@@ -44,13 +46,15 @@ from .builders import (
     make_logger,
     make_release,
     make_run_deps,
+    make_torrent_record,
     parsed_info,
     rg_group,
     scripted_roles,
     sonarr_ep,
     stand_in_ep,
+    stored_orders,
 )
-from .fakes import FakeRadarrClient, ScriptedEpisodes
+from .fakes import FakeRadarrClient, FakeSonarrClient, PerSeriesSonarrClient, ScriptedEpisodes
 
 GRAB_URL = "https://nyaa.si/1"
 """The URL of the one torrent a Sonarr title check of series 7 lists."""
@@ -300,7 +304,73 @@ class ScriptedParse:
         }
 
 
-def sonarr_checking(
+SERIES_8 = SonarrSeries(id=8, title="Show Zoku", tvdbId=80)
+"""Series 8 as Sonarr lists it, a series a stored pending import may claim."""
+
+SERIES_8_E2 = sonarr_ep(1, 2, ep_id=250, tvdb_id=9101, episode_file_id=0)
+"""Series 8's one row: its second episode, on row 250 with no file."""
+
+TITLE_5 = TitleMapping(anilist_id=5, tvdb_season=1, tvdb_epoffset=1)
+"""Title 5 of series 7: its first season from the second episode on."""
+
+
+def sonarr_checking(run: FakeRunServices, sonarr: FakeSonarrClient, deps: ArrRunDeps | None = None) -> SonarrStrategy:
+    """A `SonarrStrategy` built by its constructor over `run` and `sonarr`, past the library read an arr run starts on.
+
+    The deps are `make_run_deps` over the run's cache store unless given, and then they must share it.
+    """
+
+    deps = deps or make_run_deps(cache_store=run.cache_store)
+    assert deps.cache_store is run.cache_store
+    strat = SonarrStrategy(deps, run, sonarr_client=sonarr)
+    strat.start_of_run(strat.get_items())
+    return strat
+
+
+def sonarr_grab_run(
+    episodes: list[SonarrEpisode],
+    *,
+    store: FakeCacheStore | None = None,
+    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
+    grab: bool = True,
+) -> FakeRunServices:
+    """Drive a Sonarr `check_title` for title 5 of series 7, whose rows are `episodes`, in a blocking run unless `mode` says.
+
+    The series has mappings for titles 4 and 5 and for the ignored title 6, and SeaDex lists one torrent for title 5,
+    of `GRAB_FILES`, which Sonarr parses as the season's first two episodes. The plan grabs it unless `grab` is off.
+    Sonarr also has series 8, with the one row `SERIES_8_E2`. AniList and SkyHook answer for every title and series.
+    `store` is the cache the run starts with, empty unless given.
+    """
+
+    torrent = make_torrent_record(infohash="h1", file_names=GRAB_FILES)
+    entry = make_entry_record(anilist_id=5, url="https://releases.moe/5", torrents=(torrent,))
+    release = make_release(url=GRAB_URL, infohash="h1", files=list(GRAB_FILES), size=[1000] * len(GRAB_FILES))
+    run = FakeRunServices(
+        anilist_ids={4: TitleMapping(anilist_id=4), 5: TITLE_5},
+        ignored={6: TitleMapping(anilist_id=6)},
+        prologue_entry=entry,
+        anilist_title="Show Cour 2",
+        seadex_dict={"NAN0": rg_group({GRAB_URL: release})},
+        plan_marks=frozenset({GRAB_URL}) if grab else frozenset(),
+        import_wait_mode=mode,
+        cache_store=store,
+    )
+    for series in (SERIES_7, SERIES_8):
+        run.cache_store.put_tvdb_orders(series.tvdbId, stored_orders({}))
+    deps = make_run_deps(
+        cache_store=run.cache_store,
+        seadex=FakeSeaDexSource({5: entry}),
+        anilist_client=ScriptedAniListClient("Show Cour 2"),
+    )
+    parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
+    sonarr = PerSeriesSonarrClient({7: episodes, 8: [SERIES_8_E2]}, candidates=[])
+    sonarr.all_series_return = [SERIES_7, SERIES_8]
+    sonarr.parse_fn = parses.get
+    sonarr_checking(run, sonarr, deps).check_title(SERIES_7, 5, TITLE_5)
+    return run
+
+
+def scripted_checking(
     run: FakeRunServices,
     episodes: ScriptedEpisodes | None = None,
     *,
@@ -326,7 +396,7 @@ def sonarr_checking(
     )
 
 
-def sonarr_grab_run(
+def scripted_grab_run(
     *,
     episodes: ScriptedEpisodes,
     store: FakeCacheStore | None = None,
@@ -357,7 +427,7 @@ def sonarr_grab_run(
         import_wait_mode=mode,
         cache_store=store,
     )
-    strat = sonarr_checking(run, episodes, parse=ScriptedParse({GRAB_URL: files}), listings=listings)
+    strat = scripted_checking(run, episodes, parse=ScriptedParse({GRAB_URL: files}), listings=listings)
     strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
     return run
 
