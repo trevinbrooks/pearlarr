@@ -25,6 +25,7 @@ from pearlarr.wait_types import (
 from .builders import FakeCacheStore, attempt_result, make_config, pending_import
 from .fakes import FakeClock
 from .wait_fakes import (
+    ALL_IN,
     FakeQbit,
     FakeTorrent,
     QbitStep,
@@ -53,7 +54,7 @@ class TestRunDeferred:
             pytest.param([attempt_result(all_done=True)], [NO_PROGRESS], id="the-attempt-confirms"),
             pytest.param(
                 [attempt_result(all_done=False, command_issued=True)],
-                [ImportProgress(1, 1, determinate=True)],
+                [ALL_IN],
                 id="the-progress-read-confirms",
             ),
         ],

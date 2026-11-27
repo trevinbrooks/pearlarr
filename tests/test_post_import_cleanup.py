@@ -20,7 +20,6 @@ from pearlarr.wait_types import (
     AttemptKind,
     AttemptResult,
     EffectStatus,
-    ImportProgress,
     Outcome,
     PauseReason,
     PendingImportState,
@@ -40,6 +39,7 @@ from .builders import (
 )
 from .fakes import FakeClock, bind_arr_http, diagnostic_messages, install_recording_hub
 from .wait_fakes import (
+    ALL_IN,
     TORRENT_H_COMPLETE,
     CategoryQbit,
     FakeQbit,
@@ -75,7 +75,7 @@ class TestPostImportCategory:
 
         return make_orchestration_manager(
             qbit=qbit,
-            strategy=RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)]),
+            strategy=RecordingStrategy(progress=[ALL_IN]),
             store=store,
             state=state,
             stored_pending_imports=[pending_import(infohash="h", series_id=7)],
@@ -189,7 +189,7 @@ class TestRemoveFromQueue:
         moves: list[tuple[str, str]],
         closes: list[str],
     ) -> None:
-        strategy = RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)])
+        strategy = RecordingStrategy(progress=[ALL_IN])
         qbit = CategoryQbit(torrents)
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
@@ -217,7 +217,7 @@ class TestCleanupCategoryResolve:
         respx.get(f"{_ARR_URL}/api/v3/downloadclient").mock(
             side_effect=[httpx.Response(500), httpx.Response(200, json=[download_client_json(sonarr_client_fields())])]
         )
-        strategy = RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)])
+        strategy = RecordingStrategy(progress=[ALL_IN])
         qbit = CategoryQbit(TORRENT_H_COMPLETE)
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
@@ -284,7 +284,7 @@ class TestCloseSkipOnMoveToUnwatched:
         closes: list[str],
         kept: list[str],
     ) -> None:
-        strategy = RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)])
+        strategy = RecordingStrategy(progress=[ALL_IN])
         qbit = CategoryQbit(TORRENT_H_COMPLETE, set_errors=move_errors)
         store = FakeCacheStore()
         mgr = self._manager(grab=grab, post_import="sonarr-done", qbit=qbit, strategy=strategy, store=store)
@@ -314,9 +314,7 @@ class TestMoveKeepsAnUnseenTorrentOut:
 
         return make_orchestration_manager(
             qbit=qbit,
-            strategy=RecordingStrategy(
-                attempts=[attempt_result(all_done=True)], progress=[ImportProgress(1, 1, determinate=True)]
-            ),
+            strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)], progress=[ALL_IN]),
             store=store,
             stored_pending_imports=[pending_import(infohash="h", series_id=7, awaiting_cleanup=awaiting_cleanup)],
             categories=make_fetched_categories(
@@ -400,7 +398,7 @@ class TestMoveKeepsAnUnseenTorrentOut:
         # for them at the queue removal, never at the move.
         respx.get(f"{_ARR_URL}/api/v3/downloadclient").respond(status_code=500)
         config = make_config(torrent_category="anime", post_import_category="sonarr-done")
-        strategy = RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)])
+        strategy = RecordingStrategy(progress=[ALL_IN])
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d", category="manual")]})
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
@@ -435,7 +433,7 @@ class TestCloseRetrySchedule:
     ) -> None:
         recording = install_recording_hub()
         clock = FakeClock()
-        strategy = RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)], removals=close_results)
+        strategy = RecordingStrategy(progress=[ALL_IN], removals=close_results)
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
             qbit=FakeQbit(TORRENT_H_COMPLETE),
@@ -475,7 +473,7 @@ class TestCleanupRetry:
         # counted IMPORTED this run. Run 2: finishing the cleanup closes and drops,
         # or keeps the pending import again when the close still fails.
         run1_strategy = RecordingStrategy(
-            progress=[ImportProgress(1, 1, determinate=True)],
+            progress=[ALL_IN],
             removals=[EffectStatus.FAILED],
         )
         store = FakeCacheStore()

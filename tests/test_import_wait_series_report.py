@@ -34,6 +34,7 @@ from .builders import (
 )
 from .fakes import FakeClock, diagnostic_messages, install_recording_hub
 from .wait_fakes import (
+    ALL_IN,
     TORRENT_H_COMPLETE,
     FakeQbit,
     FakeTorrent,
@@ -55,7 +56,7 @@ class TestReportImportsForSeries:
         [
             pytest.param(
                 FakeTorrent(is_complete=True, content_path="/d"),
-                ImportProgress(1, 1, determinate=True),
+                ALL_IN,
                 PendingImportState.IMPORTED,
                 [(TitleState.IMPORTED, f"Show{SEP}SubGroup")],
                 {},
@@ -259,9 +260,7 @@ class TestGoneTorrentHasItsTitlesCheckedAgain:
         store = self._store()
         mgr = make_orchestration_manager(
             qbit=FakeQbit(torrents),
-            strategy=RecordingStrategy(
-                attempts=[attempt_result(all_done=True)], progress=[ImportProgress(1, 1, determinate=True)]
-            ),
+            strategy=RecordingStrategy(attempts=[attempt_result(all_done=True)], progress=[ALL_IN]),
             store=store,
             stored_pending_imports=[replace(self._record(), awaiting_cleanup=awaiting_cleanup)],
         )

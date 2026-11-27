@@ -220,6 +220,9 @@ class CategoryQbit(FakeQbit):
 TORRENT_H_COMPLETE: dict[str, list[QbitStep]] = {"h": [FakeTorrent(is_complete=True, content_path="/d")]}
 """Torrent "h" complete in qBittorrent, as a `FakeQbit` script."""
 
+ALL_IN = ImportProgress(1, 1, determinate=True)
+"""The arr's answer to an import progress read once every file of the torrent is in."""
+
 
 @dataclass(frozen=True)
 class _ImportCall:

@@ -11,7 +11,6 @@ from pearlarr.arr_models import HistoryRecord
 from pearlarr.arr_run_state import ArrRunState
 from pearlarr.config import Arr
 from pearlarr.import_wait import ImportWaitManager
-from pearlarr.wait_types import ImportProgress
 
 from .builders import (
     FakeCacheStore,
@@ -26,6 +25,7 @@ from .builders import (
 )
 from .fakes import FakeRadarrClient
 from .wait_fakes import (
+    ALL_IN,
     TORRENT_H_COMPLETE,
     CategoryQbit,
     FakeTorrent,
@@ -77,7 +77,7 @@ class TestCrossArrCategoryGate:
         # pending import still claims the hash cross-arr -> the move is put off.
         sonarr_mgr = make_orchestration_manager(
             qbit=qbit,
-            strategy=RecordingStrategy(progress=[ImportProgress(1, 1, determinate=True)]),
+            strategy=RecordingStrategy(progress=[ALL_IN]),
             store=store,
             stored_pending_imports=[sonarr_pending],
             config=make_config(post_import_category="pearlarr-done"),
@@ -114,9 +114,7 @@ class TestCrossArrCategoryGate:
     def test_radarr_on_the_torrent_holds_the_move_and_never_the_queue_removal(
         self, awaiting_cleanup: bool, radarr_awaiting_cleanup: bool
     ) -> None:
-        strategy = RecordingStrategy(
-            attempts=[attempt_result(all_done=True)], progress=[ImportProgress(1, 1, determinate=True)]
-        )
+        strategy = RecordingStrategy(attempts=[attempt_result(all_done=True)], progress=[ALL_IN])
         qbit = CategoryQbit(TORRENT_H_COMPLETE)
         store = FakeCacheStore()
         mgr = make_orchestration_manager(
