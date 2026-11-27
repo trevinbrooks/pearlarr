@@ -28,7 +28,6 @@ from .wait_fakes import (
     ALL_IN,
     TORRENT_H_COMPLETE,
     CategoryQbit,
-    FakeTorrent,
     RecordingStrategy,
     make_orchestration_manager,
 )
@@ -71,7 +70,7 @@ class TestCrossArrCategoryGate:
         store = FakeCacheStore()
         sonarr_pending = pending_import(infohash="h", series_id=7)
         radarr_pending = pending_import(infohash="h", series_id=0)
-        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        qbit = CategoryQbit(TORRENT_H_COMPLETE)
 
         # Sonarr run: its part is confirmed (files done) and drops, but the Radarr
         # pending import still claims the hash cross-arr -> the move is put off.

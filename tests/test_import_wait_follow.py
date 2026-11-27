@@ -15,7 +15,13 @@ from pearlarr.pending_import import PendingImport
 from pearlarr.wait_types import AttemptResult, EffectStatus, PauseReason
 
 from .builders import FakeCacheStore, attempt_result, pending_import, sonarr_ep, two_claim_pending_import
-from .wait_fakes import FakeQbit, FakeTorrent, RecordingStrategy, RecordingWaitView, make_orchestration_manager
+from .wait_fakes import (
+    TORRENT_H_COMPLETE,
+    FakeQbit,
+    RecordingStrategy,
+    RecordingWaitView,
+    make_orchestration_manager,
+)
 
 _MOVED_DOWN_ONE = [
     sonarr_ep(1, number, ep_id=100 + number, tvdb_id=8999 + number, episode_file_id=0) for number in (1, 2, 3)
@@ -60,9 +66,7 @@ class TestWaitSavesTheFollowedPendingImport:
         """A manager over `store` with `pending` stored and its torrent complete in qBittorrent."""
 
         store.put_pending_import_row(Arr.SONARR, pending.infohash, pending.to_json())
-        return make_orchestration_manager(
-            qbit=FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]}), strategy=strategy, store=store
-        )
+        return make_orchestration_manager(qbit=FakeQbit(TORRENT_H_COMPLETE), strategy=strategy, store=store)
 
     @pytest.mark.parametrize(
         ("answer", "awaiting_cleanup"),
