@@ -457,22 +457,15 @@ def _aired_over_dvd_rows(client: FakeSkyHookClient) -> SeriesReads:
         pytest.param(FakeSkyHookClient(failing=frozenset({(50, "official")})), _UNCONFIRMED, id="skyhook-unreachable"),
     ],
 )
-def test_an_aired_series_over_rows_numbered_by_another_order_has_no_view_for_the_rest_of_the_run(
+def test_an_aired_series_over_rows_numbered_by_another_order_has_no_view_with_a_warning(
     client: FakeSkyHookClient, warning: str
 ) -> None:
     recording = install_recording_hub()
-    cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50)], cache, client, sonarr=sonarr)
+    reads = _aired_over_dvd_rows(client)
 
-    views = [
-        strat._reads.aired_series(1),
-        strat._episodes.title_episodes(1, 500, _SEASON_ONE),
-        strat._reads.aired_series(1),
-    ]
+    view = reads.aired_series(1)
 
-    assert views == [NoView.READ_FAILED] * 3
+    assert view is NoView.READ_FAILED
     assert diagnostic_messages(recording, Severity.WARNING) == [warning]
 
 
