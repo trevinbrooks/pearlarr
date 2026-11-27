@@ -5,8 +5,9 @@ Bootstrap builds a run's parts once, and the loop hands each of them the run's f
 a title's check marks shows in the run's summary. A Radarr run checks every movie a mapping source knows.
 
 `ArrRunDeps.build` sets up what the parts share. The arr client verifies certificates as the arr's `verify_ssl` says.
-qBittorrent is reached with the config's options, and a grab goes to it under the arr's category with the config's
-tags. A category left to the arr's download client is read when it is first used, never while the run boots.
+qBittorrent gets the config's options and the arr's timeout unless they set one, and a grab goes to it under the
+arr's category with the config's tags. A category left to the arr's download client is read when it is first used,
+never while the run boots.
 """
 
 import logging
@@ -256,7 +257,7 @@ _ARR_TIMEOUT = {"REQUESTS_ARGS": {"timeout": ARR_REQUEST_TIMEOUT_S}}
         pytest.param({"REQUESTS_ARGS": {"timeout": 60}}, {"REQUESTS_ARGS": {"timeout": 60}}, id="own-timeout"),
     ],
 )
-def test_qbittorrent_is_reached_with_the_configs_options_timing_out_as_the_arr_unless_they_say(
+def test_qbittorrent_gets_the_configs_options_and_the_arrs_timeout_unless_they_set_one(
     build: _Build, options: dict[str, object], settings: dict[str, object]
 ) -> None:
     # A wedged qBittorrent socket can't hang a poll.
