@@ -440,7 +440,7 @@ class TestGrabNotes:
         assert notes == "-# Show"
 
     def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
-        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*", title_name="K-ON!"))
+        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*"))
 
         assert notes == "-# K-ON! \\*Special\\*"
 
