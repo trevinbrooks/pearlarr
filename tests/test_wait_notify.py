@@ -253,12 +253,12 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(disc
     [
         pytest.param(
             Outcome.NOTHING_PLACED,
-            "Demo Batch - no file was placed on an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`",
+            "Demo Batch - no file was placed on an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part_2.mkv`",
             id="nothing-placed",
         ),
         pytest.param(
             Outcome.PARTIAL,
-            "Demo Batch - imported in part; files left for hand import in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`",
+            "Demo Batch - imported in part; files left for hand import in Sonarr\n`Part_1.mkv`\n`Part_2.mkv`",
             id="partial",
         ),
     ],
@@ -267,7 +267,7 @@ def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(
     discord: respx.Route, outcome: Outcome, value: str
 ) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
-    left = files_left_for_hand_import("Part_1.mkv", "Part 2.mkv")
+    left = files_left_for_hand_import("Part_1.mkv", "Part_2.mkv")
     row = WaitOutcomeRow("Demo Batch", outcome, left_for_hand_import=left)
 
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
@@ -288,6 +288,77 @@ def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(di
         "that aren't in Sonarr's list, so Pearlarr can't tell where they belong:\n"
         "DVD S07E01: `[grp] Show Ending S1 - 01 [ABCD1234].mkv`\n"
         "DVD S07E02: `[grp] Show Ending S1 - 02 [ABCD1234].mkv`"
+    )
+
+
+def _nothing_placed(label: str, name: str) -> WaitOutcomeRow:
+    """A one-file torrent of `label` whose file no episode took, so it is left for a hand import."""
+
+    return WaitOutcomeRow(label, Outcome.NOTHING_PLACED, left_for_hand_import=files_left_for_hand_import(name))
+
+
+def test_push_wait_summary_says_a_releases_torrents_once_with_their_files_in_order(discord: respx.Route) -> None:
+    # A release of a torrent per episode, every one left for a hand import, in the order the downloads finished.
+    finished = (
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 05 [1080p HEVC AAC][F94C53E6].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 11 [1080p HEVC AAC][E52DF113].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 01 [1080p HEVC AAC][DC4D7B5D].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 09 [1080p HEVC AAC][1395FE2A].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 03 [1080p HEVC AAC][3F92B6D1].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 10 [1080p HEVC AAC][A7C46E90].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 02 [1080p HEVC AAC][8A41C0E7].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 07 [1080p HEVC AAC][E6A0247C].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 04 [1080p HEVC AAC][C07E5A28].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 08 [1080p HEVC AAC][29D8F31B].mkv",
+        "[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 06 [1080p HEVC AAC][5B13D9AF].mkv",
+    )
+    rows = (
+        WaitOutcomeRow("Shakugan no Shana · Doki · S01 E01-E24", Outcome.IMPORTED),
+        *(_nothing_placed("Though I Am an Inept Villainess · Chihiro · S01 E01-E11", name) for name in finished),
+    )
+
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=872)) is True
+    assert _embed_posted(discord).fields == (
+        EmbedField("Imported (1)", "Shakugan no Shana · Doki · S01 E01-E24"),
+        EmbedField(
+            "Left for the next run (11)",
+            "Though I Am an Inept Villainess · Chihiro · S01 E01-E11 · 11 torrents"
+            " - no file was placed on an episode; import by hand in Sonarr\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 01 [1080p HEVC AAC][DC4D7B5D].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 02 [1080p HEVC AAC][8A41C0E7].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 03 [1080p HEVC AAC][3F92B6D1].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 04 [1080p HEVC AAC][C07E5A28].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 05 [1080p HEVC AAC][F94C53E6].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 06 [1080p HEVC AAC][5B13D9AF].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 07 [1080p HEVC AAC][E6A0247C].mkv`",
+        ),
+        # The list runs on under no name, so Discord shows no header between the two halves.
+        EmbedField(
+            "",
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 08 [1080p HEVC AAC][29D8F31B].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 09 [1080p HEVC AAC][1395FE2A].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 10 [1080p HEVC AAC][A7C46E90].mkv`\n"
+            "`[Chihiro] Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den - 11 [1080p HEVC AAC][E52DF113].mkv`",
+        ),
+    )
+
+
+def test_push_wait_summary_says_a_releases_torrents_apart_when_their_outcomes_differ(discord: respx.Route) -> None:
+    # The entry of two stands where the first of them did, ahead of the torrent that timed out.
+    label = "Frieren · SubsPlease · S01 E01-E28"
+    rows = (
+        _nothing_placed(label, "[SubsPlease] Sousou no Frieren - 02 (1080p) [3E7D1A42].mkv"),
+        WaitOutcomeRow(label, Outcome.DOWNLOAD_TIMED_OUT),
+        _nothing_placed(label, "[SubsPlease] Sousou no Frieren - 01 (1080p) [C1F05B97].mkv"),
+    )
+
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
+    [field] = _embed_posted(discord).fields
+    assert field.value == (
+        "Frieren · SubsPlease · S01 E01-E28 · 2 torrents - no file was placed on an episode; import by hand in Sonarr\n"
+        "`[SubsPlease] Sousou no Frieren - 01 (1080p) [C1F05B97].mkv`\n"
+        "`[SubsPlease] Sousou no Frieren - 02 (1080p) [3E7D1A42].mkv`\n"
+        "Frieren · SubsPlease · S01 E01-E28 - download timed out; left for the next run"
     )
 
 
@@ -328,7 +399,7 @@ def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
 def test_push_wait_summary_ends_a_section_past_two_fields_on_a_whole_line_and_a_count_of_the_rest(
     discord: respx.Route, rows: tuple[WaitOutcomeRow, ...], names: list[str], last_lines: list[str]
 ) -> None:
-    # A field holds 1024 characters. A section runs on into one more, with no name so Discord shows no header for it.
+    # A field holds 1024 characters.
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
     fields = _embed_posted(discord).fields
     assert [field.name for field in fields] == names
