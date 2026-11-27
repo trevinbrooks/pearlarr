@@ -10,7 +10,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 ### Fixed
 
 - A file named by number alone is placed when its series title is one the run knows with the words split another way, such as "Akujo dewa" in the file's name for AniList's "Akujo de wa". Before, a release named that way was left for a hand import with "no file was placed on an episode". The first run after upgrading re-checks every cached title once and says so, and it places such a release that is still waiting from an earlier version.
-- The Discord wait summary names the torrents of one release once. When a release comes as a torrent per episode, those with the same outcome share one line that says how many torrents it stands for, and the files they left for a hand import are listed under it in episode order. Before, each torrent repeated that line, with its file under it, in the order the downloads finished. A section too long for one Discord field now runs on below it, and one too long for two ends on a line that counts the files and torrents it leaves out. Before, a section listed 25 torrents at most and stopped in the middle of a line at Discord's limit, with nothing to say more were left.
+- The Discord wait summary says a release's torrents once. Torrents of one release with the same outcome share a line that says how many there are, with the files they left for a hand import listed under it. Torrents are listed by name and files in episode order, not in the order the downloads finished. A long section no longer stops in the middle of a line, and when it can't all fit, it ends on a line counting what it left out.
 
 ## [1.6.2] - 2026-11-27
 
