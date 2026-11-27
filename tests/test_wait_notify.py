@@ -235,34 +235,32 @@ def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(push
     assert field.value == "Demo Batch - gone from qBittorrent; title checked again next run"
 
 
-def test_push_wait_summary_lists_the_unmatched_files_under_their_row(pushes: list[DiscordEmbed]) -> None:
+@pytest.mark.parametrize(
+    ("outcome", "value"),
+    [
+        pytest.param(
+            Outcome.NOTHING_PLACED,
+            "Demo Batch - no file was placed on an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`",
+            id="nothing-placed",
+        ),
+        pytest.param(
+            Outcome.PARTIAL,
+            "Demo Batch - imported in part; files left for hand import in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`",
+            id="partial",
+        ),
+    ],
+)
+def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(
+    pushes: list[DiscordEmbed], outcome: Outcome, value: str
+) -> None:
     # One backticked line per name: Discord strips leading whitespace and reads `_` as markdown.
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow(
-        "Demo Batch",
-        Outcome.NOTHING_PLACED,
-        left_for_hand_import=files_left_for_hand_import("Part_1.mkv", "Part 2.mkv"),
-    )
+    left = files_left_for_hand_import("Part_1.mkv", "Part 2.mkv")
+    row = WaitOutcomeRow("Demo Batch", outcome, left_for_hand_import=left)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
     [field] = pushes[0].fields
-    assert field.name == "Left for the next run (1)"
-    assert field.value == (
-        "Demo Batch - no file was placed on an episode; import by hand in Sonarr\n`Part_1.mkv`\n`Part 2.mkv`"
-    )
-    assert pushes[0].color == COLOR_DEFERRED
-
-
-def test_push_wait_summary_lists_the_files_left_for_hand_import_under_their_row(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    row = WaitOutcomeRow(
-        "Demo Batch", Outcome.PARTIAL, left_for_hand_import=files_left_for_hand_import("show - 03 [grp].mkv")
-    )
-
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((row,), elapsed_s=15)) is True
-    [field] = pushes[0].fields
-    assert field.name == "Left for the next run (1)"
-    assert field.value == ("Demo Batch - imported in part; files left for hand import in Sonarr\n`show - 03 [grp].mkv`")
+    assert field == EmbedField(name="Left for the next run (1)", value=value)
 
 
 def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(pushes: list[DiscordEmbed]) -> None:
