@@ -202,6 +202,13 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false(hook: respx.R
     ]
 
 
+def test_push_wait_summary_goes_to_both_discord_and_the_webhook(discord: respx.Route, hook: respx.Route) -> None:
+    notifier = Notifier(discord_url=_DISCORD, webhook_url=_HOOK, web=httpx.Client())
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is True
+    assert (discord.call_count, hook.call_count) == (1, 1)
+
+
 def test_push_wait_summary_builds_discord_embed(discord: respx.Route) -> None:
     assert _notifier().push_wait_summary(arr=Arr.RADARR, result=_result()) is True
 
