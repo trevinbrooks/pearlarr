@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# These assert on the loop/services/strategy's private wiring (_filter / _state / _parse /
-# _reconciler), which strict re-flags. The repo disables reportPrivateUsage for tests.
 """How an arr run is put together, seen through what its runs do.
 
 Bootstrap builds a run's parts once, and the loop hands each of them the run's fresh state as the run starts: what a
@@ -14,6 +11,7 @@ tags. A category left to the arr's download client is read when it is first used
 """
 
 import logging
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import override
@@ -31,13 +29,15 @@ from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
-from pearlarr.output import ArrRunSummaryReady, NeedsActionCause, RowFinished
+from pearlarr.output import ArrRunSummaryReady, Diagnostic, NeedsActionCause, RowFinished
 from pearlarr.radarr_strategy import RadarrStrategy
+from pearlarr.releases import Release
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import (
     FakeSeaDexSource,
     attempt_result,
+    download_client_json,
     drive_arr_run,
     grab_request,
     make_config,
@@ -47,8 +47,9 @@ from .builders import (
     make_torrent_record,
     one_release_dict,
     pending_import_update,
+    sonarr_client_fields,
 )
-from .fakes import FakeArrItem, FakeRadarrClient, install_recording_hub
+from .fakes import FakeArrItem, FakeRadarrClient, diagnostic_messages, install_recording_hub
 from .http_mock import serve_nyaa_torrents
 from .wait_fakes import ALL_IN, FakeQbit, FakeTorrent, QbitStep, RecordingStrategy
 
@@ -176,6 +177,61 @@ def test_a_blocking_run_counts_its_grab_once_and_imports_it() -> None:
 # --- what ArrRunDeps.build sets up ------------------------------------------------------------------------------
 
 
+class _QbitStandIn:
+    """The `qbittorrentapi.Client` build makes, standing in for qBittorrent: its login succeeds and it lists nothing.
+
+    It keeps the settings it is built with, and the category and tags of each torrent it is asked to add.
+    """
+
+    def __init__(self, **settings: object) -> None:
+        self.settings = settings
+        self.added: list[tuple[str | None, list[str] | None]] = []
+
+    def auth_log_in(self) -> None:
+        pass
+
+    def torrents_add(self, *, urls: str, category: str | None, tags: list[str] | None) -> str:
+        del urls
+        self.added.append((category, tags))
+        return "Ok."
+
+    def torrents_info(self, *, torrent_hashes: str) -> list[FakeTorrent]:
+        del torrent_hashes
+        return []
+
+
+type _Build = Callable[[AppConfig], ArrRunDeps]
+"""`ArrRunDeps.build` for a Sonarr run over a config."""
+
+
+@pytest.fixture
+def build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Build]:
+    """`ArrRunDeps.build` as bootstrap calls it for a Sonarr run, each one built closed after the test.
+
+    A qBittorrent it is configured with is a `_QbitStandIn`.
+    """
+
+    monkeypatch.setattr(qbittorrentapi, "Client", _QbitStandIn)
+    built: list[ArrRunDeps] = []
+
+    def _build(config: AppConfig) -> ArrRunDeps:
+        deps = ArrRunDeps.build(
+            Arr.SONARR,
+            cache=str(tmp_path / "cache.db"),
+            logger=logging.getLogger("pearlarr.test"),
+            resolver=make_resolver(),
+            app_config=config,
+            web=httpx.Client(),
+            boot=BootFlow(),
+        )
+        built.append(deps)
+        return deps
+
+    yield _build
+    for deps in built:
+        deps.close()
+
+
 def _build_deps(app_config: AppConfig, tmp_path: Path) -> ArrRunDeps:
     """`ArrRunDeps.build` over the throwaway wiring every construction test shares."""
 
@@ -210,66 +266,62 @@ def test_arr_run_deps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest
     assert seen == [False]
 
 
-class _PassingQbit:
-    """A fake `qbittorrentapi.Client` whose login succeeds (build's qBittorrent client)."""
+_SONARR_AND_QBITTORRENT = make_config(
+    url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p", tags=["seadex"]
+)
+"""Sonarr and qBittorrent configured, the categories left to Sonarr's download client and the torrents tagged."""
 
-    def __init__(self, **kwargs: object) -> None:
-        del kwargs
-
-    def auth_log_in(self) -> None:
-        pass
+_DOWNLOAD_CLIENTS = "http://sonarr/api/v3/downloadclient"
 
 
-@respx.mock
-def test_arr_run_deps_build_wires_lazy_categories_fetched_at_first_use(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """With qbit configured and omitted categories, `build` fetches NOTHING - the first use does, once."""
+class TestCategoriesLeftToTheArr:
+    """A category left to the arr's download client is read when it is first used.
 
-    monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
-    route = respx.get("http://sonarr/api/v3/downloadclient").respond(
-        json=[
-            {
-                "enable": True,
-                "implementation": "QBittorrent",
-                "fields": [
-                    {"name": "tvCategory", "value": "tv-sonarr"},
-                    {"name": "tvImportedCategory", "value": "sonarr-done"},
-                ],
-            },
-        ],
-    )
-    config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")
+    Never while the run boots, so an arr restarting under the boot costs the run nothing. A read the arr fails is
+    tried once and warns: that use goes without, and the next one asks again.
+    """
 
-    deps = _build_deps(config, tmp_path)
-    try:
-        # Boot did no category I/O: an arr restarting under the boot must not
-        # cost the arr run its post-import moves (the use-time fetch retries).
-        assert route.call_count == 0
-        assert deps.categories.grab_category() == "tv-sonarr"
+    @respx.mock
+    def test_an_arr_failing_while_the_run_boots_still_gives_the_first_use_its_category(self, build: _Build) -> None:
+        route = respx.get(_DOWNLOAD_CLIENTS).respond(500)
+        recording = install_recording_hub()
+        deps = build(_SONARR_AND_QBITTORRENT)
+        route.respond(json=[download_client_json(sonarr_client_fields())])
+
         assert deps.categories.post_import_category() == "sonarr-done"
-        assert route.call_count == 1  # memoized after the one success
-        # The torrent adapter asks the same resolver at add time.
-        assert deps.torrents.categories is deps.categories
-    finally:
-        deps.close()
+        assert recording.of_type(Diagnostic) == []
+
+    @respx.mock
+    def test_a_read_the_arr_fails_warns_and_the_next_use_asks_again(self, build: _Build) -> None:
+        respx.get(_DOWNLOAD_CLIENTS).side_effect = [
+            httpx.Response(500),
+            httpx.Response(200, json=[download_client_json(sonarr_client_fields())]),
+        ]
+        recording = install_recording_hub()
+        deps = build(_SONARR_AND_QBITTORRENT)
+
+        assert deps.categories.grab_category() is None
+        assert diagnostic_messages(recording) == [
+            (
+                "Could not fetch the Sonarr download clients (status code 500) - blank categories stay blank, "
+                "and post-import moves and imports from unwatched categories wait"
+            ),
+        ]
+        assert deps.categories.grab_category() == "tv-sonarr"
 
 
 @respx.mock
-def test_arr_run_deps_build_skips_the_category_fetch_without_qbit(tmp_path: Path) -> None:
-    """No qBittorrent client (perpetual dry run): no category is ever applied, so `build` never contacts the arr."""
+def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tags(build: _Build) -> None:
+    # The grab and the post-import move ask the one read of Sonarr's download clients.
+    clients = respx.get(_DOWNLOAD_CLIENTS).respond(json=[download_client_json(sonarr_client_fields())])
+    serve_nyaa_torrents(1)
+    deps = build(_SONARR_AND_QBITTORRENT)
+    assert isinstance(deps.qbit, _QbitStandIn)
 
-    route = respx.get("http://sonarr/api/v3/downloadclient").respond(json=[])
-    config = make_config(url="http://sonarr", api_key="key")
+    deps.torrents.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=False)
 
-    deps = _build_deps(config, tmp_path)
-    deps.close()
-
-    # No transport was bound, so even USING the resolver stays fetchless.
-    assert deps.categories.grab_category() is None
-    assert deps.categories.post_import_category() is None
-    assert route.call_count == 0
+    assert deps.qbit.added == [("tv-sonarr", ["seadex"])]
+    assert (deps.categories.post_import_category(), clients.call_count) == ("sonarr-done", 1)
 
 
 def test_arr_run_deps_build_binds_arr_http_when_configured(tmp_path: Path) -> None:
@@ -294,22 +346,3 @@ def test_arr_run_deps_build_leaves_arr_http_none_without_connection_keys(tmp_pat
     assert deps.arr_http is None
     # The resolver's None-http contract: no transport, so reads stay fetchless blanks.
     assert deps.categories.grab_category() is None
-
-
-def test_arr_run_deps_build_category_handle_derives_from_arr_http(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The category handle is the arr transport's no-retry derivation - one shared set of failure streaks."""
-
-    monkeypatch.setattr(qbittorrentapi, "Client", _PassingQbit)
-    config = make_config(url="http://sonarr", api_key="key", host="http://qbit:8080", username="u", password="p")
-
-    deps = _build_deps(config, tmp_path)
-    deps.close()
-
-    assert deps.arr_http is not None
-    sources = deps.categories._sources
-    assert sources is not None
-    assert sources.http.retries == 0
-    assert sources.http.streaks is deps.arr_http.streaks
