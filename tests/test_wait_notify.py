@@ -343,29 +343,45 @@ def test_push_wait_summary_says_a_releases_torrents_once_with_their_files_in_ord
     )
 
 
-def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(discord: respx.Route) -> None:
-    # A torrent per episode names its own episode once its file is placed, so a release's imports sit together in
-    # episode order, not in the order the downloads finished around another title's. A name in capitals sorts as
-    # it reads, so SPY comes after Shakugan.
-    rows = (
-        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E05", Outcome.IMPORTED),
-        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E11", Outcome.IMPORTED),
-        WaitOutcomeRow("Shakugan no Shana · Doki · S01 E01-E24", Outcome.IMPORTED),
-        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E01", Outcome.IMPORTED),
-        WaitOutcomeRow("SPY x FAMILY · SubsPlease · S01 E09", Outcome.IMPORTED),
-    )
+@pytest.mark.parametrize(
+    ("finished", "field"),
+    [
+        # A torrent per episode names its own episode once its file is placed, so a release's imports sit together
+        # in episode order, E99 before E100, not in the order the downloads finished around another title's.
+        pytest.param(
+            [
+                "One Piece · SubsPlease · S21 E100",
+                "One Piece · SubsPlease · S21 E98",
+                "Mushoku Tensei: Jobless Reincarnation · SubsPlease · S01 E01-E11",
+                "One Piece · SubsPlease · S21 E101",
+                "One Piece · SubsPlease · S21 E99",
+            ],
+            EmbedField(
+                "Imported (5)",
+                "Mushoku Tensei: Jobless Reincarnation · SubsPlease · S01 E01-E11\n"
+                "One Piece · SubsPlease · S21 E98\n"
+                "One Piece · SubsPlease · S21 E99\n"
+                "One Piece · SubsPlease · S21 E100\n"
+                "One Piece · SubsPlease · S21 E101",
+            ),
+            id="a-releases-episodes",
+        ),
+        pytest.param(
+            ["SPY x FAMILY · SubsPlease · S01 E01-E12", "Shakugan no Shana · Doki · S01 E01-E24"],
+            EmbedField(
+                "Imported (2)", "Shakugan no Shana · Doki · S01 E01-E24\nSPY x FAMILY · SubsPlease · S01 E01-E12"
+            ),
+            id="a-name-in-capitals-as-it-reads",
+        ),
+    ],
+)
+def test_push_wait_summary_lists_a_sections_torrents_in_order_of_their_names(
+    discord: respx.Route, finished: list[str], field: EmbedField
+) -> None:
+    rows = tuple(WaitOutcomeRow(label, Outcome.IMPORTED) for label in finished)
 
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=872)) is True
-    assert _embed_posted(discord).fields == (
-        EmbedField(
-            "Imported (5)",
-            "Shakugan no Shana · Doki · S01 E01-E24\n"
-            "SPY x FAMILY · SubsPlease · S01 E01\n"
-            "SPY x FAMILY · SubsPlease · S01 E05\n"
-            "SPY x FAMILY · SubsPlease · S01 E09\n"
-            "SPY x FAMILY · SubsPlease · S01 E11",
-        ),
-    )
+    assert _embed_posted(discord).fields == (field,)
 
 
 def test_push_wait_summary_says_a_releases_torrents_apart_when_their_outcomes_differ(discord: respx.Route) -> None:
