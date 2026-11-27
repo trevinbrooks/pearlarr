@@ -141,7 +141,7 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
         if orders_stored:
             run.cache_store.put_tvdb_orders(SERIES_7_DVD.tvdbId, aired_orders())
         recording = install_recording_hub()
-        strat = sonarr_checking(run, FakeSonarrClient(all_series=[SERIES_7_DVD], episodes=[DVD_E1]))
+        strat = sonarr_checking(run, FakeSonarrClient(all_series=[SERIES_7_DVD]))
 
         strat.check_title(SERIES_7_DVD, 5, TitleMapping(anilist_id=5))
 
