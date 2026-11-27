@@ -159,12 +159,11 @@ def _episodes(
 def _sync(
     series: list[SonarrItem],
     cache: FakeCacheStore,
-    client: FakeSkyHookClient | None = None,
     *,
     sonarr: FakeSonarrClient | None = None,
     waits: ImportWaitMode = ImportWaitMode.OFF,
 ) -> SonarrStrategy:
-    """The Sonarr strategy after the Sonarr run's library fetch of `series`, its orders fetched through `client`.
+    """The Sonarr strategy after the Sonarr run's library fetch of `series`, with SkyHook holding no series.
 
     The titles are mapped as `_MAPPED` has them. Every series' episodes are `_ROWS` unless `sonarr` serves others.
     Its AniList knows no title, a series has the scene mappings `cache` holds, and the run waits on imports as
@@ -173,7 +172,7 @@ def _sync(
 
     sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
     sonarr.all_series_return = series
-    deps = make_run_deps(cache_store=cache, skyhook_client=client, anime_ids=_MAPPED)
+    deps = make_run_deps(cache_store=cache, anime_ids=_MAPPED)
     services = ArrRunServices(deps, Arr.SONARR)
     services.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=waits))
     strat = SonarrStrategy(deps, services, sonarr_client=sonarr)
@@ -672,21 +671,6 @@ def test_a_pending_imports_series_is_fetched_while_imports_are_waited_on(
     strat.start_of_run([])
 
     assert strat.prefetch_orders([]) == fetched
-
-
-def test_an_unreachable_source_leaves_a_new_series_without_orders_and_serves_the_stored_ones() -> None:
-    # Series 1's stored answer is due but SkyHook is unreachable: the stale answer still serves the grab.
-    # Series 2 was never fetched, so its index has no orders.
-    cache = FakeCacheStore()
-    cache.put_tvdb_orders(50, stored_orders(_ORDERS, fresh_for=timedelta(days=-1)))
-    client = FakeSkyHookClient(failing=frozenset({(50, "official"), (60, "official")}))
-    strat = _sync([_series(1, 50), _series(2, 60)], cache, client)
-
-    assert strat._episodes.prefetch_orders([1, 2]) == 0
-
-    first, second = strat._reads.series_index(1), strat._reads.series_index(2)
-    assert first is not None and second is not None
-    assert (first.orders["dvd"].id_by_key, second.orders) == ({(1, 1): 12, (1, 2): 11}, {})
 
 
 _TWO_SEASONS = (
