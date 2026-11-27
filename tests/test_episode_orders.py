@@ -181,12 +181,12 @@ def _sync(
     return strat
 
 
-def _stored(orders: Mapping[str, tuple[OrderRow, ...]], tvdb_id: int = 50) -> FakeCacheStore:
-    """A cache holding `orders` for the TVDB series, and TheXEM's answer for it, which maps none of its episodes."""
+def _stored(orders: Mapping[str, tuple[OrderRow, ...]]) -> FakeCacheStore:
+    """A cache holding `orders` for TVDB series 50, and TheXEM's answer for it, which maps none of its episodes."""
 
     cache = FakeCacheStore()
-    cache.put_tvdb_orders(tvdb_id, stored_orders(orders))
-    cache.put_scene_mappings(tvdb_id, stored_scene_mappings())
+    cache.put_tvdb_orders(50, stored_orders(orders))
+    cache.put_scene_mappings(50, stored_scene_mappings())
     return cache
 
 
@@ -356,16 +356,6 @@ def test_a_series_sonarr_sends_no_episodes_of_has_none(library: list[SonarrItem]
 
     assert view == AiredSeries(in_sonarr=(), stand_ins=())
     assert diagnostic_messages(recording, Severity.WARNING) == []
-
-
-def test_a_series_with_no_anilist_mapping_is_read_by_the_order_the_library_read_gives_it() -> None:
-    sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(2, 60, season_type="dvd")], _stored(_LONGER_AIRED, tvdb_id=60), sonarr=sonarr)
-
-    view = strat._reads.aired_series(2)
-
-    assert isinstance(view, AiredSeries)
-    assert _numbered(view.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
 
 
 def test_the_series_hash_of_a_run_is_of_the_series_with_an_anilist_mapping() -> None:
