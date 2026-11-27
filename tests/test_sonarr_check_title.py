@@ -247,11 +247,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=specials), counts={5: episode_count})
 
-        run = sonarr_grab_run(
-            store=FakeCacheStore(),
-            episodes=episodes,
-            files=tuple(ListedFile(name, 1000, parsed_info()) for name in names),
-        )
+        run = sonarr_grab_run(episodes=episodes, files=tuple(ListedFile(name, 1000, parsed_info()) for name in names))
 
         (req,) = run.grab_requests
         assert req.pending_import_updates["h1"].file_map == placed
@@ -259,7 +255,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
     def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP2]})
 
-        run = sonarr_grab_run(store=FakeCacheStore(), episodes=episodes, listings=ScriptedListings(unreachable=True))
+        run = sonarr_grab_run(episodes=episodes, listings=ScriptedListings(unreachable=True))
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD

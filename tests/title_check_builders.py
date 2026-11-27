@@ -328,8 +328,8 @@ def sonarr_checking(
 
 def sonarr_grab_run(
     *,
-    store: FakeCacheStore,
     episodes: ScriptedEpisodes,
+    store: FakeCacheStore | None = None,
     mode: ImportWaitMode = ImportWaitMode.BLOCKING,
     grab: bool = True,
     files: tuple[ListedFile, ...] | None = None,
@@ -338,7 +338,8 @@ def sonarr_grab_run(
     """Drive a Sonarr `check_title` for title 5 (series 7) listing one torrent, in a blocking run unless `mode` says.
 
     The series has mappings for titles 4 and 5 and for the ignored title 6. The torrent is `files`, or `GRAB_FILES`
-    named as the season's first two episodes. The plan grabs it unless `grab` is off.
+    named as the season's first two episodes. The plan grabs it unless `grab` is off. `store` is the cache the run
+    starts with, empty unless given.
     """
 
     if files is None:
