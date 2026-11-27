@@ -204,9 +204,26 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     names = [field.name for field in embed.fields]
     assert names == ["Imported (2)", "Left for the next run (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
-    # Left/failed rows carry the outcome detail. A failure colors the embed red.
+    # Left/failed rows carry the outcome detail.
     assert embed.fields[2].value == "Bleach TYBW - download errored; left for the next run"
-    assert embed.color == COLOR_FAILED
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "color"),
+    [
+        pytest.param((Outcome.IMPORTED,), COLOR_SUCCESS, id="all-imported-green"),
+        pytest.param((Outcome.STILL_IMPORTING,), COLOR_DEFERRED, id="one-left-orange"),
+        pytest.param((Outcome.STILL_IMPORTING, Outcome.DOWNLOAD_ERRORED), COLOR_FAILED, id="one-failed-red"),
+    ],
+)
+def test_push_wait_summary_is_colored_by_its_worst_outcome(
+    pushes: list[DiscordEmbed], outcomes: tuple[Outcome, ...], color: int
+) -> None:
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
+    result = WaitResult(tuple(WaitOutcomeRow("Frieren", outcome) for outcome in outcomes), elapsed_s=60)
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
+    assert pushes[0].color == color
 
 
 def test_push_wait_summary_says_a_gone_download_has_its_title_checked_again(pushes: list[DiscordEmbed]) -> None:
@@ -280,22 +297,6 @@ def test_push_wait_summary_unmatched_names_stay_inside_the_value_clamp(pushes: l
     assert field["value"].startswith(
         "Title 0 - no file was placed on an episode; import by hand in Sonarr\n`Demo Batch Part 0"
     )
-
-
-def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
-
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert pushes[0].color == COLOR_SUCCESS
-
-
-def test_push_wait_summary_left_only_is_orange(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
-    result = WaitResult((WaitOutcomeRow("Frieren", Outcome.STILL_IMPORTING),), elapsed_s=60)
-
-    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
-    assert pushes[0].color == COLOR_DEFERRED
 
 
 def test_pushes_are_paced_only_within_a_burst(
