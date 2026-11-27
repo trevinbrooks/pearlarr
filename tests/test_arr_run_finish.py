@@ -456,8 +456,9 @@ class TestWhatARunSends:
         assert hook.call_count == 0
 
     def test_a_wait_report_that_raises_past_the_notifier_is_dropped_with_a_warning(self, tmp_path: Path) -> None:
-        # A YAML block scalar (`wait_webhook_url: |`) keeps its line's newline. httpx refuses that URL with an
-        # error that isn't an HTTP error, which the notifier doesn't catch, so the run's own catch is what warns.
+        # The run's own catch is for whatever the notifier doesn't expect. A URL httpx refuses is such a case: a
+        # YAML block scalar (`wait_webhook_url: |`) keeps its line's newline, and httpx's error for it isn't an
+        # HTTP error.
         cache = tmp_path / "cache.db"
         _cache_left_with(cache, Arr.SONARR, _pending("h"))
         config = make_config(wait_webhook_url="https://hook.example/wait\n")
