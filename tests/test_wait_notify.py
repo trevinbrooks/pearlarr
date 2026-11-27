@@ -391,8 +391,7 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     assert embed.thumb_url == "https://img.anili.st/cover.png"
     assert embed.image_url == "https://img.anili.st/banner.png"
     # A genuinely different Arr series name becomes the muted subtext byline, going in
-    # the trailing nameless notes field (an empty field name renders as no
-    # header at all - checked live against the webhook API).
+    # the trailing nameless notes field (an empty field name renders as no header at all).
     assert embed.description == ""
     assert embed.fields == (EmbedField(name="", value="-# Sousou no Frieren"),)
 
@@ -464,7 +463,7 @@ class TestGrabNotes:
         assert "OMEGA" not in notes
 
     def test_cut_landing_on_whitespace_keeps_the_whole_word(self, pushes: list[DiscordEmbed]) -> None:
-        # 400 chars of complete 5-char words: the cut lands ON the separator, so
+        # 400 chars of complete 5-char words: the cut lands on the separator, so
         # no word is sacrificed.
         notes = self._notes(
             pushes,
@@ -578,7 +577,7 @@ class TestGrabLayout:
             ),
         )
 
-        # No description hoist with several groups - and "Replacing" appears
+        # No description hoist with several groups, and "Replacing" appears
         # exactly once, after the group stack.
         assert embed.description == ""
         assert [f.name for f in embed.fields] == [
