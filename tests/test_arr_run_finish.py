@@ -22,7 +22,16 @@ from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, RowFinished, ScanFinished, TitleHeader, WaitStarted
+from pearlarr.output import (
+    ArrRunFinished,
+    ArrRunSummaryReady,
+    Diagnostic,
+    RowFinished,
+    ScanFinished,
+    Severity,
+    TitleHeader,
+    WaitStarted,
+)
 from pearlarr.output.events import TitleState
 from pearlarr.pending_import import PendingImport
 from pearlarr.wait_types import ImportWaitMode, Outcome
@@ -403,7 +412,10 @@ class TestWhatARunSaves:
 
 
 class TestWhatARunSends:
-    """A blocking wait sends its report of the torrents it finished to the wait webhook, unless notifying is off."""
+    """A blocking wait sends its report of the torrents it finished to the wait webhook, unless notifying is off.
+
+    A report that raises past the notifier is dropped with a warning, and the run goes on to its save.
+    """
 
     @respx.mock
     def test_a_blocking_wait_sends_the_torrents_it_finished_to_the_wait_webhook(self, tmp_path: Path) -> None:
@@ -442,3 +454,26 @@ class TestWhatARunSends:
         )
 
         assert hook.call_count == 0
+
+    def test_a_wait_report_that_raises_past_the_notifier_is_dropped_with_a_warning(self, tmp_path: Path) -> None:
+        # A YAML block scalar (`wait_webhook_url: |`) keeps its line's newline. httpx refuses that URL with an
+        # error that isn't an HTTP error, which the notifier doesn't catch, so the run's own catch is what warns.
+        cache = tmp_path / "cache.db"
+        _cache_left_with(cache, Arr.SONARR, _pending("h"))
+        config = make_config(wait_webhook_url="https://hook.example/wait\n")
+        recording = install_recording_hub()
+
+        _run(
+            cache,
+            RecordingStrategy(attempts=_ALL_IMPORTED),
+            FakeQbit(TORRENT_H_COMPLETE),
+            mode=ImportWaitMode.BLOCKING,
+            config=config,
+        )
+
+        [warning] = recording.of_type(Diagnostic)
+        assert warning.severity is Severity.WARNING
+        assert warning.message == "Wait completion notification failed unexpectedly - the notification was dropped"
+        # Nothing expected this error, so the warning carries its traceback to the log.
+        assert warning.trace is not None
+        assert _saved_pending_imports(cache, Arr.SONARR) == set()

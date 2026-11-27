@@ -189,15 +189,6 @@ def _resolve_setting(key: str) -> tuple[str, str]:
     return _FIELD_GROUP.get(key, "seadex"), key
 
 
-def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
-    """An instance with `__init__` bypassed and only the given attrs set."""
-
-    obj = object.__new__(cls)
-    for name, value in attrs.items():
-        setattr(obj, name, value)
-    return obj
-
-
 # The cached-title columns `update_cached_title` merges, aliased from the real store's tuple so the fake
 # can't drift from `CacheStore`.
 _FAKE_CACHED_TITLE_FIELDS: tuple[str, ...] = _CACHED_TITLE_COLUMNS
