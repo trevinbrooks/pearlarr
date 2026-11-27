@@ -40,7 +40,7 @@ from pearlarr.releases import EpisodeKey, SeadexDict
 from pearlarr.scene_numbers import SceneMapping
 from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
-from pearlarr.sonarr_episodes import sonarr_series_hash
+from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
 from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
@@ -60,6 +60,7 @@ from .builders import (
     make_release,
     make_run_deps,
     make_series_reads,
+    make_sonarr_episodes,
     pending_import,
     rg_group,
     sonarr_ep,
@@ -112,6 +113,10 @@ def _series(
     return SonarrSeries.model_validate(raw)
 
 
+_MAPPED: AnimeIdsByName = {"Show 1": {"anilist_id": 500, "tvdb_id": 50}}
+"""The AniList mapping of the strategies and episode readers here: title 500 is of TVDB series 50, and no other series has one."""
+
+
 def _reads(
     series: list[SonarrItem],
     cache: FakeCacheStore,
@@ -129,8 +134,25 @@ def _reads(
     return make_series_reads(sonarr, cache, library=series, skyhook_client=client)
 
 
-_MAPPED: AnimeIdsByName = {"Show 1": {"anilist_id": 500, "tvdb_id": 50}}
-"""The AniList mapping of the strategies here: title 500 is of TVDB series 50, and no other series has one."""
+def _episodes(
+    series: list[SonarrItem],
+    cache: FakeCacheStore,
+    client: FakeSkyHookClient | None = None,
+    *,
+    sonarr: FakeSonarrClient | None = None,
+) -> SonarrEpisodes:
+    """A run's episode reader after its library read of `series`, built as the strategy builds it.
+
+    It takes what `_reads` takes, and its reads have the series, rows, orders and scene mappings `_reads` gives.
+    The titles are mapped as `_MAPPED` has them.
+    """
+
+    sonarr = sonarr or FakeSonarrClient(episodes=list(_ROWS))
+    sonarr.all_series_return = series
+    deps = make_run_deps(cache_store=cache, skyhook_client=client, anime_ids=_MAPPED)
+    episodes = make_sonarr_episodes(deps, sonarr=sonarr)
+    episodes.refresh_library()
+    return episodes
 
 
 def _sync(
@@ -215,9 +237,9 @@ def test_a_series_numbered_by_another_order_is_served_as_aired_with_its_stored_o
 
 def test_a_titles_episodes_of_a_series_numbered_by_another_order_are_its_aired_ones() -> None:
     sonarr = FakeSonarrClient(episodes=list(_DVD_ROWS))
-    strat = _sync([_series(1, 50, season_type="dvd")], _stored(_LONGER_AIRED), sonarr=sonarr)
+    episodes = _episodes([_series(1, 50, season_type="dvd")], _stored(_LONGER_AIRED), sonarr=sonarr)
 
-    title = strat._episodes.title_episodes(1, 500, _SEASON_ONE)
+    title = episodes.title_episodes(1, 500, _SEASON_ONE)
 
     assert not isinstance(title, NoView)
     assert _numbered(title.aired) == [(12, (1, 1)), (11, (1, 2)), (-9003, (1, 3))]
@@ -579,9 +601,9 @@ def test_a_series_with_no_view_has_no_rows_a_view_is_built_from() -> None:
 def test_a_library_series_with_no_stored_answer_is_unread(series_id: int, unread: bool) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    strat = _sync([_series(1, 50), _series(2, 60), _series(3, 0)], cache)
+    episodes = _episodes([_series(1, 50), _series(2, 60), _series(3, 0)], cache)
 
-    assert strat._episodes.metadata_unread([], [series_id]) is unread
+    assert episodes.metadata_unread([], [series_id]) is unread
 
 
 @pytest.mark.parametrize(
@@ -593,15 +615,15 @@ def test_a_series_whose_scene_mappings_were_never_read_is_unread_only_in_another
 ) -> None:
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    strat = _sync([_series(1, 50, season_type=season_type)], cache)
+    episodes = _episodes([_series(1, 50, season_type=season_type)], cache)
 
-    assert strat._episodes.metadata_unread([], [1]) is unread
+    assert episodes.metadata_unread([], [1]) is unread
 
 
 def test_a_series_in_another_order_is_read_once_thexem_was_read_for_it_even_with_no_mappings() -> None:
-    strat = _sync([_series(1, 50, season_type="dvd")], _stored(_ORDERS))
+    episodes = _episodes([_series(1, 50, season_type="dvd")], _stored(_ORDERS))
 
-    assert strat._episodes.metadata_unread([], [1]) is False
+    assert episodes.metadata_unread([], [1]) is False
 
 
 @pytest.mark.parametrize(
@@ -618,19 +640,19 @@ def test_a_series_in_another_order_is_unread_while_a_fetch_its_stored_orders_wer
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS, fresh_for=timedelta(days=-1)))
     cache.put_scene_mappings(50, stored_scene_mappings())
-    strat = _sync([_series(1, 50, season_type=season_type)], cache, client)
+    episodes = _episodes([_series(1, 50, season_type=season_type)], cache, client)
 
-    strat._episodes.prefetch_orders([1])
+    episodes.prefetch_orders([1])
 
-    assert (strat._episodes.metadata_unread([], [1]), strat._episodes.title_unread(500, 1)) == (unread, unread)
+    assert (episodes.metadata_unread([], [1]), episodes.title_unread(500, 1)) == (unread, unread)
 
 
 def test_orders_are_fetched_once_per_tvdb_series() -> None:
     # Two Sonarr series of one TVDB series, one with no TVDB id, and one the Sonarr run's library fetch lacks.
     cache = FakeCacheStore()
-    strat = _sync([_series(1, 50), _series(2, 50), _series(3, 0)], cache)
+    episodes = _episodes([_series(1, 50), _series(2, 50), _series(3, 0)], cache)
 
-    assert strat._episodes.prefetch_orders([1, 2, 3, 9]) == 1
+    assert episodes.prefetch_orders([1, 2, 3, 9]) == 1
     assert cache.stats().tvdb_orders == 1
 
 
@@ -638,9 +660,9 @@ def test_a_fresh_stored_answer_is_fetched_again_once_sonarr_lists_another_episod
     # The stored answer is fresh, so only the count Sonarr's series row carries can make it due.
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS, sonarr_counts={"official": 2}))
-    strat = _sync([_series(1, 50, counts={"official": 3})], cache)
+    episodes = _episodes([_series(1, 50, counts={"official": 3})], cache)
 
-    assert strat._episodes.prefetch_orders([1]) == 1
+    assert episodes.prefetch_orders([1]) == 1
 
 
 @pytest.mark.parametrize(
