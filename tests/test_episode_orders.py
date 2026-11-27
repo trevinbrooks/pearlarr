@@ -76,6 +76,7 @@ from .fakes import (
     diagnostic_messages,
     install_recording_hub,
 )
+from .title_check_builders import FakeRunServices, sonarr_checking
 from .wait_fakes import FakeQbit
 
 _DVD = (OrderRow(1, 1, 9002, None), OrderRow(1, 2, 9001, None))
@@ -529,12 +530,15 @@ def test_the_import_and_the_check_of_a_run_hold_off_on_rows_out_of_step_with_one
     recording = install_recording_hub()
     cache = FakeCacheStore()
     cache.put_tvdb_orders(50, stored_orders(_ORDERS))
-    strat = _sync([_series(1, 50)], cache, _skyhook(_ORDERS), sonarr=FakeSonarrClient(episodes=list(_DVD_ROWS)))
+    run = FakeRunServices(prologue_entry=make_entry_record(), cache_store=cache)
+    sonarr = FakeSonarrClient(all_series=[_series(1, 50)], episodes=list(_DVD_ROWS))
+    deps = make_run_deps(cache_store=cache, skyhook_client=_skyhook(_ORDERS), anime_ids=_MAPPED)
+    strat = sonarr_checking(run, sonarr, deps)
 
     progress = strat.import_progress(_ON_THE_FIRST)
-    view = strat._episodes.title_episodes(1, 500, _SEASON_ONE)
+    strat.check_title(_series(1, 50), 500, _SEASON_ONE)
 
-    assert (progress, view) == (NO_PROGRESS, NoView.READ_FAILED)
+    assert (progress, run.log_al_title_calls) == (NO_PROGRESS, [])
     assert diagnostic_messages(recording, Severity.WARNING) == [_OUT_OF_STEP]
 
 
