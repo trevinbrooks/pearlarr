@@ -41,6 +41,7 @@ from pearlarr.scene_numbers import SceneMapping
 from pearlarr.series_reads import SeriesReads
 from pearlarr.skyhook_client import SkyHookReply
 from pearlarr.sonarr_episodes import sonarr_series_hash
+from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import OrderRow, SeriesNumbering
 from pearlarr.wait_types import NO_PROGRESS, ImportProgress, ImportWaitMode
@@ -54,6 +55,7 @@ from .builders import (
     drive_arr_run,
     make_config,
     make_entry_record,
+    make_parse_cache,
     make_pending_follower,
     make_release,
     make_run_deps,
@@ -723,11 +725,10 @@ def _reads_in_one_season(sonarr: FakeSonarrClient | None = None, series: SonarrS
     return _reads([series or _in_one_season()], _stored_as_one_season(), sonarr=sonarr)
 
 
-def _synced_in_one_season(sonarr: FakeSonarrClient | None = None, series: SonarrSeries | None = None) -> SonarrStrategy:
-    """The strategy over the library read, the rows and the stored orders `_reads_in_one_season` has."""
+def _parse_cache_in_one_season(sonarr: FakeSonarrClient, series: SonarrSeries | None = None) -> SonarrParseCache:
+    """The parse cache over the library read and the stored orders `_reads_in_one_season` has, Sonarr being `sonarr`."""
 
-    sonarr = sonarr or FakeSonarrClient(episodes=list(_ONE_SEASON_ROWS))
-    return _sync([series or _in_one_season()], _stored_as_one_season(), sonarr=sonarr)
+    return make_parse_cache(sonarr, _stored_as_one_season(), library=[series or _in_one_season()])
 
 
 def _parsing(parses: Mapping[str, ParsedFileInfo]) -> FakeSonarrClient:
@@ -829,18 +830,18 @@ def test_a_new_read_of_a_series_matches_a_name_to_its_new_rows() -> None:
 
 def test_a_listed_file_of_a_series_in_another_order_carries_its_aired_matches() -> None:
     # Nothing in the run has read the series yet.
-    strat = _synced_in_one_season(_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+    parse_cache = _parse_cache_in_one_season(_parsing({_FIFTH: _FIFTH_BY_SONARR}))
 
-    ((file,),) = strat._parse.parsed_files(_listing(_FIFTH)).values()
+    ((file,),) = parse_cache.parsed_files(_listing(_FIFTH)).values()
 
     assert file.parse == _FIFTH_BY_SONARR.with_matched((_matched(2, 2, 15),))
 
 
 def test_the_parse_cache_keeps_sonarrs_own_answer_for_a_series_in_another_order() -> None:
     cache = _stored_as_one_season()
-    strat = _sync([_in_one_season()], cache, sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+    parse_cache = make_parse_cache(_parsing({_FIFTH: _FIFTH_BY_SONARR}), cache, library=[_in_one_season()])
 
-    strat._parse.parsed_files(_listing(_FIFTH))
+    parse_cache.parsed_files(_listing(_FIFTH))
 
     row = cache.get_sonarr_parse(_FIFTH)
     assert row is not None
@@ -849,10 +850,10 @@ def test_the_parse_cache_keeps_sonarrs_own_answer_for_a_series_in_another_order(
 
 def test_a_cached_parse_is_matched_as_aired_again_without_asking_sonarr() -> None:
     sonarr = _parsing({_FIFTH: _FIFTH_BY_SONARR})
-    strat = _synced_in_one_season(sonarr)
-    strat._parse.parsed_files(_listing(_FIFTH))
+    parse_cache = _parse_cache_in_one_season(sonarr)
+    parse_cache.parsed_files(_listing(_FIFTH))
 
-    ((again,),) = strat._parse.parsed_files(_listing(_FIFTH)).values()
+    ((again,),) = parse_cache.parsed_files(_listing(_FIFTH)).values()
 
     assert again.parse == _FIFTH_BY_SONARR.with_matched((_matched(2, 2, 15),))
     assert sonarr.parse_calls == [_FIFTH]
@@ -869,8 +870,7 @@ def _asked_to_parse(cache: FakeCacheStore, series: SonarrSeries, by_sonarr: Pars
     """
 
     sonarr = _parsing({_FIFTH: by_sonarr})
-    strat = _sync([series], cache, sonarr=sonarr)
-    strat._parse.parsed_files(_listing(_FIFTH))
+    make_parse_cache(sonarr, cache, library=[series]).parsed_files(_listing(_FIFTH))
     return sonarr.parse_calls
 
 
@@ -902,8 +902,8 @@ def test_a_stored_parse_is_asked_for_again_once_its_series_is_in_another_order_t
 _SIXTH = "Show - 06.mkv"
 
 
-def _with_two_sixth_episodes() -> SonarrStrategy:
-    """`_synced_in_one_season` where TVDB's aired order counts the special as a sixth episode too.
+def _with_two_sixth_episodes() -> SonarrParseCache:
+    """`_parse_cache_in_one_season` where TVDB's aired order counts the special as a sixth episode too.
 
     Two aired episodes carry the number, and Sonarr answers a name it reads by such a number with an error.
     """
@@ -916,13 +916,13 @@ def _with_two_sixth_episodes() -> SonarrStrategy:
         series_id=1,
     )
     cache = _stored_as_one_season((OrderRow(0, 1, 9100, 6), *_TWO_SEASONS[1:]))
-    return _sync([_in_one_season()], cache, sonarr=_parsing({_SIXTH: by_sonarr}))
+    return make_parse_cache(_parsing({_SIXTH: by_sonarr}), cache, library=[_in_one_season()])
 
 
 def test_a_name_an_aired_sonarr_answers_with_an_error_is_an_unread_parse() -> None:
-    strat = _with_two_sixth_episodes()
+    parse_cache = _with_two_sixth_episodes()
 
-    ((file,),) = strat._parse.parsed_files(_listing(_SIXTH)).values()
+    ((file,),) = parse_cache.parsed_files(_listing(_SIXTH)).values()
 
     assert file.parse is None
 
@@ -939,9 +939,9 @@ def test_a_name_an_alternate_title_may_not_count_for_has_no_matched_episodes() -
         matched_episodes=(_matched(1, 3, 13),),
         series_id=1,
     )
-    strat = _synced_in_one_season(_parsing({name: by_sonarr}), _in_one_season(limited))
+    parse_cache = _parse_cache_in_one_season(_parsing({name: by_sonarr}), _in_one_season(limited))
 
-    ((file,),) = strat._parse.parsed_files(_listing(name)).values()
+    ((file,),) = parse_cache.parsed_files(_listing(name)).values()
 
     assert file.parse == by_sonarr.with_matched(())
 
@@ -955,18 +955,18 @@ def test_a_name_sonarr_searches_for_a_specials_title_has_no_matched_episodes() -
         matched_episodes=(_matched(0, 1, 20),),
         series_id=1,
     )
-    strat = _synced_in_one_season(_parsing({name: by_sonarr}))
+    parse_cache = _parse_cache_in_one_season(_parsing({name: by_sonarr}))
 
-    ((file,),) = strat._parse.parsed_files(_listing(name)).values()
+    ((file,),) = parse_cache.parsed_files(_listing(name)).values()
 
     assert file.parse == by_sonarr.with_matched(())
 
 
 def test_a_listed_file_of_a_series_with_no_aired_view_yet_has_no_matched_episodes() -> None:
     # No orders are stored for the series.
-    strat = _sync([_in_one_season()], FakeCacheStore(), sonarr=_parsing({_FIFTH: _FIFTH_BY_SONARR}))
+    parse_cache = make_parse_cache(_parsing({_FIFTH: _FIFTH_BY_SONARR}), FakeCacheStore(), library=[_in_one_season()])
 
-    ((file,),) = strat._parse.parsed_files(_listing(_FIFTH)).values()
+    ((file,),) = parse_cache.parsed_files(_listing(_FIFTH)).values()
 
     assert file.parse == _FIFTH_BY_SONARR.with_matched(())
 
@@ -976,9 +976,9 @@ def test_the_listed_files_of_a_series_whose_episodes_fail_to_read_are_unread_par
     of_series_one = ParsedFileInfo(series_id=1)
     sonarr = _parsing({_FIFTH: of_series_one, _SIXTH: of_series_one})
     sonarr.episodes_return = None
-    strat = _synced_in_one_season(sonarr)
+    parse_cache = _parse_cache_in_one_season(sonarr)
 
-    ((fifth, sixth),) = strat._parse.parsed_files(_listing(_FIFTH, _SIXTH)).values()
+    ((fifth, sixth),) = parse_cache.parsed_files(_listing(_FIFTH, _SIXTH)).values()
 
     assert (fifth.parse, sixth.parse) == (None, None)
     assert sonarr.episodes_calls == [1]
