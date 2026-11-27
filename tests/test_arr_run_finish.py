@@ -1,11 +1,12 @@
 # pyright: strict
 """Tests for the end of an arr run: what it shows, counts, saves and sends once the scan is done.
 
-Each test runs a whole arr run, the loop and its services built by their constructors, over a cache an earlier run
-left pending imports in. qBittorrent is scripted, time is a fake clock, and the arr's side of an import is a
-scripted strategy. The outcome is read off the events the run showed, the cache once it is closed and opened again,
-what the arr was asked to do, and what the wait webhook was sent. That a run whose title or library item failed
-still ends with its summary is pinned in `test_arr_run_scan`, and that a failed push only warns in `test_wait_notify`.
+Each test runs a whole arr run, the loop and its services built by their constructors, over the pending imports an
+earlier run left in the cache or one the run's own check grabs. qBittorrent is scripted, time is a fake clock, and
+the arr's side of an import is a scripted strategy. The outcome is read off the events the run showed, the cache once
+it is closed and opened again, what the arr was asked to do, and what the wait webhook was sent. That a run whose
+title or library item failed still ends with its summary is pinned in `test_arr_run_scan`, and that a failed push
+only warns in `test_wait_notify`.
 """
 
 import json
@@ -16,17 +17,30 @@ from typing import cast, override
 import pytest
 import respx
 
+from pearlarr.arr_run_services import ArrRunServices
 from pearlarr.boundary import Json
 from pearlarr.cache import CacheStore
 from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import TitleMapping
-from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, ScanFinished, TitleHeader, WaitStarted
+from pearlarr.output import ArrRunFinished, ArrRunSummaryReady, RowFinished, ScanFinished, TitleHeader, WaitStarted
 from pearlarr.output.events import TitleState
 from pearlarr.pending_import import PendingImport
-from pearlarr.wait_types import ImportWaitMode
+from pearlarr.wait_types import ImportWaitMode, Outcome
 
-from .builders import attempt_result, drive_arr_run, make_config, make_run_deps, pending_import
+from .builders import (
+    FakeSeaDexSource,
+    attempt_result,
+    drive_arr_run,
+    grab_request,
+    make_config,
+    make_entry_record,
+    make_run_deps,
+    one_release_dict,
+    pending_import,
+    pending_import_update,
+)
 from .fakes import FakeArrItem, FakeClock, RecordingHub, install_recording_hub
+from .http_mock import serve_nyaa_torrents
 from .wait_fakes import ALL_IN, TORRENT_H_COMPLETE, FakeQbit, FakeTorrent, RecordingStrategy
 
 _ALL_IMPORTED = (attempt_result(),)
@@ -201,10 +215,46 @@ class _SeriesInLibrary(RecordingStrategy):
         return item.id
 
 
+class _GrabsOneRelease(_SeriesInLibrary):
+    """Sonarr's side of a run whose check of series 7 grabs NAN0's Nyaa release, torrent "h".
+
+    Sonarr imports every file of it when asked.
+    """
+
+    def __init__(self, services: ArrRunServices) -> None:
+        super().__init__(attempts=_ALL_IMPORTED, progress=[ALL_IN])
+        self._services = services
+
+    @override
+    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
+        entry = self._services.begin_check(anilist_id)
+        assert entry is not None
+        self._services.grab_and_cache(
+            grab_request(
+                anilist_id=anilist_id,
+                entry=entry,
+                seadex_dict=one_release_dict(srg="NAN0", infohash="h"),
+                pending_import_updates={"h": pending_import_update("h")},
+            )
+        )
+
+
+class _ListsWhatItAdded(FakeQbit):
+    """qBittorrent holding nothing until it is asked to add a torrent, and from then on holding "h" finished."""
+
+    def __init__(self) -> None:
+        super().__init__({"h": [_FINISHED]})
+
+    @override
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
+        return super().torrents_info(torrent_hashes=torrent_hashes) if self.added else []
+
+
 class TestWhatARunCounts:
     """The summary counts each pending import where the run left it and says when the run could grab nothing.
 
-    It holds how long the run took.
+    A torrent the run grabs is counted once, as grabbed, never also among the pending imports an earlier run left. The
+    summary holds how long the run took.
     """
 
     def test_the_summary_counts_each_carried_over_import_where_it_ended(self, tmp_path: Path) -> None:
@@ -223,6 +273,24 @@ class TestWhatARunCounts:
         assert summary.summary.tally.imported == 2
         assert summary.summary.tally.downloading == 1
         assert summary.summary.tally.downloaded == 0
+
+    @respx.mock
+    def test_the_summary_counts_a_grab_once_and_the_blocking_wait_imports_it(self) -> None:
+        # The grab enters the torrent in the run's list of what it grabbed, which the summary counts and the wait reads.
+        serve_nyaa_torrents(1)
+        deps = make_run_deps(qbit=_ListsWhatItAdded().client(), seadex=FakeSeaDexSource({1: make_entry_record()}))
+        recording = install_recording_hub()
+
+        drive_arr_run(deps, _GrabsOneRelease, import_wait_mode=ImportWaitMode.BLOCKING)
+
+        (summary,) = recording.of_type(ArrRunSummaryReady)
+        tally = summary.summary.tally
+        assert [row.group for row in tally.grabbed] == ["NAN0"]
+        # The summary shows before the blocking wait, so the wait's import is not counted in it either.
+        assert (tally.imported, tally.downloading, tally.downloaded) == (0, 0, 0)
+        assert [(row.label, row.outcome) for row in recording.of_type(RowFinished)] == [
+            ("Show · NAN0", Outcome.IMPORTED)
+        ]
 
     @pytest.mark.parametrize(
         ("qbit", "dry_run", "note"),

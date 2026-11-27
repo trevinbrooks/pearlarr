@@ -1,9 +1,8 @@
 # pyright: strict
 """How an arr run is put together, seen through what its runs do.
 
-Bootstrap builds a run's parts once, and the loop hands each of them the run's fresh state as the run starts: what a
-title's check marks shows in the run's summary, and what it grabs is counted once and waited on by the run's own
-wait. A Radarr run lists every movie a mapping source knows.
+Bootstrap builds a run's parts once, and the loop hands each of them the run's fresh state as the run starts, so what
+a title's check marks shows in the run's summary. A Radarr run checks every movie a mapping source knows.
 
 `ArrRunDeps.build` sets up what the parts share. The arr client verifies certificates as the arr's `verify_ssl` says.
 qBittorrent is reached with the config's options, and a grab goes to it under the arr's category with the config's
@@ -14,7 +13,6 @@ import logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import override
 
 import httpx
 import pytest
@@ -25,33 +23,28 @@ from seadex import Tracker
 from pearlarr import arr_run_services
 from pearlarr.arr_http import ARR_REQUEST_TIMEOUT_S
 from pearlarr.arr_models import RadarrMovie
-from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
+from pearlarr.arr_run_services import ArrRunDeps
 from pearlarr.boot_flow import BootFlow
 from pearlarr.config import AppConfig, Arr
-from pearlarr.mappings import MappingResolver, MappingSources, TitleMapping
-from pearlarr.output import ArrRunSummaryReady, Diagnostic, NeedsActionCause, RowFinished
+from pearlarr.mappings import MappingResolver, MappingSources
+from pearlarr.output import ArrRunSummaryReady, Diagnostic, NeedsActionCause
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import Release
-from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import (
     FakeSeaDexSource,
-    attempt_result,
     download_client_json,
     drive_arr_run,
-    grab_request,
     make_config,
     make_entry_record,
     make_resolver,
     make_run_deps,
     make_torrent_record,
-    one_release_dict,
-    pending_import_update,
     sonarr_client_fields,
 )
-from .fakes import FakeArrItem, FakeRadarrClient, diagnostic_messages, install_recording_hub
+from .fakes import FakeRadarrClient, diagnostic_messages, install_recording_hub
 from .http_mock import serve_nyaa_torrents
-from .wait_fakes import ALL_IN, FakeQbit, FakeTorrent, QbitStep, RecordingStrategy
+from .wait_fakes import FakeTorrent
 
 # --- a run's parts act on the run's state -----------------------------------------------------------------------
 
@@ -108,70 +101,6 @@ def test_a_radarr_run_checks_a_movie_only_anibridge_maps() -> None:
     _radarr_run(deps, FakeRadarrClient(movies=[_YOUR_NAME]))
 
     assert seadex.entry_calls == [21519]
-
-
-_HASH = "ab" * 20
-"""The info hash of the Nyaa release the grabs here add."""
-
-
-class _ListsWhatItAdded(FakeQbit):
-    """qBittorrent holding nothing until it is asked to add a torrent, and from then on holding it finished."""
-
-    def __init__(self) -> None:
-        finished: list[QbitStep] = [FakeTorrent(is_complete=True, content_path="/downloads/done")]
-        super().__init__({_HASH: finished})
-
-    @override
-    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
-        return super().torrents_info(torrent_hashes=torrent_hashes) if self.added else []
-
-
-class _GrabsOneRelease(RecordingStrategy):
-    """Sonarr's side of a run over series 7 under title 1, whose check grabs one Nyaa release.
-
-    Sonarr imports every file of it when asked.
-    """
-
-    def __init__(self, services: ArrRunServices) -> None:
-        super().__init__(attempts=(attempt_result(),), progress=(ALL_IN,))
-        self._services = services
-
-    @override
-    def get_items(self) -> list[FakeArrItem]:
-        return [FakeArrItem(item_id=7)]
-
-    @override
-    def item_mappings(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, TitleMapping]:
-        return {1: TitleMapping(anilist_id=1)}
-
-    @override
-    def check_title(self, item: FakeArrItem, anilist_id: int, mapping: TitleMapping) -> None:
-        entry = self._services.begin_check(anilist_id)
-        assert entry is not None
-        self._services.grab_and_cache(
-            grab_request(
-                anilist_id=anilist_id,
-                entry=entry,
-                seadex_dict=one_release_dict(srg="NAN0", infohash=_HASH),
-                pending_import_updates={_HASH: pending_import_update(_HASH)},
-            )
-        )
-
-
-@respx.mock
-def test_a_blocking_run_counts_its_grab_once_and_imports_it() -> None:
-    # The grab enters the torrent in the run's list of what it grabbed, which the summary counts and the wait reads.
-    serve_nyaa_torrents(1)
-    deps = make_run_deps(qbit=_ListsWhatItAdded().client(), seadex=FakeSeaDexSource({1: make_entry_record()}))
-    recording = install_recording_hub()
-
-    drive_arr_run(deps, _GrabsOneRelease, import_wait_mode=ImportWaitMode.BLOCKING)
-
-    (summary,) = recording.of_type(ArrRunSummaryReady)
-    tally = summary.summary.tally
-    # Counted as this run's grab, never also as a download an earlier run left.
-    assert ([row.group for row in tally.grabbed], tally.downloading) == (["NAN0"], 0)
-    assert [(row.label, row.outcome) for row in recording.of_type(RowFinished)] == [("Show · NAN0", Outcome.IMPORTED)]
 
 
 # --- what ArrRunDeps.build sets up ------------------------------------------------------------------------------
@@ -309,8 +238,9 @@ def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tag
     serve_nyaa_torrents(1)
     deps = build(_SONARR_AND_QBITTORRENT)
     assert isinstance(deps.qbit, _QbitStandIn)
+    release = Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash="ab" * 20)
 
-    deps.torrents.add(item=Release(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), dry_run=False)
+    deps.torrents.add(item=release, dry_run=False)
 
     assert deps.qbit.added == [("tv-sonarr", ["seadex"])]
     assert (deps.categories.post_import_category(), clients.call_count) == ("sonarr-done", 1)
