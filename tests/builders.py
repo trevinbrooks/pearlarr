@@ -115,6 +115,7 @@ from pearlarr.skyhook_client import AbstractSkyHookClient
 from pearlarr.skyhook_gateway import SkyHookGateway
 from pearlarr.sonarr_client import AbstractSonarrClient
 from pearlarr.sonarr_episodes import SonarrEpisodes, sonarr_series_hash
+from pearlarr.sonarr_parse import SonarrParseCache
 from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.stamps import STAMP_FORMAT, parse_stamp, stamp_of
 from pearlarr.torrent_service import TorrentService
@@ -1581,6 +1582,20 @@ def make_series_reads(
     if library is not None:
         reads.begin_run(LibraryRead.of(library, sonarr_series_hash(series.id for series in library)))
     return reads
+
+
+def make_parse_cache(
+    sonarr: AbstractSonarrClient, cache_store: AbstractCacheStore, *, library: Sequence[SonarrItem]
+) -> SonarrParseCache:
+    """A real `SonarrParseCache` of a run over `library` (`make_series_reads`), with no strategy around it.
+
+    It reads the stored parses in `cache_store`, and Sonarr answers the names it has none for. The run's reads take
+    their TVDB orders and scene mappings from `cache_store` too.
+    """
+
+    return SonarrParseCache(
+        make_run_deps(cache_store=cache_store), sonarr, make_series_reads(sonarr, cache_store, library=library)
+    )
 
 
 def make_pending_follower(cache_store: AbstractCacheStore, rows: SeriesRows) -> PendingFollower:

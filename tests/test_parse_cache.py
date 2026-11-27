@@ -31,6 +31,7 @@ from pearlarr.stamps import stamp_of
 from .builders import (
     FakeCacheStore,
     make_config,
+    make_parse_cache,
     make_release,
     make_run_deps,
     make_series_reads,
@@ -205,9 +206,9 @@ _HASH = sonarr_series_hash([1])
 def _parse_cache(
     sonarr: FakeSonarrClient, cache: FakeCacheStore, *, library: Sequence[SonarrSeries] = _LIBRARY
 ) -> SonarrParseCache:
-    """The parse cache of a run over `library` and the stored parses in `cache`, built as a run builds it."""
+    """The parse cache of a run over `library` and the stored parses in `cache` (`make_parse_cache`)."""
 
-    return SonarrParseCache(make_run_deps(cache_store=cache), sonarr, make_series_reads(sonarr, library=library))
+    return make_parse_cache(sonarr, cache, library=library)
 
 
 def _listing(files: Mapping[str, int], urls: Sequence[str] = ("u",)) -> SeadexDict:
