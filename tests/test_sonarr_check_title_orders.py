@@ -12,10 +12,8 @@ from dataclasses import dataclass
 import pytest
 from seadex import TorrentRecord
 
-from pearlarr.aired_view import NoView
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode, SonarrSeries
 from pearlarr.file_paths import normalize_file_name
-from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Severity
 from pearlarr.releases import EpisodeKey, PrintedKey, SeadexDict, SkipReason
@@ -34,57 +32,52 @@ from .builders import (
     parsed_info,
     rg_group,
     sonarr_ep,
-    stand_in_ep,
     stored_orders,
     stored_scene_mappings,
 )
-from .fakes import FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
+from .fakes import FakeSonarrClient, diagnostic_messages, install_recording_hub
 from .title_check_builders import (
+    DVD_E1,
     EP1,
     EP2,
     GRAB_FILES,
     GRAB_URL,
     SERIES_7,
-    STAND_IN_E2,
+    SERIES_7_DVD,
     FakeRunServices,
-    ScriptedParse,
+    aired_orders,
     anilist_counting,
     mapping_one_series,
-    scripted_checking,
+    sonarr_checking,
     sonarr_grab_run,
+    sonarr_listing,
 )
 
-_LISTED_EP1 = EP1.renumbered(season=1, episode=1, absolute=None)
-"""Series 7's first episode as its view holds it when the DVD order lists it under its aired number."""
+_LISTED_EP1 = DVD_E1.renumbered(season=1, episode=1, absolute=1)
+"""Series 7's first DVD row as its view holds it, under its aired number."""
 
 
 def _check_title_in_another_order(
-    window: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
+    rows: list[SonarrEpisode], *, grab: bool = True, ignore_unmonitored: bool = False
 ) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 over `window`, all of series 7 as aired, numbered by its DVD order.
+    """Drive a Sonarr `check_title` for title 5, all of series 7, over Sonarr's `rows` of it by its DVD order.
 
-    The entry lists one torrent of `GRAB_FILES`, named as the season's first two episodes, which the plan grabs
-    unless `grab` is off.
+    The series is as `sonarr_listing` stores it. The entry lists one torrent of `GRAB_FILES`, which Sonarr parses
+    as the season's first two episodes, and the plan grabs it unless `grab` is off.
     """
 
-    release = make_release(url=GRAB_URL, infohash="h1", files=list(GRAB_FILES))
-    seadex: SeadexDict = {"NAN0": rg_group({GRAB_URL: release})}
+    release = make_release(url=GRAB_URL, infohash="h1", files=list(GRAB_FILES), size=[1000] * len(GRAB_FILES))
     run = FakeRunServices(
         prologue_entry=make_entry_record(),
         anilist_title="Show",
-        seadex_dict=seadex,
+        seadex_dict={"NAN0": rg_group({GRAB_URL: release})},
         plan_marks=frozenset({GRAB_URL}) if grab else frozenset(),
         import_wait_mode=ImportWaitMode.BLOCKING,
     )
-    episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order="dvd")
-    parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
-    strat = scripted_checking(
-        run,
-        episodes,
-        config=make_config(ignore_unmonitored=ignore_unmonitored),
-        parse=ScriptedParse({GRAB_URL: tuple(ListedFile(name, 1000, parses[name]) for name in GRAB_FILES)}),
-    )
-    strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
+    sonarr = sonarr_listing(run.cache_store, SERIES_7_DVD, rows)
+    sonarr.parse_fn = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}.get
+    deps = make_run_deps(config=make_config(ignore_unmonitored=ignore_unmonitored), cache_store=run.cache_store)
+    sonarr_checking(run, sonarr, deps).check_title(SERIES_7_DVD, 5, TitleMapping(anilist_id=5))
     return run
 
 
@@ -95,63 +88,63 @@ class TestSonarrCheckTitleOnASeriesInAnotherOrder:
     """
 
     def test_a_title_whose_every_episode_in_sonarr_is_unmonitored_stops_as_unmonitored(self) -> None:
-        unmonitored = _LISTED_EP1.model_copy(update={"monitored": False})
+        unmonitored = DVD_E1.model_copy(update={"monitored": False})
 
-        run = _check_title_in_another_order([unmonitored, STAND_IN_E2], ignore_unmonitored=True)
+        run = _check_title_in_another_order([unmonitored], ignore_unmonitored=True)
 
         assert (run.unmonitored_titles, run.log_al_title_calls) == (["Show"], [])
 
     def test_a_cached_rows_coverage_backfill_is_of_the_episodes_sonarr_has(self) -> None:
-        run = _check_title_in_another_order([_LISTED_EP1, STAND_IN_E2])
+        run = _check_title_in_another_order([DVD_E1])
 
         (coverage,) = run.cached_skip_coverages
         assert coverage() == "S01 E01"
 
     def test_the_plan_is_made_over_the_episodes_sonarr_has(self) -> None:
-        run = _check_title_in_another_order([_LISTED_EP1, STAND_IN_E2])
+        run = _check_title_in_another_order([DVD_E1])
 
         assert run.planned_title_episodes == [(_LISTED_EP1,)]
 
     @pytest.mark.parametrize(
-        ("window", "grab", "skip_reason", "left_out"),
+        ("rows", "grab", "skip_reason", "left_out"),
         [
+            pytest.param([DVD_E1], True, None, ["S01 E02 (1 of 2 files, NAN0)"], id="one-of-its-files"),
             pytest.param(
-                [_LISTED_EP1, STAND_IN_E2], True, None, ["S01 E02 (1 of 2 files, NAN0)"], id="one-of-its-files"
-            ),
-            pytest.param(
-                [stand_in_ep(1, 1, tvdb_id=9001), STAND_IN_E2, sonarr_ep(1, 3, ep_id=103, episode_file_id=0)],
+                [sonarr_ep(1, 3, ep_id=103, tvdb_id=9003, episode_file_id=0)],
                 True,
                 SkipReason.AIRED_ONLY,
                 ["S01 E01-E02 (2 of 2 files, NAN0)"],
                 id="its-every-file",
             ),
-            pytest.param([_LISTED_EP1, STAND_IN_E2], False, None, [], id="a-release-the-plan-does-not-grab"),
+            pytest.param([DVD_E1], False, None, [], id="a-release-the-plan-does-not-grab"),
         ],
     )
     def test_a_grabs_files_on_episodes_sonarr_has_no_row_for_are_reported_in_one_row(
-        self, window: list[SonarrEpisode], grab: bool, skip_reason: SkipReason | None, left_out: list[str]
+        self, rows: list[SonarrEpisode], grab: bool, skip_reason: SkipReason | None, left_out: list[str]
     ) -> None:
-        run = _check_title_in_another_order(window, grab=grab)
+        run = _check_title_in_another_order(rows, grab=grab)
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is skip_reason
         assert run.left_out == left_out
 
     @pytest.mark.parametrize(
-        ("reason", "not_stored"),
+        ("orders_stored", "not_stored"),
         [
-            pytest.param(NoView.ORDERS_UNREAD, "aired episodes", id="aired-episodes"),
-            pytest.param(NoView.SCENE_UNREAD, "scene numbers from TheXEM", id="scene-numbers"),
+            pytest.param(False, "aired episodes", id="aired-episodes"),
+            pytest.param(True, "scene numbers from TheXEM", id="scene-numbers"),
         ],
     )
     def test_a_series_with_no_aired_view_yet_is_left_unchecked_with_a_warning_of_what_is_not_stored(
-        self, reason: NoView, not_stored: str
+        self, orders_stored: bool, not_stored: str
     ) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Show")
+        if orders_stored:
+            run.cache_store.put_tvdb_orders(SERIES_7_DVD.tvdbId, aired_orders())
         recording = install_recording_hub()
-        strat = scripted_checking(run, ScriptedEpisodes(order="dvd", no_views={7: reason}))
+        strat = sonarr_checking(run, FakeSonarrClient(all_series=[SERIES_7_DVD], episodes=[DVD_E1]))
 
-        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
+        strat.check_title(SERIES_7_DVD, 5, TitleMapping(anilist_id=5))
 
         (warning,) = diagnostic_messages(recording, Severity.WARNING)
         assert warning == (
@@ -175,7 +168,9 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     def test_a_series_whose_episodes_could_not_be_read_is_left_unchecked_quietly(self) -> None:
         run = FakeRunServices(prologue_entry=make_entry_record())
         recording = install_recording_hub()
-        strat = scripted_checking(run, ScriptedEpisodes())
+        sonarr = FakeSonarrClient(all_series=[SERIES_7])
+        sonarr.episodes_return = None
+        strat = sonarr_checking(run, sonarr)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 

@@ -33,7 +33,7 @@ from pearlarr.planner import GrabPlan
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import SeadexDict
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import SeriesNumbering
+from pearlarr.tvdb_orders import AIRED_ORDER, CachedOrders, OrderRow, SeriesNumbering, is_another_order
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
@@ -55,6 +55,7 @@ from .builders import (
     sonarr_ep,
     stand_in_ep,
     stored_orders,
+    stored_scene_mappings,
 )
 from .fakes import FakeRadarrClient, FakeSonarrClient, PerSeriesSonarrClient, ScriptedEpisodes
 
@@ -326,6 +327,31 @@ class Unread:
     """The titles whose AniList lookup comes while AniList is unreachable."""
     series_ids: frozenset[int] = frozenset()
     """The series SkyHook has never answered for."""
+
+
+SERIES_7_DVD = SonarrSeries(id=7, title="Show", tvdbId=70, seasonType="dvd")
+"""Series 7 as Sonarr lists it numbered by its DVD order."""
+
+DVD_E1 = sonarr_ep(1, 1, ep_id=101, tvdb_id=9001, episode_file_id=0)
+"""Series 7's first episode on row 101 with no file, which the DVD order lists under its aired number."""
+
+
+def aired_orders() -> CachedOrders:
+    """SkyHook's answer for a series whose aired order is one season of three episodes, n being TVDB episode 9000 + n."""
+
+    return stored_orders({AIRED_ORDER: tuple(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3))})
+
+
+def sonarr_listing(store: FakeCacheStore, series: SonarrSeries, rows: list[SonarrEpisode]) -> FakeSonarrClient:
+    """Sonarr listing `series` with `rows`, and SkyHook's `aired_orders` for the series stored in `store`.
+
+    For a series in another order TheXEM's answer is stored too, which maps none of its episodes.
+    """
+
+    store.put_tvdb_orders(series.tvdbId, aired_orders())
+    if is_another_order(series.seasonType):
+        store.put_scene_mappings(series.tvdbId, stored_scene_mappings())
+    return FakeSonarrClient(all_series=[series], episodes=rows)
 
 
 def anilist_counting(anilist_id: int, episodes: int) -> AniListBody:
