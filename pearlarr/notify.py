@@ -25,12 +25,13 @@ from .discord import (
     EmbedField,
     discord_push,
 )
+from .file_names import natural_key
 from .output import hub_warn
 from .output.console_text import count_noun, human_bytes, long_duration
 from .output.wait_lines import hand_import_names, hand_import_sentences
 from .releases import Release, SeadexDict
 from .torrent_service import AddStatus, GrabResult
-from .wait_types import OutcomeKind
+from .wait_types import LeftForHandImport, OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail
 
@@ -77,16 +78,55 @@ def _wait_color(result: WaitResult) -> int:
     return COLOR_SUCCESS
 
 
-def _wait_row_lead(row: WaitOutcomeRow) -> str:
-    """A summary row's lead: the name alone for an import, else with why it didn't import."""
+def _says(row: WaitOutcomeRow) -> str:
+    """What a summary row says after its name: nothing for an import, else why it didn't import."""
 
     if row.outcome.kind is OutcomeKind.IMPORTED:
-        return row.label
+        return ""
     left = row.left_for_hand_import
     if left.explained_by_order:
         lead, reason = hand_import_sentences(left)
-        return f"{row.label} - {lead}\n{reason}:"
-    return f"{row.label} - {row.outcome.detail}"
+        return f"{lead}\n{reason}:"
+    return row.outcome.detail
+
+
+@dataclass(frozen=True, slots=True)
+class _WaitEntry:
+    """A section's rows that read the same, said once."""
+
+    label: str
+    says: str
+    """What the rows say after their name (`_says`)."""
+    torrents: int
+    files: tuple[str, ...]
+    """The files the rows left for a hand import, a line each."""
+
+    @property
+    def lead(self) -> str:
+        """The name, with how many torrents when it stands for more than one, then what they say."""
+
+        label = self.label if self.torrents == 1 else f"{self.label} · {self.torrents} torrents"
+        return f"{label} - {self.says}" if self.says else label
+
+
+def _wait_entries(rows: Sequence[WaitOutcomeRow]) -> list[_WaitEntry]:
+    """A section's rows as entries, one for each name and what it says, where the first of its rows stands.
+
+    A release Pearlarr grabbed as a torrent per episode gives each torrent the release's name, so they read as one.
+    """
+
+    same: dict[tuple[str, str], list[WaitOutcomeRow]] = {}
+    for row in rows:
+        same.setdefault((row.label, _says(row)), []).append(row)
+    return [_WaitEntry(label, says, len(group), _file_lines(group)) for (label, says), group in same.items()]
+
+
+def _file_lines(rows: Sequence[WaitOutcomeRow]) -> tuple[str, ...]:
+    """The files the rows left for a hand import, by name so episode 2 comes before 10, not in finishing order."""
+
+    files = sorted((file for row in rows for file in row.left_for_hand_import.files), key=lambda f: natural_key(f.name))
+    # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
+    return tuple(hand_import_names(LeftForHandImport(files=tuple(files)), quote="`"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +139,7 @@ class _Line:
 
 
 def _left_out(files: int, torrents: int) -> str:
-    """A cut section's last line: the files it didn't list of the row it stopped in, then the torrents it never reached.
+    """A cut section's last line: the files it didn't list of the entry it stopped in, then the torrents after.
 
     Files and torrents are counted apart because the section's count is torrents, and one torrent can leave many files.
     """
@@ -112,17 +152,16 @@ def _left_out(files: int, torrents: int) -> str:
     return "… " + " · ".join(counts)
 
 
-def _section_lines(rows: Sequence[WaitOutcomeRow]) -> list[_Line]:
-    """Each row's lead, then each file it left for a hand import. An order's reason stays on its lead's line."""
+def _section_lines(entries: Sequence[_WaitEntry]) -> list[_Line]:
+    """Each entry's lead, then each of its files. An order's reason stays on its lead's line."""
 
     lines: list[_Line] = []
-    unlisted = len(rows)
-    for row in rows:
-        lines.append(_Line(_wait_row_lead(row), _left_out(0, unlisted)))
-        unlisted -= 1
-        # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
-        names = hand_import_names(row.left_for_hand_import, quote="`")
-        lines += (_Line(name, _left_out(len(names) - n, unlisted)) for n, name in enumerate(names))
+    unlisted = sum(entry.torrents for entry in entries)
+    for entry in entries:
+        lines.append(_Line(entry.lead, _left_out(0, unlisted)))
+        unlisted -= entry.torrents
+        files = entry.files
+        lines += (_Line(name, _left_out(len(files) - n, unlisted)) for n, name in enumerate(files))
     return lines
 
 
@@ -439,9 +478,10 @@ class Notifier:
         """A section per outcome kind (imported / left / failed), if any, its name counting its torrents.
 
         Imported rows list just the name. Left and failed rows carry the outcome's human detail (the reason the
-        torrent didn't import) and any file left for a hand import. A section runs on into a second field with no
-        name, which Discord shows with no header. `room` is what the embed's total leaves for the fields, and three
-        sections of two full fields would pass it, so each section fits in what the ones before it left.
+        torrent didn't import) and any file left for a hand import. Rows that read the same are said once
+        (`_wait_entries`). A section runs on into a second field with no name, which Discord shows with no header.
+        `room` is what the embed's total leaves for the fields, and three sections of two full fields would pass
+        it, so each section fits in what the ones before it left.
         """
 
         sections = (
@@ -455,7 +495,7 @@ class Notifier:
             if not rows:
                 continue
             name = f"{title} ({len(rows)})"
-            first, *more = _fit(_section_lines(rows), _field_sizes(room - len(name)))
+            first, *more = _fit(_section_lines(_wait_entries(rows)), _field_sizes(room - len(name)))
             section = [EmbedField(name, first), *(EmbedField("", value) for value in more)]
             room -= sum(len(field.name) + len(field.value) for field in section)
             fields += section
