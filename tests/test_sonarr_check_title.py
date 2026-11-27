@@ -394,29 +394,30 @@ class TestSonarrCheckTitleMetadataUnread:
     """
 
     @pytest.mark.parametrize(
-        ("unread_series", "unread_anilist_ids", "expected"),
+        ("unread", "expected"),
         [
-            pytest.param(frozenset[int](), frozenset[int](), False, id="all-read"),
-            pytest.param(frozenset({7}), frozenset[int](), True, id="its-own-series"),
-            pytest.param(frozenset({8}), frozenset[int](), True, id="a-stored-records-series"),
-            pytest.param(frozenset[int](), frozenset({5}), True, id="its-own-entry"),
-            pytest.param(frozenset[int](), frozenset({4}), True, id="another-entry-of-its-series"),
-            pytest.param(frozenset[int](), frozenset({6}), True, id="an-ignored-entry-of-its-series"),
+            pytest.param(Unread(), False, id="all-read"),
+            pytest.param(Unread(series_ids=frozenset({7})), True, id="its-own-series"),
+            pytest.param(Unread(series_ids=frozenset({8})), True, id="a-stored-records-series"),
+            pytest.param(Unread(anilist_ids=frozenset({5})), True, id="its-own-entry"),
+            pytest.param(Unread(anilist_ids=frozenset({4})), True, id="another-entry-of-its-series"),
+            pytest.param(Unread(anilist_ids=frozenset({6})), True, id="an-ignored-entry-of-its-series"),
         ],
     )
-    def test_the_grab_request_carries_whether_its_metadata_is_unread(
-        self, unread_series: frozenset[int], unread_anilist_ids: frozenset[int], expected: bool
-    ) -> None:
+    def test_the_grab_request_carries_whether_its_metadata_is_unread(self, unread: Unread, expected: bool) -> None:
         # Series 8's pending import already holds the torrent title 5 lists, so the grab places it under that pending
         # import too.
         store = FakeCacheStore()
-        resident = pending_import(infohash="h1", series_id=8, seadex_files=list(GRAB_FILES))
-        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[EP1, EP2]), unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
+        resident = pending_import(
+            infohash="h1",
+            series_id=8,
+            file_episode_map={GRAB_FILES[1]: [250]},
+            seadex_files=list(GRAB_FILES),
+            tvdb_ids={250: 9101},
         )
+        store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
 
-        run = scripted_grab_run(store=store, episodes=episodes)
+        run = sonarr_grab_run([EP1, EP2], store=store, unread=unread)
 
         (req,) = run.grab_requests
         assert req.metadata_unread is expected
