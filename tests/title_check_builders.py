@@ -5,7 +5,7 @@ The Sonarr checks share series 7 and the one torrent its title lists, and `sonar
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import override
 
 from seadex import EntryRecord
@@ -314,6 +314,18 @@ TITLE_5 = TitleMapping(anilist_id=5, tvdb_season=1, tvdb_epoffset=1)
 """Title 5 of series 7: its first season from the second episode on."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Unread:
+    """What a check read without an answer: SeaDex's entries, AniList's titles and SkyHook's series."""
+
+    seadex: bool = False
+    """Whether SeaDex is unreachable for every entry but the one the check began on."""
+    anilist_ids: frozenset[int] = frozenset()
+    """The titles whose AniList lookup comes while AniList is unreachable."""
+    series_ids: frozenset[int] = frozenset()
+    """The series SkyHook has never answered for."""
+
+
 def sonarr_checking(run: FakeRunServices, sonarr: FakeSonarrClient, deps: ArrRunDeps | None = None) -> SonarrStrategy:
     """A `SonarrStrategy` built by its constructor over `run` and `sonarr`, past the library read an arr run starts on.
 
@@ -333,17 +345,19 @@ def sonarr_grab_run(
     store: FakeCacheStore | None = None,
     mode: ImportWaitMode = ImportWaitMode.BLOCKING,
     grab: bool = True,
+    unread: Unread = Unread(),
 ) -> FakeRunServices:
     """Drive a Sonarr `check_title` for title 5 of series 7, whose rows are `episodes`, in a blocking run unless `mode` says.
 
-    The series has mappings for titles 4 and 5 and for the ignored title 6, and SeaDex lists one torrent for title 5,
-    of `GRAB_FILES`, which Sonarr parses as the season's first two episodes. The plan grabs it unless `grab` is off.
-    Sonarr also has series 8, with the one row `SERIES_8_E2`. AniList and SkyHook answer for every title and series.
-    `store` is the cache the run starts with, empty unless given.
+    The series has mappings for titles 4 and 5 and for the ignored title 6, each with a SeaDex entry. Title 5's lists
+    one torrent, of `GRAB_FILES`, which Sonarr parses as the season's first two episodes, and the others list none.
+    The plan grabs it unless `grab` is off. Sonarr also has series 8, with the one row `SERIES_8_E2`. Every source
+    answers but the ones `unread` names. `store` is the cache the run starts with, empty unless given.
     """
 
     torrent = make_torrent_record(infohash="h1", file_names=GRAB_FILES)
     entry = make_entry_record(anilist_id=5, url="https://releases.moe/5", torrents=(torrent,))
+    entries = {4: make_entry_record(anilist_id=4), 5: entry, 6: make_entry_record(anilist_id=6)}
     release = make_release(url=GRAB_URL, infohash="h1", files=list(GRAB_FILES), size=[1000] * len(GRAB_FILES))
     run = FakeRunServices(
         anilist_ids={4: TitleMapping(anilist_id=4), 5: TITLE_5},
@@ -356,11 +370,12 @@ def sonarr_grab_run(
         cache_store=store,
     )
     for series in (SERIES_7, SERIES_8):
-        run.cache_store.put_tvdb_orders(series.tvdbId, stored_orders({}))
+        if series.id not in unread.series_ids:
+            run.cache_store.put_tvdb_orders(series.tvdbId, stored_orders({}))
     deps = make_run_deps(
         cache_store=run.cache_store,
-        seadex=FakeSeaDexSource({5: entry}),
-        anilist_client=ScriptedAniListClient("Show Cour 2"),
+        seadex=FakeSeaDexSource({5: entry} if unread.seadex else entries, unreachable=unread.seadex),
+        anilist_client=ScriptedAniListClient("Show Cour 2", failing=unread.anilist_ids),
     )
     parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
     sonarr = PerSeriesSonarrClient({7: episodes, 8: [SERIES_8_E2]}, candidates=[])

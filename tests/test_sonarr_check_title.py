@@ -52,7 +52,7 @@ from .title_check_builders import (
     SERIES_7,
     STAND_IN_E2,
     FakeRunServices,
-    ScriptedListings,
+    Unread,
     scripted_checking,
     scripted_grab_run,
     seadex_groups,
@@ -254,9 +254,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         assert req.pending_import_updates["h1"].file_map == placed
 
     def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP2]})
-
-        run = scripted_grab_run(episodes=episodes, listings=ScriptedListings(unreachable=True))
+        run = sonarr_grab_run([EP1, EP2], unread=Unread(seadex=True))
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
