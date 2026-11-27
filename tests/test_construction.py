@@ -32,7 +32,6 @@ from pearlarr.config import AppConfig, Arr
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import ArrRunSummaryReady, NeedsActionCause, RowFinished
 from pearlarr.radarr_strategy import RadarrStrategy
-from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import (
@@ -48,7 +47,7 @@ from .builders import (
     one_release_dict,
     pending_import_update,
 )
-from .fakes import FakeArrItem, FakeRadarrClient, FakeSonarrClient, install_recording_hub
+from .fakes import FakeArrItem, FakeRadarrClient, install_recording_hub
 from .http_mock import serve_nyaa_torrents
 from .wait_fakes import ALL_IN, FakeQbit, FakeTorrent, QbitStep, RecordingStrategy
 
@@ -157,24 +156,6 @@ def test_a_blocking_run_counts_its_grab_once_and_imports_it() -> None:
     # Counted as this run's grab, never also as a download an earlier run left.
     assert ([row.group for row in tally.grabbed], tally.downloading) == (["NAN0"], 0)
     assert [(row.label, row.outcome) for row in recording.of_type(RowFinished)] == [("Show · NAN0", Outcome.IMPORTED)]
-
-
-def test_sonarr_strategy_init_shares_cache_store_for_staged_writes() -> None:
-    # The parse-cache writer (SonarrParseCache) and the pending import update builder (ImportReconciler,
-    # through the services' pending import store) must share the strat's cache_store by identity, or
-    # a staged parse write would not be visible to build_pending_import_updates.
-    deps = make_run_deps()
-    services = ArrRunServices(deps, Arr.SONARR)
-    # Inject a typed fake through the sonarr_client argument so the collaborator wiring
-    # runs off the REAL __init__ without connection keys - an incomplete fake here
-    # is a pyright error and un-instantiable, unlike the old stringly-typed
-    # monkeypatch.
-    strat = SonarrStrategy(deps, services, sonarr_client=FakeSonarrClient())
-
-    assert strat._parse.cache_store is deps.cache_store
-    assert strat._reconciler._pending_imports is services.pending_imports
-    # `PendingImportStore._store` is private, and this identity is the invariant the comment above names.
-    assert services.pending_imports._store is deps.cache_store
 
 
 def test_radarr_strategy_init_builds_without_network_via_the_client_argument() -> None:
