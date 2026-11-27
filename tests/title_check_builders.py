@@ -14,7 +14,7 @@ from pearlarr.anilist_client import AniListBody
 from pearlarr.arr_models import ArrFiles, SonarrEpisode, SonarrSeries
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
-from pearlarr.cache import CachedTitleUpdate
+from pearlarr.cache import AbstractCacheStore, CachedTitleUpdate
 from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
 from pearlarr.mappings import (
@@ -310,7 +310,7 @@ def aired_orders() -> CachedOrders:
     return stored_orders({AIRED_ORDER: tuple(OrderRow(1, n, 9000 + n, n) for n in (1, 2, 3))})
 
 
-def sonarr_listing(store: FakeCacheStore, series: SonarrSeries, rows: list[SonarrEpisode]) -> FakeSonarrClient:
+def sonarr_listing(store: AbstractCacheStore, series: SonarrSeries, rows: list[SonarrEpisode]) -> FakeSonarrClient:
     """Sonarr listing `series` with `rows`, and SkyHook's `aired_orders` for the series stored in `store`.
 
     For a series in another order TheXEM's answer is stored too, which maps none of its episodes.
