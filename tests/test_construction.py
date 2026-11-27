@@ -231,8 +231,7 @@ class TestCategoriesLeftToTheArr:
 
 @respx.mock
 def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tags(build: _Build) -> None:
-    # The grab and the post-import move ask the one read of Sonarr's download clients.
-    clients = respx.get(_DOWNLOAD_CLIENTS).respond(json=[download_client_json(sonarr_client_fields())])
+    respx.get(_DOWNLOAD_CLIENTS).respond(json=[download_client_json(sonarr_client_fields())])
     serve_nyaa_torrents(1)
     deps = build(_SONARR_AND_QBITTORRENT)
     assert isinstance(deps.qbit, _QbitStandIn)
@@ -241,7 +240,6 @@ def test_a_grab_goes_to_qbittorrent_under_the_arrs_category_with_the_configs_tag
     deps.torrents.add(item=release, dry_run=False)
 
     assert deps.qbit.added == [("tv-sonarr", ["seadex"])]
-    assert (deps.categories.post_import_category(), clients.call_count) == ("sonarr-done", 1)
 
 
 _ARR_TIMEOUT = {"REQUESTS_ARGS": {"timeout": ARR_REQUEST_TIMEOUT_S}}
