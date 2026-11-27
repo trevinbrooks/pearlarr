@@ -15,9 +15,8 @@ from pearlarr.arr_models import ArrFiles, SonarrEpisode, SonarrSeries
 from pearlarr.arr_run_services import ArrRunDeps, ArrRunServices
 from pearlarr.arr_run_state import ArrRunState, Title
 from pearlarr.cache import CachedTitleUpdate
-from pearlarr.config import AppConfig, Arr
+from pearlarr.config import Arr
 from pearlarr.grab_pipeline import GrabRequest
-from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import (
     AnimeIdsRawMapping,
     ExternalIds,
@@ -28,7 +27,6 @@ from pearlarr.mappings import (
 )
 from pearlarr.pending_import import TitleNames
 from pearlarr.pending_import_store import PendingImportStore
-from pearlarr.placement_types import FetchedListings
 from pearlarr.planner import GrabPlan
 from pearlarr.radarr_strategy import RadarrStrategy
 from pearlarr.releases import SeadexDict
@@ -42,22 +40,18 @@ from .builders import (
     ScriptedAniListClient,
     anilist_body,
     grab_plan,
-    make_bare_instance,
     make_config,
     make_entry_record,
-    make_logger,
     make_release,
     make_run_deps,
     make_torrent_record,
     parsed_info,
     rg_group,
-    scripted_roles,
     sonarr_ep,
-    stand_in_ep,
     stored_orders,
     stored_scene_mappings,
 )
-from .fakes import FakeRadarrClient, FakeSonarrClient, PerSeriesSonarrClient, ScriptedEpisodes
+from .fakes import FakeRadarrClient, FakeSonarrClient, PerSeriesSonarrClient
 
 GRAB_URL = "https://nyaa.si/1"
 """The URL of the one torrent a Sonarr title check of series 7 lists."""
@@ -73,9 +67,6 @@ EP2 = sonarr_ep(1, 2, ep_id=102, episode_file_id=0)
 
 SERIES_7 = SonarrSeries(id=7, title="Show", tvdbId=70)
 """Series 7 as Sonarr lists it."""
-
-STAND_IN_E2 = stand_in_ep(1, 2, tvdb_id=9002)
-"""The stand-in for a second episode that Sonarr's order of series 7 has no row for."""
 
 
 class FakeRunServices(ArrRunServices):
@@ -284,29 +275,6 @@ class FakeRunServices(ArrRunServices):
         self.title_block_coverages.append(coverage)
 
 
-class ScriptedListings:
-    """A scripted listings collaborator: no torrent listed and no size matched, or SeaDex unreachable."""
-
-    def __init__(self, *, unreachable: bool = False) -> None:
-        self._read = None if unreachable else FetchedListings({}, {})
-
-    def read(self, series_id: int, resolved: ResolvedMappings) -> FetchedListings | None:
-        del series_id, resolved
-        return self._read
-
-
-class ScriptedParse:
-    """Parse collaborator serving scripted files per release (no Sonarr round-trip), none for an unscripted release."""
-
-    def __init__(self, files_by_url: dict[str, tuple[ListedFile, ...]] | None = None) -> None:
-        self._files = files_by_url or {}
-
-    def parsed_files(self, seadex_dict: SeadexDict) -> dict[str, tuple[ListedFile, ...]]:
-        return {
-            url: self._files.get(url, ()) for group_releases in seadex_dict.values() for url in group_releases.releases
-        }
-
-
 SERIES_8 = SonarrSeries(id=8, title="Show Zoku", tvdbId=80)
 """Series 8 as Sonarr lists it, a series a stored pending import may claim."""
 
@@ -418,68 +386,6 @@ def sonarr_grab_run(
     sonarr.all_series_return = [SERIES_7, SERIES_8]
     sonarr.parse_fn = parses.get
     sonarr_checking(run, sonarr, deps).check_title(SERIES_7, 5, TITLE_5)
-    return run
-
-
-def scripted_checking(
-    run: FakeRunServices,
-    episodes: ScriptedEpisodes | None = None,
-    *,
-    config: AppConfig | None = None,
-    parse: ScriptedParse | None = None,
-    listings: ScriptedListings | None = None,
-) -> SonarrStrategy:
-    """A `SonarrStrategy` over `run`, its episode reads `episodes`, built without its constructor.
-
-    The parse and the listings are scripted (none by default), and the config waits no time between titles unless
-    `config` says otherwise.
-    """
-
-    episodes = episodes if episodes is not None else ScriptedEpisodes()
-    return make_bare_instance(
-        SonarrStrategy,
-        _services=run,
-        **scripted_roles(episodes, run.pending_imports),
-        _parse=parse or ScriptedParse(),
-        _listings=listings or ScriptedListings(),
-        _config=config or make_config(sleep_time=0),
-        logger=make_logger(),
-    )
-
-
-def scripted_grab_run(
-    *,
-    episodes: ScriptedEpisodes,
-    store: FakeCacheStore | None = None,
-    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
-    grab: bool = True,
-    files: tuple[ListedFile, ...] | None = None,
-    listings: ScriptedListings | None = None,
-) -> FakeRunServices:
-    """Drive a Sonarr `check_title` for title 5 (series 7) listing one torrent, in a blocking run unless `mode` says.
-
-    The series has mappings for titles 4 and 5 and for the ignored title 6. The torrent is `files`, or `GRAB_FILES`
-    named as the season's first two episodes. The plan grabs it unless `grab` is off. `store` is the cache the run
-    starts with, empty unless given.
-    """
-
-    if files is None:
-        parses = {name: parsed_info(season=1, episodes=(n,)) for n, name in enumerate(GRAB_FILES, start=1)}
-        files = tuple(ListedFile(name, 1000, parses[name]) for name in GRAB_FILES)
-    release = make_release(url=GRAB_URL, infohash="h1", files=[f.file_name for f in files])
-    seadex: SeadexDict = {"NAN0": rg_group({GRAB_URL: release})}
-    run = FakeRunServices(
-        anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-        ignored={6: TitleMapping(anilist_id=6)},
-        prologue_entry=make_entry_record(url="https://releases.moe/5"),
-        anilist_title="Show Cour 2",
-        seadex_dict=seadex,
-        plan_marks=frozenset({GRAB_URL}) if grab else frozenset(),
-        import_wait_mode=mode,
-        cache_store=store,
-    )
-    strat = scripted_checking(run, episodes, parse=ScriptedParse({GRAB_URL: files}), listings=listings)
-    strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
     return run
 
 

@@ -137,7 +137,6 @@ from .fakes import (
     FakeSkyHookClient,
     FakeSonarrClient,
     FakeXemClient,
-    ScriptedEpisodes,
 )
 
 # The display separator the wait region, boot step lines and report rows join parts with. Assertions build expected
@@ -1598,19 +1597,6 @@ def make_pending_follower(cache_store: AbstractCacheStore, rows: SeriesRows) -> 
     pending_imports = PendingImportStore(cache_store)
     pending_imports.bind_arr_run(ArrRunState(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING))
     return PendingFollower(pending_imports, rows, make_logger())
-
-
-def scripted_roles(episodes: ScriptedEpisodes, pending_imports: PendingImportStore) -> dict[str, object]:
-    """The bare-strategy attributes one `ScriptedEpisodes` fills.
-
-    It is the episode collaborator and the run's reads, and the rows the follower of `pending_imports` reads.
-    """
-
-    return {
-        "_episodes": episodes,
-        "_reads": episodes,
-        "_follower": PendingFollower(pending_imports, episodes, make_logger()),
-    }
 
 
 def make_sonarr_episodes(
