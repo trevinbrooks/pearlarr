@@ -1,14 +1,12 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# The tests read the strategy's private collaborators (_episodes / _parse / _reads), which strict re-flags.
-# The repo disables reportPrivateUsage for tests.
 """Each series' TVDB orders through a run's reads and the Sonarr strategy: what is fetched, what grab and import get.
 
 The grab is served a file's parse too, matched as an aired Sonarr matches it.
 
-A test of the reads alone builds them alone (`_reads`). One that asks for a title's episodes, a fetch, the parse
-cache, the import or the run's start builds the strategy (`_sync`), whose collaborators share one read of each
-series. A whole run is driven through `drive_arr_run` (`_run`).
+A test builds only the part of a run it asks, each as the strategy builds it: the reads (`_reads`), the episode
+reader with its own reads (`_episodes`), the parse cache (`make_parse_cache`) or the pending follower over reads the
+test holds. One of the import, the run's start or a prefetch builds the strategy (`_sync`), and one of a title's
+check builds it with `sonarr_checking`. A whole run is driven through `drive_arr_run` (`_run`).
 """
 
 from collections.abc import Mapping
