@@ -13,7 +13,6 @@ import pytest
 from seadex import TorrentRecord
 
 from pearlarr.aired_view import NoView
-from pearlarr.anilist_client import AniListBody
 from pearlarr.arr_models import MatchedEpisode, ParsedFileInfo, SonarrEpisode, SonarrSeries
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.grab_placement import ListedFile
@@ -27,7 +26,6 @@ from pearlarr.wait_types import ImportWaitMode
 from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
-    anilist_body,
     make_config,
     make_entry_record,
     make_release,
@@ -50,6 +48,7 @@ from .title_check_builders import (
     STAND_IN_E2,
     FakeRunServices,
     ScriptedParse,
+    anilist_counting,
     mapping_one_series,
     scripted_checking,
     sonarr_grab_run,
@@ -280,7 +279,7 @@ def _check_second_season(library: _SeriesInSonarr, titles: Mapping[int, _Title] 
     )
     for n, title in titles.items():
         if title.episodes is not None:
-            deps.anilist.answers[n] = _counting(n, title.episodes)
+            deps.anilist.answers[n] = anilist_counting(n, title.episodes)
     sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
     strat = SonarrStrategy(deps, run, sonarr_client=sonarr)
     strat.get_items()
@@ -292,14 +291,6 @@ def _lone_file(anilist_id: int, size: int) -> TorrentRecord:
     """A release of title `anilist_id` whose one file is `size` bytes."""
 
     return make_torrent_record(infohash=f"{anilist_id:040x}", file_names=("Show Zoku.mkv",), file_size=size)
-
-
-def _counting(anilist_id: int, episodes: int) -> AniListBody:
-    """AniList's answer for a title of `episodes` episodes."""
-
-    body = anilist_body(anilist_id)
-    body["data"]["Media"]["episodes"] = episodes
-    return body
 
 
 class TestSonarrCheckTitleOverSonarrsParses:

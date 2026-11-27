@@ -17,7 +17,6 @@ import pytest
 from pearlarr.arr_models import SonarrEpisode
 from pearlarr.config import Arr
 from pearlarr.file_paths import normalize_file_name
-from pearlarr.grab_placement import ListedFile
 from pearlarr.mappings import MappingSource, TitleMapping
 from pearlarr.output import Severity
 from pearlarr.pending_import import PendingImport
@@ -53,9 +52,10 @@ from .title_check_builders import (
     STAND_IN_E2,
     FakeRunServices,
     Unread,
+    anilist_counting,
     scripted_checking,
-    scripted_grab_run,
     seadex_groups,
+    sonarr_checking,
     sonarr_grab_run,
 )
 
@@ -240,15 +240,27 @@ class TestSonarrCheckTitlePendingImportUpdates:
     def test_the_titles_anilist_episode_count_reaches_its_placement(
         self, episode_count: int, placed: dict[str, tuple[int, ...]]
     ) -> None:
-        # Two specials numbered apart take the sequence only when they are the title's every episode.
+        # Title 5 is two specials numbered apart, which take the sequence only when they are its every episode.
         specials = [
             sonarr_ep(0, 1, ep_id=501, episode_file_id=0, air_date="2016-03-01"),
             sonarr_ep(0, 4, ep_id=504, episode_file_id=0, air_date="2016-06-01"),
         ]
         names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=specials), counts={5: episode_count})
+        own = TitleMapping(anilist_id=5, tvdb_mappings={0: [(1, 1), (4, 4)]})
+        release = make_release(url=GRAB_URL, infohash="h1", files=names, size=[1000] * len(names))
+        run = FakeRunServices(
+            anilist_ids={5: own},
+            prologue_entry=make_entry_record(),
+            seadex_dict={"NAN0": rg_group({GRAB_URL: release})},
+            plan_marks=frozenset({GRAB_URL}),
+            import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+        deps = make_run_deps(cache_store=run.cache_store)
+        deps.anilist.answers[5] = anilist_counting(5, episode_count)
+        sonarr = FakeSonarrClient(all_series=[SERIES_7], episodes=specials, parse_fn=lambda _name: parsed_info())
+        strat = sonarr_checking(run, sonarr, deps)
 
-        run = scripted_grab_run(episodes=episodes, files=tuple(ListedFile(name, 1000, parsed_info()) for name in names))
+        strat.check_title(SERIES_7, 5, own)
 
         (req,) = run.grab_requests
         assert req.pending_import_updates["h1"].file_map == placed
