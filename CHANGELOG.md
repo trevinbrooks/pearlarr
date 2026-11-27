@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-27
+
 ### Fixed
 
 - A grab on qBittorrent 5.2.0 or later is reported as a grab. Those versions answer an add in a new way. Before, Pearlarr read every such answer as a refusal: the grab failed with "qBittorrent rejected the torrent" though qBittorrent had taken the torrent, no grab notification was sent, and the add didn't count toward `advanced.max_torrents_to_add`, so a run could add more torrents than that cap allows. The next run found the torrent already in qBittorrent and tracked it from there. qBittorrent 5.1 and earlier answer the old way and were never affected.
