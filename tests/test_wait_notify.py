@@ -291,22 +291,64 @@ def test_push_wait_summary_says_why_order_only_files_are_left_for_hand_import(di
     )
 
 
+def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
+    """A row with `outcome` for each numbered title, as a big wait's backlog has."""
+
+    return tuple(WaitOutcomeRow(f"Show {n:03d} · SubsPlease · S01 E01-E12", outcome) for n in numbers)
+
+
 @pytest.mark.parametrize(
-    ("titles", "last_lines"),
+    ("rows", "names", "last_lines"),
     [
-        pytest.param(25, ["Title 23", "Title 24"], id="25-all-listed"),
-        pytest.param(26, ["Title 24", "… +1 more"], id="26th-counted"),
+        pytest.param(
+            _backlog(Outcome.IMPORTED, range(1, 81)),
+            ["Imported (80)", ""],
+            ["Show 056 · SubsPlease · S01 E01-E12", "… +24 more"],
+            id="between-torrents",
+        ),
+        pytest.param(
+            (
+                WaitOutcomeRow(
+                    "Gintama · Okay-Subs · S01 E01-E49",
+                    Outcome.NOTHING_PLACED,
+                    left_for_hand_import=files_left_for_hand_import(
+                        *(f"[Okay-Subs] Gintama - {n:02d} (BD 1080p HEVC FLAC 2.0).mkv" for n in range(1, 50))
+                    ),
+                ),
+                WaitOutcomeRow("Dandadan · SubsPlease · S01 E01-E12", Outcome.DOWNLOAD_TIMED_OUT),
+                WaitOutcomeRow("Frieren · SubsPlease · S01 E01-E28", Outcome.DOWNLOAD_TIMED_OUT),
+            ),
+            ["Left for the next run (3)", ""],
+            # The second field has room for file 34 but not for the count after it, so the count takes its place.
+            ["`[Okay-Subs] Gintama - 33 (BD 1080p HEVC FLAC 2.0).mkv`", "… +16 more files · +2 more"],
+            id="in-a-torrents-files",
+        ),
     ],
 )
-def test_push_wait_summary_lists_up_to_25_titles_a_field_and_counts_the_rest(
-    discord: respx.Route, titles: int, last_lines: list[str]
+def test_push_wait_summary_ends_a_section_past_two_fields_on_a_whole_line_and_a_count_of_the_rest(
+    discord: respx.Route, rows: tuple[WaitOutcomeRow, ...], names: list[str], last_lines: list[str]
 ) -> None:
-    # A big carried-over backlog stays readable. Discord's own clamp on a field's length is the backstop.
-    rows = tuple(WaitOutcomeRow(f"Title {n}", Outcome.IMPORTED) for n in range(titles))
+    # A field holds 1024 characters. A section runs on into one more, with no name so Discord shows no header for it.
+    assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
+    fields = _embed_posted(discord).fields
+    assert [field.name for field in fields] == names
+    assert fields[-1].value.splitlines()[-2:] == last_lines
+
+
+def test_push_wait_summary_fits_three_long_sections_in_the_embeds_total(discord: respx.Route) -> None:
+    # Two full fields for each of three sections pass the 6000 characters Discord allows an embed, and the payload
+    # would drop the last field with its count. The last section has only the room the first two left.
+    rows = (
+        *_backlog(Outcome.IMPORTED, range(1, 81)),
+        *_backlog(Outcome.DOWNLOAD_TIMED_OUT, range(101, 141)),
+        *_backlog(Outcome.GONE, range(201, 241)),
+    )
 
     assert _notifier().push_wait_summary(arr=Arr.SONARR, result=WaitResult(rows, elapsed_s=15)) is True
-    [field] = _embed_posted(discord).fields
-    assert field.value.splitlines()[-2:] == last_lines
+    fields = _embed_posted(discord).fields
+    names = ["Imported (80)", "", "Left for the next run (40)", "", "Failed (40)", ""]
+    assert [field.name for field in fields] == names
+    assert fields[-1].value.splitlines()[-1] == "… +20 more"
 
 
 def _notice(

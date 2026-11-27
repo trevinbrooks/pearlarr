@@ -8,7 +8,7 @@ With none, every push is a no-op.
 
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 import httpx
@@ -20,6 +20,7 @@ from .discord import (
     COLOR_FAILED,
     COLOR_GRAB,
     COLOR_SUCCESS,
+    MAX_FIELD_VALUE_LEN,
     DiscordEmbed,
     EmbedField,
     discord_push,
@@ -32,11 +33,6 @@ from .torrent_service import AddStatus, GrabResult
 from .wait_types import OutcomeKind
 from .wait_view import WaitOutcomeRow, WaitResult
 from .web_client import failure_detail
-
-# Cap how many titles a single notification field lists before collapsing the
-# remainder into a "… +N more" line, keeping a big carried-over backlog readable.
-# The payload boundary's char clamps are the hard limit guarantee.
-_MAX_FIELD_TITLES = 25
 
 # Arr logos for the grab embed's author line: the icon marks which arr the
 # grab ran for (the webhook's own avatar already carries the SeaDex identity).
@@ -81,18 +77,93 @@ def _wait_color(result: WaitResult) -> int:
     return COLOR_SUCCESS
 
 
-def _wait_row_text(row: WaitOutcomeRow) -> str:
-    """One summary row: the name alone for an import, else with its detail and any file left for a hand import."""
+def _wait_row_lead(row: WaitOutcomeRow) -> str:
+    """A summary row's lead: the name alone for an import, else with why it didn't import."""
 
     if row.outcome.kind is OutcomeKind.IMPORTED:
         return row.label
     left = row.left_for_hand_import
-    # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
-    names = hand_import_names(left, quote="`")
     if left.explained_by_order:
         lead, reason = hand_import_sentences(left)
-        return "\n".join((f"{row.label} - {lead}", f"{reason}:", *names))
-    return "\n".join((f"{row.label} - {row.outcome.detail}", *names))
+        return f"{row.label} - {lead}\n{reason}:"
+    return f"{row.label} - {row.outcome.detail}"
+
+
+@dataclass(frozen=True, slots=True)
+class _Line:
+    """A line of a summary section, and the line the section ends on when it stops just before it."""
+
+    text: str
+    left_out: str
+    """What the section leaves out from here on, as a "… +N more" line."""
+
+
+def _left_out(files: int, torrents: int) -> str:
+    """A cut section's last line: the files it didn't list of the row it stopped in, then the torrents it never reached.
+
+    Files and torrents are counted apart because the section's count is torrents, and one torrent can leave many files.
+    """
+
+    counts: list[str] = []
+    if files:
+        counts.append(f"+{count_noun(files, 'more file')}")
+    if torrents:
+        counts.append(f"+{torrents} more")
+    return "… " + " · ".join(counts)
+
+
+def _section_lines(rows: Sequence[WaitOutcomeRow]) -> list[_Line]:
+    """Each row's lead, then each file it left for a hand import. An order's reason stays on its lead's line."""
+
+    lines: list[_Line] = []
+    unlisted = len(rows)
+    for row in rows:
+        lines.append(_Line(_wait_row_lead(row), _left_out(0, unlisted)))
+        unlisted -= 1
+        # Discord strips leading whitespace and reads `_`, `*`, `[` as markdown, so each name goes in backticks.
+        names = hand_import_names(row.left_for_hand_import, quote="`")
+        lines += (_Line(name, _left_out(len(names) - n, unlisted)) for n, name in enumerate(names))
+    return lines
+
+
+def _field_sizes(room: int) -> tuple[int, int]:
+    """A section's two field sizes: Discord's limit for one field each, within the room the embed has left.
+
+    Two, so a long section can't crowd the ones after it out of the embed.
+    """
+
+    first = min(MAX_FIELD_VALUE_LEN, room)
+    return first, min(MAX_FIELD_VALUE_LEN, room - first)
+
+
+def _fits(lines: Sequence[str], text: str, size: int) -> bool:
+    """Whether `text` fits on a line of its own after `lines`, within `size` characters."""
+
+    return len("\n".join((*lines, text))) <= size
+
+
+def _fit(lines: Sequence[_Line], sizes: Sequence[int]) -> list[str]:
+    """A section's field values: its lines in order, whole, each value within its size.
+
+    The lines run on into the next field when one won't fit whole. When the last field fills, the section ends on
+    the line that counts what it left out, after as many lines as leave room for it.
+    """
+
+    fields: list[list[str]] = [[] for _ in sizes]
+    at = shown = 0
+    while shown < len(lines) and at < len(fields):
+        if _fits(fields[at], lines[shown].text, sizes[at]):
+            fields[at].append(lines[shown].text)
+            shown += 1
+        else:
+            at += 1
+    if shown < len(lines):
+        last = fields[-1]
+        while last and not _fits(last, lines[shown].left_out, sizes[-1]):
+            last.pop()
+            shown -= 1
+        last.append(lines[shown].left_out)
+    return ["\n".join(field) for field in fields if field]
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,25 +423,25 @@ class Notifier:
         if result.waited == 0:
             return False
         elapsed = long_duration(result.elapsed_s)
-        posted = self._push(
-            DiscordEmbed(
-                author_name="Pearlarr",
-                title=f"{arr.capitalize()} wait complete",
-                color=_wait_color(result),
-                description=f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}",
-                fields=self._wait_fields(result),
-            ),
+        embed = DiscordEmbed(
+            author_name="Pearlarr",
+            title=f"{arr.capitalize()} wait complete",
+            color=_wait_color(result),
+            description=f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}",
         )
+        posted = self._push(replace(embed, fields=self._wait_fields(result, room=embed.field_room)))
         if self.webhook_url is not None:
             posted = self._post_webhook(arr, result, self.webhook_url) or posted
         return posted
 
     @staticmethod
-    def _wait_fields(result: WaitResult) -> tuple[EmbedField, ...]:
-        """One counted field per outcome kind (imported / left / failed), if any.
+    def _wait_fields(result: WaitResult, *, room: int) -> tuple[EmbedField, ...]:
+        """A section per outcome kind (imported / left / failed), if any, its name counting its torrents.
 
-        Left and failed rows carry the outcome's human detail (the reason
-        the torrent didn't import). Imported rows list just the name.
+        Imported rows list just the name. Left and failed rows carry the outcome's human detail (the reason the
+        torrent didn't import) and any file left for a hand import. A section runs on into a second field with no
+        name, which Discord shows with no header. `room` is what the embed's total leaves for the fields, and three
+        sections of two full fields would pass it, so each section fits in what the ones before it left.
         """
 
         sections = (
@@ -379,14 +450,15 @@ class Notifier:
             (OutcomeKind.FAILED, "Failed"),
         )
         fields: list[EmbedField] = []
-        for kind, name in sections:
+        for kind, title in sections:
             rows = [r for r in result.rows if r.outcome.kind is kind]
             if not rows:
                 continue
-            value = "\n".join(_wait_row_text(r) for r in rows[:_MAX_FIELD_TITLES])
-            if len(rows) > _MAX_FIELD_TITLES:
-                value += f"\n… +{len(rows) - _MAX_FIELD_TITLES} more"
-            fields.append(EmbedField(name=f"{name} ({len(rows)})", value=value))
+            name = f"{title} ({len(rows)})"
+            first, *more = _fit(_section_lines(rows), _field_sizes(room - len(name)))
+            section = [EmbedField(name, first), *(EmbedField("", value) for value in more)]
+            room -= sum(len(field.name) + len(field.value) for field in section)
+            fields += section
         return tuple(fields)
 
     def _post_webhook(self, arr: Arr, result: WaitResult, url: str) -> bool:
