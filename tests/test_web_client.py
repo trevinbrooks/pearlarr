@@ -1,20 +1,15 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The verify pin reads the client's private transport chain (httpx exposes no
-# public ssl-context accessor). The repo already disables the rule for tests.
-"""Direct tests for the shared non-arr web client and its GET retry helper.
+# httpx has no public read of the SSL context a client verifies against, so the verify check reads it off the
+# client's private transport.
+"""The shared web client and its GET and HEAD retries.
 
-`make_web_client` is the second process-wide client (tracker pages, AniList,
-webhooks, mapping downloads): these pin its transport policy - redirects
-followed (no credential header is sent on it), verification always on, the
-`pearlarr/<version>` User-Agent default, and the (5, 30) timeout split -
-mirroring what `test_arr_http` pins for the arr client. `get_with_retries`
-replaces the urllib3 `Retry` adapter the old requests session mounted, so
-its matrix is pinned too: transient statuses and transport errors retry
-with backoff, a terminal status returns immediately, retry exhaustion
-returns the response (never raises on status) but propagates a transport
-error, and a response's Retry-After window beats the backoff (capped, junk
-falls back).
+`make_web_client` builds the one client for tracker pages, AniList, webhooks and the mapping downloads. It follows
+redirects, always verifies certificates, names pearlarr in its User-Agent, and gives up after 5 seconds to connect
+and 30 to read. `get_with_retries` and `head_with_retries` send again after a retryable status or a transport
+error, waiting longer each time, or as long as the response's Retry-After says up to a cap. A status that isn't
+retryable comes back at once. The status the last try gets comes back too, and only a transport error that
+outlasts every retry is raised.
 """
 
 import ssl
@@ -26,7 +21,7 @@ import respx
 
 from pearlarr import __version__
 from pearlarr.arr_http import GET_RETRIES
-from pearlarr.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, head_with_retries, make_web_client
+from pearlarr.web_client import RETRY_AFTER_CAP_S, get_with_retries, head_with_retries, make_web_client
 
 _URL = "https://web.test/page"
 
@@ -46,18 +41,12 @@ def _pool_ssl_context(client: httpx.Client) -> ssl.SSLContext:
 
 
 def test_make_web_client_pins_the_transport_policy() -> None:
-    """The factory pins the web client's transport policy: redirects, verification, UA, and timeouts.
-
-    It follows redirects (no credential is sent on this client), always verifies, defaults
-    to an identifiable UA, and fixes the (5, 30) (connect, read) timeout split every
-    external call used to pass per-request.
-    """
+    """Redirects are safe to follow, as no credential goes out on this client. No arr's `verify_ssl` reaches it."""
 
     client = make_web_client()
     try:
         assert client.follow_redirects is True
-        assert client.headers["User-Agent"] == USER_AGENT
-        assert f"pearlarr/{__version__}" == USER_AGENT
+        assert client.headers["User-Agent"] == f"pearlarr/{__version__}"
         assert client.timeout.connect == 5
         assert client.timeout.read == 30
         assert client.timeout.write == 30
@@ -86,8 +75,7 @@ def test_get_with_retries_transient_5xx_recovers() -> None:
 
 @respx.mock
 def test_get_with_retries_exhausted_5xx_returns_the_response() -> None:
-    # raise_on_status=False parity: the still-503 response is RETURNED so the
-    # call site's raise_for_status surfaces it. The helper never raises on status.
+    # The last response comes back as it is: the caller's `raise_for_status` is what raises on it.
     route = respx.get(_URL).respond(status_code=503)
     sleeps: list[float] = []
 
@@ -100,9 +88,16 @@ def test_get_with_retries_exhausted_5xx_returns_the_response() -> None:
 
 
 @respx.mock
-def test_get_with_retries_connect_error_recovers() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(httpx.ConnectError("refused"), id="refused"),
+        pytest.param(httpx.ReadTimeout("no answer"), id="timed-out"),
+    ],
+)
+def test_get_with_retries_recovers_from_a_transport_error(error: httpx.TransportError) -> None:
     route = respx.get(_URL)
-    route.side_effect = [httpx.ConnectError("boom"), httpx.Response(200)]
+    route.side_effect = [error, httpx.Response(200)]
 
     with httpx.Client() as client:
         response = get_with_retries(client, _URL, sleep=lambda _s: None)
@@ -113,8 +108,7 @@ def test_get_with_retries_connect_error_recovers() -> None:
 
 @respx.mock
 def test_get_with_retries_exhausted_transport_error_propagates() -> None:
-    # Matching urllib3 Retry exhaustion raising: a transport error that survives
-    # every retry propagates (unlike a status, which always returns).
+    # A transport error that outlasts every retry is raised, where a status would come back.
     route = respx.get(_URL).mock(side_effect=httpx.ConnectError("still down"))
 
     with httpx.Client() as client, pytest.raises(httpx.ConnectError):
@@ -125,10 +119,8 @@ def test_get_with_retries_exhausted_transport_error_propagates() -> None:
 
 @respx.mock
 def test_get_with_retries_honors_retry_after() -> None:
-    # urllib3 Retry parity: the throttled response's own window beats the
-    # exponential backoff, so a 429 carrying Retry-After: 7 waits 7s, not 0.5s.
-    route = respx.get(_URL)
-    route.side_effect = [httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200)]
+    # The response's own window beats the backoff: Retry-After: 7 waits 7 seconds, not half of one.
+    respx.get(_URL).mock(side_effect=[httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200)])
     sleeps: list[float] = []
 
     with httpx.Client() as client:
@@ -140,14 +132,14 @@ def test_get_with_retries_honors_retry_after() -> None:
 
 @respx.mock
 def test_get_with_retries_caps_and_falls_back_on_bad_retry_after() -> None:
-    # An absurd window is capped. An unparseable one (e.g. an HTTP-date) falls
-    # back to that attempt's exponential backoff instead of being honored.
-    route = respx.get(_URL)
-    route.side_effect = [
-        httpx.Response(503, headers={"Retry-After": "9999"}),
-        httpx.Response(503, headers={"Retry-After": "soon"}),
-        httpx.Response(200),
-    ]
+    # A window past the cap waits the cap. One that isn't a number of seconds waits that try's backoff.
+    respx.get(_URL).mock(
+        side_effect=[
+            httpx.Response(503, headers={"Retry-After": "9999"}),
+            httpx.Response(503, headers={"Retry-After": "soon"}),
+            httpx.Response(200),
+        ]
+    )
     sleeps: list[float] = []
 
     with httpx.Client() as client:
