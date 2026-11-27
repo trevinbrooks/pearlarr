@@ -597,140 +597,111 @@ def _limited(retry_after: str) -> httpx.Response:
 
 
 def _push_grab(notifier: Notifier) -> bool:
-    """Drive one grab push with minimal embed data (the containment tests' focus)."""
+    """One grab push with the quiet minimum of embed data, for the tests of what a failed post does."""
 
     return notifier.push_grab(_notice())
 
 
-def test_push_grab_discord_failure_warns_and_returns_false(discord: respx.Route) -> None:
-    # The invariant the grab relies on: a Discord failure is contained in
-    # _push (warn, False) - it must never abort the grab that triggered it.
-    discord.mock(side_effect=httpx.ConnectError)
-    notifier = _notifier()
+class TestAFailedDiscordPost:
+    """A post Discord refuses or never gets warns and is reported unsent, never raising into the grab or the run.
 
-    recording = install_recording_hub()
-    posted = _push_grab(notifier)  # must not raise
+    A 429 is Discord throttling a healthy webhook: a Retry-After of up to 5s is waited out and the post tried once
+    more, and a notification that still can't go is dropped with a warning that doesn't blame the config. A 4xx
+    otherwise means the webhook itself is bad, so one warning turns Discord off for the rest of the run. Anything else
+    warns on each push.
+    """
 
-    assert posted is False
-    [warning] = diagnostic_messages(recording, Severity.WARNING)
-    # The exception type only - an httpx exception's str embeds the webhook
-    # URL (the credential) - and the config key to check.
-    assert warning == "Discord notification failed (ConnectError) - check notifications.discord_url"
-    assert "discord.example" not in warning
-
-
-def test_push_grab_4xx_disables_discord_for_the_run(discord: respx.Route) -> None:
-    # A 4xx (e.g. a deleted webhook's 404) is permanent: one actionable warning,
-    # then Discord pushes are disabled - no warn-per-grab retry storm.
-    discord.respond(404)
-    notifier = _notifier()
-
-    recording = install_recording_hub()
-    assert _push_grab(notifier) is False
-    assert _push_grab(notifier) is False
-
-    assert discord.call_count == 1  # the bad webhook is POSTed once
-    assert notifier.enabled is False
-    warnings = diagnostic_messages(recording, Severity.WARNING)
-    assert warnings == [
-        (
-            "Discord notification failed (HTTP 404) - disabling Discord notifications "
-            "for this run - check notifications.discord_url"
-        ),
-    ]
-    assert all("secret-token" not in message for message in warnings)
-
-
-def test_push_grab_429_retry_delivers_after_default_delay(discord: respx.Route, clock: FakeClock) -> None:
-    # A 429 without a Retry-After header sleeps the 1s default then retries
-    # once: the notification is delivered, so the caller sees True and nothing
-    # warns - a rate-limited push that made it is not a failure.
-    discord.mock(side_effect=[httpx.Response(429), httpx.Response(204)])
-    notifier = _notifier()
-
-    recording = install_recording_hub()
-    assert _push_grab(notifier) is True
-
-    assert discord.call_count == 2  # original + retry
-    assert clock.sleeps == [1.0]  # absent header -> the 1s default
-    assert diagnostic_messages(recording, Severity.WARNING) == []
-
-
-@pytest.mark.parametrize(
-    ("header", "expected_delay"),
-    [("3", 3.0), ("0.5", 0.5), ("soon", 1.0)],
-)
-def test_push_grab_429_honors_retry_after(
-    header: str,
-    expected_delay: float,
-    discord: respx.Route,
-    clock: FakeClock,
-) -> None:
-    # Discord's Retry-After (an int or float seconds string) is slept out
-    # before the retry. An unparseable value falls back to the 1s default.
-    discord.mock(side_effect=[_limited(header), httpx.Response(204)])
-
-    assert _push_grab(_notifier()) is True
-    assert clock.sleeps == [expected_delay]
-
-
-@pytest.mark.usefixtures("clock")
-def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(discord: respx.Route) -> None:
-    # A 429 whose retry 429s again drops this notification with one truthful
-    # warning, never an optimistic "later notifications" claim. The webhook is
-    # healthy (throttled, not bad), so pushes stay enabled, the config is not
-    # blamed, and a later push still attempts (and drops the same way).
-    discord.mock(return_value=_limited("0.1"))
-    notifier = _notifier()
-
-    recording = install_recording_hub()
-    assert _push_grab(notifier) is False
-    assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
-    ]
-    assert _push_grab(notifier) is False  # a later push still attempts
-
-    assert notifier.enabled is True  # not disabled: later pushes still go out
-    assert discord.call_count == 4  # (original + retry) per push
-    warnings = diagnostic_messages(recording, Severity.WARNING)
-    assert len(warnings) == 2  # one truthful warning per dropped push
-    assert all("discord_url" not in message for message in warnings)  # config isn't at fault
-    assert all("secret-token" not in message for message in warnings)
-
-
-def test_push_grab_429_long_retry_after_skips_the_retry(discord: respx.Route, clock: FakeClock) -> None:
-    # A Retry-After above the 5s cap isn't worth blocking the run for: no
-    # sleep, no retry - the push is dropped immediately with the same truthful
-    # warning, and pushes stay enabled for the rest of the run.
-    discord.mock(side_effect=[_limited("30")])
-    notifier = _notifier()
-
-    recording = install_recording_hub()
-    assert _push_grab(notifier) is False
-
-    assert discord.call_count == 1  # no retry POST
-    assert clock.sleeps == []  # the 30s was not slept
-    assert notifier.enabled is True
-    assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
-    ]
-
-
-@pytest.mark.usefixtures("clock")
-def test_push_grab_5xx_stays_per_push(discord: respx.Route) -> None:
-    # A 5xx is transient (Discord hiccup): keep trying - and warning - per push.
-    discord.respond(500)
-    notifier = _notifier()
-
-    recording = install_recording_hub()
-    assert _push_grab(notifier) is False
-    assert _push_grab(notifier) is False
-
-    assert notifier.enabled is True
-    assert (
-        diagnostic_messages(recording, Severity.WARNING)
-        == ["Discord notification failed (HTTP 500) - check notifications.discord_url"] * 2
+    @pytest.mark.parametrize(
+        ("limited", "waited"),
+        [
+            pytest.param(httpx.Response(429), 1.0, id="no-header"),
+            pytest.param(_limited("5"), 5.0, id="at-the-5s-cap"),
+            pytest.param(_limited("0.5"), 0.5, id="fractional"),
+            # The header's other form, a date, isn't read, so the default is waited.
+            pytest.param(_limited("Fri, 31 Dec 1999 23:59:59 GMT"), 1.0, id="http-date"),
+        ],
     )
+    def test_a_short_rate_limit_is_waited_out_and_delivered(
+        self, discord: respx.Route, clock: FakeClock, limited: httpx.Response, waited: float
+    ) -> None:
+        discord.mock(side_effect=[limited, httpx.Response(204)])
+        recording = install_recording_hub()
+
+        assert _push_grab(_notifier()) is True
+
+        assert discord.call_count == 2
+        assert clock.sleeps == [waited]
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
+    @pytest.mark.parametrize(
+        ("answers", "posts", "waited"),
+        [
+            pytest.param([_limited("1"), _limited("1")], 2, [1.0], id="limited-again-on-the-retry"),
+            pytest.param([_limited("6")], 1, [], id="retry-after-past-the-cap"),
+        ],
+    )
+    def test_a_rate_limit_that_cannot_be_waited_out_drops_the_notification(
+        self, discord: respx.Route, clock: FakeClock, answers: list[httpx.Response], posts: int, waited: list[float]
+    ) -> None:
+        discord.mock(side_effect=answers)
+        recording = install_recording_hub()
+
+        assert _push_grab(_notifier()) is False
+
+        assert discord.call_count == posts
+        assert clock.sleeps == waited
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
+        ]
+
+    @pytest.mark.parametrize(
+        ("answer", "warning"),
+        [
+            pytest.param(
+                httpx.ConnectError,
+                "Discord notification failed (ConnectError) - check notifications.discord_url",
+                id="unreachable",
+            ),
+            pytest.param(
+                httpx.Response(500),
+                "Discord notification failed (HTTP 500) - check notifications.discord_url",
+                id="server-error",
+            ),
+            pytest.param(
+                _limited("6"),
+                "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
+                id="rate-limited",
+            ),
+        ],
+    )
+    @pytest.mark.usefixtures("clock")
+    def test_a_failure_not_of_the_webhook_warns_on_each_push_and_keeps_discord_on(
+        self, discord: respx.Route, answer: httpx.Response | type[httpx.ConnectError], warning: str
+    ) -> None:
+        discord.mock(side_effect=[answer, answer])
+        notifier = _notifier()
+        recording = install_recording_hub()
+
+        assert (_push_grab(notifier), _push_grab(notifier)) == (False, False)
+
+        assert discord.call_count == 2
+        assert diagnostic_messages(recording, Severity.WARNING) == [warning, warning]
+
+    def test_a_deleted_webhook_turns_discord_off_for_the_run(self, discord: respx.Route) -> None:
+        # Discord answers a deleted webhook with a 404. Warning on every grab after it would say nothing new.
+        discord.respond(404)
+        notifier = _notifier()
+        recording = install_recording_hub()
+
+        assert (_push_grab(notifier), _push_grab(notifier)) == (False, False)
+
+        assert discord.call_count == 1
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            (
+                "Discord notification failed (HTTP 404) - disabling Discord notifications for this run - "
+                "check notifications.discord_url"
+            ),
+        ]
 
 
 class _RaisingNotifier:
