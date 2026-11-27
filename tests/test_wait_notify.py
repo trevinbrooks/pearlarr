@@ -472,29 +472,25 @@ class TestGrabNotes:
 
         assert notes == "> " + " ".join(["word"] * 80) + " …"
 
-    def test_comparison_links(self, pushes: list[DiscordEmbed]) -> None:
-        # A single link needs no number. Several are numbered on one line.
-        single = self._notes(
-            pushes,
-            _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/one",))),
-        )
-        multi = self._notes(
-            pushes,
-            _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/1", "https://slow.pics/c/2"))),
-        )
+    @pytest.mark.parametrize(
+        ("comparisons", "links"),
+        [
+            pytest.param(("https://slow.pics/c/one",), "[Comparison](https://slow.pics/c/one)", id="one-unnumbered"),
+            pytest.param(
+                ("https://slow.pics/c/1", "https://slow.pics/c/2"),
+                "[Comparison 1](https://slow.pics/c/1) · [Comparison 2](https://slow.pics/c/2)",
+                id="several-numbered",
+            ),
+            # The lib's lax parse can yield an empty segment, sorted first. It gets no broken link and no number.
+            pytest.param(
+                ("", "https://slow.pics/c/only"), "[Comparison](https://slow.pics/c/only)", id="blank-dropped"
+            ),
+        ],
+    )
+    def test_comparison_links(self, pushes: list[DiscordEmbed], comparisons: tuple[str, ...], links: str) -> None:
+        notes = self._notes(pushes, _notice(entry=make_entry_record(comparisons=comparisons)))
 
-        assert single == "[Comparison](https://slow.pics/c/one)"
-        assert multi == "[Comparison 1](https://slow.pics/c/1) · [Comparison 2](https://slow.pics/c/2)"
-
-    def test_blank_comparison_segments_are_dropped(self, pushes: list[DiscordEmbed]) -> None:
-        # The lib's lax parse can yield an empty segment (sorted first). It must
-        # not render a broken [Comparison N]() link - nor inflate the numbering.
-        notes = self._notes(
-            pushes,
-            _notice(entry=make_entry_record(comparisons=("", "https://slow.pics/c/only"))),
-        )
-
-        assert notes == "[Comparison](https://slow.pics/c/only)"
+        assert notes == links
 
     def test_incomplete_entry_renders_caveat(self, pushes: list[DiscordEmbed]) -> None:
         notes = self._notes(
