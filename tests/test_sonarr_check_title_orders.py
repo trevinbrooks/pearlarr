@@ -169,7 +169,7 @@ class TestSonarrCheckTitleOnASeriesInAiredOrder:
     def test_the_title_block_says_nothing_of_its_numbers(self) -> None:
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]))
 
-        run = sonarr_grab_run(store=FakeCacheStore(), episodes=episodes)
+        run = sonarr_grab_run(episodes=episodes)
 
         # The check ran through to its grab, past the title block and the row for files left out.
         assert len(run.grab_requests) == 1
