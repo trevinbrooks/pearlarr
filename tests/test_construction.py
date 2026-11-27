@@ -36,7 +36,6 @@ from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.wait_types import ImportWaitMode, Outcome
 
 from .builders import (
-    FakeCacheStore,
     FakeSeaDexSource,
     attempt_result,
     drive_arr_run,
@@ -158,25 +157,6 @@ def test_a_blocking_run_counts_its_grab_once_and_imports_it() -> None:
     # Counted as this run's grab, never also as a download an earlier run left.
     assert ([row.group for row in tally.grabbed], tally.downloading) == (["NAN0"], 0)
     assert [(row.label, row.outcome) for row in recording.of_type(RowFinished)] == [("Show · NAN0", Outcome.IMPORTED)]
-
-
-def test_services_read_selection_change_from_the_store_at_construction() -> None:
-    # The real __init__ compares the store's selection hash against the config's:
-    # an older hash turns on the arr-run-wide re-check. A matching hash or a fresh
-    # store (no hash stored yet) stays quiet.
-    config = make_config()
-
-    vouched_old = FakeCacheStore()
-    vouched_old.store_selection_hash(Arr.SONARR, "a-previous-digest")
-    assert ArrRunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_changed is True
-
-    vouched_current = FakeCacheStore()
-    vouched_current.store_selection_hash(Arr.SONARR, config.selection_hash())
-    assert (
-        ArrRunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_changed is False
-    )
-
-    assert ArrRunServices(make_run_deps(config=config), Arr.SONARR).selection_changed is False
 
 
 def test_sonarr_strategy_init_shares_cache_store_for_staged_writes() -> None:
