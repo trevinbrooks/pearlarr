@@ -306,6 +306,7 @@ class FakeCacheStore(AbstractCacheStore):
         *,
         sonarr_parse: dict[str, dict[str, Any]] | None = None,
         pending: dict[str, dict[str, dict[str, Any]]] | None = None,
+        tvdb_orders: Mapping[int, CachedOrders] | None = None,
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
         self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
@@ -314,7 +315,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._guards: dict[str, dict[int, OwnedAtGrab]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
-        self._tvdb_orders: dict[int, CachedOrders] = {}
+        self._tvdb_orders: dict[int, CachedOrders] = dict(tvdb_orders or {})
         self._scene_mappings: dict[int, CachedSceneMappings] = {}
         self._kv: dict[str, str] = {}
 
