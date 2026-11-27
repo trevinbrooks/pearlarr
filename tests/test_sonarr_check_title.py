@@ -71,7 +71,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
 
     def test_sonarr_title_with_no_seadex_entry_grabs_nothing_and_owes_no_pause(self) -> None:
         run = FakeRunServices()
-        strat = scripted_checking(run)
+        strat = SonarrStrategy(make_run_deps(), run, sonarr_client=FakeSonarrClient())
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
@@ -98,7 +98,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
         # the source, so the mapping carries source=ANIBRIDGE as a real one does.
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         recording = install_recording_hub()
-        strat = scripted_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=[])))
+        strat = SonarrStrategy(make_run_deps(), run, sonarr_client=FakeSonarrClient(episodes=[]))
 
         strat.check_title(SERIES_7, 5, mapping)
         assert run.no_episodes_titles == ["Title"]
@@ -142,11 +142,8 @@ class TestSonarrCheckTitleBeforeTheGrab:
             seadex_dict=seadex_groups("GroupA", "GroupB"),
             interactive_result={},
         )
-        strat = scripted_checking(
-            run,
-            ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
-            config=make_config(interactive=True),
-        )
+        sonarr = FakeSonarrClient(episodes=[sonarr_ep(1, 1)])
+        strat = SonarrStrategy(make_run_deps(config=make_config(interactive=True)), run, sonarr_client=sonarr)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
         assert run.invalid_selection_skips == 1
