@@ -33,7 +33,6 @@ from pearlarr.wait_types import Outcome
 from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import (
-    SEP,
     files_left_for_hand_import,
     make_bare_instance,
     make_config,
@@ -191,12 +190,13 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
     embed = pushes[0]
     assert embed.title == "Radarr wait complete"
-    assert f"2 imported{SEP}1 left{SEP}1 failed" in embed.description
-    names = [field.name for field in embed.fields]
-    assert names == ["Imported (2)", "Left for the next run (1)", "Failed (1)"]
-    assert "Frieren" in embed.fields[0].value
-    # Left/failed rows carry the outcome detail.
-    assert embed.fields[2].value == "Bleach TYBW - download errored; left for the next run"
+    assert embed.description == "2 imported · 1 left · 1 failed · 1h 11m 04s"
+    # Imported rows list the name alone. Left and failed rows carry the outcome's detail.
+    assert embed.fields == (
+        EmbedField(name="Imported (2)", value="Frieren\nApothecary Diaries"),
+        EmbedField(name="Left for the next run (1)", value="Spy x Family - download timed out; left for the next run"),
+        EmbedField(name="Failed (1)", value="Bleach TYBW - download errored; left for the next run"),
+    )
 
 
 @pytest.mark.parametrize(
