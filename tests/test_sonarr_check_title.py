@@ -398,6 +398,14 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         assert _title_stamps(store) == {9: _STAMP, 22: _STAMP, 23: _STAMP}
 
 
+_STOPS_BEFORE_A_GRAB = [
+    # No release to grab caches the title as having none. No episode in Sonarr's order caches it as having nothing
+    # to grab. Each row holds the series, Sonarr's rows of it, and the titles stopped on each of the two.
+    pytest.param(SERIES_7, [EP1, EP2], ([5], list[int]()), id="no-suitable-release"),
+    pytest.param(SERIES_7_DVD, [DVD_E1], (list[int](), [5]), id="no-episode-in-sonarrs-order"),
+]
+
+
 class TestSonarrCheckTitleMetadataUnread:
     """A grab asks whether its check read a title without its AniList answer or a series without its TVDB orders.
 
@@ -434,15 +442,7 @@ class TestSonarrCheckTitleMetadataUnread:
         (req,) = run.grab_requests
         assert req.metadata_unread is expected
 
-    @pytest.mark.parametrize(
-        ("series", "rows", "stopped_on"),
-        [
-            # No release to grab caches the title as having none. No episode in Sonarr's order caches it as
-            # having nothing to grab.
-            pytest.param(SERIES_7, [EP1, EP2], ([5], list[int]()), id="no-suitable-release"),
-            pytest.param(SERIES_7_DVD, [DVD_E1], (list[int](), [5]), id="no-episode-in-sonarrs-order"),
-        ],
-    )
+    @pytest.mark.parametrize(("series", "rows", "stopped_on"), _STOPS_BEFORE_A_GRAB)
     def test_a_title_that_stops_before_a_grab_is_not_unread_for_another_entry_of_its_series(
         self, series: SonarrSeries, rows: list[SonarrEpisode], stopped_on: tuple[list[int], list[int]]
     ) -> None:
@@ -460,3 +460,15 @@ class TestSonarrCheckTitleMetadataUnread:
         no_releases = [anilist_id for anilist_id, _ in run.no_releases_calls]
         assert (no_releases, [anilist_id for anilist_id, _ in run.nothing_to_grab_calls]) == stopped_on
         assert (run.no_releases_unread, run.nothing_to_grab_unread) == ([], [])
+
+    @pytest.mark.parametrize(("series", "rows", "stopped_on"), _STOPS_BEFORE_A_GRAB)
+    def test_a_title_that_stops_before_a_grab_without_its_own_anilist_answer_is_unread(
+        self, series: SonarrSeries, rows: list[SonarrEpisode], stopped_on: tuple[list[int], list[int]]
+    ) -> None:
+        run = FakeRunServices(anilist_ids={5: TITLE_5}, prologue_entry=make_entry_record())
+        deps = make_run_deps(cache_store=run.cache_store, anilist_client=ScriptedAniListClient(failing=frozenset({5})))
+        strat = sonarr_checking(run, sonarr_listing(run.cache_store, series, rows), deps)
+
+        strat.check_title(series, 5, TITLE_5)
+
+        assert (run.no_releases_unread, run.nothing_to_grab_unread) == stopped_on
