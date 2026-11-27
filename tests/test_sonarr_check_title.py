@@ -42,7 +42,7 @@ from .builders import (
     sonarr_ep,
     two_claim_pending_import,
 )
-from .fakes import FakeSonarrClient, PerSeriesSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
+from .fakes import FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
 from .title_check_builders import (
     EP1,
     EP2,
@@ -52,8 +52,9 @@ from .title_check_builders import (
     STAND_IN_E2,
     FakeRunServices,
     ScriptedListings,
+    scripted_checking,
+    scripted_grab_run,
     seadex_groups,
-    sonarr_checking,
     sonarr_grab_run,
 )
 
@@ -69,7 +70,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
 
     def test_sonarr_title_with_no_seadex_entry_grabs_nothing_and_owes_no_pause(self) -> None:
         run = FakeRunServices()
-        strat = sonarr_checking(run)
+        strat = scripted_checking(run)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
@@ -96,7 +97,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
         # the source, so the mapping carries source=ANIBRIDGE as a real one does.
         run = FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         recording = install_recording_hub()
-        strat = sonarr_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=[])))
+        strat = scripted_checking(run, ScriptedEpisodes(FakeSonarrClient(episodes=[])))
 
         strat.check_title(SERIES_7, 5, mapping)
         assert run.no_episodes_titles == ["Title"]
@@ -140,7 +141,7 @@ class TestSonarrCheckTitleBeforeTheGrab:
             seadex_dict=seadex_groups("GroupA", "GroupB"),
             interactive_result={},
         )
-        strat = sonarr_checking(
+        strat = scripted_checking(
             run,
             ScriptedEpisodes(FakeSonarrClient(episodes=[sonarr_ep(1, 1)])),
             config=make_config(interactive=True),
@@ -171,9 +172,8 @@ class TestSonarrCheckTitlePendingImportUpdates:
             seadex_files=list(GRAB_FILES),
         )
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        sonarr = FakeSonarrClient(episodes=[EP1, EP2])
 
-        run = sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [EP2]}))
+        run = sonarr_grab_run([EP1, EP2], store=store)
 
         (req,) = run.grab_requests
         (update,) = req.pending_import_updates.values()
@@ -247,7 +247,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
         names = [*numbered_names("ova", 2), *numbered_names("short", 3)]
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=specials), counts={5: episode_count})
 
-        run = sonarr_grab_run(episodes=episodes, files=tuple(ListedFile(name, 1000, parsed_info()) for name in names))
+        run = scripted_grab_run(episodes=episodes, files=tuple(ListedFile(name, 1000, parsed_info()) for name in names))
 
         (req,) = run.grab_requests
         assert req.pending_import_updates["h1"].file_map == placed
@@ -255,7 +255,7 @@ class TestSonarrCheckTitlePendingImportUpdates:
     def test_an_unread_listing_places_nothing_and_skips_the_release(self) -> None:
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP2]})
 
-        run = sonarr_grab_run(episodes=episodes, listings=ScriptedListings(unreachable=True))
+        run = scripted_grab_run(episodes=episodes, listings=ScriptedListings(unreachable=True))
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
@@ -268,9 +268,8 @@ class TestSonarrCheckTitlePendingImportUpdates:
         store = FakeCacheStore()
         resident = pending_import(infohash="h1", seadex_files=list(GRAB_FILES), tvdb_ids=None)
         store.put_pending_import_row(Arr.SONARR, "h1", resident.to_json())
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=[EP1, EP2]), windows={5: [EP2]})
 
-        run = sonarr_grab_run(store=store, episodes=episodes, mode=ImportWaitMode.OFF)
+        run = sonarr_grab_run([EP1, EP2], store=store, mode=ImportWaitMode.OFF)
 
         (req,) = run.grab_requests
         assert req.pending_import_updates == {}
@@ -321,11 +320,8 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
 
     def test_a_stored_pending_import_is_followed_before_its_torrent_is_placed(self) -> None:
         store = _store_holding(_stored_on_the_first_row(tvdb_ids={101: 9001}))
-        episodes = ScriptedEpisodes(
-            FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
-        )
 
-        run = sonarr_grab_run(store=store, episodes=episodes)
+        run = sonarr_grab_run([_MOVED_SPECIAL, _SECOND_ROW], store=store)
 
         (req,) = run.grab_requests
         pending = req.pending_import_updates["h1"].pending_import_at(_STAMP, restart=False)
@@ -344,6 +340,7 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
                 {9: _STAMP, 22: None, 23: _STAMP},
                 id="one-series",
             ),
+            # Series 8's TVDB episode 9101 has moved from row 201 to row 250 (`SERIES_8_E2`).
             pytest.param(
                 two_claim_pending_import(
                     anilist_ids=(22, 23),
@@ -364,12 +361,8 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
         self, stored: PendingImport, followed: dict[str, list[int]], stamps: dict[int, str | None]
     ) -> None:
         store = _store_holding(stored)
-        sonarr = PerSeriesSonarrClient(
-            {7: [_MOVED_SPECIAL, _SECOND_ROW], 8: [sonarr_ep(1, 2, ep_id=250, tvdb_id=9101, episode_file_id=0)]},
-            candidates=[],
-        )
 
-        run = sonarr_grab_run(store=store, episodes=ScriptedEpisodes(sonarr, windows={5: [_SECOND_ROW]}), grab=False)
+        run = sonarr_grab_run([_MOVED_SPECIAL, _SECOND_ROW], store=store, grab=False)
 
         (req,) = run.grab_requests
         row = store.get_pending_import_row(Arr.SONARR, "h1")
@@ -385,7 +378,7 @@ class TestSonarrCheckTitleFollowsStoredPendingImports:
             FakeSonarrClient(episodes=[_MOVED_SPECIAL, _SECOND_ROW]), windows={5: [_SECOND_ROW]}
         )
 
-        run = sonarr_grab_run(store=store, episodes=episodes)
+        run = scripted_grab_run(store=store, episodes=episodes)
 
         (req,) = run.grab_requests
         assert req.seadex_dict["NAN0"].releases[GRAB_URL].skip_reason is SkipReason.PLACEMENT_INPUT_UNREAD
@@ -425,7 +418,7 @@ class TestSonarrCheckTitleMetadataUnread:
             FakeSonarrClient(episodes=[EP1, EP2]), unread_series=unread_series, unread_anilist_ids=unread_anilist_ids
         )
 
-        run = sonarr_grab_run(store=store, episodes=episodes)
+        run = scripted_grab_run(store=store, episodes=episodes)
 
         (req,) = run.grab_requests
         assert req.metadata_unread is expected
@@ -448,7 +441,7 @@ class TestSonarrCheckTitleMetadataUnread:
             seadex_dict={},
         )
         episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order=order, unread_anilist_ids=frozenset({4}))
-        strat = sonarr_checking(run, episodes)
+        strat = scripted_checking(run, episodes)
 
         strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
 
