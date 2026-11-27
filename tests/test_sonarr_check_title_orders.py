@@ -17,7 +17,6 @@ from pearlarr.file_paths import normalize_file_name
 from pearlarr.mappings import TitleMapping
 from pearlarr.output import Severity
 from pearlarr.releases import EpisodeKey, PrintedKey, SeadexDict, SkipReason
-from pearlarr.sonarr_strategy import SonarrStrategy
 from pearlarr.tvdb_orders import AIRED_ORDER, OrderRow
 from pearlarr.wait_types import ImportWaitMode
 
@@ -276,9 +275,7 @@ def _check_second_season(library: _SeriesInSonarr, titles: Mapping[int, _Title] 
         if title.episodes is not None:
             deps.anilist.answers[n] = anilist_counting(n, title.episodes)
     sonarr = FakeSonarrClient(all_series=[library.series], episodes=library.episodes, parse_fn=library.parses.get)
-    strat = SonarrStrategy(deps, run, sonarr_client=sonarr)
-    strat.get_items()
-    strat.check_title(library.series, 5, mappings[5])
+    sonarr_checking(run, sonarr, deps).check_title(library.series, 5, mappings[5])
     return run
 
 
