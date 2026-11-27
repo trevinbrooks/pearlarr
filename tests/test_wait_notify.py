@@ -564,11 +564,18 @@ class TestGrabLayout:
         assert embed.description == ""
         assert embed.fields == ()
 
-    def test_replacing_collapses_beyond_cap(self, discord: respx.Route) -> None:
-        embed = _post_grab(discord, _notice(replaced_groups=tuple(f"Group{i:02d}" for i in range(12))))
+    @pytest.mark.parametrize(
+        ("groups", "value"),
+        [
+            pytest.param(3, "Group00, Group01, Group02", id="3-all-listed"),
+            pytest.param(12, "Group00, Group01, Group02, … +9 more", id="past-3-counted"),
+        ],
+    )
+    def test_replacing_collapses_beyond_cap(self, discord: respx.Route, groups: int, value: str) -> None:
+        embed = _post_grab(discord, _notice(replaced_groups=tuple(f"Group{i:02d}" for i in range(groups))))
 
         [replacing] = embed.fields
-        assert replacing.value == "Group00, Group01, Group02, … +9 more"
+        assert replacing.value == value
 
 
 @pytest.mark.usefixtures("discord")
