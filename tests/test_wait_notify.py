@@ -419,6 +419,16 @@ def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
     return tuple(WaitOutcomeRow(f"Show {n:03d} · SubsPlease · S01 E01-E12", outcome) for n in numbers)
 
 
+_GINTAMA_BATCH = WaitOutcomeRow(
+    "Gintama · Okay-Subs · S01 E01-E49",
+    Outcome.NOTHING_PLACED,
+    left_for_hand_import=files_left_for_hand_import(
+        *(f"[Okay-Subs] Gintama - {n:02d} (BD 1080p HEVC FLAC 2.0).mkv" for n in range(1, 50))
+    ),
+)
+"""A batch of 49 files, none placed, so each is left for a hand import."""
+
+
 @pytest.mark.parametrize(
     ("rows", "names", "last_lines"),
     [
@@ -429,21 +439,21 @@ def _backlog(outcome: Outcome, numbers: range) -> tuple[WaitOutcomeRow, ...]:
             id="between-torrents",
         ),
         pytest.param(
+            (_GINTAMA_BATCH,),
+            ["Left for the next run (1)", ""],
+            ["`[Okay-Subs] Gintama - 34 (BD 1080p HEVC FLAC 2.0).mkv`", "… +15 more files"],
+            id="in-the-last-torrents-files",
+        ),
+        pytest.param(
             (
-                WaitOutcomeRow(
-                    "Gintama · Okay-Subs · S01 E01-E49",
-                    Outcome.NOTHING_PLACED,
-                    left_for_hand_import=files_left_for_hand_import(
-                        *(f"[Okay-Subs] Gintama - {n:02d} (BD 1080p HEVC FLAC 2.0).mkv" for n in range(1, 50))
-                    ),
-                ),
+                _GINTAMA_BATCH,
                 WaitOutcomeRow("Kaiju No. 8 · SubsPlease · S01 E01-E12", Outcome.DOWNLOAD_TIMED_OUT),
                 WaitOutcomeRow("Sakamoto Days · SubsPlease · S01 E01-E11", Outcome.DOWNLOAD_TIMED_OUT),
             ),
             ["Left for the next run (3)", ""],
             # The second field has room for file 34 but not for the count after it, so the count takes its place.
-            ["`[Okay-Subs] Gintama - 33 (BD 1080p HEVC FLAC 2.0).mkv`", "… +16 more files · +2 more"],
-            id="in-a-torrents-files",
+            ["`[Okay-Subs] Gintama - 33 (BD 1080p HEVC FLAC 2.0).mkv`", "… +16 more files · +2 more torrents"],
+            id="in-a-torrents-files-before-others",
         ),
     ],
 )
