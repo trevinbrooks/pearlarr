@@ -14,7 +14,7 @@ from dataclasses import replace
 
 import pytest
 
-from pearlarr.arr_models import SonarrEpisode
+from pearlarr.arr_models import SonarrEpisode, SonarrSeries
 from pearlarr.config import Arr
 from pearlarr.file_paths import normalize_file_name
 from pearlarr.mappings import MappingSource, TitleMapping
@@ -22,12 +22,13 @@ from pearlarr.output import Severity
 from pearlarr.pending_import import PendingImport
 from pearlarr.releases import SeadexDict, SkipReason
 from pearlarr.sonarr_strategy import SonarrStrategy
-from pearlarr.tvdb_orders import AIRED_ORDER
 from pearlarr.wait_types import ImportWaitMode
 
 from .builders import (
     FakeCacheStore,
     FakeSeaDexSource,
+    ScriptedAniListClient,
+    anilist_body,
     claim_anilist_ids,
     make_config,
     make_entry_record,
@@ -42,21 +43,23 @@ from .builders import (
     sonarr_ep,
     two_claim_pending_import,
 )
-from .fakes import FakeSonarrClient, ScriptedEpisodes, diagnostic_messages, install_recording_hub
+from .fakes import FakeSonarrClient, diagnostic_messages, install_recording_hub
 from .title_check_builders import (
+    DVD_E1,
     EP1,
     EP2,
     GRAB_FILES,
     GRAB_URL,
     SERIES_7,
-    STAND_IN_E2,
+    SERIES_7_DVD,
+    TITLE_5,
     FakeRunServices,
     Unread,
     anilist_counting,
-    scripted_checking,
     seadex_groups,
     sonarr_checking,
     sonarr_grab_run,
+    sonarr_listing,
 )
 
 _STAMP = "2026-01-01 00:00:00"
@@ -432,26 +435,27 @@ class TestSonarrCheckTitleMetadataUnread:
         assert req.metadata_unread is expected
 
     @pytest.mark.parametrize(
-        ("window", "order", "stopped_on"),
+        ("series", "rows", "stopped_on"),
         [
             # No release to grab caches the title as having none. No episode in Sonarr's order caches it as
             # having nothing to grab.
-            pytest.param([EP2], AIRED_ORDER, ([5], list[int]()), id="no-suitable-release"),
-            pytest.param([STAND_IN_E2], "dvd", (list[int](), [5]), id="no-episode-in-sonarrs-order"),
+            pytest.param(SERIES_7, [EP1, EP2], ([5], list[int]()), id="no-suitable-release"),
+            pytest.param(SERIES_7_DVD, [DVD_E1], (list[int](), [5]), id="no-episode-in-sonarrs-order"),
         ],
     )
     def test_a_title_that_stops_before_a_grab_is_not_unread_for_another_entry_of_its_series(
-        self, window: list[SonarrEpisode], order: str, stopped_on: tuple[list[int], list[int]]
+        self, series: SonarrSeries, rows: list[SonarrEpisode], stopped_on: tuple[list[int], list[int]]
     ) -> None:
         run = FakeRunServices(
-            anilist_ids={4: TitleMapping(anilist_id=4), 5: TitleMapping(anilist_id=5)},
-            prologue_entry=make_entry_record(),
-            seadex_dict={},
+            anilist_ids={4: TitleMapping(anilist_id=4), 5: TITLE_5}, prologue_entry=make_entry_record(), seadex_dict={}
         )
-        episodes = ScriptedEpisodes(FakeSonarrClient(episodes=window), order=order, unread_anilist_ids=frozenset({4}))
-        strat = scripted_checking(run, episodes)
+        deps = make_run_deps(cache_store=run.cache_store, anilist_client=ScriptedAniListClient(failing=frozenset({4})))
+        # Title 5's answer was cached, and AniList went unreachable on title 4's lookup.
+        deps.anilist.answers[5] = anilist_body(5)
+        deps.anilist.episode_count(4)
+        strat = sonarr_checking(run, sonarr_listing(run.cache_store, series, rows), deps)
 
-        strat.check_title(SERIES_7, 5, TitleMapping(anilist_id=5))
+        strat.check_title(series, 5, TITLE_5)
 
         no_releases = [anilist_id for anilist_id, _ in run.no_releases_calls]
         assert (no_releases, [anilist_id for anilist_id, _ in run.nothing_to_grab_calls]) == stopped_on
