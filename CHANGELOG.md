@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Fixed
+
+- A file named by number alone is placed when its series title is one the run knows with the words split another way, such as "Akujo dewa" in the file's name for AniList's "Akujo de wa". Before, a release named that way was left for a hand import with "no file was placed on an episode". The first run after upgrading re-checks every cached title once and says so, and it places such a release that is still waiting from an earlier version.
+
 ## [1.6.2] - 2026-11-27
 
 ### Fixed

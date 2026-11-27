@@ -228,6 +228,30 @@ class TestEveryNumberingAgrees:
 
         assert proposed == {name: (8830,)}
 
+    def test_a_known_title_spaced_another_way_is_still_known(self) -> None:
+        # Though I Am an Inept Villainess (Sonarr 275): Chihiro's singles write "dewa" and carry the subtitle.
+        # AniList's romaji carries the subtitle and writes "de wa". Sonarr's alternate title writes "dewa" and has
+        # no subtitle. So the parsed series name is no known name space for space, and one with the spaces dropped.
+        series = _series(_run(1, range(10205, 10216), absolute=1))
+        window = _window(
+            188139,
+            _ids(series, 1),
+            11,
+            "Though I Am an Inept Villainess",
+            "Though I Am an Inept Villainess",
+            "Futsutsuka na Akujo de wa Gozaimasu ga: Suuguu Chouso Torikae Den",
+        )
+        title = "Futsutsuka na Akujo dewa Gozaimasu ga- Suuguu Chouso Torikae Den"
+        name = f"[Chihiro] {title} - 05 [1080p HEVC AAC][F94C53E6].mkv"
+
+        proposed = _read(
+            _grabbing_title(series, window, alternate_titles=("Futsutsuka na Akujo dewa Gozaimasu ga",)),
+            (window,),
+            {name: _absolute_only(5, title)},
+        )
+
+        assert proposed == {name: (10209,)}
+
     def test_a_two_number_name_is_read_onto_two_ids(self) -> None:
         # Gintama (Sonarr 39): CBT's DVD batch opens with 001-002 in one file, then 003 on.
         series, window, parsed = _gintama()

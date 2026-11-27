@@ -89,6 +89,16 @@ def _name_key(title: str) -> str:
     return " ".join(folded.split())
 
 
+def _joined_name_key(title: str) -> str:
+    """`_name_key` with its spaces dropped: the name by its letters and digits alone.
+
+    A romanized name splits its words more than one way ("de wa" and "dewa", "Re Zero" and "ReZero"), so two
+    spellings of one name can differ in nothing but their spaces. The `known_titles` gate reads them as one name.
+    """
+
+    return _name_key(title).replace(" ", "")
+
+
 def _raw_name_key(title: str) -> str:
     """The name lowercased with the " - " and ": " separators converted to a space, punctuation kept.
 
@@ -175,7 +185,7 @@ class _Window:
     season_rows: Mapping[int, int]
     """Episode number -> id over the regular rows of the window's first regular season."""
     titles: frozenset[str]
-    """`_name_key` of each AniList name of the title, the blank left out."""
+    """`_joined_name_key` of each AniList name of the title, the blank left out."""
     marked: frozenset[str]
     """`_marked_name_key` of each AniList name of the title whose `_name_key` isn't blank."""
 
@@ -200,7 +210,7 @@ class _Window:
                 for ep in regular_ids
                 if ep.season_number == first_season and ep.episode_number is not None
             },
-            titles=frozenset(_name_key(title) for title in titles) - {""},
+            titles=frozenset(_joined_name_key(title) for title in titles) - {""},
             marked=frozenset(_marked_name_key(title) for title in titles if _name_key(title)),
         )
 
@@ -338,7 +348,7 @@ class NumberingStep:
     union_monotone: bool
     """Whether the union's regular rows all carry absolutes that strictly increase."""
     known_titles: frozenset[str]
-    """`_name_key` of the series' name, of each alternate name, and of each window's AniList names."""
+    """`_joined_name_key` of the series' name, of each alternate name, and of each window's AniList names."""
 
     @classmethod
     def of(cls, grabbing_title: GrabbingTitle, windows: Iterable[TitleWindow]) -> Self:
@@ -349,7 +359,8 @@ class NumberingStep:
         regular_ids = _regular(index.by_id.values())
         union = frozenset(ep_id for window in own for ep_id in window.ids)
         union_regular_ids = [ep for ep in regular_ids if ep.id in union]
-        known = {_name_key(title) for title in (grabbing_title.title_names.series, *grabbing_title.alternate_titles)}
+        names = (grabbing_title.title_names.series, *grabbing_title.alternate_titles)
+        known = {_joined_name_key(title) for title in names}
         known.update(title for window in own for title in window.titles)
         return cls(
             series=index,
@@ -436,8 +447,9 @@ class NumberingStep:
         if len(distinct) != 1 or not any(fit.numbering in _PLACING for fit in gated):
             return None
         # A parsed series name the run doesn't know (a recut's, another series') says the group may have counted
-        # something other than this series' episodes, whatever the numbers agree on.
-        if _name_key(file.title) not in self.known_titles:
+        # something other than this series' episodes, whatever the numbers agree on. A known name spaced another
+        # way is still known.
+        if _joined_name_key(file.title) not in self.known_titles:
             return None
         return distinct.pop()
 
